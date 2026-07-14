@@ -12,7 +12,7 @@ async function createTestServer(
   let port: number;
 
   await new Promise<void>(resolve => {
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       port = (server.address() as any).port;
       resolve();
     });
@@ -69,7 +69,7 @@ async function createTestServer(
 }
 
 function connect(port: number, protocols: string[] | undefined) {
-  const url = `ws://localhost:${port}`;
+  const url = `ws://127.0.0.1:${port}`;
   // `undefined` means "no protocols argument at all", i.e. the default options.
   return protocols === undefined ? new WebSocket(url) : new WebSocket(url, protocols);
 }
@@ -245,7 +245,7 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     await using server = await createTestServer([]);
     const { promise: closePromise, resolve: resolveClose } = Promise.withResolvers<CloseEvent>();
 
-    const ws = new WebSocket(`ws://localhost:${server.port}`, ["chat", "echo"]);
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`, ["chat", "echo"]);
     const onopenMock = mock(() => {});
     ws.onopen = onopenMock;
     ws.onclose = close => resolveClose(close);
@@ -259,7 +259,7 @@ describe("WebSocket strict RFC 6455 subprotocol handling", () => {
     expect(onopenMock).not.toHaveBeenCalled();
 
     const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers<void>();
-    const bare = new WebSocket(`ws://localhost:${server.port}`);
+    const bare = new WebSocket(`ws://127.0.0.1:${server.port}`);
     try {
       bare.onopen = () => resolveOpen();
       bare.onerror = reject;
@@ -315,7 +315,7 @@ describe("WebSocket strict RFC 6455 extension handling", () => {
   it("should still accept a plain permessage-deflate response", async () => {
     await using server = await createTestServer(["Sec-WebSocket-Extensions: permessage-deflate"]);
     const { promise: openPromise, resolve: resolveOpen, reject } = Promise.withResolvers();
-    const ws = new WebSocket(`ws://localhost:${server.port}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${server.port}`);
     try {
       ws.onopen = () => resolveOpen();
       ws.onerror = reject;

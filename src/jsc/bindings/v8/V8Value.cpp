@@ -194,7 +194,20 @@ MaybeLocal<String> Value::ToString(Local<Context> context) const
 
 MaybeLocal<String> Value::ToDetailString(Local<Context> context) const
 {
-    return ToString(context);
+    // V8 routes this through NoSideEffectsToString, which never throws and
+    // handles Symbol / throwing toString(). Approximate that: try toString,
+    // and on failure fall back to the value's typeof string rather than
+    // leaving an exception pending or returning empty.
+    Zig::GlobalObject* globalObject = context->globalObject();
+    auto& vm = JSC::getVM(globalObject);
+    JSC::JSValue value = localToJSValue();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSString* result = value.toString(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        scope.clearException();
+        result = JSC::jsTypeStringForValue(globalObject, value);
+    }
+    return context->currentHandleScope()->createLocal<String>(vm, result);
 }
 
 MaybeLocal<Number> Value::ToNumber(Local<Context> context) const

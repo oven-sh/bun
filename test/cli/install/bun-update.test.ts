@@ -533,10 +533,7 @@ it("outdated should not answer from a stale manifest cache", async () => {
   // The default bunfig.toml written by dummyBeforeEach disables the manifest
   // cache (`cache = false`). Use default caching here so the install step
   // writes a manifest that `bun outdated` would otherwise read back as fresh.
-  await writeFile(
-    join(package_dir, "bunfig.toml"),
-    `[install]\nregistry = "http://localhost:${getPort()}/"\n`,
-  );
+  await writeFile(join(package_dir, "bunfig.toml"), `[install]\nregistry = "http://localhost:${getPort()}/"\n`);
   const cacheDir = join(package_dir, ".bun-cache");
   const testEnv = { ...env, BUN_INSTALL_CACHE_DIR: cacheDir };
 

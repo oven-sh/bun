@@ -1341,40 +1341,43 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
   // discovered bunfig.toml is refused unless it is a regular file owned by
   // the current user. chown to another uid needs root, so exercise the
   // regular-file check via a symlink instead.
-  it.skipIf(isWindows)("ignores a bunfig.toml in an ancestor directory that is not a trusted regular file", async () => {
-    const hitsA: string[] = [];
-    const hitsB: string[] = [];
-    await using srvA = registry(await makePkgTarball("ANCESTOR"), hitsA);
-    await using srvB = registry(await makePkgTarball("GLOBAL"), hitsB);
+  it.skipIf(isWindows)(
+    "ignores a bunfig.toml in an ancestor directory that is not a trusted regular file",
+    async () => {
+      const hitsA: string[] = [];
+      const hitsB: string[] = [];
+      await using srvA = registry(await makePkgTarball("ANCESTOR"), hitsA);
+      await using srvB = registry(await makePkgTarball("GLOBAL"), hitsB);
 
-    const { x_dir, env } = setup();
-    const home = tmpdirSync();
-    const cwd = join(x_dir, "work");
-    await mkdir(cwd, { recursive: true });
-    // Ancestor bunfig.toml is a symlink: fails the regular-file trust check.
-    const target = join(x_dir, "planted.toml");
-    await writeFile(target, `[install]\nregistry = "http://127.0.0.1:${srvA.port}/"\n`);
-    symlinkSync(target, join(x_dir, "bunfig.toml"));
-    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srvB.port}/"\n`);
+      const { x_dir, env } = setup();
+      const home = tmpdirSync();
+      const cwd = join(x_dir, "work");
+      await mkdir(cwd, { recursive: true });
+      // Ancestor bunfig.toml is a symlink: fails the regular-file trust check.
+      const target = join(x_dir, "planted.toml");
+      await writeFile(target, `[install]\nregistry = "http://127.0.0.1:${srvA.port}/"\n`);
+      symlinkSync(target, join(x_dir, "bunfig.toml"));
+      await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srvB.port}/"\n`);
 
-    await using proc = spawn({
-      cmd: [bunExe(), "x", "px-probe"],
-      cwd,
-      stdout: "pipe",
-      stdin: "ignore",
-      stderr: "pipe",
-      env: bunxEnv(env, home),
-    });
-    const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      await using proc = spawn({
+        cmd: [bunExe(), "x", "px-probe"],
+        cwd,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env: bunxEnv(env, home),
+      });
+      const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
-    expect({ out: out.trim(), hitsA, hitsB }).toEqual({
-      out: "SERVED-BY-GLOBAL",
-      hitsA: [],
-      hitsB: ["/px-probe", "/px-probe-1.0.0.tgz"],
-    });
-    expect(err).not.toContain("error:");
-    expect(exited).toBe(0);
-  });
+      expect({ out: out.trim(), hitsA, hitsB }).toEqual({
+        out: "SERVED-BY-GLOBAL",
+        hitsA: [],
+        hitsB: ["/px-probe", "/px-probe-1.0.0.tgz"],
+      });
+      expect(err).not.toContain("error:");
+      expect(exited).toBe(0);
+    },
+  );
 });
 
 // Regression test: bunx should not crash on corrupted .bunx files (Windows only)

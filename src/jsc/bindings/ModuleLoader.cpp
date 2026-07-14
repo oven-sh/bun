@@ -393,11 +393,11 @@ static JSValue handleVirtualModuleResult(
         }
 
         if (res->result.value.isCommonJSModule) {
-            // isBuiltIn=true: plugin output is not the on-disk file at this key
-            // and runVirtualModule runs before the IsolatedModuleCache lookup,
-            // so inserting here would violate that cache's isNewEntry assert.
+            // skipIsolationCache: runVirtualModule runs before the isolation
+            // cache lookup, and plugin output is not the on-disk file at this
+            // key, so inserting would trip that cache's isNewEntry assert.
             if (commonJSModule) {
-                commonJSModule->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value, true);
+                commonJSModule->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value, false, true);
                 if (scope.exception()) [[unlikely]] {
                     RELEASE_AND_RETURN(scope, reject(scope.exception()));
                 }
@@ -408,7 +408,7 @@ static JSValue handleVirtualModuleResult(
             if (scope.exception()) [[unlikely]] {
                 RELEASE_AND_RETURN(scope, reject(scope.exception()));
             }
-            auto created = Bun::createCommonJSModule(globalObject, specifierValue, res->result.value, true);
+            auto created = Bun::createCommonJSModule(globalObject, specifierValue, res->result.value, false, true);
             EXCEPTION_ASSERT(created.has_value() == !scope.exception());
             if (created.has_value()) {
                 return resolve(JSSourceCode::create(vm, WTF::move(created.value())));

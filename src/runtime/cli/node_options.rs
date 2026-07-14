@@ -62,10 +62,13 @@ pub fn tokenize(input: &[u8]) -> Result<Vec<Box<[u8]>>, TokenizeError> {
     Ok(tokens)
 }
 
-/// Result of parsing NODE_OPTIONS: the preload list in declaration order.
+/// Result of parsing NODE_OPTIONS. `--require` / `-r` and `--import` are kept
+/// separate so the caller can preserve Node's ordering (all requires before
+/// all imports) and Bun's own CLI ordering.
 #[derive(Default)]
 pub struct Parsed {
-    pub preloads: Vec<Box<[u8]>>,
+    pub requires: Vec<Box<[u8]>>,
+    pub imports: Vec<Box<[u8]>>,
 }
 
 /// Split `--name=value` into `(name, Some(value))`; `--name` into
@@ -443,9 +446,9 @@ fn fail_tokenize(detail: &str) -> ! {
     Global::exit(9);
 }
 
-/// Tokenize and validate a `NODE_OPTIONS` value. Preload flags (`--import`,
-/// `--require`, `-r`) are collected into `Parsed.preloads` in declaration
-/// order; other allowed flags are currently accepted without effect. Flags
+/// Tokenize and validate a `NODE_OPTIONS` value. `--require` / `-r` and
+/// `--import` are collected into `Parsed.requires` / `Parsed.imports`
+/// respectively; other allowed flags are currently accepted without effect. Flags
 /// outside Node's allowlist produce a warning (not a hard error: tooling such
 /// as Next.js forwards `process.execArgv` into worker NODE_OPTIONS and may
 /// carry Bun-specific flags). Tokenizer errors and missing preload values
@@ -486,8 +489,12 @@ pub fn parse(raw: &[u8]) -> Parsed {
             continue;
         }
 
-        let is_preload = matches!(&*normalized, b"--import" | b"--require" | b"-r");
-        if is_preload {
+        let dest = match &*normalized {
+            b"--require" | b"-r" => Some(&mut parsed.requires),
+            b"--import" => Some(&mut parsed.imports),
+            _ => None,
+        };
+        if let Some(dest) = dest {
             let value: &[u8] = match inline_value {
                 Some(v) if !v.is_empty() => v,
                 Some(_) => fail_requires_argument(tok),
@@ -499,7 +506,7 @@ pub fn parse(raw: &[u8]) -> Parsed {
                     _ => fail_requires_argument(name),
                 },
             };
-            parsed.preloads.push(Box::<[u8]>::from(value));
+            dest.push(Box::<[u8]>::from(value));
         }
     }
     parsed

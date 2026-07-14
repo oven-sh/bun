@@ -76,24 +76,6 @@ fn throw_range_error_msg(
 }
 
 #[inline]
-fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
-    global_this: &JSGlobalObject,
-    value: V,
-    name: &str,
-    min: i64,
-    max: i64,
-) -> JsError {
-    global_this.throw_range_error(
-        value,
-        jsc::RangeErrorOptions {
-            field_name: name.as_bytes(),
-            min,
-            max,
-            ..Default::default()
-        },
-    )
-}
-
 // `Option<i64>` is not a valid const-generic type on stable, so the bounds
 // are runtime params + debug_assert.
 pub(crate) fn validate_integer(
@@ -135,12 +117,12 @@ pub(crate) fn validate_integer(
     let num = value.as_number();
 
     if num < min || num > max {
-        return Err(throw_range_error_min_max(
+        return Err(throw_range_error(
             global_this,
-            num,
-            name,
-            min as i64,
-            max as i64,
+            format_args!(
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
+                name, min, max, num
+            ),
         ));
     }
 
@@ -185,7 +167,7 @@ pub(crate) fn validate_int32(
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,
@@ -229,7 +211,7 @@ pub(crate) fn validate_uint32(
         return Err(throw_range_error(
             global_this,
             format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} and <= {}. Received {}",
+                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
                 name,
                 min,
                 max,

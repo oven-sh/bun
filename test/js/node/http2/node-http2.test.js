@@ -1680,7 +1680,7 @@ it("http2 stream.close() validates input types and ranges", async () => {
       // Test out of range values
       [-1, 2 ** 32].forEach(code => {
         expect(() => stream.close(code)).toThrow(
-          `The value of "code" is out of range. It must be >= 0 and <= 4294967295. Received ${code}`,
+          `The value of "code" is out of range. It must be >= 0 && <= 4294967295. Received ${code}`,
         );
       });
 
@@ -2118,7 +2118,7 @@ it("http2 request.close() validates input and manages stream state", async done 
 
       // Test out of range code
       expect(() => req.close(2 ** 32)).toThrow(
-        'The value of "code" is out of range. It must be ' + ">= 0 and <= 4294967295. Received 4294967296",
+        'The value of "code" is out of range. It must be ' + ">= 0 && <= 4294967295. Received 4294967296",
       );
       expect(req.closed).toBe(false);
 

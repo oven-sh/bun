@@ -20,6 +20,20 @@
 
 namespace Bun {
 
+// Node builds each ERR_OUT_OF_RANGE range string at the call site. validateInteger,
+// validateInt32, validateUint32 and validateNumber spell it with "&&"; other callers
+// (checkRangesOrGetDefault, buffer's boundsError) use the shared " and " form.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L102
+static WTF::String conjunctiveRange(double lower, double upper)
+{
+    WTF::StringBuilder range;
+    range.append(">= "_s);
+    range.append(lower);
+    range.append(" && <= "_s);
+    range.append(upper);
+    return range.toString();
+}
+
 using namespace JSC;
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateInteger, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -48,7 +62,7 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     *out = value_num;
     return JSValue::encode(jsUndefined());
@@ -67,7 +81,7 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     *out = value_num;
     return JSValue::encode(jsUndefined());
@@ -98,7 +112,7 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto max_isnonnull = !max.isUndefinedOrNull();
 
     if ((min_isnonnull && value_num < min_num) || (max_isnonnull && value_num > max_num) || ((min_isnonnull || max_isnonnull) && std::isnan(value_num))) {
-        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
         if (min_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, Bun::LOWER, value);
         if (max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, max_num, Bun::UPPER, value);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, ""_s, value);
@@ -120,7 +134,7 @@ JSC::EncodedJSValue V::validateNumber(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto max_isnonnull = !max.isUndefinedOrNull();
 
     if ((min_isnonnull && value_num < min_num) || (max_isnonnull && value_num > max_num) || ((min_isnonnull || max_isnonnull) && std::isnan(value_num))) {
-        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+        if (min_isnonnull && max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
         if (min_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, Bun::LOWER, value);
         if (max_isnonnull) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, max_num, Bun::UPPER, value);
         return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, ""_s, value);
@@ -208,15 +222,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_checkRangesOrGetDefault, (JSC::JSGlobalObjec
     RETURN_IF_EXCEPTION(scope, {});
 
     if (number_num < lower_num || number_num > upper_num) {
-        // Node's checkRangesOrGetDefault spells the range with "and"
-        // (lib/internal/validators.js), unlike validateInteger/validateInt32/validateUint32
-        // which use "&&".
-        WTF::StringBuilder range;
-        range.append(">= "_s);
-        range.append(lower_num);
-        range.append(" and <= "_s);
-        range.append(upper_num);
-        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, range.toString(), number);
+        return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, lower_num, upper_num, number);
     }
     return JSValue::encode(number);
 }
@@ -456,7 +462,7 @@ EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     return JSValue::encode(jsUndefined());
 }
@@ -482,7 +488,7 @@ EncodedJSValue V::validateInt32(ThrowScope& scope, JSC::JSGlobalObject* globalOb
     RETURN_IF_EXCEPTION(scope, {});
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
-    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min_num, max_num, value);
+    if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
 
     if (out) {
         *out = static_cast<int32_t>(std::round(value_num));
@@ -512,7 +518,7 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto positive_b = positive.toBoolean(globalObject);
     auto min = positive_b ? 1 : 0;
     auto max = std::numeric_limits<uint32_t>().max();
-    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min, max), value);
 
     if (out) {
         *out = static_cast<uint32_t>(std::round(value_num));
@@ -531,7 +537,7 @@ JSC::EncodedJSValue V::validateUint32(JSC::ThrowScope& scope, JSC::JSGlobalObjec
     auto positive_b = positive.toBoolean(globalObject);
     auto min = positive_b ? 1 : 0;
     auto max = std::numeric_limits<uint32_t>().max();
-    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, min, max, value);
+    if (value_num < min || value_num > max) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min, max), value);
 
     if (out) {
         *out = static_cast<uint32_t>(std::round(value_num));

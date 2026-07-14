@@ -411,7 +411,7 @@ fn is_allowed(flag: &[u8]) -> bool {
 /// forwards `process.execArgv` to worker processes (Next.js, jest-worker).
 /// Accepted silently so that `bun --bun next build` keeps working.
 fn is_bun_flag(flag: &[u8]) -> bool {
-    matches!(flag, b"--bun" | b"-b" | b"--smol" | b"--hot" | b"--watch")
+    matches!(flag, b"--bun" | b"-b" | b"--smol" | b"--hot")
 }
 
 #[cold]

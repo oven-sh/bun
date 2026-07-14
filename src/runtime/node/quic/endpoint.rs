@@ -1901,13 +1901,11 @@ impl QuicEndpoint {
         Ok(engine)
     }
 
-    /// Destroy the engines/socket and drop every reference to this endpoint.
-    /// Returns false when another path already tore it down.
-    ///
-    /// `closed` is set FIRST: it gates `schedule_process`/`rearm_timer`, so a
-    /// callback running below must not be able to re-arm a tick onto engines
-    /// this function is about to free.
-    fn teardown(&self) -> bool {
+    /// Release the native resources this endpoint owns: the armed tick, the
+    /// lsquic engines, the UDP socket and the registry entry. Touches no JS,
+    /// so `finalize` can call it after the heap is gone. Returns false when
+    /// another path already released them.
+    fn release_native(&self) -> bool {
         if self.closed.replace(true) {
             return false;
         }
@@ -1929,6 +1927,19 @@ impl QuicEndpoint {
         }
         let me = core::ptr::from_ref(self).cast_mut();
         ENDPOINT_REGISTRY.with_borrow_mut(|v| v.retain(|&e| e != me));
+        true
+    }
+
+    /// Destroy the engines/socket and drop every reference to this endpoint.
+    /// Returns false when another path already tore it down.
+    ///
+    /// `closed` is set FIRST: it gates `schedule_process`/`rearm_timer`, so a
+    /// callback running below must not be able to re-arm a tick onto engines
+    /// this function is about to free.
+    fn teardown(&self) -> bool {
+        if !self.release_native() {
+            return false;
+        }
         self.server_tls.set(None);
         self.client_tls.set(None);
         self.sni_contexts.with_mut(Vec::clear);
@@ -2529,5 +2540,10 @@ impl QuicEndpoint {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
+        // An endpoint kept alive for reuse (an idle implicit client endpoint
+        // unrefs rather than destroying) still owns its UDP socket and
+        // engines here. Nothing can reach it once the wrapper is collected,
+        // so release them rather than leaking the socket's poll.
+        self.release_native();
     }
 }

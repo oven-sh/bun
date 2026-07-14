@@ -2477,7 +2477,8 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   printf("napi_reference_unref: status=%d\n", (int)st);
   st = napi_get_reference_value(env, ref, &out);
   printf("napi_get_reference_value: status=%d\n", (int)st);
-  st = napi_create_bigint_int64(env, 42, &out);
+  napi_value bigint_val;
+  st = napi_create_bigint_int64(env, 42, &bigint_val);
   printf("napi_create_bigint_int64: status=%d\n", (int)st);
   st = napi_create_symbol(env, nullptr, &out);
   printf("napi_create_symbol: status=%d\n", (int)st);
@@ -2487,6 +2488,17 @@ static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
   printf("napi_is_typedarray: status=%d\n", (int)st);
   st = napi_get_instance_data(env, &inst_data);
   printf("napi_get_instance_data: status=%d\n", (int)st);
+  uint64_t u64_out;
+  st = napi_get_value_bigint_uint64(env, bigint_val, &u64_out, &bool_out);
+  printf("napi_get_value_bigint_uint64: status=%d\n", (int)st);
+  napi_async_cleanup_hook_handle ach = nullptr;
+  st = napi_add_async_cleanup_hook(
+      env, +[](napi_async_cleanup_hook_handle, void *) {}, nullptr, &ach);
+  printf("napi_add_async_cleanup_hook: status=%d\n", (int)st);
+  if (st == napi_ok) {
+    st = napi_remove_async_cleanup_hook(ach);
+    printf("napi_remove_async_cleanup_hook: status=%d\n", (int)st);
+  }
 
   // Clear the pending exception so we can inspect side effects.
   napi_value exc;

@@ -396,6 +396,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "napi_is_buffer",
         "napi_is_typedarray",
         "napi_get_instance_data",
+        "napi_get_value_bigint_uint64",
+        "napi_add_async_cleanup_hook",
+        "napi_remove_async_cleanup_hook",
       ]) {
         expect(result).toContain(`${fn}: status=0`);
       }

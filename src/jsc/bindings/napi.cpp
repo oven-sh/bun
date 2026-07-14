@@ -1477,7 +1477,7 @@ node_api_create_external_string_latin1(napi_env env,
     bool* copied)
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_latin1
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ARG(env, str);
     NAPI_CHECK_ARG(env, result);
 
@@ -1512,7 +1512,7 @@ node_api_create_external_string_utf16(napi_env env,
     bool* copied)
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_utf16
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     NAPI_CHECK_ARG(env, str);
     NAPI_CHECK_ARG(env, result);
 
@@ -2615,7 +2615,7 @@ extern "C" napi_status napi_get_value_bigint_uint64(napi_env env, napi_value val
     // toBigInt64 can throw if the value is not a bigint. we have already checked, so we shouldn't
     // hit an exception here and it's okay to assert at the end
     *result = jsValue.toBigUInt64(toJS(env));
-    NAPI_RETURN_IF_EXCEPTION(env);
+    NAPI_RETURN_IF_VM_EXCEPTION(env);
 
     // bigint to uint64 conversion is lossless if and only if there aren't multiple digits and the
     // value is positive
@@ -2984,7 +2984,7 @@ extern "C" JS_EXPORT napi_status napi_add_async_cleanup_hook(napi_env env,
     napi_async_cleanup_hook function,
     void* data, napi_async_cleanup_hook_handle* handle_out)
 {
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
     if (function) {
         napi_async_cleanup_hook_handle handle = env->addAsyncCleanupHook(function, data);
         if (handle_out) {
@@ -3019,7 +3019,7 @@ extern "C" JS_EXPORT napi_status napi_remove_async_cleanup_hook(napi_async_clean
     }
 
     napi_env env = handle->env;
-    NAPI_PREAMBLE(env);
+    NAPI_PREAMBLE_NO_PENDING_CHECK(env);
 
     // Always attempt removal like Node.js (no VM terminating check)
     // Node.js has no such check in napi_remove_async_cleanup_hook

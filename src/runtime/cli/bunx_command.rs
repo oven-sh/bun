@@ -813,6 +813,7 @@ impl BunxCommand {
                             "ignoring <b>{}<r> because it is not a regular file owned by the current user",
                             BStr::new(path_z.as_bytes()),
                         );
+                        Output::flush();
                         break 'find_bunfig None;
                     }
                     break 'find_bunfig Some(buf[..len].to_vec());

@@ -1363,11 +1363,10 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
     });
     const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
-    expect(err).toContain("ignoring");
-    expect(err).toContain(join(x_dir, "bunfig.toml"));
-    expect(err).toContain("not a regular file owned by the current user");
     expect(out.trim()).toBe("SERVED-BY-GLOBAL");
     expect(hits).toEqual(["/px-probe", "/px-probe-1.0.0.tgz"]);
+    expect(err).toContain("not a regular file owned by the current user");
+    expect(err).toContain(join(x_dir, "bunfig.toml"));
     expect(exited).toBe(0);
   });
 

@@ -615,18 +615,17 @@ describe.skipIf(isASAN || process.arch !== "x64")("long double varargs inside cc
   });
 });
 
-// TinyCC compiles thread-local variables to Local-Exec TLS, which has no
-// meaning inside an in-memory relocation (there is no PT_TLS segment): the
-// generated loads/stores alias the host process's own thread block. TinyCC
-// must reject it instead of silently corrupting Bun's thread-locals.
+// TinyCC emits Local-Exec TLS, which has no PT_TLS segment to target under
+// in-memory relocation and would alias the host's own thread block; it must be
+// rejected up front instead of silently corrupting Bun's thread-locals.
 describe.skipIf(isASAN)("thread-local storage inside cc()-compiled C", () => {
   it.each(["_Thread_local", "__thread"])("%s is a compile error", keyword => {
-    const dir = tempDirWithFiles(`bun-ffi-cc-tls`, {
+    using dir = tempDir("bun-ffi-cc-tls", {
       "tls.c": `${keyword} int bun_test_tls_counter = 0;\nint bump(void) { return ++bun_test_tls_counter; }\n`,
     });
     expect(() => {
       cc({
-        source: path.join(dir, "tls.c"),
+        source: path.join(String(dir), "tls.c"),
         symbols: { bump: { args: [], returns: "int" } },
       });
     }).toThrow(/thread-local storage is not supported/);

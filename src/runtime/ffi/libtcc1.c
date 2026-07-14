@@ -605,10 +605,9 @@ unsigned long long __fixunsxfdi (long double a1)
         return 0;
 }
 
-/* TinyCC's lib/va_list.c: __va_arg is no longer inlined by tccdefs.h, and Bun
-   replaces libtcc1 with this file. Only referenced by x86_64 SysV codegen.
-   Deviation from upstream: no extern abort() — Bun never injects that symbol,
-   so referencing it would make every cc() fail with an unresolved reference. */
+/* TinyCC lib/va_list.c (x86_64 SysV only): __va_arg is no longer inlined and
+   Bun supplies libtcc1 from this file. No extern abort(): Bun never injects
+   that symbol, so referencing it would fail every cc() at relocate. */
 #if defined(__x86_64__) && !defined(_WIN32)
 
 enum __va_arg_type {

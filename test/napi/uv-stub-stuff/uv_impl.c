@@ -203,6 +203,7 @@ static napi_value test_errors(napi_env env, napi_callback_info info) {
 
   set_int(env, obj, "translateENOENT", uv_translate_sys_error(ENOENT));
   set_int(env, obj, "translateZero", uv_translate_sys_error(0));
+  set_int(env, obj, "translateAlreadyUV", uv_translate_sys_error(UV_ENOENT));
   set_int(env, obj, "uvENOENT", UV_ENOENT);
 
   return obj;
@@ -229,8 +230,13 @@ static napi_value test_type_names(napi_env env, napi_callback_info info) {
            uv_handle_size(UV_TIMER) == sizeof(uv_timer_t));
   set_bool(env, obj, "reqSizeWrite",
            uv_req_size(UV_WRITE) == sizeof(uv_write_t));
+  set_bool(env, obj, "handleSizeUnknown",
+           uv_handle_size(UV_UNKNOWN_HANDLE) == (size_t)-1);
+  set_bool(env, obj, "handleSizeFile", uv_handle_size(UV_FILE) == (size_t)-1);
   set_bool(env, obj, "handleSizeMax",
            uv_handle_size(UV_HANDLE_TYPE_MAX) == (size_t)-1);
+  set_bool(env, obj, "reqSizeUnknown",
+           uv_req_size(UV_UNKNOWN_REQ) == (size_t)-1);
   set_bool(env, obj, "reqSizeMax", uv_req_size(UV_REQ_TYPE_MAX) == (size_t)-1);
 
   return obj;

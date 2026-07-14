@@ -164,7 +164,7 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(result).toEqual({
       errNameENOENT: "ENOENT",
       errNameEINVAL: "EINVAL",
-      errNameUnknown: null,
+      errNameUnknown: "Unknown system error",
       strerrorENOENT: "no such file or directory",
       strerrorUnknown: "Unknown system error",
       errNameR: "EBUSY",
@@ -173,6 +173,7 @@ describe.if(!isWindows)("uv stubs", () => {
       strerrorRUnknown: "Unknown system error 1234",
       translateENOENT: result.uvENOENT,
       translateZero: 0,
+      translateAlreadyUV: result.uvENOENT,
       uvENOENT: result.uvENOENT,
     });
     expect(result.uvENOENT).toBeLessThan(0);
@@ -197,7 +198,10 @@ describe.if(!isWindows)("uv stubs", () => {
       handleSizeAsync: true,
       handleSizeTimer: true,
       reqSizeWrite: true,
+      handleSizeUnknown: true,
+      handleSizeFile: true,
       handleSizeMax: true,
+      reqSizeUnknown: true,
       reqSizeMax: true,
     });
   });

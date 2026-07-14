@@ -185,7 +185,7 @@ UV_EXTERN const char* uv_err_name(int err)
     switch (err) {
         UV_ERRNO_MAP(UV_ERR_NAME_GEN)
     }
-    return NULL;
+    return "Unknown system error";
 }
 #undef UV_ERR_NAME_GEN
 
@@ -233,61 +233,62 @@ UV_EXTERN char* uv_strerror_r(int err, char* buf, size_t buflen)
 
 UV_EXTERN int uv_translate_sys_error(int sys_errno)
 {
-    return UV__ERR(sys_errno);
+    /* If < 0 then it's already a libuv error. */
+    return sys_errno <= 0 ? sys_errno : -sys_errno;
 }
-
-static const char* uv__handle_type_names[] = {
-#define XX(uc, lc) [UV_##uc] = #lc,
-    UV_HANDLE_TYPE_MAP(XX)
-#undef XX
-        [UV_FILE]
-    = "file",
-};
 
 UV_EXTERN const char* uv_handle_type_name(uv_handle_type type)
 {
-    if ((int)type >= 0 && type < UV_HANDLE_TYPE_MAX)
-        return uv__handle_type_names[type];
-    return NULL;
-}
-
-static const size_t uv__handle_type_sizes[] = {
-#define XX(uc, lc) [UV_##uc] = sizeof(uv_##lc##_t),
-    UV_HANDLE_TYPE_MAP(XX)
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return #lc;
+        UV_HANDLE_TYPE_MAP(XX)
 #undef XX
-};
+    case UV_FILE:
+        return "file";
+    default:
+        return NULL;
+    }
+}
 
 UV_EXTERN size_t uv_handle_size(uv_handle_type type)
 {
-    if ((int)type >= 0 && type < UV_HANDLE_TYPE_MAX)
-        return uv__handle_type_sizes[type];
-    return (size_t)-1;
-}
-
-static const char* uv__req_type_names[] = {
-#define XX(uc, lc) [UV_##uc] = #lc,
-    UV_REQ_TYPE_MAP(XX)
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return sizeof(uv_##lc##_t);
+        UV_HANDLE_TYPE_MAP(XX)
 #undef XX
-};
+    default:
+        return (size_t)-1;
+    }
+}
 
 UV_EXTERN const char* uv_req_type_name(uv_req_type type)
 {
-    if ((int)type >= 0 && type < UV_REQ_TYPE_MAX)
-        return uv__req_type_names[type];
-    return NULL;
-}
-
-static const size_t uv__req_type_sizes[] = {
-#define XX(uc, lc) [UV_##uc] = sizeof(uv_##lc##_t),
-    UV_REQ_TYPE_MAP(XX)
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return #lc;
+        UV_REQ_TYPE_MAP(XX)
 #undef XX
-};
+    default:
+        return NULL;
+    }
+}
 
 UV_EXTERN size_t uv_req_size(uv_req_type type)
 {
-    if ((int)type >= 0 && type < UV_REQ_TYPE_MAX)
-        return uv__req_type_sizes[type];
-    return (size_t)-1;
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return sizeof(uv_##lc##_t);
+        UV_REQ_TYPE_MAP(XX)
+#undef XX
+    default:
+        return (size_t)-1;
+    }
 }
 
 UV_EXTERN void uv_sleep(unsigned int msec)

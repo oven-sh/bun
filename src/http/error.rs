@@ -45,6 +45,8 @@ pub enum Error {
     DNSResolveFailed,
     #[error("ConnectionRefused")]
     ConnectionRefused,
+    #[error("ERR_TLS_HANDSHAKE_FAILED")]
+    TLSHandshakeFailed,
     #[error("TooManyRedirects")]
     TooManyRedirects,
     #[error("HTTP3Unsupported")]
@@ -282,6 +284,7 @@ impl Error {
             Self::ConnectionClosed => "ConnectionClosed",
             Self::DNSResolveFailed => "DNSResolveFailed",
             Self::ConnectionRefused => "ConnectionRefused",
+            Self::TLSHandshakeFailed => "ERR_TLS_HANDSHAKE_FAILED",
             Self::TooManyRedirects => "TooManyRedirects",
             Self::HTTP3Unsupported => "HTTP3Unsupported",
             Self::ResponseHeadersTooLarge => "ResponseHeadersTooLarge",

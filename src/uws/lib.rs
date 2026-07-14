@@ -156,7 +156,8 @@ pub mod ssl_wrapper {
     mod boring_sys {
         pub(super) use bun_boringssl::c::{
             BIO_ctrl_pending, BIO_free, BIO_new, BIO_read, BIO_s_mem, BIO_set_mem_eof_return,
-            BIO_write, ERR_clear_error, SSL, SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
+            BIO_write, ERR_clear_error, ERR_peek_last_error, ERR_reason_error_string, SSL,
+            SSL_CTX, SSL_CTX_free, SSL_CTX_get_verify_mode,
             SSL_ERROR_SSL, SSL_ERROR_SYSCALL, SSL_ERROR_WANT_READ, SSL_ERROR_WANT_RENEGOTIATE,
             SSL_ERROR_WANT_WRITE, SSL_ERROR_ZERO_RETURN, SSL_RECEIVED_SHUTDOWN, SSL_VERIFY_NONE,
             SSL_VERIFY_PEER, SSL_do_handshake, SSL_free, SSL_get_error, SSL_get_rbio,
@@ -899,6 +900,14 @@ pub mod ssl_wrapper {
             if result <= 0 {
                 // SAFETY: ssl is still valid.
                 let err = unsafe { boring_sys::SSL_get_error(ssl.as_ptr(), result) };
+                // Capture the protocol-level reason (e.g. WRONG_VERSION_NUMBER)
+                // before draining the queue so the handshake callback can report
+                // it. Mirrors `ssl_park_fatal_reason` in openssl.c.
+                let ssl_queue_err = if err == boring_sys::SSL_ERROR_SSL {
+                    boring_sys::ERR_peek_last_error()
+                } else {
+                    0
+                };
                 boring_sys::ERR_clear_error();
                 if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                     // Remotely-Initiated Shutdown
@@ -920,7 +929,19 @@ pub mod ssl_wrapper {
                     Self::r(this)
                         .flags
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
-                    let verify = Self::r(this).get_verify_error();
+                    let verify = if ssl_queue_err != 0 {
+                        // Same shape `ssl_dispatch_parked_reason` (openssl.c)
+                        // dispatches for a fatal handshake error: error_no =
+                        // -71 (EPROTO sentinel), reason from BoringSSL's
+                        // static error-string table.
+                        us_bun_verify_error_t {
+                            error_no: -71,
+                            code: c"EPROTO".as_ptr(),
+                            reason: boring_sys::ERR_reason_error_string(ssl_queue_err),
+                        }
+                    } else {
+                        Self::r(this).get_verify_error()
+                    };
                     Self::r(this).trigger_handshake_callback(false, verify);
 
                     if Self::r(this).flags.fatal_error() {

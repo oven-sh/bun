@@ -1189,10 +1189,15 @@ impl<const SSL: bool> Handler<SSL> {
                 // if we are here is because server rejected us, and the error_no is the cause of this
                 // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
                 if client.flags.did_have_handshaking_error {
-                    client.close_and_fail::<SSL>(
-                        get_cert_error_from_no(handshake_error.error_no),
-                        socket,
-                    );
+                    // Negative error_no is the EPROTO/ECONNRESET sentinel
+                    // from the handshake layer (not an X509_V_ERR_* code):
+                    // the peer isn't speaking TLS.
+                    let err = if handshake_error.error_no < 0 {
+                        crate::Error::TLSHandshakeFailed
+                    } else {
+                        get_cert_error_from_no(handshake_error.error_no)
+                    };
+                    client.close_and_fail::<SSL>(err, socket);
                     return;
                 }
                 // if handshake_success it self is false, this means that the connection was rejected

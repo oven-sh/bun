@@ -13,7 +13,7 @@ const kClientMagic = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 const kSettings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
 const kPing = Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]);
 
-async function runFloodStages(host: string) {
+async function runFloodStages(host: string | undefined) {
   const stages: string[] = [];
   const stage = (name: string) => {
     stages.push(name);
@@ -38,10 +38,11 @@ async function runFloodStages(host: string) {
     });
   });
 
-  await new Promise<void>(resolve => server.listen(0, host, resolve));
+  await new Promise<void>(resolve => (host === undefined ? server.listen(0, resolve) : server.listen(0, host, resolve)));
   stage("listening");
 
-  const client = net.connect((server.address() as any).port, host);
+  const client =
+    host === undefined ? net.connect((server.address() as any).port) : net.connect((server.address() as any).port, host);
   client.on("error", () => {});
   let interval: ReturnType<typeof setInterval> | undefined;
   const startFlood = () => {
@@ -87,3 +88,8 @@ test.skipIf(!isIPv6())(
   () => runFloodStages("::1"),
   45_000,
 );
+
+// The vendored test's exact connection shape: dual-stack listener
+// (listen(0) binds ::) with the default-host client connect - the
+// v4-mapped-over-dual path, distinct from both pure-family variants above.
+test("PING flood tears the session down at every stage (dual-stack default)", () => runFloodStages(undefined), 45_000);

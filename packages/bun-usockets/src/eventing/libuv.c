@@ -28,16 +28,16 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * arriving after this side already half-closed and stopped reading never
    * fires another readable poll, and the socket (and server.close()) waits
    * forever - so DISCONNECT is armed unconditionally in us_poll_start/change
-   * and surfaced here as a readable dispatch: the read loop's recv() then
-   * discovers the true end of stream (0) after consuming whatever is still
-   * queued. It is NOT mapped to the eof hint: unlike kqueue's EV_EOF, which
-   * the kernel sets only alongside the final data, AFD can signal DISCONNECT
-   * while data is still in flight, and treating it as EOF closed connections
+   * and surfaced as a readable dispatch: the read loop's recv() discovers
+   * the true end of stream (0) after consuming whatever is still queued.
+   * It is mapped to the eof hint ONLY for sockets whose write side we
+   * already shut down (see below): unlike kqueue's EV_EOF, which the kernel
+   * sets only alongside the final data, AFD can signal DISCONNECT while data
+   * is still in flight, and an unconditional eof mapping closed connections
    * at a mid-stream EAGAIN (truncated bodies across the fetch/backpressure
    * suites). One-shot: AFD keeps reporting DISCONNECT once signaled, so
    * re-arm without it - us_poll_start/us_poll_change add it back on the next
-   * poll change, and the FIN itself is never lost because recv() owns EOF
-   * discovery.
+   * poll change.
    * https://github.com/libuv/libuv/blob/v1.x/docs/src/poll.rst (UV_DISCONNECT
    * is Windows-only and best-effort; readable polling stays the primary
    * signal). */

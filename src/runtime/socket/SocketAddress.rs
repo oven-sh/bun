@@ -443,7 +443,6 @@ pub enum AddressError {
     #[error("InvalidLength")]
     InvalidLength,
 }
-bun_core::named_error_set!(AddressError);
 
 impl SocketAddress {
     /// Create a new IP socket address. `addr` is assumed to be a valid ipv4 or ipv6

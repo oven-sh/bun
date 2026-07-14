@@ -20,21 +20,22 @@ afterEach(() => fault.clear());
 // stream; anything past "ARMED" means a TLS socket survived the failed
 // allocation and reached its read loop.
 const OOM_FIXTURE_MARKERS = ["ARMED", "READ DATA", "CLOSED", "CLIENT ERROR"];
-// How `CrashReason::OutOfMemory` is phrased depends on whether a crash report is
-// being generated, and CI configures that per job (BUN_CRASH_REPORT_URL is only
-// set when its remap server came up). Match either phrasing.
-const OOM_CRASH_MESSAGES = ["Bun ran out of memory", "Bun has run out of memory"];
 test.skipIf(!fault.available())(
   "a failed per-loop TLS buffer allocation reports out of memory instead of faulting inside SSL_read",
   async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "tls-loop-buffer-oom-fixture.ts")],
-      env: bunEnv,
+      // BUN_CRASH_REPORT_URL="": this OOM is deliberate; uploading it to CI's
+      // remap server would pin a spurious "crash reported" error on the next
+      // unrelated failing test.
+      env: { ...bunEnv, BUN_CRASH_REPORT_URL: "", BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    const outOfMemory = OOM_CRASH_MESSAGES.some(message => stderr.includes(message));
+    // `CrashReason::OutOfMemory` phrasing varies with SHOW_CRASH_TRACE, so
+    // match the shared substring (see run-crash-handler.test.ts).
+    const outOfMemory = stderr.toLowerCase().includes("out of memory");
     expect({
       markers: stdout
         .split("\n")

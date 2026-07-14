@@ -215,6 +215,7 @@ unsafe extern "C" {
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
     safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
+    safe fn WebWorker__entrySettled(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         cpp_worker: *mut c_void,
@@ -506,6 +507,13 @@ impl WebWorker {
         let mut preloads: Vec<Box<[u8]>> = Vec::with_capacity(preload_modules_len);
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
+            // node: builtin specifiers skip the file resolver — the worker-side
+            // module loader resolves them. Lets node:worker_threads run its
+            // bootstrap (stdio rebinding) as a preload.
+            if utf8_slice.slice().starts_with(b"node:") {
+                preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
+                continue;
+            }
             // SAFETY: `parent_ref` is the live VM on the calling (parent)
             // thread — its `transpiler` is uniquely owned here.
             if let Some(preload) = unsafe {
@@ -823,7 +831,7 @@ impl WebWorker {
     /// ran `shutdown()` (after which `self` may be freed by `~Worker` on the
     /// parent thread; touching `self` past that point is the UAF this return
     /// shape exists to prevent).
-    fn start_vm(&self) -> Result<*mut VirtualMachine, bun_core::Error> {
+    fn start_vm(&self) -> Result<*mut VirtualMachine, crate::CrateError> {
         debug_assert!(self.status.get() == Status::Start);
         debug_assert!(self.vm_ptr().is_null());
 
@@ -1090,22 +1098,39 @@ impl WebWorker {
                     vm.as_mut().exit_handler.exit_code = 1;
                 }
                 self.flush_logs(vm);
+                WebWorker__entrySettled(vm.global());
                 return self.shutdown();
             }
         };
 
+        // Fire (and clear) the entryEvaluated hook on EVERY post-evaluation path
+        // so buffered postMessageToThread deliveries drain and the sender's
+        // Atomics.waitAsync settles. dispatchOnline re-calls it as a no-op.
+        WebWorker__entrySettled(vm.global());
+
         // SAFETY: `promise` is a live JSC heap cell.
         unsafe {
-            if (*promise).status() == jsc::js_promise::Status::Rejected {
+            let status = (*promise).status();
+            if status == jsc::js_promise::Status::Rejected {
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),
                     (*promise).result(vm.jsc_vm()),
                     true,
                 );
                 if !handled {
-                    vm.as_mut().exit_handler.exit_code = 1;
+                    // exit_code is already 1 from uncaught_exception; re-setting it here
+                    // would clobber a process.on('exit') change to process.exitCode.
                     return self.shutdown();
                 }
+            } else if status == jsc::js_promise::Status::Pending {
+                // Unsettled top-level await (loop drained, entry promise still
+                // pending): node exits the worker with code 13, but only if the
+                // user hasn't set a nonzero process.exitCode.
+                if vm.exit_handler.exit_code == 0 {
+                    vm.as_mut().exit_handler.exit_code = 13;
+                }
+                self.flush_logs(vm);
+                return self.shutdown();
             } else {
                 let _ = (*promise).result(vm.jsc_vm());
             }
@@ -1254,6 +1279,14 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Reclaim queued CppTasks (the per-worker stdio/messaging
+            // MessagePort drain tasks that can be in self.tasks mid-tick when
+            // terminate() lands, and any Worker dispatchExit close task from a
+            // sub-worker) while JSC is still live: ~Ref<Worker> walks
+            // ~JSEventListener Weak<> handles, and after teardownJSCVM the
+            // worker VM is dealloc'd-without-Drop so anything still in
+            // self.tasks leaks. Mirrors the global_exit() ordering.
+            vm.event_loop_mut().release_queued_tasks_for_shutdown();
             vm.release_strong_refs_before_teardown();
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
@@ -1440,6 +1473,17 @@ fn on_unhandled_rejection(
         .to_error()
         .unwrap_or(error_instance_or_exception);
 
+    // A parse failure rejects with a BuildMessage, which doesn't survive structured
+    // clone. Node reports a SyntaxError; build a real one from the formatted parse
+    // error so the subtype reaches the parent intact.
+    if let Some(bm) = error_instance.as_::<crate::BuildMessage>() {
+        // SAFETY: as_ returned a live BuildMessage cell, read-only on the
+        // worker (JS) thread that owns it.
+        let text = unsafe { (*bm).msg.data.text.clone() };
+        error_instance =
+            global_object.create_syntax_error_instance(format_args!("{}", bstr::BStr::new(&text)));
+    }
+
     let mut array: Vec<u8> = Vec::new();
 
     // `worker_ref()` is the safe BACKREF accessor — `vm.worker` points at the
@@ -1494,6 +1538,11 @@ fn on_unhandled_rejection(
     {
         let _ = global_object.try_take_exception();
     }
+    // node runs the worker's process 'exit' handlers on an uncaught exception (code 1;
+    // they may change process.exitCode). Run them before arming termination — a pending
+    // termination exception makes dispatchExitInternal skip 'exit' (as terminate() should),
+    // and its processIsExiting guard stops shutdown() from running them twice.
+    virtual_machine::ExitHandler::dispatch_on_exit(vm);
     let _ = worker.set_requested_terminate();
     // Do NOT call `worker.shutdown()` here —
     // `shutdown()` RETURNS, so calling it here would destroy

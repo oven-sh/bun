@@ -22,21 +22,12 @@ const step = (s: string) => {
   steps.push(s);
   fs.writeSync(2, `STEP: ${s}\n`);
 };
-// REF'D ticker, not an unref'd timeout: round 2 showed zero watchdog output
-// despite fs.writeSync - an unref'd 15s timer never fired inside a 20s
-// stall, so either unref'd timers cannot wake a socket-waiting loop here or
-// the loop is wedged in an infinite poll. A ref'd 5s ticker discriminates:
-// TICK lines during the stall = loop turns, missing socket event; no TICK
-// lines = the event loop itself is wedged.
-let ticks = 0;
-const ticker = setInterval(() => {
-  ticks++;
-  fs.writeSync(2, `TICK ${ticks}: after: ${steps.join(" -> ")} connections=${(server as any)?._connections}\n`);
-  if (ticks >= 3) {
-    fs.writeSync(2, `WATCHDOG: stalled\n`);
-    process.exit(1);
-  }
-}, 5_000);
+// A/B CONTROL: no timers at all. The tickered sibling passed in the same
+// 2-wide phase where the timerless original stalled, and an unref'd watchdog
+// never fired inside a stall - hypothesis: with no pending ref'd timer the
+// loop enters an infinite-timeout poll and a socket death event is lost
+// (any timer-driven wakeup collects it). If this file stalls while the
+// tickered sibling passes on the same lane, timer presence is the variable.
 
 const { promise, resolve, reject } = Promise.withResolvers();
 
@@ -75,4 +66,3 @@ step("write-result-true");
 step("disposing-server");
 await (server as any)[Symbol.asyncDispose]();
 step("server-disposed");
-clearInterval(ticker);

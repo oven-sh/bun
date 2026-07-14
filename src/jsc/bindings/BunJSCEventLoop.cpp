@@ -84,11 +84,8 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 
 #if USE(MIMALLOC)
             // Collect retired pages, punch free-block holes, hand the arena purge to
-            // the scavenger. Rate-limited: with the per-page skip this measures as
-            // noise on express, so it bounds per-park work on larger heaps, not a fix.
-            // `nowNs` is the tick's own reading, reused rather than taken again; 0
-            // means it had none to share. Compared by addition, not subtraction: an
-            // out-of-order reading would underflow and force an unearned sweep.
+            // the scavenger. Rate-limited; nowNs is the tick's shared reading (0 = take
+            // one), compared by addition so an out-of-order reading cannot underflow.
             static constexpr uint64_t idleSweepIntervalNs = 100 * 1000000ULL;
             static thread_local uint64_t lastIdleSweepNs = 0;
 #if !OS(WINDOWS)

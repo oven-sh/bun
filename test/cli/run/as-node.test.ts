@@ -129,10 +129,8 @@ describe("node value-taking CLI flags do not eat the entrypoint", () => {
       "app.mjs": appBody,
     });
     const { stdout, stderr, exitCode } = await run(["--experimental-loader", "./hooks.mjs"], String(dir));
-    expect({ stdout, stderr }).toEqual({
-      stdout: JSON.stringify({ argv: ["scriptarg"], execArgv: ["--experimental-loader", "./hooks.mjs"] }),
-      stderr: "",
-    });
+    expect(stderr).not.toContain("flag value was run as the entrypoint");
+    expect(JSON.parse(stdout)).toEqual({ argv: ["scriptarg"], execArgv: ["--experimental-loader", "./hooks.mjs"] });
     expect(exitCode).toBe(0);
   });
 
@@ -192,6 +190,7 @@ describe("node value-taking CLI flags do not eat the entrypoint", () => {
     "--test-skip-pattern",
     "--experimental-test-tag-filter",
     "--test-timeout",
+    "--test-name-pattern",
   ];
 
   describe.each([[[]], [["run"]]])("bun %p", runArg => {

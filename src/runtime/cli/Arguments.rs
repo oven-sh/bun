@@ -379,6 +379,10 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
 ];
 
 pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
+    // Node.js --test-name-pattern, here rather than in RUNTIME_PARAMS_ so it
+    // does not collide with `bun test`'s own -t/--test-name-pattern entry in
+    // TEST_ONLY_PARAMS. Hidden from --help (empty description).
+    parse_param!("--test-name-pattern <STR>..."),
     parse_param!(
         "-F, --filter <STR>...             Run a script in all workspace packages matching the pattern"
     ),

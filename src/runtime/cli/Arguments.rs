@@ -351,6 +351,8 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--report-signal <STR>"),
     parse_param!("--secure-heap <STR>"),
     parse_param!("--secure-heap-min <STR>"),
+    parse_param!("--security-revert <STR>..."),
+    parse_param!("--security-reverts <STR>..."),
     parse_param!("--snapshot-blob <STR>"),
     parse_param!("--tls-cipher-list <STR>"),
     parse_param!("--tls-keylog <STR>"),

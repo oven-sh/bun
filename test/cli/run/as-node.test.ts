@@ -165,6 +165,8 @@ describe("node value-taking CLI flags do not eat the entrypoint", () => {
     "--report-signal",
     "--secure-heap",
     "--secure-heap-min",
+    "--security-revert",
+    "--security-reverts",
     "--snapshot-blob",
     "--tls-cipher-list",
     "--tls-keylog",

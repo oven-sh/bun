@@ -36,7 +36,7 @@ test("dag", () => {
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
-        stdout: "pipe",
+        stdout: "ignore",
       });
 
       const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -48,6 +48,5 @@ test("dag", () => {
       expect(stderr).toContain("[value too large, output truncated]");
       expect(exitCode).toBe(1);
     },
-    30000,
   );
 });

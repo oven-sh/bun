@@ -272,7 +272,9 @@ ${iniInner.join("\n")}
   }
 
   await makeTest([["_authToken", "skibidi"]], result => {
-    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+    // Auth-only config: the url stays empty so env var registries still apply;
+    // Options::load falls back to the default registry URL.
+    expect(result.default_registry_url).toEqual("");
     expect(result.default_registry_token).toEqual("skibidi");
   });
 
@@ -282,7 +284,7 @@ ${iniInner.join("\n")}
       ["_password", "skibidi"],
     ],
     result => {
-      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+      expect(result.default_registry_url).toEqual("");
       expect(result.default_registry_username).toEqual("zorp");
       expect(result.default_registry_password).toEqual("skibidi");
     },
@@ -447,7 +449,7 @@ ${Object.keys(opts)
   );
 
   await makeTest([["email", "user@example.com"]], result => {
-    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+    expect(result.default_registry_url).toEqual("");
     expect(result.default_registry_email).toEqual("user@example.com");
   });
 
@@ -458,7 +460,7 @@ ${Object.keys(opts)
       ["email", "test@example.com"],
     ],
     result => {
-      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+      expect(result.default_registry_url).toEqual("");
       expect(result.default_registry_username).toEqual("testuser");
       expect(result.default_registry_password).toEqual("testpass");
       expect(result.default_registry_email).toEqual("test@example.com");

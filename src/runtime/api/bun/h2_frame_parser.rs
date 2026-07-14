@@ -3422,7 +3422,14 @@ impl H2FrameParser {
             // early-return instead of removing a map entry run() still owns.
             self.auto_flusher.get().registered.set(false);
             self.deref();
-            self.close_transport_after_fatal_write();
+            // An empty write buffer here means a later write in the same flush()
+            // cycle already drained the bytes the failing send left behind (racy
+            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
+            if self.has_backpressure() {
+                self.close_transport_after_fatal_write();
+            } else {
+                self.transport_write_fatal.set(false);
+            }
             return false;
         }
         let _ = self.flush();

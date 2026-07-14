@@ -63,7 +63,11 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
 
   /** Raw TCP server speaking just enough h2: tapes every client frame as
    * "t<type><a if ACK flag>#<streamId>" and reports them via onFrame. */
-  function rawH2Server(onFrame: (frame: string) => void) {
+  function rawH2Server(
+    onFrame: (frame: string) => void,
+    opts: { sendPing?: boolean; onSocket?: (socket: net.Socket) => void } = {},
+  ) {
+    const { sendPing = true, onSocket } = opts;
     return net.createServer(socket => {
       socket.on("error", () => {});
       let buf = Buffer.alloc(0);
@@ -82,12 +86,15 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
           buf = buf.subarray(9 + len);
         }
       });
-      // Server SETTINGS + ACK of the client's SETTINGS, then a PING the
-      // client must ACK - the ACK proves the client write path is alive
-      // end-to-end after the injected failures.
+      // Server SETTINGS + ACK of the client's SETTINGS, then (by default) a
+      // PING the client must ACK - the ACK proves the client write path is
+      // alive end-to-end after the injected failures.
       socket.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]));
       socket.write(Buffer.from([0, 0, 0, 4, 1, 0, 0, 0, 0]));
-      socket.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0]), Buffer.alloc(8, 3)]));
+      if (sendPing) {
+        socket.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0]), Buffer.alloc(8, 3)]));
+      }
+      onSocket?.(socket);
     });
   }
 
@@ -137,6 +144,68 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
     // type 1 = HEADERS (the request), t4a = client's SETTINGS ACK.
     expect(h.frames.some(f => f.startsWith("t1"))).toBe(true);
     expect(h.frames).toContain("t4a#0");
+  });
+
+  // A fatal-classified errno (EPIPE) latches transport_write_fatal, but the
+  // same flush() cycle retries the buffered bytes (_generic_flush after the
+  // failed uncork write) and can drain them - kernels return racy one-off
+  // send errnos on healthy sockets (macOS EPROTOTYPE->EPIPE class). The
+  // deferred close must re-verify instead of killing the recovered session.
+  test("one-off fatal errno (EPIPE) whose bytes drain in the same flush cycle leaves the session alive", async () => {
+    const frames: string[] = [];
+    const waiters: Array<{ want: string; count: number; resolve: () => void }> = [];
+    const seen = (want: string) => frames.filter(f => f === want).length;
+    function frameSeen(want: string, count = 1) {
+      return new Promise<void>(resolve => {
+        if (seen(want) >= count) return resolve();
+        waiters.push({ want, count, resolve });
+      });
+    }
+    let rawSocket: net.Socket | undefined;
+    const server = rawH2Server(
+      f => {
+        frames.push(f);
+        for (let i = waiters.length - 1; i >= 0; i--) {
+          if (seen(waiters[i].want) >= waiters[i].count) waiters.splice(i, 1)[0].resolve();
+        }
+      },
+      { sendPing: false, onSocket: s => (rawSocket = s) },
+    );
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    let terminal: string | null = null;
+    client.on("error", e => (terminal ??= `session-error:${(e as any).code ?? (e as Error).message}`));
+    client.on("close", () => (terminal ??= "session-close"));
+    const req = client.request({ ":path": "/" });
+    req.on("error", () => {});
+    try {
+      // The client's SETTINGS ACK on the wire means its write path is idle:
+      // the next client send is the PING ACK triggered below.
+      await frameSeen("t4a#0");
+      const fd = (client.socket as any)?._handle?.fd ?? -1;
+      expect(fd).toBeGreaterThanOrEqual(0);
+      fault.set({ syscall: "send", action: "errno", errno: "EPIPE", after: 0, repeat: 1, fd });
+      const acked = frameSeen("t6a#0");
+      rawSocket!.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0]), Buffer.alloc(8, 5)]));
+      await acked;
+      // The ACK reached the server, so the transport recovered. Bounded window
+      // for the stale-latch deferred close to fire (it runs from the deferred
+      // task queue within a few macrotask turns).
+      for (let i = 0; i < 20 && terminal === null; i++) {
+        await new Promise(r => setTimeout(r, 10));
+      }
+      expect(terminal).toBeNull();
+      // Second round-trip proves the session stayed fully alive.
+      const acked2 = frameSeen("t6a#0", 2);
+      rawSocket!.write(Buffer.concat([Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0]), Buffer.alloc(8, 6)]));
+      await acked2;
+      expect({ terminal, destroyed: client.destroyed }).toEqual({ terminal: null, destroyed: false });
+    } finally {
+      fault.clear();
+      client.destroy();
+      server.close();
+    }
   });
 
   test("sustained errno (forever) surfaces as session + stream close, not a silent half-alive jam", async () => {

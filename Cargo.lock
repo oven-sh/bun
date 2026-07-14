@@ -1525,6 +1525,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_qr"
+version = "0.0.0"
+
+[[package]]
 name = "bun_react_compiler"
 version = "0.0.0"
 dependencies = [
@@ -1684,6 +1688,7 @@ dependencies = [
  "bun_paths",
  "bun_picohttp",
  "bun_ptr",
+ "bun_qr",
  "bun_resolve_builtins",
  "bun_resolver",
  "bun_router",

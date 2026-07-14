@@ -66,6 +66,7 @@ bun_ast.workspace = true
 bun_ast_jsc.workspace = true
 lol_html.workspace = true
 bun_md.workspace = true
+bun_qr.workspace = true
 bun_options_types.workspace = true
 bun_output.workspace = true
 bun_spawn.workspace = true

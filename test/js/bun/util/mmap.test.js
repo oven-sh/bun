@@ -114,11 +114,7 @@ describe.skipIf(isWindows)("Bun.mmap", async () => {
 
       const lines = stdout.trim().split("\n");
       expect({ lines, signalCode: proc.signalCode, exitCode }).toEqual({
-        lines: [
-          expect.stringMatching(/^threw RangeError .*4294967297/),
-          "at-limit 4294967296",
-          "capped 4096",
-        ],
+        lines: [expect.stringMatching(/^threw RangeError .*4294967297/), "at-limit 4294967296", "capped 4096"],
         signalCode: null,
         exitCode: 0,
       });

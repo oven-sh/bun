@@ -718,14 +718,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         "test_napi_float16_array",
         "[(() => { const f = new Float16Array(new ArrayBuffer(16), 4, 4); f.set([1.5, 2, 3, 4]); return f; })()]",
       );
-      expect(output).toBe(
-        [
-          "is_typedarray=1 info_status=0 type=11 length=4 byte_offset=4 e0=0x3E00",
-          "arraybuffer_byte_length=16 data_is_ab_plus_offset=1",
-          "create_status=0 created_is_typedarray=1 created_type=11 created_length=4",
-          "created instanceof Float16Array=1",
-        ].join("\n"),
-      );
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/)).toEqual([
+        "is_typedarray=1 info_status=0 type=11 length=4 byte_offset=4 e0=0x3E00",
+        "arraybuffer_byte_length=16 data_is_ab_plus_offset=1",
+        "create_status=0 created_is_typedarray=1 created_type=11 created_length=4",
+        "created instanceof Float16Array=1",
+      ]);
     });
   });
 

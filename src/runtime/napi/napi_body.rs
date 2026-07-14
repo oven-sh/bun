@@ -110,6 +110,17 @@ impl NapiEnv {
         Self::set_last_error(Some(self), NapiStatus::generic_failure)
     }
 
+    pub fn pending_exception(&self) -> napi_status {
+        Self::set_last_error(Some(self), NapiStatus::pending_exception)
+    }
+
+    /// Checks both `env->m_pendingException` (set by `napi_throw*`) and the JSC
+    /// VM exception slot. This is the gate Node.js's `NAPI_PREAMBLE` enforces.
+    pub fn has_pending_exception(&self) -> bool {
+        // SAFETY: env is non-null; C++ side is read-only here.
+        unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
+    }
+
     /// Assert that we're not currently performing garbage collection
     pub fn check_gc(&self) {
         // SAFETY: env is non-null; C++ side is read-only here.
@@ -120,11 +131,6 @@ impl NapiEnv {
     pub fn get_version(&self) -> u32 {
         // SAFETY: env is non-null; C++ side is read-only here.
         unsafe { napi_internal_get_version(self.as_mut_ptr()) }
-    }
-
-    pub fn has_pending_exception(&self) -> bool {
-        // SAFETY: interior mutability via `as_mut_ptr`; the C++ side is read-only.
-        unsafe { NapiEnv__hasPendingException(self.as_mut_ptr()) }
     }
 
     pub fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -425,6 +431,19 @@ macro_rules! get_env {
             None => return env_is_null(),
         }
     };
+}
+
+/// Like `get_env!` but also returns `napi_pending_exception` if a JS exception
+/// is pending on the env (mirrors Node's `NAPI_PREAMBLE`). Use this for napi
+/// entry points that can execute JS or have observable side effects.
+macro_rules! preamble {
+    ($env:expr) => {{
+        let env = get_env!($env);
+        if env.has_pending_exception() {
+            return env.pending_exception();
+        }
+        env
+    }};
 }
 
 macro_rules! get_out {
@@ -873,18 +892,11 @@ pub(super) extern "C" fn napi_get_prototype(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_prototype");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let object = object_.get();
     if object.is_empty() {
         return env.invalid_arg();
-    }
-    // Node's NAPI_PREAMBLE bails with napi_pending_exception before
-    // CHECK_TO_OBJECT when an exception from napi_throw is already stashed on
-    // the env. Mirror that so ToObject on null/undefined below does not push a
-    // fresh VM TypeError that would shadow the addon's original exception.
-    if env.has_pending_exception() {
-        return NapiEnv::set_last_error(Some(env), NapiStatus::pending_exception);
     }
     // Node's CHECK_TO_OBJECT: ToObject throws on null/undefined; leave the
     // TypeError pending and return napi_object_expected. Other primitives are
@@ -963,7 +975,7 @@ pub(super) extern "C" fn napi_get_array_length(
     result_: *mut u32,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_get_array_length");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
 
@@ -986,7 +998,7 @@ pub(super) extern "C" fn napi_strict_equals(
     result_: *mut bool,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_strict_equals");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let (lhs, rhs) = (lhs_.get(), rhs_.get());
     *result = match lhs.is_strict_equal(rhs, env.to_js()) {
@@ -1163,7 +1175,7 @@ pub(super) extern "C" fn napi_make_callback(
     maybe_result: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_make_callback");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let (recv, func) = (recv_.get(), func_.get());
     if func.is_empty_or_undefined_or_null()
         || (!func.is_callable() && !func.is_async_context_frame())
@@ -1523,7 +1535,7 @@ pub(super) extern "C" fn napi_create_promise(
     promise_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_promise");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let deferred = get_out!(env, deferred_);
     let promise = get_out!(env, promise_);
     let strong = Box::new(JSPromiseStrong::init(env.to_js()));
@@ -1542,7 +1554,7 @@ pub(super) extern "C" fn napi_resolve_deferred(
     resolution_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_resolve_deferred");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
     // `deferred_box` drops at scope exit (deinit + free).
@@ -1561,7 +1573,7 @@ pub(super) extern "C" fn napi_reject_deferred(
     rejection_: napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_reject_deferred");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     // SAFETY: deferred was created by heap::alloc in napi_create_promise.
     let deferred_box = unsafe { bun_core::heap::take(deferred) };
     let rejection = rejection_.get();
@@ -1612,7 +1624,7 @@ pub(super) extern "C" fn napi_create_date(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_date");
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     result.set(
         env,
@@ -2004,7 +2016,7 @@ pub(super) extern "C" fn napi_create_buffer_copy(
     result_: *mut napi_value,
 ) -> napi_status {
     bun_output::scoped_log!(napi, "napi_create_buffer_copy: {}", length);
-    let env = get_env!(env_);
+    let env = preamble!(env_);
     let result = get_out!(env, result_);
     let buffer: JSValue = match JSValue::create_buffer_from_length(env.to_js(), length) {
         Ok(b) => b,

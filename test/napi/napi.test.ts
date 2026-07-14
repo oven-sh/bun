@@ -386,6 +386,52 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("pending-exception gate", () => {
+    it("refuses and performs no side effects while a napi exception is pending", async () => {
+      const result = await checkSameOutput("test_pending_exception_gate", []);
+      // every gated call must report napi_pending_exception (10)
+      for (const fn of [
+        "napi_object_freeze",
+        "napi_object_seal",
+        "napi_set_element",
+        "napi_run_script",
+        "napi_instanceof",
+        "napi_strict_equals",
+        "napi_wrap",
+        "napi_get_prototype",
+        "napi_get_date_value",
+        "napi_get_array_length",
+        "napi_create_date",
+        "napi_create_dataview",
+        "napi_create_promise",
+        "napi_resolve_deferred",
+      ]) {
+        expect(result).toContain(`${fn}: status=10`);
+      }
+      // functions Node.js does NOT gate (CHECK_ENV) must still succeed
+      for (const fn of [
+        "napi_get_global",
+        "napi_create_reference",
+        "napi_reference_unref",
+        "napi_get_reference_value",
+        "napi_create_bigint_int64",
+        "napi_create_symbol",
+        "napi_is_buffer",
+        "napi_is_typedarray",
+        "napi_get_instance_data",
+        "napi_get_value_bigint_uint64",
+        "napi_add_async_cleanup_hook",
+        "napi_remove_async_cleanup_hook",
+      ]) {
+        expect(result).toContain(`${fn}: status=0`);
+      }
+      // side effects must NOT have happened
+      expect(result).toContain("side_effect frozen=false");
+      expect(result).toContain("side_effect arr[7]=undefined");
+      expect(result).toContain("side_effect script_ran=false");
+    });
+  });
+
   describe("napi_async_work", () => {
     it("null checks execute callbacks", async () => {
       const output = await checkSameOutput("test_napi_async_work_execute_null_check", []);

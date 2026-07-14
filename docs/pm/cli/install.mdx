@@ -352,6 +352,8 @@ Environment variables take priority over `bunfig.toml`.
 | `BUN_CONFIG_SKIP_LOAD_LOCKFILE`    | Don’t load a lockfile                                     |
 | `BUN_CONFIG_SKIP_INSTALL_PACKAGES` | Don’t install any packages                                |
 
+For npm compatibility, Bun also reads `NPM_CONFIG_REGISTRY` (or `npm_config_registry`) as a fallback: it only applies when no registry is explicitly configured in `bunfig.toml` or `.npmrc`, while `BUN_CONFIG_REGISTRY` and `--registry` override both.
+
 Bun uses the fastest installation method available on the target platform: `clonefile` on macOS and `hardlink` on Linux. You can change the installation method with the `--backend` flag. When unavailable or on error, `clonefile` and `hardlink` fall back to a platform-specific implementation of copying files.
 
 Bun stores installed packages from npm in `~/.bun/install/cache/${name}@${version}`. If the semver version has a `build` or a `pre` tag, Bun replaces it with a hash of that value. This reduces the chances of errors from long file paths, but complicates figuring out where a package was installed on disk.

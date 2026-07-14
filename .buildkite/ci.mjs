@@ -704,6 +704,15 @@ function needsBaselineVerification(platform) {
   return false;
 }
 
+// Ubuntu 20.04's qemu 4.2 mis-handles concurrent `lock cmpxchg` in x86_64-on-x86_64 user mode;
+// after #34009 (mimalloc per-thread heaps) the SIMD baseline test segfaults/deadlocks in
+// `_mi_theap_init` ~10-20% of the time. qemu 7.2 is 40/40 green. aarch64 is unaffected.
+const PINNED_QEMU_X64 = {
+  url: "https://github.com/multiarch/qemu-user-static/releases/download/v7.2.0-1/qemu-x86_64-static",
+  sha256: "7132ffd39aef71c26d3344cc0c7dffc530e10e3e720c58c8279a97ef6fdd7784",
+  path: "./qemu-x86_64-static",
+};
+
 /**
  * Returns the emulator binary name for the given platform.
  * Linux uses QEMU user-mode; Windows uses Intel SDE.
@@ -717,7 +726,8 @@ function getEmulatorBinary(platform) {
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return "C:\\intel-sde\\sde.exe";
   if (arch === "aarch64") return "qemu-aarch64-static";
-  return "qemu-x86_64-static";
+  // Fetched into the checkout root by the setup command below (see PINNED_QEMU_X64).
+  return PINNED_QEMU_X64.path;
 }
 
 /**
@@ -764,6 +774,15 @@ function getVerifyBaselineStep(platform, options) {
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
           `chmod +x ${profileDir}/${profileExe}`,
+          // x64 lanes pin a known-good qemu (see PINNED_QEMU_X64); aarch64 uses the system one.
+          // sha256 check makes a truncated/hijacked download a hard failure before anything runs under it.
+          ...(emulator === PINNED_QEMU_X64.path
+            ? [
+                `curl -fsSL --retry 5 -o ${PINNED_QEMU_X64.path} '${PINNED_QEMU_X64.url}'`,
+                `echo '${PINNED_QEMU_X64.sha256}  ${PINNED_QEMU_X64.path}' | sha256sum -c -`,
+                `chmod +x ${PINNED_QEMU_X64.path}`,
+              ]
+            : []),
         ];
 
   // Windows: the emulator phase runs bun-profile.exe under Intel SDE, so the

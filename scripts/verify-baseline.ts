@@ -74,7 +74,7 @@ const config = isWindows
         cwd: undefined,
       };
 
-function isInstructionViolation(exitCode: number, output: string): boolean {
+function isInstructionViolation(exitCode: number | null, output: string): boolean {
   if (isWindows) return SDE_VIOLATION_PATTERN.test(output);
   return exitCode === 132; // SIGILL = 128 + signal 4
 }
@@ -115,6 +115,11 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     cwd: config.cwd ?? options?.cwd,
     stdout: "pipe",
     stderr: "pipe",
+    // A crash inside the emulated process can deadlock the emulator itself (qemu-user never delivers
+    // the re-raised signal), which otherwise runs out the step's hard timeout. Normal is ~2s (qemu)
+    // to ~30s (SDE); allow an order of magnitude headroom and force-kill beyond it.
+    timeout: 120_000,
+    killSignal: "SIGKILL",
   });
 
   let stdout: string;
@@ -133,9 +138,17 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     ]);
   }
 
-  const exitCode = proc.exitCode!;
+  const exitCode = proc.exitCode;
+  const killed = exitCode === null && proc.signalCode === "SIGKILL";
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
+
+  if (killed) {
+    if (!live && output.trim()) console.log(output.trim());
+    console.log(`    WARN: emulated process hung; force-killed after ${elapsed}s (not a CPU instruction issue)`);
+    otherFailures++;
+    return false;
+  }
 
   if (exitCode === 0) {
     if (!live && stdout.trim()) console.log(stdout.trim());

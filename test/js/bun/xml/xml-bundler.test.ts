@@ -125,7 +125,7 @@ describe("XML bundler", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout.trim())).toEqual({ root: { v: ["from-plugin", "two"] } });
     expect(exitCode).toBe(0);
   });

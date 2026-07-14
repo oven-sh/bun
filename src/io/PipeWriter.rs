@@ -745,6 +745,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.is_not_empty()
     }
 
+    /// Bytes accepted from callers that have not reached the fd yet.
+    pub fn buffered_len(&self) -> usize {
+        self.outgoing.size()
+    }
+
     pub fn should_buffer(&self, addition: usize) -> bool {
         !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }
@@ -1205,24 +1210,12 @@ pub trait BaseWindowsPipeWriter {
                         // detach() schedules start_close() (now or after the pending
                         // op completes); on_close_complete heap::take()s `raw`.
                         (*raw).detach();
-                    } else {
-                        // Don't own fd: stop any in-flight op and detach parent so
-                        // on_fs_write_complete won't touch the (possibly freed)
-                        // writer. We must still reclaim the Box<File>.
-                        (*raw).stop();
-                        (*raw).fs.data = core::ptr::null_mut();
-                        if (*raw).state == crate::source::FileState::Deinitialized {
-                            // No callback will ever fire for this fs_t — sole
-                            // owner, free now.
-                            // SAFETY: `raw` is the Box<File> leaked above via
-                            // into_raw; no libuv request references it.
-                            drop(bun_core::heap::take(raw));
-                        }
-                        // else: state is Operating/Canceling — libuv still owns a
-                        // request pointing into *raw. on_fs_write_complete sees
-                        // parent_ptr null, observes state == Deinitialized after
-                        // complete(), and heap::take()s there.
+                    } else if !(*raw).detach_borrowed_fd() {
+                        // Idle and the fd is parent-owned: nothing pending,
+                        // nothing to close. Reclaim and drop the Box.
+                        drop(bun_core::heap::take(raw));
                     }
+                    // else: on_fs_write_complete heap::take()s the detached Box.
                 }
             }
             Source::Pipe(pipe) => {
@@ -1955,7 +1948,8 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub current_payload: StreamBuffer,
     // we preserve the last write result for simplicity
     pub last_write_result: WriteResult,
-    // some error happed? we will not report onClose only onError
+    // Set only by `close_without_reporting()` (i.e. `Drop`) to suppress
+    // `Parent::on_close` while the parent is mid-teardown.
     pub closed_without_reporting: bool,
 }
 
@@ -2094,6 +2088,12 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
     }
 
+    /// Bytes accepted from callers that have not reached the fd yet: queued in
+    /// `outgoing` or handed to libuv in `current_payload`.
+    pub fn buffered_len(&self) -> usize {
+        self.outgoing.size() + self.current_payload.size()
+    }
+
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `Parent::on_write` (e.g. `FileSink::on_write`) re-enters JS via
@@ -2119,7 +2119,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             Self::r(this).last_write_result = WriteResult::Err(err.clone());
             Self::r_on_error(this, err);
             core::hint::black_box(this);
-            Self::r(this).close_without_reporting();
+            // `close()`, not `close_without_reporting()`: the parent must still
+            // observe `on_close` after `on_error` (the `PosixStreamingWriter`
+            // contract). FileSink's stream teardown only runs from `on_close`.
+            Self::r(this).close();
             return;
         }
 
@@ -2247,11 +2250,10 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         // `Parent::on_error` (re-enters JS via FileSink::on_error → promise
         // reject; user callback may `writer.with_mut(|w| w.end())`/`.close()`
         // forming a fresh aliased `&mut Self`) and then read
-        // `self.{get_fd, closed_without_reporting, is_done}` via
-        // `close_without_reporting()`. With `&mut self` `noalias`, LLVM may
-        // forward pre-`on_error` field loads across the call. Launder this
-        // entry point too — it is reached from `on_write_complete` with a
-        // fresh `&mut`.
+        // `self.{source, is_done, closed_without_reporting}` via `close()`.
+        // With `&mut self` `noalias`, LLVM may forward pre-`on_error` field
+        // loads across the call. Launder this entry point too — it is reached
+        // from `on_write_complete` with a fresh `&mut`.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // `this` is the only access path to `*self` for the rest of this
         // function; every `r(this)` reborrow is sole-aliased on the JS thread.
@@ -2278,7 +2280,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                     Self::r(this).last_write_result = WriteResult::Err(err.clone());
                     Self::r_on_error(this, err);
                     core::hint::black_box(this);
-                    Self::r(this).close_without_reporting();
+                    // See `on_write_complete`: the parent must get `on_close`.
+                    Self::r(this).close();
                     return;
                 }
                 Some(Source::SyncFile(_)) => {
@@ -2335,7 +2338,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 Self::r_on_error(this, err);
                 core::hint::black_box(this);
-                Self::r(this).close_without_reporting();
+                // See `on_write_complete`: the parent must get `on_close`.
+                Self::r(this).close();
                 return;
             }
         } else {
@@ -2357,7 +2361,8 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                 Self::r(this).last_write_result = WriteResult::Err(err.clone());
                 Self::r_on_error(this, err);
                 core::hint::black_box(this);
-                Self::r(this).close_without_reporting();
+                // See `on_write_complete`: the parent must get `on_close`.
+                Self::r(this).close();
                 return;
             }
         }
@@ -2369,6 +2374,9 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         Self::r(this).last_write_result = WriteResult::Pending(0);
     }
 
+    /// Close the source without invoking `Parent::on_close`. Only `Drop` uses
+    /// this (the parent is mid-teardown there). Error paths must use `close()`
+    /// instead so the parent still observes `on_close`.
     fn close_without_reporting(&mut self) {
         if self.get_fd() != Fd::INVALID {
             debug_assert!(!self.closed_without_reporting);

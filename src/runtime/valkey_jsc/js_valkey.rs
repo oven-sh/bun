@@ -668,10 +668,25 @@ impl JSValkeyClient {
         }
 
         // Parse database number from pathname (e.g., "/1" -> database 1)
-        let database: u32 = if pathname_utf8.slice().len() > 1 {
-            bun_core::fmt::parse_int::<u32>(&pathname_utf8.slice()[1..], 10).unwrap_or(0)
-        } else {
-            0
+        let database: u32 = match uri {
+            // For unix sockets the pathname is the socket path, not a db index.
+            valkey::Protocol::StandaloneUnix | valkey::Protocol::StandaloneTlsUnix => 0,
+            _ => {
+                let path = pathname_utf8.slice();
+                if path.len() > 1 {
+                    match bun_core::fmt::parse_int::<u32>(&path[1..], 10) {
+                        Ok(n) => n,
+                        Err(_) => {
+                            return Err(global_object.throw_invalid_arguments(format_args!(
+                                "Invalid database number in Redis URL: {}",
+                                bun_core::fmt::quote(&path[1..]),
+                            )));
+                        }
+                    }
+                } else {
+                    0
+                }
+            }
         };
 
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -1563,7 +1578,7 @@ impl JSValkeyClient {
         }
     }
 
-    fn connect(&self) -> Result<(), bun_core::Error> {
+    fn connect(&self) -> Result<(), crate::Error> {
         self.client_mut().flags.needs_to_open_socket = false;
 
         self.ref_();
@@ -1676,7 +1691,7 @@ impl JSValkeyClient {
         global_this: &JSGlobalObject,
         _this_value: JSValue,
         command: &Command,
-    ) -> Result<*mut JSPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, crate::Error> {
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
 

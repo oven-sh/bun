@@ -77,6 +77,45 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+nativeTests.test_threadsafe_function_abort_then_last_release = async (_, queued = 0) => {
+  // create (thread_count=1), acquire (=2), optionally queue items, abort (=1, closing)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release(queued);
+  // let the abort's scheduled dispatch run first
+  await new Promise(resolve => setImmediate(resolve));
+  // release the last reference of the already-closing tsfn (=0)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release_drop();
+  // wait for the finalizer (bounded poll, not a timed sleep)
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized());
+  // the process must exit on its own after this returns; a leaked event-loop
+  // keepalive would hang it forever
+};
+
+nativeTests.test_threadsafe_function_abort_full_queue = async () => {
+  // abort a tsfn whose bounded queue is full, then call it without blocking:
+  // napi_closing (16), not napi_queue_full (17), and it must still finalize
+  console.log("call after abort:", nativeTests.test_napi_threadsafe_function_abort_full_queue());
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized());
+};
+
+nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
+  // create (max_queue_size=1, thread_count=3), fill the queue, spawn two
+  // producers that block on the condvar, then abort
+  nativeTests.test_napi_threadsafe_function_abort_blocked_producers();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized());
+};
+
 nativeTests.test_get_exception = (_, value) => {
   function thrower() {
     throw value;
@@ -195,6 +234,43 @@ nativeTests.test_set_property = () => {
       }
     }
   }
+};
+
+nativeTests.test_property_names_cache_poisoning = () => {
+  // napi_key_include_prototypes = 0, napi_key_own_only = 1
+  // napi_key_all_properties = 0, napi_key_skip_symbols = 16
+  // napi_key_keep_numbers = 0
+  const mkA = () => ({ a: 1, b: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkA(), 0, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(include_prototypes):", Reflect.ownKeys(mkA()).join(","));
+  console.log("Object.keys after get_all_property_names(include_prototypes):", Object.keys(mkA()).join(","));
+
+  const proto = { pEnum: 9 };
+  const mkB = () => {
+    const o = Object.create(proto);
+    o.w1 = 1;
+    o.w2 = 2;
+    return o;
+  };
+  for (let i = 0; i < 20; i++) nativeTests.get_property_names(mkB());
+  console.log("Object.keys after get_property_names:", Object.keys(mkB()).join(","));
+  console.log("Reflect.ownKeys after get_property_names:", Reflect.ownKeys(mkB()).join(","));
+
+  const mkC = () => ({ c: 1, d: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkC(), 0, 16, 0);
+  console.log("Object.getOwnPropertyNames after skip_symbols chain walk:", Object.getOwnPropertyNames(mkC()).join(","));
+
+  // Own-only mode must still return only own keys and not poison anything.
+  const mkD = () => ({ e: 1, f: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkD(), 1, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(own_only):", Reflect.ownKeys(mkD()).join(","));
+
+  // The napi result itself should still include inherited keys.
+  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0).keys;
+  console.log("napi include_prototypes result has own a,b:", apnResult.includes("a") && apnResult.includes("b"));
+  console.log("napi include_prototypes result has inherited toString:", apnResult.includes("toString"));
+  const gpnResult = nativeTests.get_property_names(mkB());
+  console.log("napi get_property_names result:", gpnResult.join(","));
 };
 
 nativeTests.test_number_integer_conversions_from_js = () => {
@@ -745,6 +821,37 @@ nativeTests.test_create_bigint_words = () => {
   console.log(nativeTests.create_weird_bigints());
 };
 
+nativeTests.test_get_all_property_names_own_only = () => {
+  // napi_key_collection_mode
+  const napi_key_own_only = 1;
+  // napi_key_filter
+  const napi_key_all_properties = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_skip_strings = 1 << 3;
+  const napi_key_skip_symbols = 1 << 4;
+  // napi_key_conversion
+  const napi_key_keep_numbers = 0;
+
+  const sym = Symbol("s");
+  const neSym = Symbol("nes");
+  const o = { x: 1, [sym]: 2 };
+  Object.defineProperty(o, "ne", { value: 3, enumerable: false, configurable: true, writable: true });
+  Object.defineProperty(o, neSym, { value: 4, enumerable: false, configurable: true, writable: true });
+
+  const describe = keys => keys.map(k => (typeof k === "symbol" ? k.toString() : JSON.stringify(k)));
+
+  for (const [label, filter] of [
+    ["skip_symbols", napi_key_skip_symbols],
+    ["skip_strings", napi_key_skip_strings],
+    ["all_properties", napi_key_all_properties],
+    ["skip_symbols|enumerable", napi_key_skip_symbols | napi_key_enumerable],
+    ["skip_strings|enumerable", napi_key_skip_strings | napi_key_enumerable],
+  ]) {
+    const { status, keys } = nativeTests.get_all_property_names(o, napi_key_own_only, filter, napi_key_keep_numbers);
+    console.log(`own_only + ${label}: status=${status} keys=[${describe(keys).join(", ")}]`);
+  }
+};
+
 nativeTests.test_bigint_word_count = () => {
   // Test with a 2-word BigInt
   const bigint = 0x123456789abcdef0123456789abcdefn;
@@ -782,6 +889,52 @@ nativeTests.test_ref_unref_underflow = () => {
       `❌ FAIL: Expected firstUnrefCount=0, secondUnrefStatus=1, got ${result.firstUnrefCount}, ${result.secondUnrefStatus}`,
     );
   }
+};
+
+nativeTests.test_napi_instanceof = () => {
+  function dump(label, r) {
+    const errName = r.exception && r.exception.constructor ? r.exception.constructor.name : undefined;
+    const errCode = r.exception ? r.exception.code : undefined;
+    console.log(
+      `${label}: status=${r.status} result=${r.result} pending=${r.pending} errName=${errName} errCode=${errCode}`,
+    );
+  }
+
+  class Base {}
+  const instance = new Base();
+  dump("class/instance", nativeTests.perform_instanceof(instance, Base));
+  dump("class/plain-obj", nativeTests.perform_instanceof({}, Base));
+
+  const arrow = () => 1;
+  Object.defineProperty(arrow, Symbol.hasInstance, { value: () => true });
+  dump("arrow+hasInstance", nativeTests.perform_instanceof({}, arrow));
+
+  const bound = function () {}.bind(null);
+  Object.defineProperty(bound, Symbol.hasInstance, { value: () => true });
+  dump("bound+hasInstance", nativeTests.perform_instanceof({}, bound));
+
+  const bareArrow = () => 1;
+  dump("bare-arrow ctor", nativeTests.perform_instanceof({}, bareArrow));
+
+  class Throws {
+    static [Symbol.hasInstance]() {
+      throw new RangeError("boom");
+    }
+  }
+  dump("hasInstance throws", nativeTests.perform_instanceof({}, Throws));
+
+  const proxy = new Proxy(Base, {
+    get(t, k) {
+      if (k === Symbol.hasInstance) throw new RangeError("proxy");
+      return Reflect.get(t, k);
+    },
+  });
+  dump("proxy get throws", nativeTests.perform_instanceof({}, proxy));
+
+  dump("number ctor", nativeTests.perform_instanceof({}, 5));
+  dump("plain-obj ctor", nativeTests.perform_instanceof({}, { x: 1 }));
+  dump("null ctor", nativeTests.perform_instanceof({}, null));
+  dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
 nativeTests.test_get_value_string = () => {
@@ -957,6 +1110,55 @@ nativeTests.test_create_tsfn_with_async_context = async () => {
       setTimeout(resolve, 100);
     });
   });
+};
+
+// An addon's own threads outlive the worker that created the threadsafe
+// functions (next-swc's tokio pool does this): the last call and the last
+// release land after the worker's VM, and the event loop they point at, are
+// gone.
+async function runOrphanWorker(workerData) {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "tsfn-orphan-worker.js"), { workerData });
+  const code = await new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+  });
+  return code;
+}
+
+nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
+  console.log("worker exited with", await runOrphanWorker());
+  console.log(nativeTests.use_orphaned_threadsafe_functions());
+};
+
+// Bun-only: an orphaned threadsafe function is freed by whichever thread drops
+// its last reference, including a call that reports napi_closing. Every
+// iteration must end with as many live threadsafe functions as it started with.
+nativeTests.test_threadsafe_function_orphan_leak = async () => {
+  const { napiThreadsafeFunctionLiveCount } = require("bun:internal-for-testing");
+  const before = napiThreadsafeFunctionLiveCount();
+  for (let i = 0; i < 5; i++) {
+    const code = await runOrphanWorker({ leak: 5 });
+    if (code !== 0) throw new Error(`worker exited with ${code}`);
+    const orphaned = napiThreadsafeFunctionLiveCount() - before;
+    const closing = nativeTests.call_leaked_threadsafe_functions();
+    console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
+  }
+};
+
+// Microtasks queued by one threadsafe-function callback must be drained before
+// the next callback in the same dispatch, and not before the first one.
+nativeTests.test_threadsafe_function_microtask_order = async () => {
+  let n = 0;
+  nativeTests.test_napi_threadsafe_function_microtask_order(null, () => {
+    const i = ++n;
+    console.log("callback", i);
+    Promise.resolve().then(() => console.log("microtask", i));
+  });
+  for (let i = 0; i < 1000 && n < 3; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
 };
 
 module.exports = nativeTests;

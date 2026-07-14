@@ -110,6 +110,8 @@ const doConnect = $newRustFunction("node_net_binding.rs", "doConnect", 2);
 
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const upgradeDuplexToTLS = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeDuplexToTLS", 2);
+// tls.connect({ socket }) upgrade: hostname policy stays with this JS layer.
+const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgradeTLSDeferred", 2);
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
@@ -1244,6 +1246,36 @@ function serverHandlersFor(server) {
   return ServerHandlersNoSNI;
 }
 
+// node.net.native trace events: one 'b'/'e' pair per connect *attempt*, including
+// failed ones. 'b' fires where the attempt is issued; the per-req flag dedupes the
+// 'e' across the afterConnect(Multiple) / rejected-promise / attempt-timeout paths.
+const kNetTraceCat = "node,node.net,node.net.native";
+const kTraceConnectActive = Symbol("kTraceConnectActive");
+let traceEvents = null;
+function traceConnectStart(req, pipePath?) {
+  traceEvents ??= require("internal/trace_events");
+  if (!traceEvents.isCategoryGroupEnabled(kNetTraceCat)) return;
+  if (pipePath !== undefined) {
+    // Node (pipe_wrap.cc) emits path_type/pipe_path at the top level of the
+    // event's `args` for pipe connects; an abstract socket path starts with
+    // '\0', which is stripped from the reported path.
+    const isAbstract = pipePath.charCodeAt(0) === 0;
+    traceEvents.emitEventWithArgs("b", kNetTraceCat, "connect", undefined, {
+      path_type: isAbstract ? "abstract socket" : "file",
+      pipe_path: isAbstract ? pipePath.slice(1) : pipePath,
+    });
+  } else {
+    traceEvents.emitEvent("b", kNetTraceCat, "connect");
+  }
+  req[kTraceConnectActive] = true;
+}
+function traceConnectEnd(req) {
+  if (req && req[kTraceConnectActive]) {
+    req[kTraceConnectActive] = false;
+    traceEvents.emitEvent("e", kNetTraceCat, "connect");
+  }
+}
+
 function kConnectTcp(self, addressType, req, address, port) {
   $debug("SocketHandle.kConnectTcp", addressType, address, port);
   return kConnectDispatch(self, req, {
@@ -1287,6 +1319,7 @@ function kConnectDispatch(self, req, opts) {
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection
     // we already catch this in connectError and error
+    traceConnectEnd(req);
   });
   const errno = req.errno;
   if (errno !== undefined) {
@@ -1692,7 +1725,7 @@ Socket.prototype.connect = function connect(...args) {
           // upgraded once it emits 'connect'.
           if (socket && !connection.connecting) {
             this[kupgraded] = connection;
-            const result = socket.upgradeTLS({
+            const result = upgradeTLSDeferred(socket, {
               data: { self: this, req: { oncomplete: afterConnect } },
               tls,
               socket: this[khandlers],
@@ -1738,7 +1771,7 @@ Socket.prototype.connect = function connect(...args) {
                 this._handle = result;
               } else {
                 this[kupgraded] = connection;
-                const result = socket.upgradeTLS({
+                const result = upgradeTLSDeferred(socket, {
                   data: { self: this, req: { oncomplete: afterConnect } },
                   tls,
                   socket: this[khandlers],
@@ -2707,6 +2740,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.addressType = addressType;
     req.tls = tls;
 
+    traceConnectStart(req);
     err = kConnectTcp(self, addressType, req, address, port);
     // kConnectTcp returns 0 (not undefined) on the async-connect path, so the
     // perf context must be established whenever the attempt was dispatched
@@ -2726,6 +2760,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.oncomplete = afterConnect;
     req.tls = tls;
 
+    traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
   }
 
@@ -2856,6 +2891,7 @@ function internalConnectMultiple(context, canceled?) {
 
   ArrayPrototypePush.$call(self.autoSelectFamilyAttemptedAddresses, `${address}:${port}`);
 
+  traceConnectStart(req);
   err = kConnectTcp(self, addressType, req, address, port);
 
   if (err) {
@@ -2903,6 +2939,9 @@ function internalConnectMultipleTimeout(context, req, handle) {
   context.socket.emit("connectionAttemptTimeout", req.address, req.port, req.addressType);
 
   req.oncomplete = undefined;
+  // close() on a still-connecting handle runs no terminal callback and never
+  // rejects doConnect's promise (see socket_body.rs), so end the span here.
+  traceConnectEnd(req);
   ArrayPrototypePush.$call(context.errors, createConnectionError(req, UV_ETIMEDOUT));
   handle.close();
 
@@ -2913,6 +2952,7 @@ function internalConnectMultipleTimeout(context, req, handle) {
 }
 
 function afterConnect(status, handle, req, readable, writable) {
+  traceConnectEnd(req);
   if (!handle) return;
   const self = handle[owner_symbol];
   if (!self) return;
@@ -2983,6 +3023,7 @@ function afterConnect(status, handle, req, readable, writable) {
 }
 
 function afterConnectMultiple(context, current, status, handle, req, readable, writable) {
+  traceConnectEnd(req);
   $debug("connect/multiple: connection attempt to %s:%s completed with status %s", req.address, req.port, status);
 
   // Make sure another connection is not spawned

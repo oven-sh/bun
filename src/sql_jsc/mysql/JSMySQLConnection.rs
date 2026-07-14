@@ -589,7 +589,8 @@ impl JSMySQLConnection {
                     // `this` (a `ParentRef`) is not used past this point, so no
                     // borrow outlives the `heap::take` inside `deinit`.
                     unsafe { Self::deref(ptr) };
-                    return Err(global_object.throw_error(e.into(), "failed to connect to mysql"));
+                    return Err(global_object
+                        .throw_error(bun_jsc::CrateError::from(e), "failed to connect to mysql"));
                 }
             };
             this.connection_mut()
@@ -931,12 +932,12 @@ impl JSMySQLConnection {
         }
     }
 
-    pub fn get_statement_from_signature_hash(
+    pub fn get_statement_from_signature_name(
         &self,
-        signature_hash: u64,
+        signature_name: &[u8],
     ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>
     {
-        self.connection_mut().statements.get_or_put(signature_hash)
+        self.connection_mut().statements.get_or_put(signature_name)
     }
 }
 
@@ -1079,7 +1080,6 @@ pub enum OnResultRowError {
     JSError,
 }
 bun_core::impl_tag_error!(OnResultRowError);
-bun_core::named_error_set!(OnResultRowError);
 impl From<OnResultRowError> for AnyMySQLErrorT {
     fn from(e: OnResultRowError) -> Self {
         match e {

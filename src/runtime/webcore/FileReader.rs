@@ -1000,6 +1000,12 @@ impl FileReader {
 
     pub fn on_reader_done(&self) {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
+        // Pin across `p.run()` and `on_close()`: both can run user JS, and the
+        // `self.buffered` / `waiting_for_on_reader_done` reads below must not
+        // land on a freed box. Same bracket as on_read_chunk / on_reader_error.
+        let parent = self.parent();
+        // SAFETY: see `parent()`.
+        unsafe { (*parent).increment_count() };
         if !self.is_pulling() {
             self.consume_reader_buffer();
             if self.pending.get().state == streams::PendingState::Pending {
@@ -1021,18 +1027,18 @@ impl FileReader {
 
         // Only close the stream if there's no buffered data left to deliver
         if self.buffered.get().is_empty() {
-            // SAFETY: see `parent()`.
-            unsafe { (*self.parent()).on_close() };
+            // SAFETY: see `parent()`; the pin keeps the count > 0.
+            unsafe { (*parent).on_close() };
         }
         if self.waiting_for_on_reader_done.get() {
             self.waiting_for_on_reader_done.set(false);
-            let parent = self.parent();
-            // SAFETY: `parent` was produced by `Source::new` (`Box::into_raw`).
-            // Tail position — `self` (a field of `*parent`) is not accessed
-            // after this call, which may free the allocation when the refcount
-            // hits zero.
+            // SAFETY: see `parent()`; the pin above keeps the count > 0.
             let _ = unsafe { Source::decrement_count(parent) };
         }
+        // SAFETY: see `parent()`; releases the pin. Tail position — `self` (a
+        // field of `*parent`) is not accessed after this call, which may free
+        // the allocation when the refcount hits zero.
+        let _ = unsafe { Source::decrement_count(parent) };
     }
 
     pub fn on_reader_error(&self, err: sys::Error) {

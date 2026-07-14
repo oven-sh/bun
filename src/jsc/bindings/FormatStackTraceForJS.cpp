@@ -579,8 +579,8 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 {
     UNUSED_PARAM(bunErrorData);
 
-    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which
-    // nulls the current thread's atom string table (and may run on the collector thread).
+    // ErrorInstance::finalizeUnconditionally calls this from Heap::runEndPhase, which nulls
+    // the current thread's atom string table and runs on whichever thread conducts the GC.
     // Releasing the last ref of an atom string there crashes in AtomStringImpl::remove(),
     // so install the VM's table for the duration; the mutator is suspended for the whole
     // end phase, so this is race-free (same as JSLock::didAcquireLock).
@@ -591,7 +591,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     if (needsVMAtomStringTable) [[unlikely]]
         thread.setCurrentAtomStringTable(vm.atomStringTable());
     auto restoreAtomStringTable = WTF::makeScopeExit([&] {
-        if (needsVMAtomStringTable) [[unlikely]]
+        if (needsVMAtomStringTable)
             thread.setCurrentAtomStringTable(previousAtomStringTable);
     });
 
@@ -647,6 +647,10 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     line_in = line.oneBasedInt();
     column_in = column.oneBasedInt();
 
+    // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
+    // in property storage crashes the next read. https://github.com/oven-sh/bun/issues/34095
+    if (!result) [[unlikely]]
+        return jsUndefined();
     return result;
 }
 

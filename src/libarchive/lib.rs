@@ -17,6 +17,9 @@ use bun_paths::{OSPathBuffer, OSPathChar, SEP, SEP_STR};
 use bun_sys::{self, Fd, FdExt};
 use bun_wyhash::hash;
 
+pub mod error;
+pub use error::{Error, Result};
+
 // ──────────────────────────────────────────────────────────────────────────
 // Local libarchive C-API surface. Thin safe(ish) wrappers over the raw
 // `extern "C"` libarchive symbols. The opaque `Archive` / `Entry` types
@@ -53,6 +56,16 @@ pub mod lib {
         Warn = -20,
         Failed = -25,
         Fatal = -30,
+    }
+
+    impl Result {
+        /// `Ok` or `Warn`: the call completed. libarchive returns `Warn` for
+        /// recoverable per-call issues while still producing a result, e.g. a
+        /// `read_next_header` that fell back to the raw pathname bytes.
+        #[inline]
+        pub fn succeeded(self) -> bool {
+            matches!(self, Result::Ok | Result::Warn)
+        }
     }
 
     // ── raw libarchive C FFI ───────────────────────────────────────────────
@@ -121,7 +134,6 @@ pub mod lib {
         fn archive_entry_free(e: *mut Entry);
         fn archive_entry_clear(e: *mut Entry) -> *mut Entry;
         fn archive_entry_pathname(e: *mut Entry) -> *const c_char;
-        fn archive_entry_pathname_utf8(e: *mut Entry) -> *const c_char;
         #[cfg(windows)]
         fn archive_entry_pathname_w(e: *mut Entry) -> *const u16;
         fn archive_entry_symlink(e: *mut Entry) -> *const c_char;
@@ -418,10 +430,6 @@ pub mod lib {
             // SAFETY: self valid; returned string owned by libarchive for the
             // lifetime of this entry.
             unsafe { ZStr::from_c_ptr(archive_entry_pathname(self.as_mut_ptr())) }
-        }
-        pub fn pathname_utf8(&self) -> &ZStr {
-            // SAFETY: self valid.
-            unsafe { ZStr::from_c_ptr(archive_entry_pathname_utf8(self.as_mut_ptr())) }
         }
         #[cfg(windows)]
         pub fn pathname_w(&self) -> &bun_core::WStr {
@@ -721,7 +729,8 @@ pub mod lib {
                 return match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => IteratorResult::init_res(None),
-                    Result::Ok => {
+                    // `Warn` still yields a fully populated entry; see `Result::succeeded`.
+                    Result::Ok | Result::Warn => {
                         let kind = bun_sys::kind_from_mode(
                             Entry::opaque_ref(entry).filetype() as bun_sys::Mode
                         );
@@ -1023,7 +1032,8 @@ pub mod lib {
                 match a.read_next_header(&mut entry) {
                     Result::Retry => continue,
                     Result::Eof => return Ok(None),
-                    Result::Ok => {
+                    // `Warn` still yields a fully populated entry; see `Result::succeeded`.
+                    Result::Ok | Result::Warn => {
                         let kind = bun_sys::kind_from_mode(
                             Entry::opaque_ref(entry).filetype() as bun_sys::Mode
                         );
@@ -1406,7 +1416,7 @@ pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>])
 /// `bun.makePathW` helper which transcodes via `from_w_path` and would lose
 /// lone surrogates / skip `\??\` long-path prefixing).
 #[cfg(windows)]
-fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> Result<(), bun_core::Error> {
+fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
     use bun_sys::{E, WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
     // Access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
     // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) is selected by setting `read_only`,
@@ -1477,10 +1487,7 @@ pub mod archiver {
     }
 
     impl Plucker {
-        pub fn init(
-            filepath: &[OSPathChar],
-            estimated_size: usize,
-        ) -> Result<Plucker, bun_core::Error> {
+        pub fn init(filepath: &[OSPathChar], estimated_size: usize) -> crate::Result<Plucker> {
             Ok(Plucker {
                 contents: MutableString::init(estimated_size)?,
                 filename_hash: hash(slice_as_bytes(filepath)),
@@ -1523,14 +1530,11 @@ pub trait ArchiveAppender {
     }
     fn on_first_directory_name(&mut self, _name: &[u8]) {}
 
-    fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_core::Error> {
+    fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
         let _ = path;
         unreachable!()
     }
-    fn append_mutable(
-        &mut self,
-        path: &[OSPathChar],
-    ) -> Result<&mut [OSPathChar], bun_core::Error> {
+    fn append_mutable(&mut self, path: &[OSPathChar]) -> crate::Result<&mut [OSPathChar]> {
         let _ = path;
         unreachable!()
     }
@@ -1544,7 +1548,7 @@ impl Archiver {
         root: &[u8],
         ctx: &mut Context,
         appender: &mut A,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
@@ -1581,7 +1585,7 @@ impl Archiver {
                 lib::Result::Eof => break 'loop_,
                 lib::Result::Retry => continue 'loop_,
                 lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(bun_core::err!("Fail"));
+                    return Err(crate::Error::Fail);
                 }
                 _ => {
                     // do not use the utf8 name there
@@ -1680,7 +1684,7 @@ impl Archiver {
         ctx: Option<&mut Context>,
         appender: &mut A,
         options: ExtractOptions,
-    ) -> Result<u32, bun_core::Error> {
+    ) -> crate::Result<u32> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
@@ -1711,7 +1715,7 @@ impl Archiver {
                 lib::Result::Eof => break 'loop_,
                 lib::Result::Retry => continue 'loop_,
                 lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(bun_core::err!("Fail"));
+                    return Err(crate::Error::Fail);
                 }
                 _ => {
                     // TODO:
@@ -2214,7 +2218,7 @@ impl Archiver {
                                                     ),
                                                 );
                                             }
-                                            return Err(bun_core::err!("Fail"));
+                                            return Err(crate::Error::Fail);
                                         }
                                     }
                                     retries_remaining -= 1;
@@ -2236,7 +2240,7 @@ impl Archiver {
         ctx: Option<&mut Context>,
         appender: &mut A,
         options: ExtractOptions,
-    ) -> Result<u32, bun_core::Error> {
+    ) -> crate::Result<u32> {
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();
             let _ = cwd.make_path_u8(root);

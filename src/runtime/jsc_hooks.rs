@@ -991,8 +991,8 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // heap ops that cannot re-enter JS, releasing the borrow before
             // invoking `fire()`.
             // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
-            // same instant to the tick so uSockets' sweep clamp and the JS park hook reuse it.
-            // It is lazy, and so are they: 0 means it took none.
+            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
+            // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
@@ -1006,7 +1006,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
-            let now_ns = now.map_or(0, |t| t.ns());
+            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
                 (*loop_)
@@ -1115,8 +1115,8 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
             // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
-            // same instant to the tick so uSockets' sweep clamp and the JS park hook reuse it.
-            // It is lazy, and so are they: 0 means it took none.
+            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
+            // and so is the hook: NOW_NS_UNKNOWN means it took none.
             let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; see
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
@@ -1130,7 +1130,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     &mut now,
                 )
             };
-            let now_ns = now.map_or(0, |t| t.ns());
+            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
                 (*loop_)

@@ -8,9 +8,8 @@ use bun_libuv_sys as uv;
 
 bun_core::declare_scope!(Loop, visible);
 
-/// A `now_ns` the caller has no reading to share for. uSockets' sweep clamp and JS park hook
-/// each take their own only when they need one, so passing this costs nothing on the paths
-/// that consume neither.
+/// A `now_ns` the caller has no reading to share for. The JS park hook takes its own only if
+/// it reaches the idle sweep, so passing this costs nothing on the paths that never park.
 pub const NOW_NS_UNKNOWN: u64 = 0;
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
@@ -260,9 +259,9 @@ impl PosixLoop {
         unsafe { c::us_loop_run_bun_tick(self, &raw const timespec, NOW_NS_UNKNOWN) };
     }
 
-    /// `now_ns` is the CLOCK_MONOTONIC instant the caller already read to compute `timespec`
-    /// (see `timer::All::get_timeout`), so the sweep clamp and the JS park hook can reuse it
-    /// instead of reading the clock again. `NOW_NS_UNKNOWN` if the caller has none to share.
+    /// `now_ns` is the CLOCK_MONOTONIC reading the caller took to pick `timespec` (see
+    /// `timer::All::get_timeout`), reused by the JS park hook's idle-sweep rate limit rather
+    /// than read again. `NOW_NS_UNKNOWN` if the caller has none to share.
     pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>, now_ns: u64) {
         // SAFETY: self is a valid loop pointer
         unsafe {

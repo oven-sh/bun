@@ -309,8 +309,8 @@ static void us_internal_drain_ready_polls(struct us_loop_t *loop) {
 }
 
 /* Bound `timeout` by the socket-timeout sweep deadline (NULL == forever). */
-static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage, uint64_t now_ns) {
-    long long ns = us_internal_sweep_timeout_ns(loop, now_ns);
+static const struct timespec *us_internal_clamp_to_sweep(struct us_loop_t *loop, const struct timespec *timeout, struct timespec *storage) {
+    long long ns = us_internal_sweep_timeout_ns(loop);
     if (ns < 0) {
         return timeout;
     }
@@ -333,7 +333,7 @@ void us_loop_run(struct us_loop_t *loop) {
         us_internal_loop_pre(loop);
 
         struct timespec sweep_ts;
-        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts, 0);
+        const struct timespec *timeout = us_internal_clamp_to_sweep(loop, NULL, &sweep_ts);
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -380,14 +380,14 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
-    /* `now_ns` is the instant the JS side already read to build `timeout`
-     * (timer::All::get_timeout), or 0 if it had none to share. Each consumer
-     * below takes its own reading only if it needs one. */
     struct timespec sweep_ts;
-    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts, now_ns);
+    timeout = us_internal_clamp_to_sweep(loop, timeout, &sweep_ts);
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    /* `now_ns` is the reading the JS side took to pick `timeout`
+     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
+     * if it had none to share. Nothing measures a deadline against it. */
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
 

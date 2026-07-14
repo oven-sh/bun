@@ -93,15 +93,13 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
     }
 }
 
-long long us_internal_sweep_timeout_ns(struct us_loop_t *loop, uint64_t now_ns) {
+long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
     if (loop->data.sweep_next_tick_ns < 0) {
         return -1;
     }
-    /* 0 == the caller had no reading to share; only now is one worth taking. */
-    if (now_ns == 0) {
-        now_ns = us_internal_monotonic_ns();
-    }
-    long long diff = loop->data.sweep_next_tick_ns - (long long) now_ns;
+    /* Its own reading, deliberately: this bounds the poll so the sweep is not
+     * starved, and a caller's older reading would round the deadline up. */
+    long long diff = loop->data.sweep_next_tick_ns - (long long) us_internal_monotonic_ns();
     return diff > 0 ? diff : 0;
 }
 

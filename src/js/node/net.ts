@@ -173,7 +173,20 @@ function failWrite(self, negErrno, callback) {
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {
+    // Node delivers a failed write to BOTH the write callback and the socket:
+    // onWriteComplete calls errorOrDestroy(self, ...) in addition to the
+    // chained callback (lib/internal/stream_base_commons.js), so 'error' and
+    // 'close' still fire even when every write had a callback. Only handing
+    // the error to a callback that ignores it left the socket alive forever
+    // (test-net-stream's server never observed its peer vanish).
     callback(er);
+    if (!self.destroyed && !self._hadError) {
+      // _hadError is the cross-path once-guard: the native error dispatch
+      // (SocketHandlers.error) can deliver the same failure, and node emits
+      // a socket error exactly once.
+      self._hadError = true;
+      self.destroy(er);
+    }
   } else if (!self.destroyed) {
     if (self.listenerCount("error") > 0) {
       // The consumer can detach its listener between now and destroy()'s
@@ -359,11 +372,19 @@ const SocketHandlers: SocketHandler = {
     if (tlsKeylogPath !== undefined) appendTlsKeylog(line);
     self.server?.emit?.("keylog", line, self);
   },
-  error(socket, error) {
+  error(socket, error, flagAlreadySet = false) {
     const self = socket.data;
     if (!self) return;
-    if (self._hadError) return;
-    self._hadError = true;
+    // ServerHandlers.error sets _hadError before delegating here (its own
+    // once-guard) and passes flagAlreadySet - honoring the flag in that case
+    // swallowed every native error dispatch on server-side sockets (the
+    // socket never emitted 'error' and sat alive; test-net-stream's server
+    // hung exactly there on darwin, where post-reset sends surface through
+    // the bounded-retry fatal path).
+    if (!flagAlreadySet) {
+      if (self._hadError) return;
+      self._hadError = true;
+    }
 
     const callback = self[kwriteCallback];
     if (callback) {
@@ -523,7 +544,10 @@ function SocketEmitEndNT(self, _err?) {
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
   const teardownNoise = self[kended] && self.writableFinished;
-  if (_err && !self.destroyed && !teardownNoise && self.listenerCount("error") > 0) {
+  // _hadError: the failure already reached JS through the error dispatch
+  // (native on_error / a fatal write); node emits a socket error exactly
+  // once, so the close that follows it is delivered plain.
+  if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
     // The consumer can detach its 'error' listener between this close
     // callback and destroy()'s deferred 'error' emission (a request that
     // finished just as the reset arrived); a last-resort no-op listener keeps

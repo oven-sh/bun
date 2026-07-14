@@ -3423,7 +3423,10 @@ mod posix_impl {
         ) {
             Ok(ptr) => {
                 // SAFETY: mmap returned a valid mapping of `map_len` bytes.
-                Ok((unsafe { core::slice::from_raw_parts_mut(ptr, map_len) }, delta))
+                Ok((
+                    unsafe { core::slice::from_raw_parts_mut(ptr, map_len) },
+                    delta,
+                ))
             }
             Err(err) => Err(err),
         }

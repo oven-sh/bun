@@ -110,16 +110,26 @@ it.concurrent("--preload loader: unref'd setTimeout fires without spinning", asy
   expectParkedNotSpun(res);
 });
 
-it.concurrent("Worker: unref'd setTimeout fires without spinning", async () => {
-  // Workers wait on their module promise via wait_for_promise_with_termination.
+it.concurrent("Worker: the loop ref does not defeat unsettled-TLA exit", async () => {
+  // wait_for_promise_with_termination breaks on !is_event_loop_alive(), which
+  // reads the same counter ref_loop_scoped bumps; the guard is scoped to
+  // auto_tick so that check reads the real ref state. A Worker whose module
+  // promise never settles must still exit promptly, not park indefinitely.
+  // (Node 26.3 exits 13 here; see worker-top-level-await.test.ts.)
   using dir = tempDir("unref-timer-worker", {
-    "worker.ts": CPU_PROBE(AWAIT_UNREFD_TIMER),
-    "main.ts": `const w = new Worker(new URL("./worker.ts", import.meta.url).href);
-      w.addEventListener("close", () => process.exit(0));`,
+    "worker.ts": `setTimeout(() => {}, 60_000).unref();
+      await new Promise(() => {});`,
+    "main.ts": `const t0 = performance.now();
+      const w = new Worker(new URL("./worker.ts", import.meta.url).href);
+      w.addEventListener("close", () => {
+        console.log(JSON.stringify({ ms: Math.round(performance.now() - t0) }));
+        process.exit(0);
+      });`,
   });
   const res = await run([bunExe(), "main.ts"], String(dir));
-  expect(res.stderr).toBe("");
-  expectParkedNotSpun(res);
+  expect({ signalCode: res.signalCode, exitCode: res.exitCode }).toEqual({ signalCode: null, exitCode: 0 });
+  const { ms } = JSON.parse(res.stdout.trim().split("\n").at(-1) ?? "null") ?? {};
+  expect(ms).toBeLessThan(5000);
 });
 
 // The loop ref also makes is_event_loop_alive*() true for the driver's scope.

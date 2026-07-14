@@ -3,12 +3,15 @@ use core::ptr;
 
 use crate as jsc;
 use crate::SysErrorJsc;
-use crate::c as jsc_c; // jsc.C.* (JSTypedArrayType, JSTypedArrayBytesDeallocator, JSObjectMakeTypedArrayWithArrayBuffer)
 use crate::{ComptimeStringMapExt as _, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_alloc::mimalloc;
 use bun_sys::{self, Fd, FdExt};
 
 bun_core::declare_scope!(ArrayBuffer, visible);
+
+/// `void (*)(void* bytes, void* deallocatorContext)` called on the JS thread
+/// when a zero-copy ArrayBuffer/typed array backing store is collected.
+pub type JSTypedArrayBytesDeallocator = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ArrayBuffer
@@ -107,7 +110,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         ptr: *mut c_void,
         len: usize,
-        dealloc: jsc_c::JSTypedArrayBytesDeallocator,
+        dealloc: JSTypedArrayBytesDeallocator,
         ctx: *mut c_void,
     ) -> JSValue;
     fn Bun__makeTypedArrayWithBytesNoCopy(
@@ -115,8 +118,14 @@ unsafe extern "C" {
         ty: TypedArrayType,
         ptr: *mut c_void,
         len: usize,
-        dealloc: jsc_c::JSTypedArrayBytesDeallocator,
+        dealloc: JSTypedArrayBytesDeallocator,
         ctx: *mut c_void,
+    ) -> JSValue;
+    fn Bun__createTypedArrayForCopy(
+        global: *const JSGlobalObject,
+        ty: TypedArrayType,
+        ptr: *const c_void,
+        len: usize,
     ) -> JSValue;
     fn JSC__ArrayBuffer__asBunArrayBuffer(self_: *mut JSCArrayBuffer, out: *mut ArrayBuffer);
     // safe: `JSCArrayBuffer` is an `opaque_ffi!` ZST handle (`!Freeze` via
@@ -560,7 +569,7 @@ impl ArrayBuffer {
         self,
         ctx: &JSGlobalObject,
         deallocator: *mut c_void,
-        callback: jsc_c::JSTypedArrayBytesDeallocator,
+        callback: JSTypedArrayBytesDeallocator,
     ) -> JsResult<JSValue> {
         if !self.value.is_empty() {
             return Ok(self.value);
@@ -847,21 +856,18 @@ impl BinaryType {
             | BinaryType::Float64Array
             | BinaryType::BigInt64Array
             | BinaryType::BigUint64Array => {
-                let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
-                // SAFETY: FFI — `global` is a live opaque ZST handle; `JSGlobalObject` is
-                // a ZST on the Rust side so the `*const` → `*mut` cast launders no
-                // provenance (see the aliasing note on the extern block above). `buffer` is a
-                // fresh ArrayBuffer JSValue (cell pointer), so `as_object_ref` yields a
-                // valid `JSObjectRef`.
-                let obj = unsafe {
-                    jsc_c::JSObjectMakeTypedArrayWithArrayBuffer(
-                        std::ptr::from_ref::<JSGlobalObject>(global).cast_mut(),
-                        self.to_typed_array_type().to_c(),
-                        buffer.as_object_ref(),
-                        ptr::null_mut(),
-                    )
-                };
-                Ok(JSValue::c(obj))
+                crate::host_fn::from_js_host_call(global, || {
+                    // SAFETY: `global` is a live opaque ZST handle; `bytes` is a
+                    // valid slice whose pointer/len are only read (copied) by C++.
+                    unsafe {
+                        Bun__createTypedArrayForCopy(
+                            global,
+                            self.to_typed_array_type(),
+                            bytes.as_ptr().cast(),
+                            bytes.len(),
+                        )
+                    }
+                })
             }
         }
     }
@@ -892,29 +898,6 @@ pub enum TypedArrayType {
 }
 
 impl TypedArrayType {
-    /// Maps to JSC's C-API `JSTypedArrayType` enum (declared in
-    /// `<JavaScriptCore/JSTypedArray.h>` and re-exported as
-    /// [`jsc_c::JSTypedArrayType`]).
-    pub fn to_c(self) -> jsc_c::JSTypedArrayType {
-        use jsc_c::JSTypedArrayType as C;
-        match self {
-            TypedArrayType::TypeNone => C::kJSTypedArrayTypeNone,
-            TypedArrayType::TypeInt8 => C::kJSTypedArrayTypeInt8Array,
-            TypedArrayType::TypeInt16 => C::kJSTypedArrayTypeInt16Array,
-            TypedArrayType::TypeInt32 => C::kJSTypedArrayTypeInt32Array,
-            TypedArrayType::TypeUint8 => C::kJSTypedArrayTypeUint8Array,
-            TypedArrayType::TypeUint8Clamped => C::kJSTypedArrayTypeUint8ClampedArray,
-            TypedArrayType::TypeUint16 => C::kJSTypedArrayTypeUint16Array,
-            TypedArrayType::TypeUint32 => C::kJSTypedArrayTypeUint32Array,
-            TypedArrayType::TypeFloat16 => C::kJSTypedArrayTypeNone,
-            TypedArrayType::TypeFloat32 => C::kJSTypedArrayTypeFloat32Array,
-            TypedArrayType::TypeFloat64 => C::kJSTypedArrayTypeFloat64Array,
-            TypedArrayType::TypeBigInt64 => C::kJSTypedArrayTypeBigInt64Array,
-            TypedArrayType::TypeBigUint64 => C::kJSTypedArrayTypeBigUint64Array,
-            TypedArrayType::TypeDataView => C::kJSTypedArrayTypeNone,
-        }
-    }
-
     // LAYERING: `napi_typedarray_type` is defined in `bun_runtime` (a higher-tier
     // crate that depends on `bun_jsc`). The conversion lives next to its target
     // type as `napi_typedarray_type::from_typed_array_type` in
@@ -1101,7 +1084,7 @@ pub unsafe fn make_array_buffer_with_bytes_no_copy(
     global: &JSGlobalObject,
     ptr: *mut c_void,
     len: usize,
-    deallocator: jsc_c::JSTypedArrayBytesDeallocator,
+    deallocator: JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
     crate::host_fn::from_js_host_call(global, || {
@@ -1126,7 +1109,7 @@ pub unsafe fn make_typed_array_with_bytes_no_copy(
     array_type: TypedArrayType,
     ptr: *mut c_void,
     len: usize,
-    deallocator: jsc_c::JSTypedArrayBytesDeallocator,
+    deallocator: JSTypedArrayBytesDeallocator,
     deallocator_context: *mut c_void,
 ) -> JsResult<JSValue> {
     crate::host_fn::from_js_host_call(global, || {

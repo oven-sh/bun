@@ -8,26 +8,25 @@ use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
 use bun_collections::{ArrayHashMap, HashMap};
+use bun_core::Output;
 use bun_core::strings;
-use bun_core::{Error, Output, err};
 use bun_dotenv::Loader as DotEnvLoader;
+
+use crate::Error;
 use bun_js_parser as js_parser;
 use bun_resolver::Resolver;
 use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
 };
 
-// The C-API surface is intentionally `#[deprecated]` upstream but is the
-// call path used for `JSObjectCallAsFunctionReturnValueHoldingAPILock`.
 use crate::expr_jsc::ExprJsc;
 use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
 use bun_jsc::virtual_machine::{
     InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
 };
-#[allow(deprecated)]
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
-    JsError, ModuleLoader, WebCore, c as js,
+    JsError, ModuleLoader, WebCore,
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
@@ -108,7 +107,7 @@ impl MacroContext {
         import_range: Range,
         caller: Expr,
         function_name: &[u8],
-    ) -> Result<Expr, Error> {
+    ) -> crate::Result<Expr> {
         let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
@@ -138,7 +137,7 @@ impl MacroContext {
                 bun_ast::ImportKind::Stmt,
             ) {
                 Ok(r) => r,
-                Err(e) if e == err!("ModuleNotFound") => {
+                Err(bun_resolver::Error::ModuleNotFound) => {
                     log.add_resolve_error(
                         Some(source),
                         import_range,
@@ -148,9 +147,9 @@ impl MacroContext {
                         ),
                         import_record_path,
                         bun_ast::ImportKind::Stmt,
-                        e,
+                        bun_ast::Error::ModuleNotFound,
                     );
-                    return Err(err!("MacroNotFound"));
+                    return Err(crate::Error::MacroNotFound);
                 }
                 Err(e) => {
                     log.add_range_error_fmt(
@@ -162,7 +161,7 @@ impl MacroContext {
                             bstr::BStr::new(import_record_path)
                         ),
                     );
-                    return Err(e);
+                    return Err(e.into());
                 }
             };
             // The resolver's `Result` owns its path strings via the global `DirnameStore`
@@ -312,7 +311,9 @@ pub(crate) fn __bun_macro_context_call(
     import_range: Range,
     caller: Expr,
     function_name: &[u8],
-) -> Result<Expr, Error> {
+) -> Result<Expr, bun_js_parser::Error> {
+    // ABI: the `extern "Rust"` declaration in bun_js_parser names
+    // `bun_js_parser::Error`; keep both sides byte-identical.
     debug_assert!(
         !ctx.data.is_null(),
         "MacroContext.call reached without init"
@@ -321,15 +322,31 @@ pub(crate) fn __bun_macro_context_call(
     // lower-tier handle is uniquely borrowed for this call so no alias exists.
     let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
     inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
-    inner.call(
-        import_record_path,
-        source_dir,
-        log,
-        source,
-        import_range,
-        caller,
-        function_name,
-    )
+    let caller_loc = caller.loc;
+    inner
+        .call(
+            import_record_path,
+            source_dir,
+            log,
+            source,
+            import_range,
+            caller,
+            function_name,
+        )
+        .map_err(|e| {
+            // visit_expr only prints a fallback "macro threw exception" when
+            // nothing was added to the log; record the specific cause here so
+            // errors like ToJSError's "Cannot convert argument type to JS"
+            // reach the user (03830.test.ts snapshot asserts on this).
+            if e.name() != "MacroFailed" {
+                log.add_error_fmt(
+                    Some(source),
+                    caller_loc,
+                    format_args!("\"{}\" error in macro", e.name()),
+                );
+            }
+            bun_js_parser::Error::MacroFailed
+        })
 }
 
 #[unsafe(no_mangle)]
@@ -411,7 +428,7 @@ impl Macro {
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> Result<Macro, Error> {
+    ) -> crate::Result<Macro> {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
@@ -466,7 +483,7 @@ impl Macro {
             unsafe {
                 (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
             }
-            return Err(err!("MacroLoadError"));
+            return Err(crate::Error::MacroLoadError);
         }
 
         Ok(Macro {
@@ -516,12 +533,12 @@ bun_core::oom_from_alloc!(MacroError);
 impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {
         match e {
-            MacroError::MacroFailed => err!("MacroFailed"),
-            MacroError::OutOfMemory => err!("OutOfMemory"),
+            MacroError::MacroFailed => crate::Error::MacroFailed,
+            MacroError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
             MacroError::ToJs(e) => e.into(),
-            MacroError::Js(JsError::OutOfMemory) => err!("OutOfMemory"),
-            MacroError::Js(JsError::Terminated) => err!("JSTerminated"),
-            MacroError::Js(JsError::Thrown) => err!("JSError"),
+            MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_alloc::AllocError),
+            MacroError::Js(JsError::Terminated) => crate::Error::JSTerminated,
+            MacroError::Js(JsError::Thrown) => crate::Error::JSError,
         }
     }
 }
@@ -562,19 +579,12 @@ impl<'a> Run<'a> {
             return Ok(caller);
         };
 
-        // SAFETY: `vm.global` is the live per-thread global; `macro_callback`
-        // was obtained from the VM's macro table; `args` is a stack slice of
-        // `#[repr(transparent)] i64` JSValues whose pointer is reinterpreted to
-        // the C-API `JSObjectRef` (same encoded value).
-        let result = unsafe {
-            js::JSObjectCallAsFunctionReturnValueHoldingAPILock(
-                vm.global,
-                macro_callback,
-                core::ptr::null_mut(),
-                args.len(),
-                args.as_ptr().cast::<js::JSValueRef>(),
-            )
-        };
+        let global = vm.global();
+        let result = vm.run_with_api_lock(|| {
+            macro_callback
+                .call(global, JSValue::ZERO, args)
+                .unwrap_or_else(|_| global.try_take_exception().unwrap_or(JSValue::ZERO))
+        });
 
         let mut runner = Run {
             caller,
@@ -1074,7 +1084,7 @@ fn expr_from_blob(
     mime_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
-) -> Result<Expr, bun_core::Error> {
+) -> crate::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
     // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
@@ -1086,7 +1096,7 @@ fn expr_from_blob(
         let source = &Source::init_path_string(b"fetch.json", bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
-            Err(_) => return Err(bun_core::err!("MacroFailed")),
+            Err(_) => return Err(crate::Error::MacroFailed),
         };
         out_expr.loc = loc;
         match &mut out_expr.data {

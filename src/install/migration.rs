@@ -1,7 +1,8 @@
+use crate::Error;
 use bun_ast::{E, ExprData};
 use bun_collections::{StringArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_core::{Error, Global, Output, err, zstr};
+use bun_core::{Global, Output, zstr};
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_semver::query::token::Wildcard;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
@@ -62,7 +63,7 @@ pub fn detect_and_load_other_lockfile<'a>(
         let migrate_result = match migrate_npm_lockfile(this, manager, log, &data, lockfile_path) {
             Ok(r) => r,
             Err(e) => {
-                if e == err!("NPMLockfileVersionMismatch") {
+                if e == crate::Error::NPMLockfileVersionMismatch {
                     bun_core::pretty_errorln!(
                         "<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3\n\nRun 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.",
                     );
@@ -241,17 +242,17 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
     let json_src = bun_ast::Source::init_path_string(abs_path, data);
     let parsed_json = bun_parsers::json::ParsedJson::parse_json(&json_src, log)
-        .map_err(|_| err!("InvalidNPMLockfile"))?;
+        .map_err(|_| crate::Error::InvalidNPMLockfile)?;
     let json = &parsed_json.root;
 
     let ExprData::EObjectJSON(root_obj) = &json.data else {
-        return Err(err!("InvalidNPMLockfile"));
+        return Err(crate::Error::InvalidNPMLockfile);
     };
     let root_obj: &E::ObjectJSON = root_obj.get();
     match root_obj.get(b"lockfileVersion") {
         Some(E::JsonValue::Number(n)) if n.value() >= 2.0 && n.value() <= 3.0 => {}
-        Some(_) => return Err(err!("NPMLockfileVersionMismatch")),
-        None => return Err(err!("InvalidNPMLockfile")),
+        Some(_) => return Err(crate::Error::NPMLockfileVersionMismatch),
+        None => return Err(crate::Error::InvalidNPMLockfile),
     }
 
     bun_core::analytics::Features::lockfile_migration_from_package_lock_inc();
@@ -261,22 +262,22 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     let root_package: &E::ObjectJSON;
     let packages_obj: &E::ObjectJSON = 'brk: {
         let Some(obj) = root_obj.get(b"packages") else {
-            return Err(err!("InvalidNPMLockfile"));
+            return Err(crate::Error::InvalidNPMLockfile);
         };
         let Some(eobj) = obj.as_object() else {
-            return Err(err!("InvalidNPMLockfile"));
+            return Err(crate::Error::InvalidNPMLockfile);
         };
         let props = eobj.properties();
         if props.is_empty() {
-            return Err(err!("InvalidNPMLockfile"));
+            return Err(crate::Error::InvalidNPMLockfile);
         }
         let prop1 = &props[0];
         // first key must be the "", self reference
         if !prop1.key.slice().is_empty() {
-            return Err(err!("InvalidNPMLockfile"));
+            return Err(crate::Error::InvalidNPMLockfile);
         }
         let Some(rp) = prop1.value.as_object() else {
-            return Err(err!("InvalidNPMLockfile"));
+            return Err(crate::Error::InvalidNPMLockfile);
         };
         root_package = rp;
         break 'brk eobj;
@@ -306,7 +307,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                         .find(|p| p.key.slice() == b"packages");
                     if let Some(packages_row) = packages_row {
                         if !matches!(packages_row.value, E::JsonValue::Array(_)) {
-                            return Err(err!("InvalidNPMLockfile"));
+                            return Err(crate::Error::InvalidNPMLockfile);
                         }
                         let loc = bun_parsers::json::property_value_loc(
                             &json_src.contents,
@@ -315,14 +316,14 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                         .unwrap_or(packages_row.key_loc);
                         (packages_row.value, loc)
                     } else {
-                        return Err(err!("InvalidNPMLockfile"));
+                        return Err(crate::Error::InvalidNPMLockfile);
                     }
                 }
-                _ => return Err(err!("InvalidNPMLockfile")),
+                _ => return Err(crate::Error::InvalidNPMLockfile),
             };
 
             let E::JsonValue::Array(json_array) = json_array_value else {
-                return Err(err!("InvalidNPMLockfile"));
+                return Err(crate::Error::InvalidNPMLockfile);
             };
 
             // due to package paths and resolved properties for links and workspaces always having
@@ -357,7 +358,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     for (i, entry) in packages_properties.iter().enumerate() {
         let pkg_path = entry.key.slice();
         let Some(pkg) = entry.value.as_object() else {
-            return Err(err!("InvalidNPMLockfile"));
+            return Err(crate::Error::InvalidNPMLockfile);
         };
 
         if pkg.get(b"link").is_some() {
@@ -399,7 +400,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         for dep_key in DEPENDENCY_KEYS {
             if let Some(deps) = pkg.get(dep_key.prop) {
                 let Some(deps_obj) = deps.as_object() else {
-                    return Err(err!("InvalidNPMLockfile"));
+                    return Err(crate::Error::InvalidNPMLockfile);
                 };
                 num_deps = num_deps.saturating_add(deps_obj.properties().len() as u32);
             }
@@ -407,10 +408,10 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
         if let Some(bin) = pkg.get(b"bin") {
             let Some(bin_obj) = bin.as_object() else {
-                return Err(err!("InvalidNPMLockfile"));
+                return Err(crate::Error::InvalidNPMLockfile);
             };
             match bin_obj.properties().len() as u32 {
-                0 => return Err(err!("InvalidNPMLockfile")),
+                0 => return Err(crate::Error::InvalidNPMLockfile),
                 1 => {}
                 n => {
                     num_extern_strings += n * 2;
@@ -424,9 +425,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             // writes it whenever it differs from the name its folder path implies,
             // e.g. a package named `admin` living at `@admin` or `packages/@admin`.
             let pkg_name: &[u8] = if let Some(set_name) = pkg.get(b"name") {
-                set_name
-                    .as_str()
-                    .ok_or_else(|| err!("InvalidNPMLockfile"))?
+                set_name.as_str().ok_or(crate::Error::InvalidNPMLockfile)?
             } else {
                 package_name_from_path(pkg_path)
             };
@@ -440,18 +439,18 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 if pkg_name[0] == b'@' {
                     // scoped
                     let Some(slash_index) = strings::index_of_char(pkg_name, b'/') else {
-                        return Err(err!("InvalidNPMLockfile"));
+                        return Err(crate::Error::InvalidNPMLockfile);
                     };
                     let slash_index = slash_index as usize;
                     if slash_index >= pkg_name.len() - 1 {
-                        return Err(err!("InvalidNPMLockfile"));
+                        return Err(crate::Error::InvalidNPMLockfile);
                     }
                     count += pkg_name[slash_index + 1..].len();
                 } else {
                     count += pkg_name.len();
                 }
                 let Some(version_str) = version_prop.as_str() else {
-                    return Err(err!("InvalidNPMLockfile"));
+                    return Err(crate::Error::InvalidNPMLockfile);
                 };
                 count += b"-.tgz".len() + version_str.len();
 
@@ -483,7 +482,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         }
     }
     if num_deps == u32::MAX {
-        return Err(err!("InvalidNPMLockfile")); // lol
+        return Err(crate::Error::InvalidNPMLockfile); // lol
     }
 
     debug!("counted {} dependencies", num_deps);
@@ -643,7 +642,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let script_value = prop
                         .value
                         .as_str()
-                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                     if strings::eql(key, pkg_name) {
                         break 'bin Bin {
@@ -671,7 +670,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let script_value = bin_entry
                         .value
                         .as_str()
-                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
                     let ek = sb.append_external(key)?;
                     let ev = sb.append_external(script_value)?;
                     this.buffers.extern_strings.push(ek);
@@ -709,7 +708,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 'arch: {
                     let mut arch = Npm::Architecture::NONE.negatable();
                     let Some(arr) = cpu_array.as_array() else {
-                        return Err(err!("InvalidNPMLockfile"));
+                        return Err(crate::Error::InvalidNPMLockfile);
                     };
                     let items = arr.items();
                     if items.is_empty() {
@@ -717,7 +716,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     }
                     for item in items {
                         let Some(s) = item.as_str() else {
-                            return Err(err!("InvalidNPMLockfile"));
+                            return Err(crate::Error::InvalidNPMLockfile);
                         };
                         arch.apply(s);
                     }
@@ -731,7 +730,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 'arch: {
                     let mut os = Npm::OperatingSystem::NONE.negatable();
                     let Some(arr) = cpu_array.as_array() else {
-                        return Err(err!("InvalidNPMLockfile"));
+                        return Err(crate::Error::InvalidNPMLockfile);
                     };
                     let items = arr.items();
                     if items.is_empty() {
@@ -739,7 +738,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     }
                     for item in items {
                         let Some(s) = item.as_str() else {
-                            return Err(err!("InvalidNPMLockfile"));
+                            return Err(crate::Error::InvalidNPMLockfile);
                         };
                         os.apply(s);
                     }
@@ -753,7 +752,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
             has_install_script: if let Some(h) = pkg.get(b"hasInstallScript") {
                 let E::JsonValue::Boolean(b) = h else {
-                    return Err(err!("InvalidNPMLockfile"));
+                    return Err(crate::Error::InvalidNPMLockfile);
                 };
                 if *b {
                     lockfile::HasInstallScript::True
@@ -765,11 +764,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             },
 
             integrity: if let Some(integrity) = pkg.get(b"integrity") {
-                Integrity::parse(
-                    integrity
-                        .as_str()
-                        .ok_or_else(|| err!("InvalidNPMLockfile"))?,
-                )
+                Integrity::parse(integrity.as_str().ok_or(crate::Error::InvalidNPMLockfile)?)
             } else {
                 Integrity::default()
             },
@@ -832,7 +827,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
     // Root resolution isn't hit through dependency tracing.
     if pkg_count == 0 {
-        return Err(err!("InvalidNPMLockfile"));
+        return Err(crate::Error::InvalidNPMLockfile);
     }
     this.packages.items_resolution_mut()[0] = Resolution::init(ResTagged::Root);
     this.packages.items_meta_mut()[0].origin = lockfile::Origin::Local;
@@ -904,12 +899,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     break 'deps None;
                 }
                 let Some(arr) = expr.as_array() else {
-                    return Err(err!("InvalidNPMLockfile"));
+                    return Err(crate::Error::InvalidNPMLockfile);
                 };
                 let items = arr.items();
                 let mut map = StringArrayHashMap::<()>::with_capacity(items.len());
                 for item in items {
-                    let s = item.as_str().ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                    let s = item.as_str().ok_or(crate::Error::InvalidNPMLockfile)?;
                     map.put_assume_capacity(s, ());
                 }
                 break 'deps Some(map);
@@ -926,7 +921,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let entry1 = id_map
                         .get(key.as_ref())
                         .copied()
-                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
                     let name_hash = string_hash(&value.name);
                     let mut sb = this.string_buf();
                     let wksp_name = sb.append(&value.name)?;
@@ -955,7 +950,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 let peer_dep_meta: Option<&E::ObjectJSON> = if dep_key.behavior == Behavior::PEER {
                     if let Some(expr) = pkg.get(b"peerDependenciesMeta") {
                         let Some(meta_obj) = expr.as_object() else {
-                            return Err(err!("InvalidNPMLockfile"));
+                            return Err(crate::Error::InvalidNPMLockfile);
                         };
                         Some(meta_obj)
                     } else {
@@ -966,7 +961,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 };
 
                 let Some(deps_obj) = deps.as_object() else {
-                    return Err(err!("InvalidNPMLockfile"));
+                    return Err(crate::Error::InvalidNPMLockfile);
                 };
 
                 'dep_loop: for prop in deps_obj.properties() {
@@ -980,7 +975,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let version_bytes = prop
                         .value
                         .as_str()
-                        .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                        .ok_or(crate::Error::InvalidNPMLockfile)?;
                     let name_hash = string_hash(name_bytes);
                     let mut sb = this.string_buf();
                     let dep_name = sb.append_with_hash(name_bytes, name_hash)?;
@@ -1001,7 +996,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                         Some(&mut *log),
                         Some(&mut *manager),
                     ) else {
-                        return Err(err!("InvalidNPMLockfile"));
+                        return Err(crate::Error::InvalidNPMLockfile);
                     };
                     debug!("-> {}\n", <&'static str>::from(version.tag));
 
@@ -1020,7 +1015,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let mut buf_len: u32 =
                         u32::try_from(pkg_path.len() + suffix_len).expect("int cast");
                     if buf_len as usize > name_checking_buf.len() {
-                        return Err(err!("PathTooLong"));
+                        return Err(crate::Error::PathTooLong);
                     }
 
                     name_checking_buf[..pkg_path.len()].copy_from_slice(pkg_path);
@@ -1051,14 +1046,14 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                 // the `else` here is technically possible to hit
                                 let resolved_v = ref_pkg
                                     .get(b"resolved")
-                                    .ok_or_else(|| err!("LockfileWorkspaceMissingResolved"))?;
+                                    .ok_or(crate::Error::LockfileWorkspaceMissingResolved)?;
                                 let resolved = resolved_v
                                     .as_str()
-                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
                                 found = id_map
                                     .get(resolved)
                                     .copied()
-                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
                             } else if found.new_package_id == PACKAGE_ID_IS_BUNDLED {
                                 debug!(
                                     "skipping bundled dependency {}",
@@ -1113,7 +1108,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                         if let Some(resolved) = dep_pkg.get(b"resolved") {
                                             let dep_resolved = resolved
                                                 .as_str()
-                                                .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                                                .ok_or(crate::Error::InvalidNPMLockfile)?;
                                             match DepTag::infer(dep_resolved) {
                                                 tag @ (DepTag::Git | DepTag::Github) => {
                                                     let mut sb = this.string_buf();
@@ -1129,7 +1124,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                         &dep_resolved_sliced,
                                                         Some(&mut *log),
                                                         Some(&mut *manager as &mut dyn dependency::NpmAliasRegistry),
-                                                    ).ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                                                    ).ok_or(crate::Error::InvalidNPMLockfile)?;
                                                     res_version_tag = parsed.tag;
                                                     res_version_git_owner =
                                                         if parsed.tag == DepTag::Git {
@@ -1171,7 +1166,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                         ),
 
                                         // npm does not support catalogs
-                                        DepTag::Catalog => return Err(err!("InvalidNPMLockfile")),
+                                        DepTag::Catalog => {
+                                            return Err(crate::Error::InvalidNPMLockfile);
+                                        }
 
                                         DepTag::Npm | DepTag::DistTag => {
                                             // It is theoretically possible to hit this in a case where the resolved dependency is NOT
@@ -1183,9 +1180,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                             // If it is a workspace package, then this branch will not be hit as the resolution was already set earlier.
                                             let dep_actual_version = dep_pkg
                                                 .get(b"version")
-                                                .ok_or_else(|| err!("InvalidNPMLockfile"))?
+                                                .ok_or(crate::Error::InvalidNPMLockfile)?
                                                 .as_str()
-                                                .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                                                .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                                             let dep_actual_version_str =
                                                 sb.append(dep_actual_version)?;
@@ -1241,12 +1238,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],
                                             ) {
-                                                return Err(err!("InvalidNPMLockfile"));
+                                                return Err(crate::Error::InvalidNPMLockfile);
                                             }
 
                                             let commit =
@@ -1269,12 +1266,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
                                             let hash_index =
                                                 strings::last_index_of_char(str.slice, b'#')
-                                                    .ok_or_else(|| err!("InvalidNPMLockfile"))?;
+                                                    .ok_or(crate::Error::InvalidNPMLockfile)?;
 
                                             if !crate::repository::is_safe_resolved_tag(
                                                 &str.slice[hash_index + 1..],
                                             ) {
-                                                return Err(err!("InvalidNPMLockfile"));
+                                                return Err(crate::Error::InvalidNPMLockfile);
                                             }
 
                                             let commit =
@@ -1314,7 +1311,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                         .tag
                                         .is_supported()
                                     {
-                                        return Err(err!("InvalidNPMLockfile"));
+                                        return Err(crate::Error::InvalidNPMLockfile);
                                     }
                                 }
 
@@ -1365,11 +1362,11 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                 if let Some(o) = peer_dep_meta {
                                     if let Some(meta) = o.get(name_bytes) {
                                         let Some(meta_obj) = meta.as_object() else {
-                                            return Err(err!("InvalidNPMLockfile"));
+                                            return Err(crate::Error::InvalidNPMLockfile);
                                         };
                                         if let Some(optional) = meta_obj.get(b"optional") {
                                             let E::JsonValue::Boolean(b) = optional else {
-                                                return Err(err!("InvalidNPMLockfile"));
+                                                return Err(crate::Error::InvalidNPMLockfile);
                                             };
                                             if *b {
                                                 let behavior = Behavior::OPTIONAL | Behavior::PEER;
@@ -1459,7 +1456,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         }
     }
     if is_missing_resolutions {
-        return Err(err!("NotAllPackagesGotResolved"));
+        return Err(crate::Error::NotAllPackagesGotResolved);
     }
 
     this.resolve(log)?;

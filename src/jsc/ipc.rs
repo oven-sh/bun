@@ -1627,7 +1627,7 @@ impl SendQueue {
     pub unsafe fn windows_configure_client(
         this: *mut Self,
         pipe_fd: Fd,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::CrateError> {
         log!("configureClient");
         let ipc_pipe: *mut uv::Pipe =
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));

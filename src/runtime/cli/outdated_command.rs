@@ -55,7 +55,7 @@ impl<'a> FilterType<'a> {
 }
 
 impl OutdatedCommand {
-    pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub(crate) fn exec(ctx: Command::Context) -> crate::Result<()> {
         bun_core::prettyln!(
             "<r><b>bun outdated <r><d>v{}<r>",
             Global::package_json_version_with_sha,
@@ -70,7 +70,7 @@ impl OutdatedCommand {
                 Ok(v) => v,
                 Err(err) => {
                     if !silent {
-                        if err == bun_core::err!("MissingPackageJSON") {
+                        if err == bun_install::Error::MissingPackageJSON {
                             Output::err_generic("missing package.json, nothing outdated", ());
                         }
                         Output::err_generic("failed to initialize bun install: {s}", (err.name(),));
@@ -88,7 +88,7 @@ impl OutdatedCommand {
         ctx: Command::Context,
         original_cwd: &[u8],
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // Reshaped for borrowck — `load_from_cwd` would otherwise alias
         // `PackageManager` with its `lockfile` field. Project disjoint
         // raw pointers from the singleton first; `load_from_cwd` only reads
@@ -162,7 +162,7 @@ impl OutdatedCommand {
     fn outdated_dispatch<const ENABLE_ANSI_COLORS: bool>(
         original_cwd: &[u8],
         manager: &mut PackageManager,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if !manager.options.filter_patterns.is_empty() {
             let filters = manager.options.filter_patterns;
             let workspace_pkg_ids = Self::find_matching_workspaces(original_cwd, manager, filters);
@@ -412,7 +412,7 @@ impl OutdatedCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
         was_filtered: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let package_patterns: Option<Vec<FilterType<'_>>> = 'package_patterns: {
             let args = manager.options.positionals.get(1..).unwrap_or(&[]);
             if args.is_empty() {

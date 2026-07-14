@@ -1,23 +1,30 @@
-# Documentation: http://trac.webkit.org/wiki/TestExpectations
 # Format: [modifier] test-name [[ expectations ]] [# comment]
+#
+# READ THIS BEFORE ADDING AN ENTRY.
+#
+# An entry does ONE thing: it removes the file from the run on every platform
+# the modifier matches. The runner parses the expectation kind (FAIL / SKIP /
+# CRASH / FLAKY / LEAK / TIMEOUT) but never reads it — see getRelevantTests in
+# scripts/runner.node.mjs. They are all the same thing, and there is no
+# "run it and expect failure" mode.
+#
+# So: quarantining ONE broken case here silently deletes the whole file's
+# coverage. If a single test is broken, skip THAT test in the file
+# (test.skip / test.skipIf(isASAN) / test.todo, with a comment naming the
+# failure) and do not add an entry here. Reserve this file for a file that
+# cannot be run at all — it hangs, crashes the runner, or trips LeakSanitizer.
+#
+# Entries match by SUBSTRING, so a path prefix quarantines an entire family.
+# A stale entry is invisible: the file simply never runs and nobody finds out.
 
 # Tests that are broken
-test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
-test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires node 24: @angular/cli@latest needs a newer Node.js than Bun reports (24.3.0), unskip after the Node.js version bump
 [ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
-test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
-test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
 
-# structuredClone(process.env) is POSIX-only: on Windows process.env is a Proxy
-# (for case-insensitive lookups), and the structured clone algorithm rejects
-# Proxy objects with DataCloneError. Tracked as a follow-up to move Windows
-# case-insensitivity into JSEnvironmentVariableMap so both platforms share the
-# exotic class and the Proxy can be dropped.
-[ WINDOWS ] test/js/node/test/parallel/test-process-env.js [ FAIL ] # structuredClone(Proxy) throws DataCloneError
-
-# Exposed by the bun -e/--eval fix that stopped swallowing uncaught exceptions (see PR #31826):
-# the spawned child needs process.binding('inspector'), which is not implemented
-test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
+# The whole file's beforeAll builds a napi addon with node-gyp, and the Windows
+# agents have no ClangCL toolset ("MSB8020: The build tools for ClangCL cannot
+# be found"), so nothing in the file can run there. Remove once the agent image
+# ships ClangCL. Runs everywhere else.
+[ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
 # Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
@@ -33,11 +40,6 @@ test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
 # linux-x64-musl matrix only; still runs everywhere else (build 63145:
 # alpine 3.23 x64 + x64-baseline only).
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # same FinalizationRegistry-timing class as its TLS sibling above
-# Pre-existing race: the server pushes ~1MB then destroySoon()s; on
-# darwin-14 aarch64 the client occasionally reads ~48KB short before EOF
-# (last buffered chunk vs close ordering). Tracked alongside #32488.
-[ DARWIN ] test/js/node/test/parallel/test-tls-client-destroy-soon.js [ FLAKY ] # 48KB-short read race on darwin-14 aarch64
 
 # Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
 test/js/node/test/parallel/test-stream-pipeline.js [ SKIP ] # block at L271 hangs: pipeline(rs, req) writes 11x'hello' raw after a never-ended GET's \r\n\r\n; node's llhttp rejects lowercase 'h' as a method char (HPE_INVALID_METHOD -> clientError -> 400+close -> req 'close' -> pipeline callback fires), but bun's uWS HttpParser buffers any incomplete run of valid tchars waiting for the request-line, so the connection stays open and the callback never fires. Pre-existing server-parser leniency; needs uWS HttpParser to reject non-uppercase method bytes like llhttp.
@@ -57,13 +59,6 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
-[ ASAN ] test/regression/issue/30205.test.ts [ FLAKY ] # NapiFinalizerTask LSAN abort during --isolate global teardown — see #32176, #32144
-
-# Tests skipped due to different log/line outputs
-[ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch
-[ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # Unexpected identifier "WARNING"
-[ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ] # bunshell > quiet > basic
-[ ASAN ] test/bundler/cli.test.ts [ SKIP ] # debug logs
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
@@ -98,9 +93,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
 [ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ LEAK ] # should not leak memory with already aborted signals
 [ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
-test/js/web/streams/streams-leak.test.ts [ FLAKY ] # RSS-delta thresholds vary with machine load (hit alpine x64-baseline #64409, debian x64-baseline #63373)
 [ ASAN ] test/js/web/fetch/fetch-leak.test.ts [ LEAK ]
-[ DARWIN ] test/js/web/fetch/fetch-leak.test.ts [ FLAKY ] # RSS-threshold checks vary with machine load on the darwin-14 aarch64 runners
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
 [ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
@@ -219,8 +212,6 @@ test/js/node/test/parallel/test-http2-util-asserts.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-headers-list.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-nghttp2error.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-update-options-buffer.js [ FAIL ] # not yet passing
-test/js/node/test/sequential/test-http2-timeout-large-write-file.js [ FAIL ] # not yet passing
-test/js/node/test/sequential/test-http2-timeout-large-write.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-autoselect-protocol.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-client-connection-tunnelling.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-client-jsstream-destroy.js [ SKIP ] # hangs; skip until the underlying feature lands
@@ -229,9 +220,6 @@ test/js/node/test/parallel/test-http2-max-invalid-frames.js [ SKIP ] # hangs; sk
 test/js/node/test/parallel/test-http2-pack-end-stream-flag.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-ping-unsolicited-ack.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-session-cleanup-on-nghttp2-goaway.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-max-session-memory.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-ping-flood.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-settings-flood.js [ SKIP ] # hangs; skip until the underlying feature lands
 
 # AddressSanitizer findings under investigation on the HTTP/2 inbound path
 [ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js [ SKIP ] # ASan report under investigation
@@ -249,7 +237,6 @@ test/js/node/http2/h2-conformance.test.ts [ FAIL ] # under reconciliation with t
 test/js/node/http2/node-http2-invalid-padding.test.ts [ FAIL ] # legacy-parser expectations under reconciliation
 [ ASAN ] test/js/third_party/grpc-js/test-server.test.ts [ SKIP ] # connect-race socket lifetime report under investigation
 [ WINDOWS ] test/js/third_party/grpc-js/test-server.test.ts [ FAIL ] # http2 teardown gap on Windows
-[ DARWIN ] test/js/third_party/grpc-js/test-server.test.ts [ FLAKY ] # intermittent SIGTRAP on darwin-14 (h2 connect race; same as the ASAN gate above)
 
 # Platform-specific http2 failures pending the socket-layer fixes (connect-race lifetime on
 # Linux/ASan, teardown gaps on Windows). Enumerated from CI so coverage stays on for everything else.

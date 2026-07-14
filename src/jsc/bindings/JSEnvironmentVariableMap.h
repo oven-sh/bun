@@ -1,4 +1,5 @@
 #include "root.h"
+#include "SharedEnvStore.h"
 
 #include <JavaScriptCore/JSObject.h>
 
@@ -68,5 +69,15 @@ void invalidateLiveDateInstanceCaches(JSC::VM&);
 // resetIfNecessarySlow() + invalidateLiveDateInstanceCaches(): every caller
 // that changes the time zone override must do both, so use this instead.
 void resetDateCachesAfterTimeZoneChange(JSC::VM&);
+
+// worker_threads SHARE_ENV: a `process.env` whose reads/writes/enumeration go
+// through the SharedEnvStore of the tree its global belongs to.
+JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
+
+// Resolve the SHARE_ENV store for a worker spawned from `globalObject`: the
+// spawning thread's existing store if it has one, otherwise a fresh store seeded
+// from its `process.env` (which is then swapped to a write-through view).
+// Returns null if seeding threw.
+RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject);
 
 }

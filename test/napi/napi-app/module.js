@@ -77,6 +77,45 @@ nativeTests.test_promise_with_threadsafe_function = async () => {
   return await nativeTests.create_promise_with_threadsafe_function(() => 1234);
 };
 
+nativeTests.test_threadsafe_function_abort_then_last_release = async (_, queued = 0) => {
+  // create (thread_count=1), acquire (=2), optionally queue items, abort (=1, closing)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release(queued);
+  // let the abort's scheduled dispatch run first
+  await new Promise(resolve => setImmediate(resolve));
+  // release the last reference of the already-closing tsfn (=0)
+  nativeTests.test_napi_threadsafe_function_abort_then_last_release_drop();
+  // wait for the finalizer (bounded poll, not a timed sleep)
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_then_last_release_finalized());
+  // the process must exit on its own after this returns; a leaked event-loop
+  // keepalive would hang it forever
+};
+
+nativeTests.test_threadsafe_function_abort_full_queue = async () => {
+  // abort a tsfn whose bounded queue is full, then call it without blocking:
+  // napi_closing (16), not napi_queue_full (17), and it must still finalize
+  console.log("call after abort:", nativeTests.test_napi_threadsafe_function_abort_full_queue());
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_full_queue_finalized());
+};
+
+nativeTests.test_threadsafe_function_abort_blocked_producers = async () => {
+  // create (max_queue_size=1, thread_count=3), fill the queue, spawn two
+  // producers that block on the condvar, then abort
+  nativeTests.test_napi_threadsafe_function_abort_blocked_producers();
+  for (let i = 0; i < 1000; i++) {
+    if (nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized()) break;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  console.log("finalized:", nativeTests.test_napi_threadsafe_function_abort_blocked_producers_finalized());
+};
+
 nativeTests.test_get_exception = (_, value) => {
   function thrower() {
     throw value;
@@ -957,6 +996,55 @@ nativeTests.test_create_tsfn_with_async_context = async () => {
       setTimeout(resolve, 100);
     });
   });
+};
+
+// An addon's own threads outlive the worker that created the threadsafe
+// functions (next-swc's tokio pool does this): the last call and the last
+// release land after the worker's VM, and the event loop they point at, are
+// gone.
+async function runOrphanWorker(workerData) {
+  const { Worker } = require("node:worker_threads");
+  const path = require("node:path");
+  const worker = new Worker(path.join(__dirname, "tsfn-orphan-worker.js"), { workerData });
+  const code = await new Promise((resolve, reject) => {
+    worker.on("error", reject);
+    worker.on("exit", resolve);
+  });
+  return code;
+}
+
+nativeTests.test_threadsafe_function_orphaned_by_worker = async () => {
+  console.log("worker exited with", await runOrphanWorker());
+  console.log(nativeTests.use_orphaned_threadsafe_functions());
+};
+
+// Bun-only: an orphaned threadsafe function is freed by whichever thread drops
+// its last reference, including a call that reports napi_closing. Every
+// iteration must end with as many live threadsafe functions as it started with.
+nativeTests.test_threadsafe_function_orphan_leak = async () => {
+  const { napiThreadsafeFunctionLiveCount } = require("bun:internal-for-testing");
+  const before = napiThreadsafeFunctionLiveCount();
+  for (let i = 0; i < 5; i++) {
+    const code = await runOrphanWorker({ leak: 5 });
+    if (code !== 0) throw new Error(`worker exited with ${code}`);
+    const orphaned = napiThreadsafeFunctionLiveCount() - before;
+    const closing = nativeTests.call_leaked_threadsafe_functions();
+    console.log(`orphaned=${orphaned} closing=${closing} leaked=${napiThreadsafeFunctionLiveCount() - before}`);
+  }
+};
+
+// Microtasks queued by one threadsafe-function callback must be drained before
+// the next callback in the same dispatch, and not before the first one.
+nativeTests.test_threadsafe_function_microtask_order = async () => {
+  let n = 0;
+  nativeTests.test_napi_threadsafe_function_microtask_order(null, () => {
+    const i = ++n;
+    console.log("callback", i);
+    Promise.resolve().then(() => console.log("microtask", i));
+  });
+  for (let i = 0; i < 1000 && n < 3; i++) {
+    await new Promise(resolve => setImmediate(resolve));
+  }
 };
 
 module.exports = nativeTests;

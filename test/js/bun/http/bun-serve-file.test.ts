@@ -1061,3 +1061,80 @@ process.exit(0);
   expect(stdout.trim()).toBe("file-response-started\nstill-serving");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// On Windows, FileResponseStream closes its fd via Closer::close in Drop AND
+// WindowsBufferedReader::Drop closed the same CRT fd via File::start_close
+// (CLOSE_HANDLE was cleared on the reader but never honored). Between the two
+// async uv_fs_close calls, an unrelated open could be handed the recycled
+// slot and have it closed under it. On POSIX the reader honors CLOSE_HANDLE,
+// so this is effectively a Windows regression test.
+test.skipIf(!isWindows)(
+  "Response(Bun.file) does not double-close the fd on Windows",
+  async () => {
+    using dir = tempDir("serve-file-double-close", {
+      "served.bin": Buffer.alloc(32 * 1024, 65),
+      "victim.json": JSON.stringify({ ok: true }),
+      "fixture.ts": /* ts */ `
+import { openSync, fstatSync, closeSync } from "node:fs";
+let serverError: unknown;
+const server = Bun.serve({
+  port: 0,
+  fetch() {
+    return new Response(Bun.file("served.bin"));
+  },
+  error(e) {
+    serverError ??= e;
+    return new Response("err", { status: 500 });
+  },
+});
+const url = "http://127.0.0.1:" + server.port + "/";
+let canaryHits = 0;
+for (let round = 0; round < 160; round++) {
+  const tasks: Promise<unknown>[] = [];
+  // Full fetches: each one drops a FileResponseStream on completion.
+  for (let i = 0; i < 48; i++) tasks.push(fetch(url).then(r => r.arrayBuffer()));
+  // Aborted fetches: each one drops a FileResponseStream from on_aborted,
+  // which is where the double-close raced most readily against new opens.
+  for (let i = 0; i < 48; i++) {
+    const c = new AbortController();
+    tasks.push(
+      fetch(url, { signal: c.signal })
+        .then(r => { c.abort(); return r.arrayBuffer().catch(() => {}); })
+        .catch(() => {}),
+    );
+  }
+  // Victim Bun.file().text() reads (async uv_fs_open -> uv_fs_fstat).
+  for (let i = 0; i < 16; i++) {
+    tasks.push(Bun.file("victim.json").json().then(v => {
+      if (!v.ok) throw new Error("wrong contents");
+    }));
+  }
+  await Promise.all(tasks);
+  if (serverError) throw serverError;
+  // Canary: a synchronously opened fd must still be valid on the next tick.
+  // The second queued uv_fs_close runs on the threadpool and, without the
+  // fix, can close this exact recycled slot.
+  const canary = openSync("victim.json", "r");
+  await Bun.sleep(0);
+  try { fstatSync(canary); } catch { canaryHits++; }
+  try { closeSync(canary); } catch {}
+}
+server.stop(true);
+if (canaryHits) throw new Error("double-close closed " + canaryHits + " canary fds");
+console.log("OK");
+`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
+  },
+  60_000,
+);

@@ -252,7 +252,7 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage1Bod
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto transfer = convert<IDLSequence<IDLObject>>(*lexicalGlobalObject, argument1.value());
+    auto transfer = convertTransferList(*lexicalGlobalObject, argument1.value(), "Optional transferList argument must be an iterable"_s, BadTransferElement::ThrowDataCloneError);
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(transfer)); })));
 }
@@ -268,8 +268,24 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessage2Bod
     auto message = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto options = convert<IDLDictionary<StructuredSerializeOptions>>(*lexicalGlobalObject, argument1.value());
-    RETURN_IF_EXCEPTION(throwScope, {});
+    // Not convert<IDLDictionary<StructuredSerializeOptions>>: that path is shared with
+    // structuredClone(), where node reports a non-object transfer element as a TypeError.
+    // From postMessage() the same element is a DataCloneError.
+    StructuredSerializeOptions options;
+    JSValue optionsValue = argument1.value();
+    if (!optionsValue.isUndefinedOrNull()) {
+        auto* optionsObject = optionsValue.getObject();
+        if (!optionsObject) [[unlikely]] {
+            throwTypeError(lexicalGlobalObject, throwScope);
+            return {};
+        }
+        JSValue transferValue = optionsObject->get(lexicalGlobalObject, Identifier::fromString(vm, "transfer"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!transferValue.isUndefined()) {
+            options.transfer = convertTransferList(*lexicalGlobalObject, transferValue, "Optional options.transfer argument must be an iterable"_s, BadTransferElement::ThrowDataCloneError);
+            RETURN_IF_EXCEPTION(throwScope, {});
+        }
+    }
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.postMessage(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(message), WTF::move(options)); })));
 }
 
@@ -289,6 +305,10 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isUndefinedOrNull())
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
+        // node: a non-object transferList (number/string/boolean/symbol) is
+        // rejected as not-an-iterable before any iteration is attempted.
+        if (!distinguishingArg.isObject())
+            return throwVMError(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Optional transferList argument must be an iterable"_s));
         {
             bool success = hasIteratorMethod(lexicalGlobalObject, distinguishingArg);
             RETURN_IF_EXCEPTION(throwScope, {});

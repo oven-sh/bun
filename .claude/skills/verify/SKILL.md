@@ -1,54 +1,30 @@
 ---
 name: verify
-description: Drive Bun's debug binary end-to-end to observe a change working at the CLI/runtime surface — not tests, not typecheck.
+description: Verify a Bun runtime change by driving the debug binary end-to-end.
 ---
 
-# Verifying a Bun change
+# Verify a Bun runtime change
 
-**Surface:** the `bun` CLI (`./build/debug/bun-debug`). Almost every change is
-observable via `bun-debug -e '<script>'` or `bun-debug <file>`.
+Build and drive the debug binary directly — never `bun test`, never import-and-call.
 
-## Get a handle
-
-```sh
-bun bd                       # builds ./build/debug/bun-debug (takes a while first time)
-./build/debug/bun-debug -e 'console.log(Bun.version)'   # sanity
-```
-
-`bun bd <args>` builds then execs the args, but for repeated verification runs
-after a single build, invoke `./build/debug/bun-debug` directly to skip the
-rebuild check.
-
-Set `BUN_DEBUG_QUIET_LOGS=1` to suppress the debug-build's scoped logging noise.
-
-## Drive it
-
-Changed a runtime API, `node:*` compat, or a CLI flag → compose a `-e` one-liner
-that reaches it and print the observable result:
+## Build
 
 ```sh
-BUN_DEBUG_QUIET_LOGS=1 ./build/debug/bun-debug -e 'process.emitWarning("x")'
-BUN_DEBUG_QUIET_LOGS=1 ./build/debug/bun-debug --some-flag -e '...'
-BUN_DEBUG_QUIET_LOGS=1 TZ=UTC ./build/debug/bun-debug -e '...'
+bun bd --version   # builds ./build/debug/bun-debug and prints its version
 ```
 
-Changed `Bun.serve` / sockets / spawn → the `-e` script starts the server on
-`port: 0` and hits it with `fetch`/`net.connect` in the same process, printing
-what came back.
+## Drive
 
-Changed the bundler / transpiler / install → drive the corresponding CLI verb
-(`./build/debug/bun-debug build entry.ts`, `... install`) against a
-`tempDir`-shaped fixture in the session scratchpad and inspect the output
-files.
+For any JS-visible change, run the debug binary with `-e` and observe stdout:
 
-## Compare to the oracle
+```sh
+bun bd -e '<repro>'   # builds, then runs; sets BUN_DEBUG_QUIET_LOGS for you
+```
 
-For Node compat changes, run the identical `-e` script under `node` and diff.
-For regressions, run under the last release (`bun -e '...'` without `bd`).
+For worker/subprocess-shaped changes, spawn a subprocess (still `-e`) so worker teardown / event-loop-idle paths are exercised. Cross-check against `node -e '<same repro>'` for Node-compat changes.
 
 ## Gotchas
 
-- macOS: ports/paths — bind `:0`, unix sockets under `os.tmpdir()`.
-- Debug build is 10-100x slower than release; keep probes tiny.
-- `bun bd test <file>` is the test runner, not verification — don't reach for
-  it here.
+- `BUN_DEBUG_QUIET_LOGS=1` suppresses debug-build log spam.
+- MessagePort's `.on/.off` are added by requiring `worker_threads` — plain `new MessageChannel()` ports only have `addEventListener` until then.
+- The debug+asan build is 10-100× slower than release; large-allocation stress tests can time out locally while passing in CI.

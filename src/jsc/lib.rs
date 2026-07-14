@@ -57,6 +57,8 @@ pub const CONV: &str = "C";
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
 // .rs file.
 // ──────────────────────────────────────────────────────────────────────────
+pub mod error;
+pub use error::{Error as CrateError, Result as CrateResult};
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]
@@ -719,27 +721,27 @@ impl<T> JsResultExt for JsResult<T> {
     }
 }
 
-impl From<bun_core::Error> for JsError {
-    fn from(_: bun_core::Error) -> Self {
+impl From<crate::CrateError> for JsError {
+    fn from(_: crate::CrateError) -> Self {
         // Mapping to `Thrown` here lets `?` propagate while the actual throw
         // is handled by the host-fn wrapper.
         JsError::Thrown
     }
 }
 
-impl From<JsError> for bun_core::Error {
-    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
-    /// the exact error tag so call sites that round-trip through
-    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
-    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
+impl From<JsError> for crate::CrateError {
+    /// Widen a `bun.JSError` value back into the crate error enum. Preserves
+    /// the exact error tag so call sites that round-trip through it (e.g. the
+    /// `bun_bundler::dispatch::DevServerVTable` boundary) keep
+    /// `error.OutOfMemory` distinguishable from `error.JSError`.
     #[inline]
     fn from(e: JsError) -> Self {
         match e {
-            JsError::OutOfMemory => bun_core::err!("OutOfMemory"),
+            JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
             // `Terminated` (worker shutdown) has no distinct error tag of its
             // own, so collapse into `JSError` like every other thrown JS
             // exception.
-            JsError::Thrown | JsError::Terminated => bun_core::err!("JSError"),
+            JsError::Thrown | JsError::Terminated => crate::CrateError::JSError,
         }
     }
 }

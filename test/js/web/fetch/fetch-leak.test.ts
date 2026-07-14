@@ -155,8 +155,10 @@ describe.each(["FormData", "Blob", "Buffer", "String", "URLSearchParams", "strea
       expect(last).toBeLessThan(first * 10);
     },
     // The URLSearchParams variant URL-encodes the 2MB body on each of the 500
-    // requests - pure throughput that a debug build cannot fit in 20s.
-    isDebug ? 120 * 1000 : 20 * 1000,
+    // requests - pure throughput that a debug build cannot fit in 20s, and
+    // ASAN instrumentation overruns the 20s release deadline the same way
+    // (observed 20000.61ms on the x64-asan lane).
+    isDebug || isASAN ? 120 * 1000 : 20 * 1000,
   );
 });
 

@@ -159,4 +159,10 @@ impl From<bun_parsers::json5::ExternalError> for Error {
     }
 }
 
+impl From<bun_parsers::xml::ExternalError> for Error {
+    fn from(e: bun_parsers::xml::ExternalError) -> Self {
+        Self::Parsers(e.into())
+    }
+}
+
 pub type Result<T, E = Error> = core::result::Result<T, E>;

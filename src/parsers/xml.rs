@@ -65,7 +65,6 @@ pub enum ParseError {
 
 bun_core::impl_tag_error!(ParseError);
 bun_core::oom_from_alloc!(ParseError);
-bun_core::named_error_set!(ParseError);
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr, Debug)]
 pub enum ExternalError {
@@ -75,12 +74,12 @@ pub enum ExternalError {
 }
 bun_core::impl_tag_error!(ExternalError);
 
-impl From<ExternalError> for bun_core::Error {
+impl From<ExternalError> for crate::Error {
     fn from(e: ExternalError) -> Self {
         match e {
-            ExternalError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            ExternalError::SyntaxError => bun_core::err!("SyntaxError"),
-            ExternalError::StackOverflow => bun_core::err!("StackOverflow"),
+            ExternalError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ExternalError::SyntaxError => crate::Error::SyntaxError,
+            ExternalError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }

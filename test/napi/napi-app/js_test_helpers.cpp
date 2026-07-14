@@ -295,6 +295,30 @@ static napi_value make_empty_object(const Napi::CallbackInfo &info) {
   return object;
 }
 
+// get_property_names(object) -> array
+static napi_value get_property_names(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value result;
+  NODE_API_CALL(env, napi_get_property_names(env, info[0], &result));
+  return result;
+}
+
+// get_all_property_names(object, key_mode, key_filter, key_conversion) -> array
+static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t key_mode, key_filter, key_conversion;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[1], &key_mode));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[2], &key_filter));
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[3], &key_conversion));
+  napi_value result;
+  NODE_API_CALL(env,
+                napi_get_all_property_names(
+                    env, info[0], (napi_key_collection_mode)key_mode,
+                    (napi_key_filter)key_filter,
+                    (napi_key_conversion)key_conversion, &result));
+  return result;
+}
+
 // add_tag(object, lower, upper)
 static napi_value add_tag(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -487,6 +511,8 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, get_all_property_names);
   REGISTER_FUNCTION(env, exports, make_empty_array);
   REGISTER_FUNCTION(env, exports, make_empty_object);
+  REGISTER_FUNCTION(env, exports, get_property_names);
+  REGISTER_FUNCTION(env, exports, get_all_property_names);
   REGISTER_FUNCTION(env, exports, add_tag);
   REGISTER_FUNCTION(env, exports, try_add_tag);
   REGISTER_FUNCTION(env, exports, check_tag);

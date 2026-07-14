@@ -236,6 +236,43 @@ nativeTests.test_set_property = () => {
   }
 };
 
+nativeTests.test_property_names_cache_poisoning = () => {
+  // napi_key_include_prototypes = 0, napi_key_own_only = 1
+  // napi_key_all_properties = 0, napi_key_skip_symbols = 16
+  // napi_key_keep_numbers = 0
+  const mkA = () => ({ a: 1, b: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkA(), 0, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(include_prototypes):", Reflect.ownKeys(mkA()).join(","));
+  console.log("Object.keys after get_all_property_names(include_prototypes):", Object.keys(mkA()).join(","));
+
+  const proto = { pEnum: 9 };
+  const mkB = () => {
+    const o = Object.create(proto);
+    o.w1 = 1;
+    o.w2 = 2;
+    return o;
+  };
+  for (let i = 0; i < 20; i++) nativeTests.get_property_names(mkB());
+  console.log("Object.keys after get_property_names:", Object.keys(mkB()).join(","));
+  console.log("Reflect.ownKeys after get_property_names:", Reflect.ownKeys(mkB()).join(","));
+
+  const mkC = () => ({ c: 1, d: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkC(), 0, 16, 0);
+  console.log("Object.getOwnPropertyNames after skip_symbols chain walk:", Object.getOwnPropertyNames(mkC()).join(","));
+
+  // Own-only mode must still return only own keys and not poison anything.
+  const mkD = () => ({ e: 1, f: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkD(), 1, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(own_only):", Reflect.ownKeys(mkD()).join(","));
+
+  // The napi result itself should still include inherited keys.
+  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0);
+  console.log("napi include_prototypes result has own a,b:", apnResult.includes("a") && apnResult.includes("b"));
+  console.log("napi include_prototypes result has inherited toString:", apnResult.includes("toString"));
+  const gpnResult = nativeTests.get_property_names(mkB());
+  console.log("napi get_property_names result:", gpnResult.join(","));
+};
+
 nativeTests.test_number_integer_conversions_from_js = () => {
   const i32 = { min: -(2 ** 31), max: 2 ** 31 - 1 };
   const u32Max = 2 ** 32 - 1;

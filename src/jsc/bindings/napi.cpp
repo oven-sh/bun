@@ -48,6 +48,7 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/PropertyNameArray.h>
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include "JSFFIFunction.h"
@@ -1812,6 +1813,35 @@ extern "C" napi_status napi_create_typedarray(
 
 namespace Zig {
 
+// Walk the prototype chain collecting property names without touching JSC's
+// per-Structure own-keys cache. JSC::allPropertyKeys() stores the chain-walked
+// list there, poisoning Reflect.ownKeys/Object.keys for same-shaped objects.
+static JSArray* collectInheritedPropertyKeys(JSGlobalObject* globalObject, JSObject* object, PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+{
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PropertyNameArrayBuilder properties(vm, propertyNameMode, PrivateSymbolMode::Exclude);
+    object->getPropertyNames(globalObject, properties, dontEnumPropertiesMode);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    unsigned numProperties = properties.size();
+    JSArray* keys = JSArray::create(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), numProperties);
+    for (unsigned i = 0; i < numProperties; i++) {
+        const auto& identifier = properties[i];
+        JSValue key;
+        if (propertyNameMode != PropertyNameMode::Strings && identifier.isSymbol()) {
+            ASSERT(!identifier.isPrivateName());
+            key = Symbol::create(vm, static_cast<SymbolImpl&>(*identifier.impl()));
+        } else {
+            key = jsOwnedString(vm, identifier.string());
+        }
+        keys->putDirectIndex(globalObject, i, key);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return keys;
+}
+
 extern "C" napi_status napi_get_all_property_names(
     napi_env env, napi_value objectNapi, napi_key_collection_mode key_mode,
     napi_key_filter key_filter, napi_key_conversion key_conversion,
@@ -1839,7 +1869,7 @@ extern "C" napi_status napi_get_all_property_names(
 
     JSArray* exportKeys = nullptr;
     if (key_mode == napi_key_include_prototypes) {
-        exportKeys = allPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
+        exportKeys = collectInheritedPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
     } else {
         exportKeys = ownPropertyKeys(globalObject, object, jsc_property_mode, jsc_key_mode);
     }
@@ -2008,7 +2038,7 @@ extern "C" napi_status napi_get_property_names(napi_env env, napi_value object,
     Zig::GlobalObject* globalObject = toJS(env);
 
     JSC::EnsureStillAliveScope ensureStillAlive(jsValue);
-    JSValue value = JSC::allPropertyKeys(globalObject, jsObject, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
+    JSValue value = collectInheritedPropertyKeys(globalObject, jsObject, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude);
     NAPI_RETURN_IF_EXCEPTION(env);
     JSC::EnsureStillAliveScope ensureStillAlive1(value);
 

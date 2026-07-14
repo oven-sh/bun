@@ -619,6 +619,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_property_names / napi_get_all_property_names", () => {
+    it("does not poison JSC's per-Structure own-keys cache", async () => {
+      const output = await checkSameOutput("test_property_names_cache_poisoning", []);
+      expect(output).toContain("Reflect.ownKeys after get_all_property_names(include_prototypes): a,b");
+      expect(output).toContain("Object.keys after get_property_names: w1,w2");
+      expect(output).toContain("napi get_property_names result: w1,w2,pEnum");
+    });
+  });
+
   describe("napi_value <=> integer conversion", () => {
     it("works", async () => {
       await checkSameOutput("test_number_integer_conversions_from_js", []);

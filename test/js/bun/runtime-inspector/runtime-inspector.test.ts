@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isWindows } from "harness";
+import os from "node:os";
 
 // Bun.serve with hostname "localhost" may bind to ::1 only on some systems,
 // while WebSocket("ws://localhost:...") resolves to 127.0.0.1. Try both.
@@ -551,8 +552,9 @@ describe.skipIf(isWindows)("--disable-sigusr1", () => {
     const stderr = await targetProc.stderr.text();
     // Should NOT see Bun Inspector banner
     expect(stderr).not.toContain("Bun Inspector");
-    // Process should be terminated by SIGUSR1's default action
-    await targetProc.exited;
-    expect(targetProc.signalCode).toBe("SIGUSR1");
+    // Process should be terminated by SIGUSR1's default action. Assert on the
+    // numeric exit code; Bun's signalCode name lookup maps macOS's SIGUSR1
+    // (30) to "SIGPWR" (the Linux name for 30).
+    expect(await targetProc.exited).toBe(128 + os.constants.signals.SIGUSR1);
   });
 });

@@ -165,6 +165,16 @@ static napi_value create_and_throw_error(const Napi::CallbackInfo &info) {
   }
 }
 
+// call_fatal_exception(value) -> napi_status as int32
+static napi_value call_fatal_exception(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value err = info[0];
+  napi_status status = napi_fatal_exception(env, err);
+  napi_value result;
+  NODE_API_CALL(env, napi_create_int32(env, (int32_t)status, &result));
+  return result;
+}
+
 // perform_get(object, key)
 static napi_value perform_get(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -472,6 +482,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, perform_set);
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
+  REGISTER_FUNCTION(env, exports, call_fatal_exception);
   REGISTER_FUNCTION(env, exports, create_latin1_string);
   REGISTER_FUNCTION(env, exports, get_all_property_names);
   REGISTER_FUNCTION(env, exports, make_empty_array);

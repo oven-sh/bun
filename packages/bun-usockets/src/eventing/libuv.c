@@ -74,6 +74,15 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
       } else if (peeked < 0 && !bsd_would_block()) {
         error = 1;
         events |= UV_READABLE;
+      } else if (peeked > 0 && us_socket_get_error((struct us_socket_t *)wp) != 0) {
+        /* Data is buffered ahead of whatever ended the connection. If the
+         * peer ABORTED, the kernel already discarded the stream's tail and a
+         * paused socket that never resumes would otherwise never learn -
+         * node's paused sockets error immediately on a reset, buffered data
+         * included. SO_ERROR separates that from a graceful FIN behind data,
+         * which stays deferred until resume. */
+        error = 1;
+        events |= UV_READABLE;
       }
     } else {
       events |= UV_READABLE;

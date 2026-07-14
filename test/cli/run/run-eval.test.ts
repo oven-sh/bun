@@ -294,7 +294,7 @@ describe("node-style CLI argument errors", () => {
   // Node exits with code 9 and `<execPath>: <flag> requires an argument` when a
   // flag that needs a value is passed without one. Bun matches that contract for
   // the runtime flags it shares with Node.
-  test.each(["-e", "--eval", "-p", "--print", "--inspect-port", "--debug-port"])(
+  test.each(["-e", "--eval", "--inspect-port", "--debug-port"])(
     "%s without a value exits with code 9 and Node's error message",
     flag => {
       const { stdout, stderr, exitCode } = Bun.spawnSync({
@@ -479,6 +479,88 @@ describe("NODE_OPTIONS validation", () => {
       env: { ...bunEnv, NODE_OPTIONS: "--no-warnings --max-old-space-size=4096 --stack-trace-limit=100" },
     });
     expect(stdout.toString("utf8")).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("node-style -e / -p composition", () => {
+  // Matches Node: -p/--print is print mode whose script may also come from
+  // -e/--eval or be omitted entirely.
+  test.each(["-p", "--print"])("bare %s prints undefined like Node", flag => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [bunExe(), flag], env: bunEnv });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([[["-pe", "40 + 2"]], [["-p", "-e", "40 + 2"]], [["-p", "40 + 2"]], [["--print", "--eval=40 + 2"]]])(
+    "%j prints the result",
+    args => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [bunExe(), ...args], env: bunEnv });
+      expect(stderr.toString("utf8")).toBe("");
+      expect(stdout.toString("utf8")).toBe("42\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("--print --eval=-42 keeps the negative value", () => {
+    const { stdout, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "--print", "--eval=-42"], env: bunEnv });
+    expect(stdout.toString("utf8")).toBe("-42\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test('-p "\\-42" unescapes the leading dash', () => {
+    const { stdout, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "-p", "\\-42"], env: bunEnv });
+    expect(stdout.toString("utf8")).toBe("-42\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test('-e "" runs an empty program', () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("-e followed by another option is a missing argument (exit 9)", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "-e", "-p"], env: bunEnv });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: -e requires an argument`);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  // Node only unescapes a leading "\-" for a separate argument, so the '=' form
+  // keeps the backslash and the expression is a syntax error.
+  test("--eval=\\-42 does not unescape the leading dash", () => {
+    const { stdout, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "--eval=\\-42"], env: bunEnv });
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // An empty value is distinct from an absent one: `-e ""` is an empty program,
+  // but `--eval=` is a missing argument.
+  test("--eval= (empty value) exits with code 9", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "--eval="], env: bunEnv });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: --eval= requires an argument`);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  // --print is a boolean upstream, so an empty '=' value is no value at all
+  // rather than the error --eval= raises.
+  test("--print= (empty value) prints undefined", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "--print="], env: bunEnv });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Node does not consume an empty argument as -p's script, so the empty string
+  // stays a positional and ends option parsing: the -e never applies.
+  test('-p "" leaves the following -e unparsed', () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({ cmd: [bunExe(), "-p", "", "-e", "42"], env: bunEnv });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("undefined\n");
     expect(exitCode).toBe(0);
   });
 });

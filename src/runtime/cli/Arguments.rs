@@ -246,9 +246,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "-i                                Auto-install dependencies during execution. Equivalent to --install=fallback."
     ),
-    parse_param!("-e, --eval <STR>                  Evaluate argument as a script"),
+    parse_param!("-e, --eval <STR>!                 Evaluate argument as a script"),
     parse_param!(
-        "-p, --print <STR>                 Evaluate argument as a script and print the result"
+        "-p, --print <STR>?!               Evaluate argument as a script and print the result"
     ),
     parse_param!(
         "--input-type <STR>                Module type for string input from stdin or --eval: \"module\" or \"commonjs\""
@@ -852,23 +852,29 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // For runtime flags borrowed from Node.js, report a missing value
             // the way `node` does (and with its exit code 9) so scripts that
             // branch on Node's CLI error contract behave the same under Bun.
-            if err == bun_core::err!("MissingValue")
+            if err == clap::Error::MissingValue
                 && matches!(
                     cmd,
                     CommandTag::AutoCommand | CommandTag::RunCommand | CommandTag::RunAsNodeCommand
                 )
             {
-                let node_flag: Option<&[u8]> = match (diag.short, diag.long.as_deref()) {
-                    (Some(b'e'), _) => Some(b"-e"),
-                    (Some(b'p'), _) => Some(b"-p"),
-                    (_, Some(b"eval")) => Some(b"--eval"),
-                    (_, Some(b"print")) => Some(b"--print"),
-                    (_, Some(b"inspect-port")) => Some(b"--inspect-port"),
-                    (_, Some(b"debug-port")) => Some(b"--debug-port"),
+                // `diag.arg` is the argument as written with its leading
+                // dashes stripped. Node echoes it verbatim, so the long form
+                // keeps a trailing '=' ("node --eval=" reports
+                // "--eval= requires an argument"); the short form reports the
+                // single flag that wanted the value rather than the cluster
+                // it arrived in.
+                let node_flag: Option<Vec<u8>> = match (diag.short, diag.long.as_deref()) {
+                    (Some(short @ (b'e' | b'p')), _) => Some(vec![b'-', short]),
+                    (_, Some(b"eval" | b"print" | b"inspect-port" | b"debug-port")) => {
+                        let mut flag = b"--".to_vec();
+                        flag.extend_from_slice(&diag.arg);
+                        Some(flag)
+                    }
                     _ => None,
                 };
                 if let Some(flag) = node_flag {
-                    exit_node_requires_argument(flag);
+                    exit_node_requires_argument(&flag);
                 }
             }
             // Report useful error and exit
@@ -1157,6 +1163,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
                 // TODO: prevent `node --port <script>` from working
                 ctx.runtime_options.eval.script = port_str.into();
                 ctx.runtime_options.eval.eval_and_print = true;
+                ctx.runtime_options.eval.provided = true;
             } else {
                 opts.port = match strings::parse_int::<u16>(port_str, 10) {
                     Ok(v) => Some(v),
@@ -1225,10 +1232,29 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             }
         }
 
-        if let Some(script) = args.option(b"--print") {
-            ctx.runtime_options.eval.script = script.into();
-            ctx.runtime_options.eval.eval_and_print = true;
-        } else if let Some(script) = args.option(b"--eval") {
+        // Node registers `--print` as a boolean and `--print <arg>` as an alias
+        // for `-pe`, i.e. `--print --eval <arg>`, so -p turns on print mode and
+        // may also carry the script (`bun -p 42`, `bun -pe 42`, `bun -p -e 42`).
+        //
+        // Divergence: because both spellings feed one upstream `--eval` string,
+        // Node takes whichever came last, so `node -p 7 -e 9` prints 9. Bun's
+        // parser keeps the two options in separate slots and has no relative
+        // order between them, so a script on -p wins and it prints 7. Every
+        // other shape matches; passing the script twice is not a form Node's
+        // own suite exercises.
+        let print_arg = args.option(b"--print");
+        let eval_arg = args.option(b"--eval");
+        if print_arg.is_some() || eval_arg.is_some() {
+            // `provided` (not a non-empty script) is what selects eval mode:
+            // `bun -e ""` runs an empty program and bare `bun -p` prints
+            // undefined, while neither flag falls through to help.
+            ctx.runtime_options.eval.provided = true;
+            ctx.runtime_options.eval.eval_and_print = print_arg.is_some();
+            let script: &[u8] = match (print_arg, eval_arg) {
+                (Some(print_script), _) if !print_script.is_empty() => print_script,
+                (_, Some(eval_script)) => eval_script,
+                (print_script, None) => print_script.unwrap_or_default(),
+            };
             ctx.runtime_options.eval.script = script.into();
         }
         if let Some(input_type) = args.option(b"--input-type") {

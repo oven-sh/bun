@@ -984,7 +984,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         let entry: &[u8] = unsafe { &*entry_ptr };
         vm.set_main(entry);
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_entry() {
             // SAFETY: `ctx.runtime_options.eval.script` is process-lifetime
             // (CLI argv); erase the borrow lifetime so the `Source` (stored in
             // the VM for the process duration) can backref into it.
@@ -2973,7 +2973,7 @@ impl RunCommand {
     /// `--preload` modules still execute the way they do under `node --check`.
     /// `Run::start` performs the actual syntax check against the stored source
     /// instead of executing anything user-provided.
-    pub fn exec_check(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+    pub fn exec_check(ctx: &mut ContextData) -> crate::Result<()> {
         let (source, display_name): (Box<[u8]>, Box<[u8]>) = if !ctx.positionals.is_empty() {
             // Resolve the file argument against cwd, like a normal entry point.
             let mut cwd_buf = PathBuffer::uninit();
@@ -3050,7 +3050,7 @@ impl RunCommand {
             return Self::exec_check(ctx);
         }
 
-        if !ctx.runtime_options.eval.script.is_empty() {
+        if ctx.runtime_options.eval.has_entry() {
             // synthetic `[eval]` path under cwd
             let mut entry_point_buf = [0u8; MAX_PATH_BYTES + EVAL_TRIGGER.len()];
             let mut cwd_buf = PathBuffer::uninit();

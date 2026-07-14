@@ -114,7 +114,9 @@ pub type Ref = bun_ptr::ExternalShared<Blob>;
 /// 2: Added byte for whether it's a dom file, length and bytes for `stored_name`,
 ///    and f64 for `last_modified`.
 /// 3: Added File name serialization for File objects (when is_jsdom_file is true)
-const SERIALIZATION_VERSION: u8 = 3;
+/// 4: Added the blob's `size` to file-backed stores so a sliced Bun.file()
+///    keeps its window's end across structuredClone/postMessage
+const SERIALIZATION_VERSION: u8 = 4;
 
 pub use bun_jsc::generated::JSBlob as js;
 
@@ -767,6 +769,10 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
+                // Version 4: a file-backed slice's window end. Written before
+                // resolve_size() so an unresolved blob stays MAX_SIZE (unknown)
+                // on the wire and the receiver stats it locally, like v3.
+                writer.write_int_le::<u64>(self.size.get())?;
                 self.resolve_size();
                 store.serialize(writer)?;
             }
@@ -2360,7 +2366,14 @@ impl BlobExt for Blob {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size.saturating_sub(offset));
+                    let available = store_size - self.offset.get();
+                    // Matches the Bytes arm: a slice's concrete size must not
+                    // widen to the rest of the file; clamp it to `available`.
+                    if self.size.get() == MAX_SIZE {
+                        self.size.set(available);
+                    } else {
+                        self.size.set(self.size.get().min(available));
+                    }
                     return;
                 }
 
@@ -2415,8 +2428,16 @@ impl BlobExt for Blob {
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                    let offset = store_size.min(self.offset.get());
+                    let available = store_size - offset;
+                    // Matches `resolve_size`: a known size (e.g. a slice) is
+                    // authoritative, clamped to `available`.
+                    let size = if self.size.get() == MAX_SIZE {
+                        available
+                    } else {
+                        self.size.get().min(available)
+                    };
+                    return (offset, size);
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());
@@ -4192,6 +4213,10 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     let store_tag = store::SerializeTag::from_raw(reader.read_int_le::<u8>()?)
         .ok_or(crate::Error::InvalidValue)?;
 
+    // Version 4: file-backed records carry the blob's own size so a sliced
+    // Bun.file() keeps its window's end. MAX_SIZE means unknown.
+    let mut file_size: Option<u64> = None;
+
     let blob: *mut Blob = match store_tag {
         store::SerializeTag::Bytes => 'bytes: {
             let bytes_len = reader.read_int_le::<u32>()?;
@@ -4231,6 +4256,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
         }
         store::SerializeTag::File => 'file: {
             use crate::node::types::PathOrFileDescriptorSerializeTag;
+            if version >= 4 {
+                file_size = Some(reader.read_int_le::<u64>()?);
+            }
             let pathlike_tag =
                 PathOrFileDescriptorSerializeTag::from_raw(reader.read_int_le::<u8>()?)
                     .ok_or(crate::Error::InvalidValue)?;
@@ -4319,6 +4347,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     // `offset` comes from untrusted bytes. Clamp it so a crafted payload cannot
     // make shared_view() slice past the end of the backing store (OOB heap read).
     blob.offset.set(offset as SizeType); // intentional truncate
+    if let Some(size) = file_size {
+        // resolve_size() clamps this to the actual file size on first use.
+        if size != MAX_SIZE {
+            blob.size.set(size as SizeType);
+        }
+    }
     if let Some(store) = blob.store.get() {
         let store_size = store.size();
         if store_size != MAX_SIZE {

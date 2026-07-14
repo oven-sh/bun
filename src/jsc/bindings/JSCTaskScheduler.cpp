@@ -14,19 +14,21 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 
 class JSCDeferredWorkTask {
 public:
-    JSCDeferredWorkTask(Ref<Ticket> ticket, Task&& task)
-        : ticket(WTF::move(ticket))
+    JSCDeferredWorkTask(WebCore::JSVMClientData* clientData, Ref<Ticket> ticket, Task&& task)
+        : clientData(clientData)
+        , ticket(WTF::move(ticket))
         , task(WTF::move(task))
     {
     }
 
+    // Captured at enqueue time so Bun__runDeferredWork never has to dereference
+    // ticket->scriptExecutionOwner() (cleared once the ticket is cancelled).
+    WebCore::JSVMClientData* clientData;
     Ref<Ticket> ticket;
     Task task;
     ~JSCDeferredWorkTask()
     {
     }
-
-    JSC::VM& vm() const { return ticket->scriptExecutionOwner()->vm(); }
 
     WTF_MAKE_TZONE_ALLOCATED(JSCDeferredWorkTask);
 };
@@ -44,7 +46,7 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
 }
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket* ticket, Task&& task)
 {
-    auto* job = new JSCDeferredWorkTask(*ticket, WTF::move(task));
+    auto* job = new JSCDeferredWorkTask(clientData, *ticket, WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
 }
 
@@ -89,9 +91,7 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
 
 extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 {
-    auto& vm = job->vm();
-    auto clientData = WebCore::clientData(vm);
-
+    auto* clientData = job->clientData;
     runPendingWork(clientData->bunVM, clientData->deferredWorkTimer, job);
 }
 

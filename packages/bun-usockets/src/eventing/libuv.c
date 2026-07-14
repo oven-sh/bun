@@ -236,6 +236,14 @@ void us_loop_free(struct us_loop_t *loop) {
 
   us_internal_loop_data_free(loop);
 
+  if (loop->uv_tick_timer) {
+    uv_ref((uv_handle_t *)loop->uv_tick_timer);
+    uv_timer_stop(loop->uv_tick_timer);
+    loop->uv_tick_timer->data = loop->uv_tick_timer;
+    uv_close((uv_handle_t *)loop->uv_tick_timer, close_cb_free);
+    loop->uv_tick_timer = 0;
+  }
+
   // we need to run the loop one last round to call all close callbacks
   // we cannot do this if we do not own the loop, default
   if (!loop->is_default) {
@@ -252,6 +260,56 @@ void us_loop_run(struct us_loop_t *loop) {
   uv_update_time(loop->uv_loop);
 
   uv_run(loop->uv_loop, UV_RUN_ONCE);
+}
+
+static void bun_tick_timer_cb(uv_timer_t *t) {
+  /* Wakeup only: the deadline's work (Bun's JS timer heap) is drained by the
+   * caller after uv_run returns. */
+  (void)t;
+}
+
+/* The libuv counterpart of epoll_kqueue.c's us_loop_run_bun_tick: run one
+ * loop iteration that ALWAYS polls I/O and runs timers, bounded by the
+ * caller's deadline. Two gaps in plain uv_run(UV_RUN_ONCE) that this exists
+ * to close:
+ * - uv_run's alive-guard skips timers and I/O entirely when the loop has no
+ *   ref'd handles. Bun refs nothing here by design (socket liveness is
+ *   tracked by Bun-side KeepAlives, and every uSockets poll/async is
+ *   uv_unref'd), so a teardown state - an armed unref'd socket poll whose
+ *   JS owner awaits its close event - wedged forever: no I/O delivery, no
+ *   timer processing, until an unrelated ref'd handle appeared.
+ * - the caller's timespec (Bun's next JS-timer deadline) was discarded, so
+ *   JS timers only fired when something else woke the loop.
+ * Ref the loop-lifetime wakeup async around the iteration so the run body
+ * always executes, and arm a scratch timer with the deadline so the wait is
+ * bounded. The async's ref is restored before returning, so process-exit
+ * semantics (driven by Bun's own accounting, not uv's) are unchanged. */
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec *timeout) {
+  us_loop_integrate(loop);
+  uv_update_time(loop->uv_loop);
+
+  uv_async_t *wakeup_uv_async =
+      (uv_async_t *)((struct us_internal_callback_t *)loop->data.wakeup_async + 1);
+  uv_ref((uv_handle_t *)wakeup_uv_async);
+
+  if (timeout) {
+    if (!loop->uv_tick_timer) {
+      loop->uv_tick_timer = malloc(sizeof(uv_timer_t));
+      uv_timer_init(loop->uv_loop, loop->uv_tick_timer);
+      uv_unref((uv_handle_t *)loop->uv_tick_timer);
+    }
+    uint64_t ms = (uint64_t)timeout->tv_sec * 1000 + (uint64_t)timeout->tv_nsec / 1000000;
+    uv_timer_start(loop->uv_tick_timer, bun_tick_timer_cb, ms, 0);
+  } else if (loop->uv_tick_timer) {
+    uv_timer_stop(loop->uv_tick_timer);
+  }
+
+  uv_run(loop->uv_loop, UV_RUN_ONCE);
+
+  if (loop->uv_tick_timer) {
+    uv_timer_stop(loop->uv_tick_timer);
+  }
+  uv_unref((uv_handle_t *)wakeup_uv_async);
 }
 
 struct us_poll_t *us_create_poll(struct us_loop_t *loop, int fallthrough,

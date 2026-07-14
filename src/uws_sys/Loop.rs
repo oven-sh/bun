@@ -466,9 +466,16 @@ impl WindowsLoop {
         self.wakeup();
     }
 
-    pub fn tick_with_timeout(&mut self, _: Option<&Timespec>) {
+    pub fn tick_with_timeout(&mut self, timespec: Option<&Timespec>) {
+        // The libuv bun_tick always runs the loop body (plain
+        // uv_run(UV_RUN_ONCE) skips timers AND I/O when no ref'd handles
+        // exist - every uSockets handle is uv_unref'd by design - which
+        // wedged teardown states awaiting a socket's close event) and bounds
+        // the wait with the caller's deadline like the epoll/kqueue tick.
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_loop_run(self) };
+        unsafe {
+            c::us_loop_run_bun_tick(self, timespec.map_or(core::ptr::null(), std::ptr::from_ref))
+        };
     }
 
     pub fn tick_without_idle(&mut self) {
@@ -638,7 +645,6 @@ mod c {
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(loop_: *mut Loop, timeout_ms: *const Timespec);
         pub(super) fn us_internal_free_closed_sockets(loop_: *mut Loop);
         pub(super) fn us_loop_close_all_groups(loop_: *mut Loop) -> c_int;

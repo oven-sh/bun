@@ -301,6 +301,59 @@ describe("module", () => {
       expect(there).toBeUndefined();
     }
   });
+
+  it("sync module() returning CommonJS source works with import()", async () => {
+    globalThis.__cjsSyncSideEffect = 0;
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-sync");
+    expect({ ...mod }).toEqual({ default: { hello: "cjs-sync", named: 1 }, hello: "cjs-sync", named: 1 });
+    expect(globalThis.__cjsSyncSideEffect).toBe(42);
+    delete require.cache["my-virtual-module-cjs-sync"];
+  });
+
+  it("sync module() returning CommonJS source works with require()", () => {
+    globalThis.__cjsSyncSideEffect = 0;
+    const mod = require("my-virtual-module-cjs-sync");
+    expect(mod).toEqual({ hello: "cjs-sync", named: 1 });
+    expect(globalThis.__cjsSyncSideEffect).toBe(42);
+    delete require.cache["my-virtual-module-cjs-sync"];
+  });
+
+  it("async module() returning CommonJS source works with import()", async () => {
+    globalThis.__cjsAsyncSideEffect = 0;
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-async");
+    expect(mod.default).toEqual({ hello: "cjs-async" });
+    expect(mod.hello).toBe("cjs-async");
+    expect(globalThis.__cjsAsyncSideEffect).toBe(99);
+    delete require.cache["my-virtual-module-cjs-async"];
+  });
+
+  it("module() returning `exports.x = ...` works", async () => {
+    // @ts-expect-error
+    const mod = await import("my-virtual-module-cjs-exports-dot");
+    expect(mod.foo).toBe("F");
+    expect(mod.bar).toBe("B");
+    delete require.cache["my-virtual-module-cjs-exports-dot"];
+  });
+
+  it("module() returning CommonJS source propagates errors from the body", async () => {
+    // @ts-expect-error
+    await expect(import("my-virtual-module-cjs-throws")).rejects.toThrow("cjs body threw");
+    delete require.cache["my-virtual-module-cjs-throws"];
+  });
+
+  it("onLoad returning CommonJS source works with import()", async () => {
+    // @ts-expect-error
+    const mod = await import("onload-cjs:m1");
+    expect(mod.default).toEqual({ fromOnLoad: true });
+    expect(mod.fromOnLoad).toBe(true);
+  });
+
+  it("onLoad returning CommonJS source works with require()", () => {
+    const mod = require("onload-cjs:m2");
+    expect(mod).toEqual({ fromOnLoad: true });
+  });
 });
 
 describe("dynamic import", () => {

@@ -392,6 +392,27 @@ static JSValue handleVirtualModuleResult(
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
         }
 
+        if (res->result.value.isCommonJSModule) {
+            if (commonJSModule) {
+                commonJSModule->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
+                if (scope.exception()) [[unlikely]] {
+                    RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                }
+                return commonJSModule;
+            }
+
+            auto* specifierValue = Bun::toJS(globalObject, *specifier);
+            if (scope.exception()) [[unlikely]] {
+                RELEASE_AND_RETURN(scope, reject(scope.exception()));
+            }
+            auto created = Bun::createCommonJSModule(globalObject, specifierValue, res->result.value);
+            EXCEPTION_ASSERT(created.has_value() == !scope.exception());
+            if (created.has_value()) {
+                return resolve(JSSourceCode::create(vm, WTF::move(created.value())));
+            }
+            RELEASE_AND_RETURN(scope, reject(scope.exception()));
+        }
+
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
     }

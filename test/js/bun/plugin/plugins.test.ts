@@ -411,7 +411,7 @@ describe("module", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(JSON.parse(stdout.trim())).toEqual({
+    expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
       keys: ["default", "fromPlugin"],
       side: 1,
       req: { fromPlugin: true },

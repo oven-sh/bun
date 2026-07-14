@@ -17,14 +17,31 @@ const step = (s: string) => {
   fs.writeSync(2, `STEP: ${s}\n`);
 };
 let ticks = 0;
+let doneReached = false;
 const watchdog = setInterval(() => {
   ticks++;
-  fs.writeSync(2, `TICK ${ticks}: after: ${steps.join(" -> ")}\n`);
+  if (!doneReached) {
+    fs.writeSync(2, `TICK ${ticks}: after: ${steps.join(" -> ")}\n`);
+  } else {
+    // Post-done phase: every stage succeeded but the process is not exiting.
+    // Dump the client socket's state to tell a zombie socket (loop alive,
+    // socket never learns the peer died) from a wedged loop (no ticks at all
+    // would print - the #34158 class, but client-side).
+    const c: any = client;
+    fs.writeSync(
+      2,
+      `TICK ${ticks} post-done: client destroyed=${c?.destroyed} readyState=${c?.readyState} pending=${c?.pending} bytesWritten=${c?.bytesWritten} bufferSize=${c?.bufferSize}\n`,
+    );
+  }
   if (ticks >= 3) {
-    fs.writeSync(2, "WATCHDOG: stalled\n");
+    fs.writeSync(2, `WATCHDOG: stalled ${doneReached ? "post-done" : "pre-done"}\n`);
     process.exit(1);
   }
 }, 5_000);
+process.on("beforeExit", () => {
+  fs.writeSync(2, "clean-exit\n");
+  clearInterval(watchdog);
+});
 
 const kClientMagic = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 const kSettings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
@@ -52,9 +69,10 @@ server.on("session", session => {
 });
 
 // Like the vendored test: default-host listen and connect (dual-stack path).
+let client: net.Socket | undefined;
 server.listen(0, () => {
   step("listening");
-  const client = net.connect((server.address() as net.AddressInfo).port);
+  client = net.connect((server.address() as net.AddressInfo).port);
   client.on("error", () => step("client-error"));
   client.on("close", () => step("client-close"));
   client.on("connect", () => {
@@ -72,7 +90,12 @@ server.listen(0, () => {
 
 await done.promise;
 step("done");
-clearInterval(watchdog);
+doneReached = true;
+ticks = 0;
+// Unref for the post-done phase: if only this interval remains the process
+// exits cleanly (beforeExit prints); a ref'd zombie handle keeps the loop
+// alive and the unref'd ticks still fire and dump its state.
+watchdog.unref?.();
 client_cleanup: {
   // the vendored test leaves the client to die with the process; keep that
   // shape (no explicit destroy) so the teardown path matches exactly

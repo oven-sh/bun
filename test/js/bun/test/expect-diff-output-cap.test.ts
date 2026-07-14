@@ -24,6 +24,9 @@ test("dag", () => {
   test.each([
     ["received", "expect(o).toEqual(1)"],
     ["expected", "expect(1).toEqual(o)"],
+    // Asymmetric matchers render their payload through a different writer
+    // bridge (amf_print_as); the cap and traversal halt must survive it.
+    ["asymmetric matcher", "expect({}).toEqual(expect.objectContaining(o))"],
   ])("truncates the %s side of a shared-reference object graph", async (_side, assertion) => {
     using dir = tempDir("diff-output-cap", {
       "dag.test.ts": dagFixture(assertion),

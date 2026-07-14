@@ -4,9 +4,6 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
-if (process.features.openssl_is_boringssl)
-  common.skip('BoringSSL does not support paramEncoding: explicit');
-
 const assert = require('assert');
 const {
   generateKeyPair,
@@ -34,7 +31,14 @@ const {
       cipher: 'aes-128-cbc',
       passphrase: 'secret'
     }
-  }, common.mustSucceed((publicKey, privateKey) => {
+  }, common.mustCall((err, publicKey, privateKey) => {
+    if (common.openSSLIsBoringSSL) {
+      // BoringSSL does not support 'explicit' param encoding.
+      assert.strictEqual(err.message, 'error:06000085:public key routines:OPENSSL_internal:INVALID_PARAMETERS')
+      return;
+    }
+
+    assert.ifError(err);
     assert.strictEqual(typeof publicKey, 'string');
     assert.match(publicKey, spkiExp);
     assert.strictEqual(typeof privateKey, 'string');

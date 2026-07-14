@@ -75,7 +75,6 @@ fn throw_range_error_msg(
     )
 }
 
-#[inline]
 // `Option<i64>` is not a valid const-generic type on stable, so the bounds
 // are runtime params + debug_assert.
 pub(crate) fn validate_integer(

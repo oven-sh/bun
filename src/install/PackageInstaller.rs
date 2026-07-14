@@ -1550,8 +1550,10 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                            Err(ForTarballError::InvalidURL | ForTarballError::AlreadyFailed) => {
+                                self.fail_enqueue_for_download::<IS_PENDING_PACKAGE_INSTALL>(
+                                    log_level,
+                                )
                             }
                         }
                     }
@@ -1576,8 +1578,10 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                            Err(ForTarballError::InvalidURL | ForTarballError::AlreadyFailed) => {
+                                self.fail_enqueue_for_download::<IS_PENDING_PACKAGE_INSTALL>(
+                                    log_level,
+                                )
                             }
                         }
                     }
@@ -1608,8 +1612,10 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                            Err(ForTarballError::InvalidURL | ForTarballError::AlreadyFailed) => {
+                                self.fail_enqueue_for_download::<IS_PENDING_PACKAGE_INSTALL>(
+                                    log_level,
+                                )
                             }
                         }
                     }
@@ -2236,7 +2242,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    fn fail_with_invalid_url<const IS_PENDING_PACKAGE_INSTALL: bool>(
+    fn fail_enqueue_for_download<const IS_PENDING_PACKAGE_INSTALL: bool>(
         &mut self,
         log_level: Options::LogLevel,
     ) {

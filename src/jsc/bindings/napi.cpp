@@ -1378,8 +1378,6 @@ extern "C" napi_status napi_fatal_exception(napi_env env,
     NAPI_CHECK_ARG(env, err);
     auto globalObject = toJS(env);
     JSValue value = toJS(err);
-    JSC::JSObject* obj = value.getObject();
-    NAPI_RETURN_EARLY_IF_FALSE(env, obj && obj->isErrorInstance(), napi_invalid_arg);
 
     Bun__reportUnhandledError(globalObject, JSValue::encode(value));
 

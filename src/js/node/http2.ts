@@ -4246,6 +4246,16 @@ class ServerHttp2Session extends Http2Session {
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
         // Graceful shutdown: no new streams, existing ones may finish.
         self.close();
+      } else if (self.closed && self.#connections === 0) {
+        // Mutual teardown: this side already sent its own graceful GOAWAY
+        // (close()) and every stream is done, so the peer's error code cannot
+        // affect anything user-visible - both ends agreed the connection is
+        // over. Destroy cleanly instead of surfacing a session error: node
+        // never observes this state (its socket is torn down before the
+        // peer's late GOAWAY could be read - grpc-js forceShutdown sends
+        // GOAWAY(NGHTTP2_CANCEL) at a client that just close()d, and on the
+        // Windows agents the frame deterministically arrived first).
+        self.destroy();
       } else {
         self.#parser?.emitErrorToAllStreams(errorCode);
         // Like Node, destroy with an error but send our own goaway with
@@ -5217,6 +5227,16 @@ class ClientHttp2Session extends Http2Session {
       // shutdown: no new streams permitted, existing streams may finish naturally.
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
         self.close();
+      } else if (self.closed && self.#connections === 0) {
+        // Mutual teardown: this side already sent its own graceful GOAWAY
+        // (close()) and every stream is done, so the peer's error code cannot
+        // affect anything user-visible - both ends agreed the connection is
+        // over. Destroy cleanly instead of surfacing a session error: node
+        // never observes this state (its socket is torn down before the
+        // peer's late GOAWAY could be read - grpc-js forceShutdown sends
+        // GOAWAY(NGHTTP2_CANCEL) at a client that just close()d, and on the
+        // Windows agents the frame deterministically arrived first).
+        self.destroy();
       } else {
         self.destroy(sessionErrorFromCode(errorCode), constants.NGHTTP2_NO_ERROR);
       }

@@ -2873,13 +2873,15 @@ static napi_value test_napi_float16_array(const Napi::CallbackInfo &info) {
          static_cast<int>(sc), created_is ? 1 : 0,
          static_cast<int>(created_type), created_len);
 
-  napi_value global = nullptr;
-  napi_value ctor = nullptr;
   bool is_instance = false;
-  NODE_API_CALL(env, napi_get_global(env, &global));
-  NODE_API_CALL(env,
-                napi_get_named_property(env, global, "Float16Array", &ctor));
-  NODE_API_CALL(env, napi_instanceof(env, created, ctor, &is_instance));
+  if (sc == napi_ok) {
+    napi_value global = nullptr;
+    napi_value ctor = nullptr;
+    NODE_API_CALL(env, napi_get_global(env, &global));
+    NODE_API_CALL(env,
+                  napi_get_named_property(env, global, "Float16Array", &ctor));
+    NODE_API_CALL(env, napi_instanceof(env, created, ctor, &is_instance));
+  }
   printf("created instanceof Float16Array=%d\n", is_instance ? 1 : 0);
 
   return ok(env);

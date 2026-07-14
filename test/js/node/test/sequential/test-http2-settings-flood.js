@@ -36,7 +36,7 @@ server.listen(0, common.mustCall(() => {
 
   // nghttp2 uses a limit of 10000 items in it's outbound queue.
   // If this number is exceeded, a flooding error is raised.
-  // TODO(jasnell): Unfortunately, this test is inherently flaky because
+  // Note(jasnell): Unfortunately, this test is inherently flaky because
   // it is entirely dependent on how quickly the server is able to handle
   // the inbound frames and whether those just happen to overflow nghttp2's
   // outbound queue. The threshold at which the flood error occurs can vary

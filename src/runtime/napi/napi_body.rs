@@ -1307,6 +1307,9 @@ pub(super) extern "C" fn napi_is_error(
     let env = get_env!(env_);
     env.check_gc();
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     // SAFETY: result is a valid out-pointer per N-API contract.
     unsafe { *result = value.is_any_error() };
     env.ok()
@@ -1331,6 +1334,9 @@ pub(super) extern "C" fn napi_is_arraybuffer(
     env.check_gc();
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     // A SharedArrayBuffer shares the `ArrayBuffer` cell type with a plain
     // ArrayBuffer in JSC, so `js_type` alone can't tell them apart. Node's
     // `napi_is_arraybuffer` maps to V8's `IsArrayBuffer()`, which is false for
@@ -1461,6 +1467,9 @@ pub(super) extern "C" fn napi_is_dataview(
     let env = get_env!(env_);
     let result = get_out!(env, result_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     *result =
         !value.is_empty_or_undefined_or_null() && value.js_type_loose() == jsc::JSType::DataView;
     env.ok()
@@ -1625,6 +1634,9 @@ pub(super) extern "C" fn napi_is_date(
     env.check_gc();
     let is_date = get_out!(env, is_date_);
     let value = value_.get();
+    if value.is_empty() {
+        return env.invalid_arg();
+    }
     *is_date = value.js_type_loose() == jsc::JSType::JSDate;
     env.ok()
 }

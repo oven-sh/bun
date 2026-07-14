@@ -1198,10 +1198,15 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     it("returns napi_invalid_arg instead of crashing", async () => {
       const output = await checkSameOutput("test_napi_null_value_args", []);
       expect(output).toContain("napi_detach_arraybuffer(NULL) -> 1");
+      expect(output).toContain("node_api_create_buffer_from_arraybuffer(NULL) -> 1");
       expect(output).toContain("napi_strict_equals(NULL, NULL) -> 1");
       expect(output).toContain("napi_instanceof(NULL, NULL) -> 1");
       expect(output).toContain("napi_new_instance(NULL) -> 1");
       expect(output).toContain("napi_is_array(NULL) -> 1");
+      expect(output).toContain("napi_is_error(NULL) -> 1");
+      expect(output).toContain("napi_is_arraybuffer(NULL) -> 1");
+      expect(output).toContain("napi_is_dataview(NULL) -> 1");
+      expect(output).toContain("napi_is_date(NULL) -> 1");
       expect(output).toContain("napi_get_array_length(NULL) -> 1");
       expect(output).toContain("napi_get_dataview_info(NULL) -> 1");
     });

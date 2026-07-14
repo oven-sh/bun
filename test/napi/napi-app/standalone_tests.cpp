@@ -1723,6 +1723,12 @@ static napi_value test_napi_typeof_empty_value(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Gated behind NAPI_VERSION >= 10 in node_api.h; forward-declare so the test
+// addon keeps building with the default NAPI_VERSION.
+extern "C" napi_status NAPI_CDECL node_api_create_buffer_from_arraybuffer(
+    napi_env env, napi_value arraybuffer, size_t byte_offset,
+    size_t byte_length, napi_value *result);
+
 // Node returns napi_invalid_arg for a NULL napi_value argument (CHECK_ARG in
 // js_native_api_v8.cc). Print the raw status for each call so the output can
 // be diffed against Node.
@@ -1735,6 +1741,9 @@ static napi_value test_napi_null_value_args(const Napi::CallbackInfo &info) {
 
   printf("napi_detach_arraybuffer(NULL) -> %d\n",
          (int)napi_detach_arraybuffer(env, nullptr));
+  printf("node_api_create_buffer_from_arraybuffer(NULL) -> %d\n",
+         (int)node_api_create_buffer_from_arraybuffer(env, nullptr, 0, 0,
+                                                      &out));
   printf("napi_strict_equals(NULL, NULL) -> %d\n",
          (int)napi_strict_equals(env, nullptr, nullptr, &b));
   printf("napi_instanceof(NULL, NULL) -> %d\n",
@@ -1743,6 +1752,14 @@ static napi_value test_napi_null_value_args(const Napi::CallbackInfo &info) {
          (int)napi_new_instance(env, nullptr, 0, nullptr, &out));
   printf("napi_is_array(NULL) -> %d\n",
          (int)napi_is_array(env, nullptr, &b));
+  printf("napi_is_error(NULL) -> %d\n",
+         (int)napi_is_error(env, nullptr, &b));
+  printf("napi_is_arraybuffer(NULL) -> %d\n",
+         (int)napi_is_arraybuffer(env, nullptr, &b));
+  printf("napi_is_dataview(NULL) -> %d\n",
+         (int)napi_is_dataview(env, nullptr, &b));
+  printf("napi_is_date(NULL) -> %d\n",
+         (int)napi_is_date(env, nullptr, &b));
   printf("napi_get_array_length(NULL) -> %d\n",
          (int)napi_get_array_length(env, nullptr, &len));
   printf("napi_get_dataview_info(NULL) -> %d\n",

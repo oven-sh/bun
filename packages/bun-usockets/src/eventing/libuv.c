@@ -186,7 +186,18 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
 void us_loop_pump(struct us_loop_t *loop) {
+  /* Same alive-guard gap as us_loop_run_bun_tick: with zero ref'd handles
+   * uv_run skips the loop body entirely - including the zero-timeout IOCP
+   * poll - so pending completions (a socket's close event) sit undelivered
+   * while the caller spins. This is the tick auto_tick takes when Bun's
+   * KeepAlive accounting says nothing is active, which is exactly the
+   * teardown state that wedged. Ref the loop-lifetime wakeup async around
+   * the iteration so the body always runs; NOWAIT keeps it non-blocking. */
+  uv_async_t *wakeup_uv_async =
+      (uv_async_t *)((struct us_internal_callback_t *)loop->data.wakeup_async + 1);
+  uv_ref((uv_handle_t *)wakeup_uv_async);
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
+  uv_unref((uv_handle_t *)wakeup_uv_async);
 }
 
 struct us_loop_t *us_create_loop(void *hint,

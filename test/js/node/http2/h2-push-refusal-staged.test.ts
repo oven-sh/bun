@@ -76,6 +76,8 @@ test("DATA on a reserved push stream is refused with RST(STREAM_CLOSED) (event-t
   const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
   client.on("error", e => t(`session-error:${(e as any).code ?? (e as Error).message}`));
   client.on("close", () => t("session-close"));
+  client.socket?.on?.("error", (e: any) => t(`socket-error:${e.code ?? e.message}`));
+  client.socket?.on?.("close", () => t("socket-close"));
   const pushedData: Buffer[] = [];
   client.on("stream", pushed => {
     t("pushed-stream");

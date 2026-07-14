@@ -24,7 +24,7 @@ const rstFrame = (id: number, code: number) => {
 };
 const ping = () => frame(8, 6, 0, 0, Buffer.alloc(8, 7));
 
-test("late RST_STREAM on an evicted stream is tolerated (event-taped)", async () => {
+async function runLateRstStages(sendPing: boolean) {
   const tape: string[] = [];
   const t = (name: string) => tape.push(name);
 
@@ -45,6 +45,7 @@ test("late RST_STREAM on an evicted stream is tolerated (event-taped)", async ()
     }
     client.on("error", e => t(`session-error:${(e as any).code ?? (e as Error).message}`));
     client.socket?.on?.("close", () => t("socket-close"));
+    client.socket?.on?.("error", (e: any) => t(`socket-error:${e.code ?? e.message}`));
 
     const req = client.request({ ":path": "/" });
     req.on("error", e => t(`req-error:${(e as any).code}`));
@@ -55,17 +56,33 @@ test("late RST_STREAM on an evicted stream is tolerated (event-taped)", async ()
     await closed;
     t("evicted");
 
-    const pinged = new Promise<void>((resolve, reject) => {
-      client.once("ping", () => (t("ping"), resolve()));
-      client.once("close", () => reject(new Error(`session closed before ping; tape: ${tape.join(" -> ")}`)));
-      setTimeout(() => reject(new Error(`ping never arrived; tape: ${tape.join(" -> ")}`)), 8_000).unref();
+    const settled = new Promise<void>((resolve, reject) => {
+      if (sendPing) {
+        client.once("ping", () => (t("ping"), resolve()));
+      } else {
+        // No ping: the session merely has to survive the late RST. Bounded
+        // poll instead of sleep-then-check: reject fast on close.
+        setTimeout(() => (client.destroyed || client.closed ? undefined : resolve()), 1_000).unref();
+      }
+      client.once("close", () => reject(new Error(`session closed; tape: ${tape.join(" -> ")}`)));
+      setTimeout(() => reject(new Error(`never settled; tape: ${tape.join(" -> ")}`)), 8_000).unref();
     });
     socket.write(rstFrame(1, http2.constants.NGHTTP2_NO_ERROR));
-    socket.write(ping());
-    await pinged;
+    t("late-rst-sent");
+    if (sendPing) {
+      socket.write(ping());
+      t("ping-sent");
+    }
+    await settled;
     expect(client.destroyed).toBe(false);
     client.destroy();
   } finally {
     server.close();
   }
-}, 30_000);
+}
+
+// The darwin tape (evicted -> socket-close, silent - no session error, no
+// ping event) says the client transport closes while processing the late
+// frames. These two subtests bisect which frame triggers it.
+test("late RST_STREAM on an evicted stream is tolerated (no ping)", () => runLateRstStages(false), 30_000);
+test("late RST_STREAM then PING is answered (event-taped)", () => runLateRstStages(true), 30_000);

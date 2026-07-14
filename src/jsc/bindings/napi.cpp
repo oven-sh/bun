@@ -1855,16 +1855,17 @@ extern "C" napi_status napi_get_all_property_names(
     NAPI_PREAMBLE(env);
     NAPI_CHECK_ARG(env, result);
     NAPI_CHECK_ARG(env, objectNapi);
+
+    auto globalObject = toJS(env);
+    auto objectValue = toJS(objectNapi);
+    NAPI_CHECK_TO_OBJECT(env, globalObject, object, objectValue);
+
     NAPI_RETURN_EARLY_IF_FALSE(env,
         key_mode == napi_key_include_prototypes || key_mode == napi_key_own_only,
         napi_invalid_arg);
     NAPI_RETURN_EARLY_IF_FALSE(env,
         key_conversion == napi_key_keep_numbers || key_conversion == napi_key_numbers_to_strings,
         napi_invalid_arg);
-
-    auto globalObject = toJS(env);
-    auto objectValue = toJS(objectNapi);
-    NAPI_CHECK_TO_OBJECT(env, globalObject, object, objectValue);
 
     // Always request non-enumerable properties from JSC; whether to exclude them is decided by
     // key_filter (napi_key_enumerable) in the filter loop below. JSC only supports Exclude when
@@ -3134,6 +3135,11 @@ extern "C" bool NapiEnv__getAndClearPendingException(napi_env env, JSC::EncodedJ
     }
 
     return false;
+}
+
+extern "C" bool NapiEnv__hasPendingException(napi_env env)
+{
+    return env->hasPendingException();
 }
 
 extern "C" void NapiEnv__ref(napi_env env)

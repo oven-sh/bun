@@ -1990,6 +1990,11 @@ static napi_value test_napi_object_coercion(const Napi::CallbackInfo &info) {
                 napi_get_all_property_names(
                     env, v_null, napi_key_own_only, napi_key_all_properties,
                     napi_key_numbers_to_strings, &out));
+  report_status(env, "get_all_property_names(null,key_mode=99)",
+                napi_get_all_property_names(
+                    env, v_null, static_cast<napi_key_collection_mode>(99),
+                    napi_key_all_properties, napi_key_numbers_to_strings,
+                    &out));
 
   // napi_key_keep_numbers vs napi_key_numbers_to_strings
   {

@@ -873,7 +873,12 @@ pub(super) extern "C" fn napi_get_prototype(
     if object.is_empty() {
         return env.invalid_arg();
     }
-    if !object.is_object() {
+    // Node's CHECK_TO_OBJECT: ToObject throws on null/undefined; leave the
+    // TypeError pending and return napi_object_expected. Other primitives are
+    // coerced, so `get_prototype` (which synthesizes the prototype for
+    // non-object values) handles them without an allocation.
+    if object.is_undefined_or_null() {
+        let _ = object.to_object(env.to_js());
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 

@@ -1684,13 +1684,12 @@ impl<'a> Scanner<'a> {
                             relative_i += 1;
                         }
                         value.length = u32::try_from(relative_i - offset).unwrap();
+                        self.i += relative_i;
                         // If the name is empty and it's just a value, skip it.
                         // This is kind of an opinion. But, it's hard to see where that might be intentional.
                         if name.length == 0 {
-                            self.i += relative_i;
-                            return None;
+                            continue 'outer;
                         }
-                        self.i += relative_i;
                         return Some(ScannerResult {
                             name,
                             value,

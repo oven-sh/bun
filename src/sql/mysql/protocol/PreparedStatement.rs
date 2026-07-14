@@ -1,47 +1,11 @@
 use super::any_mysql_error;
 use super::column_definition41::ColumnFlags;
 use super::command_type::CommandType;
-use super::new_reader::{NewReader, ReaderContext};
 use super::new_writer::{NewWriter, WriterContext};
 use crate::mysql::mysql_param::Param;
 use crate::mysql::mysql_types::FieldType;
 
 bun_core::declare_scope!(PreparedStatement, hidden);
-
-#[derive(Default)]
-pub struct PrepareOK {
-    pub status: u8,
-    pub statement_id: u32,
-    pub num_columns: u16,
-    pub num_params: u16,
-    pub warning_count: u16,
-}
-
-impl PrepareOK {
-    pub fn decode_internal<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), any_mysql_error::Error> {
-        self.status = reader.int::<u8>()?;
-        if self.status != 0 {
-            return Err(any_mysql_error::Error::InvalidPrepareOKPacket);
-        }
-
-        self.statement_id = reader.int::<u32>()?;
-        self.num_columns = reader.int::<u16>()?;
-        self.num_params = reader.int::<u16>()?;
-        let _ = reader.int::<u8>()?; // reserved_1
-        self.warning_count = reader.int::<u16>()?;
-        Ok(())
-    }
-
-    pub fn decode<C: ReaderContext>(
-        &mut self,
-        reader: NewReader<C>,
-    ) -> Result<(), any_mysql_error::Error> {
-        self.decode_internal(reader)
-    }
-}
 
 pub struct Execute<'a> {
     /// ID of the prepared statement to execute, returned from COM_STMT_PREPARE

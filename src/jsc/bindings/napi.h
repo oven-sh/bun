@@ -17,13 +17,16 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
+#include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/Lock.h>
 
 #include <optional>
 #include <unordered_set>
 #include <variant>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
+extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -211,6 +214,22 @@ public:
             drain();
         }
 
+        // Threadsafe functions hold a raw pointer to this env's event loop,
+        // which a worker's shutdown frees while addon threads keep running.
+        // Neutralize them all before that happens (Node: ThreadSafeFunction::Cleanup).
+        // Their finalizers are native callbacks like the ones below, so they
+        // start from a clean exception state too: a cleanup hook may have left one.
+        clearExceptionsBetweenFinalizers();
+        abortThreadSafeFunctions();
+
+        // A threadsafe function's finalizer can register a cleanup hook of its
+        // own, and the loop above has already run: drain again so it is not
+        // dropped on the floor.
+        while (!m_cleanupHooks.empty()) {
+            drain();
+        }
+        clearExceptionsBetweenFinalizers();
+
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
         // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.
         JSC::DeferGCForAWhile deferGC(m_vm);
@@ -240,6 +259,40 @@ public:
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
         clearExceptionsBetweenFinalizers();
+    }
+
+    // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
+    // by the Rust side, added and removed on the JS thread only: at creation,
+    // by the destroy path (an event-loop task), and by teardown below. The
+    // lock guards the torn-down flag so the "created after teardown" case is
+    // decided in one critical section.
+    bool registerThreadSafeFunction(void* tsfn)
+    {
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        if (m_threadSafeFunctionsTornDown) {
+            return false;
+        }
+        m_threadSafeFunctions.add(tsfn);
+        return true;
+    }
+
+    void unregisterThreadSafeFunction(void* tsfn)
+    {
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        m_threadSafeFunctions.remove(tsfn);
+    }
+
+    void abortThreadSafeFunctions()
+    {
+        WTF::HashSet<void*> tsfns;
+        {
+            WTF::Locker locker { m_threadSafeFunctionsLock };
+            m_threadSafeFunctionsTornDown = true;
+            tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
+        }
+        for (void* tsfn : tsfns) {
+            napi_internal_threadsafe_function_env_teardown(tsfn);
+        }
     }
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)
@@ -532,6 +585,10 @@ private:
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
+
+    WTF::Lock m_threadSafeFunctionsLock;
+    WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
+    bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
 
     // Drop any pending exception -- VM-scope or env-scope -- between
     // finalizers run from cleanup(). Used by cleanup() only. Defined

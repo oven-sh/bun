@@ -81,62 +81,74 @@ fn try_activate_inspector() -> bool {
     let Some(vm_ptr) = VirtualMachine::get_main_thread_vm() else {
         return false;
     };
-    // SAFETY: single-JS-thread invariant; called from main-thread event loop
-    // tick or from the trap callback on the main VM's owning thread.
-    let vm = unsafe { &mut *vm_ptr };
+    // SAFETY: single-JS-thread invariant; called from the main-thread event
+    // loop tick or from the trap callback on the main VM's owning thread. Raw
+    // pointer is used (not `&mut`) because `Debugger::create` materializes its
+    // own `&VirtualMachine` from the thread-local, which would alias.
+    unsafe {
+        if (*vm_ptr).is_shutting_down {
+            bun_core::scoped_log!(RuntimeInspector, "VM shutting down, ignoring activation");
+            return false;
+        }
+        if (*vm_ptr).debugger.is_some() {
+            bun_core::scoped_log!(RuntimeInspector, "debugger already active");
+            return false;
+        }
 
-    if vm.is_shutting_down {
-        bun_core::scoped_log!(RuntimeInspector, "VM shutting down, ignoring activation");
-        return false;
-    }
-    if vm.debugger.is_some() {
-        bun_core::scoped_log!(RuntimeInspector, "debugger already active");
-        return false;
-    }
-
-    if let Err(e) = activate_inspector(vm) {
-        bun_core::pretty_errorln!("Failed to activate inspector: {}", e.name());
-        bun_core::output::flush();
-        return false;
+        if let Err(e) = activate_inspector(vm_ptr) {
+            bun_core::pretty_errorln!("Failed to activate inspector: {}", e.name());
+            bun_core::output::flush();
+            return false;
+        }
     }
     true
 }
 
-fn activate_inspector(vm: &mut VirtualMachine) -> crate::CrateResult<()> {
+/// # Safety
+/// Must be called on the main JS thread; `vm` is the live main-thread VM.
+unsafe fn activate_inspector(vm: *mut VirtualMachine) -> crate::CrateResult<()> {
     bun_core::scoped_log!(RuntimeInspector, "activating");
 
-    let port = vm.inspect_port.unwrap_or(DEFAULT_INSPECTOR_PORT);
-    vm.debugger = Some(Box::new(Debugger {
-        path_or_port: Some(port),
-        from_environment_variable: b"",
-        wait_for_connection: Wait::Off,
-        set_breakpoint_on_first_line: false,
-        mode: Mode::Listen,
-        ..Default::default()
-    }));
+    // SAFETY: per fn contract; each access is a fresh short-lived borrow so
+    // nothing aliases across the `Debugger::create` call below.
+    let (saved, global) = unsafe {
+        let port = (*vm).inspect_port.unwrap_or(DEFAULT_INSPECTOR_PORT);
+        (*vm).debugger = Some(Box::new(Debugger {
+            path_or_port: Some(port),
+            from_environment_variable: b"",
+            wait_for_connection: Wait::Off,
+            set_breakpoint_on_first_line: false,
+            mode: Mode::Listen,
+            ..Default::default()
+        }));
 
-    let saved_minify_identifiers = vm.transpiler.options.minify_identifiers;
-    let saved_minify_syntax = vm.transpiler.options.minify_syntax;
-    let saved_minify_whitespace = vm.transpiler.options.minify_whitespace;
-    let saved_debugger = vm.transpiler.options.debugger;
+        let opts = &mut (*vm).transpiler.options;
+        let saved = (
+            opts.minify_identifiers,
+            opts.minify_syntax,
+            opts.minify_whitespace,
+            opts.debugger,
+        );
+        opts.minify_identifiers = false;
+        opts.minify_syntax = false;
+        opts.minify_whitespace = false;
+        opts.debugger = true;
 
-    vm.transpiler.options.minify_identifiers = false;
-    vm.transpiler.options.minify_syntax = false;
-    vm.transpiler.options.minify_whitespace = false;
-    vm.transpiler.options.debugger = true;
+        (saved, (*vm).global())
+    };
 
     crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
 
-    let global = vm.global();
-    let vm_ptr = vm as *mut VirtualMachine;
-    if let Err(e) = Debugger::create(vm_ptr, global) {
-        // SAFETY: `vm_ptr` still valid; restore state on failure.
-        let vm = unsafe { &mut *vm_ptr };
-        vm.debugger = None;
-        vm.transpiler.options.minify_identifiers = saved_minify_identifiers;
-        vm.transpiler.options.minify_syntax = saved_minify_syntax;
-        vm.transpiler.options.minify_whitespace = saved_minify_whitespace;
-        vm.transpiler.options.debugger = saved_debugger;
+    if let Err(e) = Debugger::create(vm, global) {
+        // SAFETY: `vm` still valid; restore state on failure.
+        unsafe {
+            (*vm).debugger = None;
+            let opts = &mut (*vm).transpiler.options;
+            opts.minify_identifiers = saved.0;
+            opts.minify_syntax = saved.1;
+            opts.minify_whitespace = saved.2;
+            opts.debugger = saved.3;
+        }
         return Err(e);
     }
     Ok(())

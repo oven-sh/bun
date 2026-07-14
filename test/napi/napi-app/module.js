@@ -236,6 +236,43 @@ nativeTests.test_set_property = () => {
   }
 };
 
+nativeTests.test_property_names_cache_poisoning = () => {
+  // napi_key_include_prototypes = 0, napi_key_own_only = 1
+  // napi_key_all_properties = 0, napi_key_skip_symbols = 16
+  // napi_key_keep_numbers = 0
+  const mkA = () => ({ a: 1, b: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkA(), 0, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(include_prototypes):", Reflect.ownKeys(mkA()).join(","));
+  console.log("Object.keys after get_all_property_names(include_prototypes):", Object.keys(mkA()).join(","));
+
+  const proto = { pEnum: 9 };
+  const mkB = () => {
+    const o = Object.create(proto);
+    o.w1 = 1;
+    o.w2 = 2;
+    return o;
+  };
+  for (let i = 0; i < 20; i++) nativeTests.get_property_names(mkB());
+  console.log("Object.keys after get_property_names:", Object.keys(mkB()).join(","));
+  console.log("Reflect.ownKeys after get_property_names:", Reflect.ownKeys(mkB()).join(","));
+
+  const mkC = () => ({ c: 1, d: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkC(), 0, 16, 0);
+  console.log("Object.getOwnPropertyNames after skip_symbols chain walk:", Object.getOwnPropertyNames(mkC()).join(","));
+
+  // Own-only mode must still return only own keys and not poison anything.
+  const mkD = () => ({ e: 1, f: 2 });
+  for (let i = 0; i < 20; i++) nativeTests.get_all_property_names(mkD(), 1, 0, 0);
+  console.log("Reflect.ownKeys after get_all_property_names(own_only):", Reflect.ownKeys(mkD()).join(","));
+
+  // The napi result itself should still include inherited keys.
+  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0).keys;
+  console.log("napi include_prototypes result has own a,b:", apnResult.includes("a") && apnResult.includes("b"));
+  console.log("napi include_prototypes result has inherited toString:", apnResult.includes("toString"));
+  const gpnResult = nativeTests.get_property_names(mkB());
+  console.log("napi get_property_names result:", gpnResult.join(","));
+};
+
 nativeTests.test_number_integer_conversions_from_js = () => {
   const i32 = { min: -(2 ** 31), max: 2 ** 31 - 1 };
   const u32Max = 2 ** 32 - 1;
@@ -852,6 +889,52 @@ nativeTests.test_ref_unref_underflow = () => {
       `❌ FAIL: Expected firstUnrefCount=0, secondUnrefStatus=1, got ${result.firstUnrefCount}, ${result.secondUnrefStatus}`,
     );
   }
+};
+
+nativeTests.test_napi_instanceof = () => {
+  function dump(label, r) {
+    const errName = r.exception && r.exception.constructor ? r.exception.constructor.name : undefined;
+    const errCode = r.exception ? r.exception.code : undefined;
+    console.log(
+      `${label}: status=${r.status} result=${r.result} pending=${r.pending} errName=${errName} errCode=${errCode}`,
+    );
+  }
+
+  class Base {}
+  const instance = new Base();
+  dump("class/instance", nativeTests.perform_instanceof(instance, Base));
+  dump("class/plain-obj", nativeTests.perform_instanceof({}, Base));
+
+  const arrow = () => 1;
+  Object.defineProperty(arrow, Symbol.hasInstance, { value: () => true });
+  dump("arrow+hasInstance", nativeTests.perform_instanceof({}, arrow));
+
+  const bound = function () {}.bind(null);
+  Object.defineProperty(bound, Symbol.hasInstance, { value: () => true });
+  dump("bound+hasInstance", nativeTests.perform_instanceof({}, bound));
+
+  const bareArrow = () => 1;
+  dump("bare-arrow ctor", nativeTests.perform_instanceof({}, bareArrow));
+
+  class Throws {
+    static [Symbol.hasInstance]() {
+      throw new RangeError("boom");
+    }
+  }
+  dump("hasInstance throws", nativeTests.perform_instanceof({}, Throws));
+
+  const proxy = new Proxy(Base, {
+    get(t, k) {
+      if (k === Symbol.hasInstance) throw new RangeError("proxy");
+      return Reflect.get(t, k);
+    },
+  });
+  dump("proxy get throws", nativeTests.perform_instanceof({}, proxy));
+
+  dump("number ctor", nativeTests.perform_instanceof({}, 5));
+  dump("plain-obj ctor", nativeTests.perform_instanceof({}, { x: 1 }));
+  dump("null ctor", nativeTests.perform_instanceof({}, null));
+  dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
 nativeTests.test_get_value_string = () => {

@@ -619,6 +619,15 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_property_names / napi_get_all_property_names", () => {
+    it("does not poison JSC's per-Structure own-keys cache", async () => {
+      const output = await checkSameOutput("test_property_names_cache_poisoning", []);
+      expect(output).toContain("Reflect.ownKeys after get_all_property_names(include_prototypes): a,b");
+      expect(output).toContain("Object.keys after get_property_names: w1,w2");
+      expect(output).toContain("napi get_property_names result: w1,w2,pEnum");
+    });
+  });
+
   describe("napi_value <=> integer conversion", () => {
     it("works", async () => {
       await checkSameOutput("test_number_integer_conversions_from_js", []);
@@ -1213,6 +1222,29 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_instanceof", () => {
+    it("honors Symbol.hasInstance and propagates exceptions", async () => {
+      const output = await checkSameOutput("test_napi_instanceof", []);
+      expect(output).toContain("class/instance: status=0 result=true pending=false");
+      expect(output).toContain("class/plain-obj: status=0 result=false pending=false");
+      expect(output).toContain("arrow+hasInstance: status=0 result=true pending=false");
+      expect(output).toContain("bound+hasInstance: status=0 result=true pending=false");
+      expect(output).toContain("bare-arrow ctor: status=9 result=false pending=true errName=TypeError");
+      expect(output).toContain("hasInstance throws: status=9 result=false pending=true errName=RangeError");
+      expect(output).toContain("proxy get throws: status=9 result=false pending=true errName=RangeError");
+      expect(output).toContain(
+        "number ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION",
+      );
+      expect(output).toContain(
+        "plain-obj ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION",
+      );
+      expect(output).toContain("null ctor: status=2 result=false pending=true errName=TypeError errCode=undefined");
+      expect(output).toContain(
+        "undefined ctor: status=2 result=false pending=true errName=TypeError errCode=undefined",
+      );
+    });
+  });
+
   describe("napi_call_function", () => {
     it("should handle null recv parameter consistently", async () => {
       const output = await checkSameOutput("test_napi_call_function_recv_null", []);
@@ -1299,6 +1331,30 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("PASS: Number object returns napi_object");
       expect(output).toContain("PASS: Boolean object returns napi_object");
       expect(output).toContain("All boxed primitive tests passed!");
+    });
+  });
+
+  describe("object API ToObject coercion", () => {
+    // The element/property-name/prototype family must coerce primitive targets
+    // via ToObject (succeeding for strings/numbers/booleans) and return
+    // napi_object_expected with a pending TypeError for null/undefined.
+    // napi_get_all_property_names must reject out-of-range enum arguments and
+    // honor napi_key_keep_numbers so index keys come back as numbers.
+    it("matches Node's CHECK_TO_OBJECT semantics and validates enums", async () => {
+      const output = await checkSameOutput("test_napi_object_coercion", []);
+      // Spot-check the lines that carry the most signal; checkSameOutput has
+      // already asserted full byte-for-byte parity with Node.
+      expect(output).toContain("set_element(number): status=0 pending=0");
+      expect(output).toContain("set_element(null): status=2 pending=1");
+      expect(output).toContain("get_element(string,1): status=0 pending=0");
+      expect(output).toContain("get_element(string,1) value=b");
+      expect(output).toContain("get_prototype(number): status=0 pending=0");
+      expect(output).toContain("get_prototype(number) is Number.prototype=1");
+      expect(output).toContain("get_prototype(null): status=2 pending=1");
+      expect(output).toContain("get_all_property_names(key_mode=99): status=1 pending=0");
+      expect(output).toContain("get_all_property_names(key_conversion=99): status=1 pending=0");
+      expect(output).toContain("keep_numbers key0 typeof=number");
+      expect(output).toContain("numbers_to_strings key0 typeof=string");
     });
   });
 

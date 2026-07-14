@@ -21,6 +21,24 @@
 
 #ifdef LIBUS_USE_LIBUV
 
+/* The shared dispatch follows socket adoption (a tunneled/upgraded socket
+ * moves; the old allocation stays readable with flags.adopted set and prev
+ * pointing at the live one) and skips closed sockets. The paused-probe below
+ * must honor the same contract - dereferencing the raw poll cast crashed the
+ * CONNECT-tunnel tests on the aarch64 agent. */
+static struct us_socket_t *us_internal_poll_cb_adopted_socket(struct us_poll_t *wp) {
+  struct us_socket_t *s = (struct us_socket_t *)wp;
+  if (s->flags.adopted && s->prev) {
+    s = s->prev;
+  }
+  return s;
+}
+
+static int us_internal_poll_cb_socket_is_probeable(struct us_poll_t *wp) {
+  struct us_socket_t *s = us_internal_poll_cb_adopted_socket(wp);
+  return !s->flags.is_closed && s->flags.is_paused;
+}
+
 /* uv_poll_t->data always (except for most times after calling us_poll_stop)
  * points to the us_poll_t */
 static void poll_cb(uv_poll_t *p, int status, int events) {
@@ -57,7 +75,7 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
     if (kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
       eof = 1;
       events |= UV_READABLE;
-    } else if (kind == POLL_TYPE_SOCKET && ((struct us_socket_t *)wp)->flags.is_paused) {
+    } else if (kind == POLL_TYPE_SOCKET && us_internal_poll_cb_socket_is_probeable(wp)) {
       /* A paused socket polls without READABLE, so the read loop cannot
        * discover terminal states for it - and the pause contract forbids
        * consuming deferred bytes. MSG_PEEK discriminates without consuming:
@@ -74,7 +92,7 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
       } else if (peeked < 0 && !bsd_would_block()) {
         error = 1;
         events |= UV_READABLE;
-      } else if (peeked > 0 && us_socket_get_error((struct us_socket_t *)wp) != 0) {
+      } else if (peeked > 0 && us_socket_get_error(us_internal_poll_cb_adopted_socket(wp)) != 0) {
         /* Data is buffered ahead of whatever ended the connection. If the
          * peer ABORTED, the kernel already discarded the stream's tail and a
          * paused socket that never resumes would otherwise never learn -

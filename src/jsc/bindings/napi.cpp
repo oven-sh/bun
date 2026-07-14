@@ -1457,6 +1457,52 @@ extern "C" napi_status napi_create_type_error(napi_env env, napi_value code,
     return createErrorWithNapiValues(env, code, msg, JSC::ErrorType::TypeError, result);
 }
 
+template<typename CharType, typename LengthFn>
+static napi_status napi_create_external_string_impl(napi_env env,
+    CharType* str,
+    size_t length,
+    napi_finalize finalize_callback,
+    void* finalize_hint,
+    napi_value* result,
+    bool* copied,
+    LengthFn&& auto_length)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_RETURN_EARLY_IF_FALSE(env, length == 0 || str != nullptr, napi_invalid_arg);
+    NAPI_CHECK_ARG(env, result);
+
+    if (length == NAPI_AUTO_LENGTH) {
+        length = auto_length(str);
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = JSC::getVM(globalObject);
+
+    if (copied) {
+        *copied = false;
+    }
+
+    // WTF::ExternalStringImpl::create does not accept empty strings; return the empty string
+    // singleton and run the finalizer now, matching V8's NewExternal{OneByte,TwoByte} behavior.
+    if (length == 0) {
+        *result = toNapi(JSC::jsEmptyString(vm), globalObject);
+        env->doFinalizer(finalize_callback, static_cast<void*>(str), finalize_hint);
+        NAPI_RETURN_SUCCESS_UNLESS_EXCEPTION(env);
+    }
+
+    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ const_cast<const CharType*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
+        NAPI_LOG("external string finalizer");
+        env->doFinalizer(finalize_callback, str, hint);
+    });
+
+    JSString* out = JSC::jsString(vm, WTF::String(WTF::move(impl)));
+    ensureStillAliveHere(out);
+    *result = toNapi(out, globalObject);
+    ensureStillAliveHere(out);
+
+    NAPI_RETURN_SUCCESS(env);
+}
+
 extern "C" JS_EXPORT napi_status
 node_api_create_external_string_latin1(napi_env env,
     char* str,
@@ -1467,29 +1513,8 @@ node_api_create_external_string_latin1(napi_env env,
     bool* copied)
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_latin1
-    NAPI_PREAMBLE(env);
-    NAPI_CHECK_ARG(env, str);
-    NAPI_CHECK_ARG(env, result);
-
-    length = length == NAPI_AUTO_LENGTH ? strlen(str) : length;
-    // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
-    NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const Latin1Character*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        NAPI_LOG("latin1 string finalizer");
-        env->doFinalizer(finalize_callback, str, hint);
-    });
-    Zig::GlobalObject* globalObject = toJS(env);
-
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTF::move(impl)));
-    ensureStillAliveHere(out);
-    *result = toNapi(out, globalObject);
-    ensureStillAliveHere(out);
-
-    if (copied) {
-        *copied = false;
-    }
-
-    NAPI_RETURN_SUCCESS(env);
+    return napi_create_external_string_impl<Latin1Character>(env, reinterpret_cast<Latin1Character*>(str), length, finalize_callback, finalize_hint, result, copied,
+        [](const Latin1Character* s) { return strlen(reinterpret_cast<const char*>(s)); });
 }
 
 extern "C" JS_EXPORT napi_status
@@ -1502,26 +1527,8 @@ node_api_create_external_string_utf16(napi_env env,
     bool* copied)
 {
     // https://nodejs.org/api/n-api.html#node_api_create_external_string_utf16
-    NAPI_PREAMBLE(env);
-    NAPI_CHECK_ARG(env, str);
-    NAPI_CHECK_ARG(env, result);
-
-    length = length == NAPI_AUTO_LENGTH ? std::char_traits<char16_t>::length(str) : length;
-    // WTF::ExternalStringImpl does not allow creating empty strings, so we have this limitation for now.
-    NAPI_RETURN_EARLY_IF_FALSE(env, length > 0, napi_invalid_arg);
-
-    Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(str), static_cast<unsigned int>(length) }, finalize_hint, [finalize_callback, env](void* hint, void* str, unsigned length) {
-        NAPI_LOG("utf16 string finalizer");
-        env->doFinalizer(finalize_callback, str, hint);
-    });
-    Zig::GlobalObject* globalObject = toJS(env);
-
-    JSString* out = JSC::jsString(JSC::getVM(globalObject), WTF::String(WTF::move(impl)));
-    ensureStillAliveHere(out);
-    *result = toNapi(out, globalObject);
-    ensureStillAliveHere(out);
-
-    NAPI_RETURN_SUCCESS(env);
+    return napi_create_external_string_impl<char16_t>(env, str, length, finalize_callback, finalize_hint, result, copied,
+        [](const char16_t* s) { return std::char_traits<char16_t>::length(s); });
 }
 
 extern "C" JS_EXPORT napi_status node_api_create_property_key_latin1(napi_env env, const char* str, size_t length, napi_value* result)

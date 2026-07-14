@@ -1836,6 +1836,88 @@ test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static int external_string_finalize_count = 0;
+static void *external_string_finalize_data = nullptr;
+static void external_string_finalizer(node_api_basic_env env, void *data,
+                                      void *hint) {
+  external_string_finalize_count++;
+  external_string_finalize_data = data;
+}
+
+static napi_value
+test_node_api_create_external_string(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  static char latin1_buf[4] = {'a', 'b', 'c', 0};
+  static char16_t utf16_buf[4] = {u'a', u'b', u'c', 0};
+
+  auto run_case = [&](const char *label, bool is_utf16, void *buf,
+                      size_t length) {
+    // Preset sentinel: if *copied is not written, this stays true.
+    bool copied = true;
+    napi_value value = nullptr;
+    external_string_finalize_count = 0;
+    external_string_finalize_data = nullptr;
+
+    napi_status status =
+        is_utf16
+            ? node_api_create_external_string_utf16(
+                  env, static_cast<char16_t *>(buf), length,
+                  external_string_finalizer, nullptr, &value, &copied)
+            : node_api_create_external_string_latin1(
+                  env, static_cast<char *>(buf), length,
+                  external_string_finalizer, nullptr, &value, &copied);
+
+    size_t actual_length = length;
+    if (length == NAPI_AUTO_LENGTH) {
+      actual_length =
+          is_utf16
+              ? std::char_traits<char16_t>::length(static_cast<char16_t *>(buf))
+              : strlen(static_cast<char *>(buf));
+    }
+
+    napi_valuetype type = napi_undefined;
+    size_t str_len = 0;
+    if (status == napi_ok) {
+      napi_typeof(env, value, &type);
+      napi_get_value_string_utf8(env, value, nullptr, 0, &str_len);
+    }
+
+    // For length 0, Node.js synchronously disposes the external resource and
+    // returns the empty string singleton; the finalizer receives the caller's
+    // original buffer pointer.
+    int finalize_data_matches =
+        external_string_finalize_data == buf ? 1 : 0;
+    printf("%s: status=%d copied=%d finalize_sync=%d finalize_data_matches=%d "
+           "type=%s length=%zu\n",
+           label, static_cast<int>(status), copied ? 1 : 0,
+           external_string_finalize_count,
+           actual_length == 0 ? finalize_data_matches : 1,
+           status == napi_ok ? napi_valuetype_to_string(type) : "n/a",
+           str_len);
+  };
+
+  run_case("latin1 len=0", false, latin1_buf, 0);
+  run_case("utf16 len=0", true, utf16_buf, 0);
+  run_case("latin1 auto empty", false, latin1_buf + 3, NAPI_AUTO_LENGTH);
+  run_case("utf16 auto empty", true, utf16_buf + 3, NAPI_AUTO_LENGTH);
+  run_case("latin1 len=3", false, latin1_buf, 3);
+  run_case("utf16 len=3", true, utf16_buf, 3);
+
+  // NULL copied out-param must be accepted on both paths.
+  {
+    napi_value value = nullptr;
+    napi_status s_latin1 = node_api_create_external_string_latin1(
+        env, latin1_buf, 0, nullptr, nullptr, &value, nullptr);
+    napi_status s_utf16 = node_api_create_external_string_utf16(
+        env, utf16_buf, 0, nullptr, nullptr, &value, nullptr);
+    printf("null copied: latin1=%d utf16=%d\n", static_cast<int>(s_latin1),
+           static_cast<int>(s_utf16));
+  }
+
+  return ok(env);
+}
+
 // Test for napi_create_external_buffer with empty/null data
 static void empty_buffer_finalizer(napi_env env, void *data, void *hint) {
   // No-op finalizer for empty buffers
@@ -2717,6 +2799,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
+  REGISTER_FUNCTION(env, exports, test_node_api_create_external_string);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);

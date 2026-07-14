@@ -355,6 +355,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("node_api_create_external_string", () => {
+    it("handles zero-length strings and always writes *copied on success", async () => {
+      const result = await checkSameOutput("test_node_api_create_external_string", []);
+      expect(result).toContain("latin1 len=0: status=0 copied=0 finalize_sync=1 finalize_data_matches=1 type=string length=0");
+      expect(result).toContain("utf16 len=0: status=0 copied=0 finalize_sync=1 finalize_data_matches=1 type=string length=0");
+      expect(result).toContain("latin1 auto empty: status=0 copied=0 finalize_sync=1 finalize_data_matches=1 type=string length=0");
+      expect(result).toContain("utf16 auto empty: status=0 copied=0 finalize_sync=1 finalize_data_matches=1 type=string length=0");
+      expect(result).toContain("latin1 len=3: status=0 copied=0 finalize_sync=0 finalize_data_matches=1 type=string length=3");
+      expect(result).toContain("utf16 len=3: status=0 copied=0 finalize_sync=0 finalize_data_matches=1 type=string length=3");
+      expect(result).toContain("null copied: latin1=0 utf16=0");
+    });
+  });
+
   describe("napi_create_external_arraybuffer", () => {
     it("wraps caller data and does not fire finalize_cb while the ArrayBuffer is alive", async () => {
       const result = await checkSameOutput("test_external_arraybuffer_finalizer", []);

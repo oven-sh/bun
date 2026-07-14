@@ -3,8 +3,8 @@
  * https://github.com/oven-sh/bun/issues/33954
  *
  * Works with both:
- *   bun bd test test/js/node/tls/node-tls-socket-server-wrap.test.mts
- *   node --test test/js/node/tls/node-tls-socket-server-wrap.test.mts
+ *   bun bd test test/js/node/tls/node-tls-socket-server-wrap.test.mjs
+ *   node --test test/js/node/tls/node-tls-socket-server-wrap.test.mjs
  */
 import assert from "node:assert";
 import fs from "node:fs";
@@ -21,7 +21,7 @@ const KEY = fs.readFileSync(path.join(FIXTURES_PATH, "agent1-key.pem"), "utf8");
 const CERT = fs.readFileSync(path.join(FIXTURES_PATH, "agent1-cert.pem"), "utf8");
 
 test("new TLSSocket({ isServer, requestCert }) without ca requests a client certificate", async () => {
-  const { promise: securePromise, resolve: resolveSecure, reject } = Promise.withResolvers<tls.PeerCertificate>();
+  const { promise: securePromise, resolve: resolveSecure, reject } = Promise.withResolvers();
   const rawServer = net.createServer(raw => {
     const socket = new tls.TLSSocket(raw, {
       isServer: true,
@@ -33,8 +33,8 @@ test("new TLSSocket({ isServer, requestCert }) without ca requests a client cert
     socket.on("data", data => socket.write(data));
     socket.on("error", reject);
   });
-  await new Promise<void>(resolve => rawServer.listen(0, "127.0.0.1", resolve));
-  const { port } = rawServer.address() as net.AddressInfo;
+  await new Promise(resolve => rawServer.listen(0, "127.0.0.1", resolve));
+  const { port } = rawServer.address();
 
   const client = tls.connect({
     host: "127.0.0.1",
@@ -44,7 +44,7 @@ test("new TLSSocket({ isServer, requestCert }) without ca requests a client cert
     rejectUnauthorized: false,
   });
   client.on("error", reject);
-  const echoPromise = new Promise<string>(resolveEcho => client.on("data", data => resolveEcho(data.toString())));
+  const echoPromise = new Promise(resolveEcho => client.on("data", data => resolveEcho(data.toString())));
   try {
     const peerCert = await securePromise;
     assert.ok(peerCert && peerCert.subject, "server must receive the client certificate");
@@ -61,7 +61,7 @@ test("new TLSSocket({ isServer, requestCert }) without ca requests a client cert
 });
 
 test("new TLSSocket({ isServer }) without requestCert does not request a client certificate", async () => {
-  const { promise: securePromise, resolve: resolveSecure, reject } = Promise.withResolvers<tls.PeerCertificate>();
+  const { promise: securePromise, resolve: resolveSecure, reject } = Promise.withResolvers();
   const rawServer = net.createServer(raw => {
     const socket = new tls.TLSSocket(raw, {
       isServer: true,
@@ -71,8 +71,8 @@ test("new TLSSocket({ isServer }) without requestCert does not request a client 
     socket.on("secure", () => resolveSecure(socket.getPeerCertificate()));
     socket.on("error", reject);
   });
-  await new Promise<void>(resolve => rawServer.listen(0, "127.0.0.1", resolve));
-  const { port } = rawServer.address() as net.AddressInfo;
+  await new Promise(resolve => rawServer.listen(0, "127.0.0.1", resolve));
+  const { port } = rawServer.address();
 
   const client = tls.connect({
     host: "127.0.0.1",
@@ -93,7 +93,7 @@ test("new TLSSocket({ isServer }) without requestCert does not request a client 
 
 test("new TLSSocket(duplex, { isServer, requestCert, rejectUnauthorized }) requests a certificate and does not auto-reject", async () => {
   // Generic-Duplex variant of the standalone server wrap (no native fd).
-  const a: Duplex = new Duplex({
+  const a = new Duplex({
     read() {},
     write(chunk, _enc, cb) {
       b.push(chunk);
@@ -104,7 +104,7 @@ test("new TLSSocket(duplex, { isServer, requestCert, rejectUnauthorized }) reque
       cb();
     },
   });
-  const b: Duplex = new Duplex({
+  const b = new Duplex({
     read() {},
     write(chunk, _enc, cb) {
       a.push(chunk);
@@ -116,7 +116,7 @@ test("new TLSSocket(duplex, { isServer, requestCert, rejectUnauthorized }) reque
     },
   });
 
-  const { promise: securePromise, resolve: resolveSecure, reject } = Promise.withResolvers<tls.PeerCertificate>();
+  const { promise: securePromise, resolve: resolveSecure, reject } = Promise.withResolvers();
   const server = new tls.TLSSocket(a, {
     isServer: true,
     key: KEY,
@@ -135,7 +135,7 @@ test("new TLSSocket(duplex, { isServer, requestCert, rejectUnauthorized }) reque
     rejectUnauthorized: false,
   });
   client.on("error", reject);
-  const echoPromise = new Promise<string>(resolveEcho => client.on("data", data => resolveEcho(data.toString())));
+  const echoPromise = new Promise(resolveEcho => client.on("data", data => resolveEcho(data.toString())));
   try {
     const peerCert = await securePromise;
     assert.ok(peerCert && peerCert.subject, "server must receive the client certificate");

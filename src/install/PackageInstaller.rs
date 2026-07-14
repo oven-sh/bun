@@ -1550,11 +1550,15 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL | ForTarballError::AlreadyFailed) => {
-                                self.fail_enqueue_for_download::<IS_PENDING_PACKAGE_INSTALL>(
-                                    log_level,
-                                )
+                            Err(ForTarballError::InvalidURL) => {
+                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::LocalTarball => {
@@ -1578,11 +1582,15 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL | ForTarballError::AlreadyFailed) => {
-                                self.fail_enqueue_for_download::<IS_PENDING_PACKAGE_INSTALL>(
-                                    log_level,
-                                )
+                            Err(ForTarballError::InvalidURL) => {
+                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::Npm => {
@@ -1612,11 +1620,15 @@ impl<'a> PackageInstaller<'a> {
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
-                            Err(ForTarballError::InvalidURL | ForTarballError::AlreadyFailed) => {
-                                self.fail_enqueue_for_download::<IS_PENDING_PACKAGE_INSTALL>(
-                                    log_level,
-                                )
+                            Err(ForTarballError::InvalidURL) => {
+                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     _ => {
@@ -2242,7 +2254,7 @@ impl<'a> PackageInstaller<'a> {
         }
     }
 
-    fn fail_enqueue_for_download<const IS_PENDING_PACKAGE_INSTALL: bool>(
+    fn fail_with_invalid_url<const IS_PENDING_PACKAGE_INSTALL: bool>(
         &mut self,
         log_level: Options::LogLevel,
     ) {

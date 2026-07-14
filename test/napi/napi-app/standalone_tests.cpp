@@ -2,11 +2,14 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cinttypes>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <thread>
 
 #include "utils.h"
 
@@ -85,6 +88,181 @@ static napi_value test_napi_threadsafe_function_does_not_hang_after_finalize(
 
   NODE_API_CALL(env, napi_release_threadsafe_function(cb, napi_tsfn_release));
   printf("success!\n");
+  return env.Undefined();
+}
+
+static napi_threadsafe_function tsfn_abort_release = nullptr;
+static bool tsfn_abort_release_finalized = false;
+
+static void tsfn_abort_release_finalize(napi_env env, void *finalize_data,
+                                        void *finalize_hint) {
+  tsfn_abort_release_finalized = true;
+}
+
+// Create a tsfn (thread_count=1), acquire a second reference (thread_count=2),
+// optionally queue some items, then abort it (thread_count=1, closing). The
+// abort's dispatch runs on the next event-loop turn, sees thread_count!=0, and
+// returns without finalizing.
+static napi_value test_napi_threadsafe_function_abort_then_last_release(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_then_last_release");
+  int queued = info[0].IsNumber() ? info[0].As<Napi::Number>().Int32Value() : 0;
+  tsfn_abort_release_finalized = false;
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ nullptr,
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 1, /* finalize data */ nullptr,
+                    tsfn_abort_release_finalize, /* context */ nullptr,
+                    &noop_callback, &tsfn_abort_release));
+  NODE_API_CALL(env, napi_acquire_threadsafe_function(tsfn_abort_release));
+  for (int i = 0; i < queued; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(
+                           tsfn_abort_release, nullptr, napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_release,
+                                                      napi_tsfn_abort));
+  return env.Undefined();
+}
+
+// Releases the last reference of the already-closing tsfn. The finalizer must
+// run and the event-loop keepalive must drop so the process exits.
+static napi_value test_napi_threadsafe_function_abort_then_last_release_drop(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_release,
+                                                      napi_tsfn_release));
+  tsfn_abort_release = nullptr;
+  return env.Undefined();
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_then_last_release_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_release_finalized);
+}
+
+static napi_threadsafe_function tsfn_abort_blocked = nullptr;
+static bool tsfn_abort_blocked_finalized = false;
+static std::atomic<int> tsfn_abort_blocked_about_to_call{0};
+
+static void tsfn_abort_blocked_finalize(napi_env env, void *finalize_data,
+                                        void *finalize_hint) {
+  tsfn_abort_blocked_finalized = true;
+}
+
+static void tsfn_abort_blocked_producer() {
+  napi_threadsafe_function tsfn = tsfn_abort_blocked;
+  tsfn_abort_blocked_about_to_call.fetch_add(1);
+  napi_call_threadsafe_function(tsfn, nullptr, napi_tsfn_blocking);
+}
+
+// Create a tsfn with max_queue_size=1 and initial_thread_count=3, fill the
+// queue, spawn two producers that block in napi_call_threadsafe_function
+// (napi_tsfn_blocking), then abort. Both producers must wake, observe
+// napi_closing, and the finalizer must run so the process exits.
+static napi_value test_napi_threadsafe_function_abort_blocked_producers(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_blocked_producers");
+  tsfn_abort_blocked_finalized = false;
+  tsfn_abort_blocked_about_to_call.store(0);
+  NODE_API_CALL(
+      env, napi_create_threadsafe_function(
+               env, /* JavaScript function */ nullptr,
+               /* async resource */ nullptr, resource_name,
+               /* max queue size */ 1,
+               /* initial thread count */ 3, /* finalize data */ nullptr,
+               tsfn_abort_blocked_finalize, /* context */ nullptr,
+               &noop_callback, &tsfn_abort_blocked));
+  // Fill the queue so both producer threads block on the condvar. The JS
+  // thread is parked in this function, so dispatch cannot drain it yet.
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_abort_blocked, nullptr,
+                                                   napi_tsfn_nonblocking));
+  std::thread(tsfn_abort_blocked_producer).detach();
+  std::thread(tsfn_abort_blocked_producer).detach();
+  while (tsfn_abort_blocked_about_to_call.load() < 2) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_blocked,
+                                                      napi_tsfn_abort));
+  return env.Undefined();
+}
+
+static napi_value
+test_napi_threadsafe_function_abort_blocked_producers_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_blocked_finalized);
+}
+
+static napi_threadsafe_function tsfn_abort_full = nullptr;
+static bool tsfn_abort_full_finalized = false;
+
+static void tsfn_abort_full_finalize(napi_env env, void *finalize_data,
+                                     void *finalize_hint) {
+  tsfn_abort_full_finalized = true;
+}
+
+// Abort a tsfn whose bounded queue is full, then call it without blocking. A
+// full queue must not hide that it is closing: the call has to report
+// napi_closing and consume this thread's reference, or nothing is left to
+// finalize it and the event-loop keepalive pins the process forever. Returns
+// the call's status.
+static napi_value
+test_napi_threadsafe_function_abort_full_queue(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "abort_full_queue");
+  tsfn_abort_full_finalized = false;
+  NODE_API_CALL(env, napi_create_threadsafe_function(
+                         env, /* JavaScript function */ nullptr,
+                         /* async resource */ nullptr, resource_name,
+                         /* max queue size */ 1,
+                         /* initial thread count */ 2,
+                         /* finalize data */ nullptr, tsfn_abort_full_finalize,
+                         /* context */ nullptr, &noop_callback,
+                         &tsfn_abort_full));
+  // The JS thread is parked in here, so nothing drains the queue: it is still
+  // full at the abort and at the call below.
+  NODE_API_CALL(env, napi_call_threadsafe_function(tsfn_abort_full, nullptr,
+                                                   napi_tsfn_nonblocking));
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn_abort_full,
+                                                      napi_tsfn_abort));
+  napi_status status = napi_call_threadsafe_function(tsfn_abort_full, nullptr,
+                                                     napi_tsfn_nonblocking);
+  tsfn_abort_full = nullptr;
+  return Napi::Number::New(env, static_cast<double>(status));
+}
+
+static napi_value test_napi_threadsafe_function_abort_full_queue_finalized(
+    const Napi::CallbackInfo &info) {
+  return Napi::Boolean::New(info.Env(), tsfn_abort_full_finalized);
+}
+
+// Queue several items while the JS thread is parked here, so all of them run in
+// one dispatch. Microtasks queued by one callback must be drained before the
+// next callback runs (https://github.com/nodejs/node/pull/38506), and must not
+// be drained before the first one.
+static napi_value test_napi_threadsafe_function_microtask_order(
+    const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  napi_value resource_name = Napi::String::New(env, "microtask_order");
+  napi_threadsafe_function tsfn;
+  NODE_API_CALL(env,
+                napi_create_threadsafe_function(
+                    env, /* JavaScript function */ info[1],
+                    /* async resource */ nullptr, resource_name,
+                    /* max queue size (unlimited) */ 0,
+                    /* initial thread count */ 1, /* finalize data */ nullptr,
+                    /* finalize callback */ nullptr, /* context */ nullptr,
+                    /* call_js_cb: default, calls info[1] */ nullptr, &tsfn));
+  for (int i = 0; i < 3; i++) {
+    NODE_API_CALL(env, napi_call_threadsafe_function(tsfn, nullptr,
+                                                     napi_tsfn_nonblocking));
+  }
+  NODE_API_CALL(env, napi_release_threadsafe_function(tsfn, napi_tsfn_release));
   return env.Undefined();
 }
 
@@ -1658,6 +1836,203 @@ test_napi_freeze_seal_indexed(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// Prints "<label>: status=<n> pending=<0|1>" and clears any pending exception
+// so the next call starts clean.
+static void report_status(napi_env env, const char *label, napi_status status) {
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  printf("%s: status=%d pending=%d\n", label, (int)status, pending ? 1 : 0);
+  if (pending) {
+    napi_value exc;
+    napi_get_and_clear_last_exception(env, &exc);
+  }
+}
+
+// Verifies that the element / property-name / prototype N-API family follows
+// Node's CHECK_TO_OBJECT semantics: primitives are coerced via ToObject and
+// succeed, null/undefined fail with napi_object_expected and a pending
+// TypeError, napi_get_all_property_names validates its enum arguments, and
+// napi_key_keep_numbers yields numeric (not string) index keys.
+static napi_value test_napi_object_coercion(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+#ifndef _WIN32
+  BlockingStdoutScope blocking_stdout;
+#endif
+
+  napi_value v_null, v_undef, v_num, v_str, v_true, v_one, out;
+  bool bresult;
+  NODE_API_CALL(env, napi_get_null(env, &v_null));
+  NODE_API_CALL(env, napi_get_undefined(env, &v_undef));
+  NODE_API_CALL(env, napi_create_double(env, 42.5, &v_num));
+  NODE_API_CALL(env,
+                napi_create_string_utf8(env, "abc", NAPI_AUTO_LENGTH, &v_str));
+  NODE_API_CALL(env, napi_get_boolean(env, true, &v_true));
+  NODE_API_CALL(env, napi_create_int32(env, 1, &v_one));
+
+  // napi_set_element
+  report_status(env, "set_element(number)",
+                napi_set_element(env, v_num, 0, v_one));
+  report_status(env, "set_element(string)",
+                napi_set_element(env, v_str, 0, v_one));
+  report_status(env, "set_element(null)",
+                napi_set_element(env, v_null, 0, v_one));
+  report_status(env, "set_element(undefined)",
+                napi_set_element(env, v_undef, 0, v_one));
+
+  // napi_has_element
+  report_status(env, "has_element(string)",
+                napi_has_element(env, v_str, 1, &bresult));
+  report_status(env, "has_element(null)",
+                napi_has_element(env, v_null, 0, &bresult));
+
+  // napi_get_element
+  {
+    napi_value r = nullptr;
+    napi_status s = napi_get_element(env, v_str, 1, &r);
+    report_status(env, "get_element(string,1)", s);
+    if (s == napi_ok) {
+      char buf[8] = {0};
+      size_t len = 0;
+      if (napi_get_value_string_utf8(env, r, buf, sizeof(buf), &len) ==
+          napi_ok) {
+        printf("get_element(string,1) value=%s\n", buf);
+      }
+    }
+  }
+  report_status(env, "get_element(number)",
+                napi_get_element(env, v_num, 0, &out));
+  report_status(env, "get_element(null)",
+                napi_get_element(env, v_null, 0, &out));
+  report_status(env, "get_element(undefined)",
+                napi_get_element(env, v_undef, 0, &out));
+
+  // napi_delete_element
+  report_status(env, "delete_element(number)",
+                napi_delete_element(env, v_num, 0, &bresult));
+  report_status(env, "delete_element(null)",
+                napi_delete_element(env, v_null, 0, &bresult));
+  {
+    // result may be NULL; the delete must still happen.
+    napi_value arr;
+    NODE_API_CALL(env, napi_create_array_with_length(env, 1, &arr));
+    NODE_API_CALL(env, napi_set_element(env, arr, 0, v_one));
+    report_status(env, "delete_element(array,result=NULL)",
+                  napi_delete_element(env, arr, 0, nullptr));
+    bool has = true;
+    NODE_API_CALL(env, napi_has_element(env, arr, 0, &has));
+    printf("delete_element(array,result=NULL) has[0]=%d\n", has ? 1 : 0);
+  }
+
+  // napi_get_property_names
+  report_status(env, "get_property_names(string)",
+                napi_get_property_names(env, v_str, &out));
+  report_status(env, "get_property_names(number)",
+                napi_get_property_names(env, v_num, &out));
+  report_status(env, "get_property_names(null)",
+                napi_get_property_names(env, v_null, &out));
+
+  // napi_get_prototype
+  {
+    napi_value r = nullptr;
+    napi_status s = napi_get_prototype(env, v_num, &r);
+    report_status(env, "get_prototype(number)", s);
+    if (s == napi_ok) {
+      napi_value number_ctor, number_proto;
+      NODE_API_CALL(env, napi_get_global(env, &out));
+      NODE_API_CALL(env,
+                    napi_get_named_property(env, out, "Number", &number_ctor));
+      NODE_API_CALL(env, napi_get_named_property(env, number_ctor, "prototype",
+                                                 &number_proto));
+      bool eq = false;
+      NODE_API_CALL(env, napi_strict_equals(env, r, number_proto, &eq));
+      printf("get_prototype(number) is Number.prototype=%d\n", eq ? 1 : 0);
+    }
+  }
+  report_status(env, "get_prototype(string)",
+                napi_get_prototype(env, v_str, &out));
+  report_status(env, "get_prototype(bool)",
+                napi_get_prototype(env, v_true, &out));
+  report_status(env, "get_prototype(null)",
+                napi_get_prototype(env, v_null, &out));
+  report_status(env, "get_prototype(undefined)",
+                napi_get_prototype(env, v_undef, &out));
+
+  // by-key property siblings: also route through CHECK_TO_OBJECT in Node
+  {
+    napi_value key;
+    NODE_API_CALL(env,
+                  napi_create_string_utf8(env, "k", NAPI_AUTO_LENGTH, &key));
+    report_status(env, "set_property(null)",
+                  napi_set_property(env, v_null, key, v_one));
+    report_status(env, "get_property(null)",
+                  napi_get_property(env, v_null, key, &out));
+    report_status(env, "has_property(null)",
+                  napi_has_property(env, v_null, key, &bresult));
+    report_status(env, "delete_property(null)",
+                  napi_delete_property(env, v_null, key, &bresult));
+    report_status(env, "has_own_property(null)",
+                  napi_has_own_property(env, v_null, key, &bresult));
+    report_status(env, "set_named_property(null)",
+                  napi_set_named_property(env, v_null, "k", v_one));
+    report_status(env, "get_named_property(null)",
+                  napi_get_named_property(env, v_null, "k", &out));
+    report_status(env, "has_named_property(null)",
+                  napi_has_named_property(env, v_null, "k", &bresult));
+  }
+
+  // napi_get_all_property_names enum validation
+  napi_value obj;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  report_status(env, "get_all_property_names(key_mode=99)",
+                napi_get_all_property_names(
+                    env, obj, static_cast<napi_key_collection_mode>(99),
+                    napi_key_all_properties, napi_key_numbers_to_strings,
+                    &out));
+  report_status(
+      env, "get_all_property_names(key_conversion=99)",
+      napi_get_all_property_names(env, obj, napi_key_own_only,
+                                  napi_key_all_properties,
+                                  static_cast<napi_key_conversion>(99), &out));
+  report_status(env, "get_all_property_names(string)",
+                napi_get_all_property_names(
+                    env, v_str, napi_key_own_only, napi_key_all_properties,
+                    napi_key_numbers_to_strings, &out));
+  report_status(env, "get_all_property_names(null)",
+                napi_get_all_property_names(
+                    env, v_null, napi_key_own_only, napi_key_all_properties,
+                    napi_key_numbers_to_strings, &out));
+  report_status(env, "get_all_property_names(null,key_mode=99)",
+                napi_get_all_property_names(
+                    env, v_null, static_cast<napi_key_collection_mode>(99),
+                    napi_key_all_properties, napi_key_numbers_to_strings,
+                    &out));
+
+  // napi_key_keep_numbers vs napi_key_numbers_to_strings
+  {
+    napi_value arr;
+    NODE_API_CALL(env, napi_create_array_with_length(env, 1, &arr));
+    NODE_API_CALL(env, napi_set_element(env, arr, 0, v_one));
+
+    napi_value keys;
+    NODE_API_CALL(env, napi_get_all_property_names(
+                           env, arr, napi_key_own_only, napi_key_skip_symbols,
+                           napi_key_keep_numbers, &keys));
+    napi_value key0;
+    NODE_API_CALL(env, napi_get_element(env, keys, 0, &key0));
+    printf("keep_numbers key0 typeof=%s\n",
+           napi_valuetype_to_string(get_typeof(env, key0)));
+
+    NODE_API_CALL(env, napi_get_all_property_names(
+                           env, arr, napi_key_own_only, napi_key_skip_symbols,
+                           napi_key_numbers_to_strings, &keys));
+    NODE_API_CALL(env, napi_get_element(env, keys, 0, &key0));
+    printf("numbers_to_strings key0 typeof=%s\n",
+           napi_valuetype_to_string(get_typeof(env, key0)));
+  }
+
+  return ok(env);
+}
+
 // Test for napi_create_external_buffer with empty/null data
 static void empty_buffer_finalizer(napi_env env, void *data, void *hint) {
   // No-op finalizer for empty buffers
@@ -2496,6 +2871,23 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_get_value_string_utf8_with_buffer);
   REGISTER_FUNCTION(env, exports,
                     test_napi_threadsafe_function_does_not_hang_after_finalize);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_then_last_release);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_then_last_release_drop);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_then_last_release_finalized);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_abort_blocked_producers);
+  REGISTER_FUNCTION(
+      env, exports,
+      test_napi_threadsafe_function_abort_blocked_producers_finalized);
+  REGISTER_FUNCTION(env, exports, test_napi_threadsafe_function_abort_full_queue);
+  REGISTER_FUNCTION(
+      env, exports, test_napi_threadsafe_function_abort_full_queue_finalized);
+  REGISTER_FUNCTION(env, exports,
+                    test_napi_threadsafe_function_microtask_order);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_string);
   REGISTER_FUNCTION(env, exports, test_napi_handle_scope_bigint);
   REGISTER_FUNCTION(env, exports, test_napi_delete_property);
@@ -2521,6 +2913,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
+  REGISTER_FUNCTION(env, exports, test_napi_object_coercion);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);

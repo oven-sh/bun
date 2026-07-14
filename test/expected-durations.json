@@ -1861,9 +1861,19 @@
     "windows": 125
   },
   "js/bun/http/bun-serve-static.test.ts": {
-    "default": 41880,
-    "asan": 123897,
-    "windows": 1697
+    "default": 200,
+    "asan": 2800,
+    "windows": 200
+  },
+  "js/bun/http/bun-serve-static-stress-access-body.test.ts": {
+    "default": 24000,
+    "asan": 63000,
+    "windows": 850
+  },
+  "js/bun/http/bun-serve-static-stress-no-body.test.ts": {
+    "default": 25000,
+    "asan": 62000,
+    "windows": 850
   },
   "js/bun/http/bun-server.test.ts": {
     "default": 3683,

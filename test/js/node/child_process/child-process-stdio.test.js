@@ -129,7 +129,7 @@ describe("short stdio arrays", () => {
     [["ignore", "pipe"]],
     [["inherit", "pipe"]],
     [["pipe", "pipe", "pipe"]], // 3-element control row
-  ])("stdio %j: stdout is a usable Readable after exit", async stdio => {
+  ])("stdio %j: stdout streams while the child runs", async stdio => {
     const child = spawn(bunExe(), ["-e", "process.stdout.write('ok')"], { env: bunEnv, stdio });
     let out = "";
     child.stdout.setEncoding("utf8");
@@ -140,5 +140,30 @@ describe("short stdio arrays", () => {
     expect(child.stdout.readable).toBe(false);
     expect(signal).toBeNull();
     expect(code).toBe(0);
+  });
+
+  // The regression: `.stdio` must not be touched before exit, otherwise it is
+  // constructed while the handle is still alive and the missing eager load is
+  // invisible. Without the fix the 2-element rows skip the eager load, so this
+  // first post-exit access constructs a native Readable over a released handle
+  // and throws "ASSERTION FAILED: typeof bunNativePtr === object".
+  // The eager load consumes the stream, so post-exit it is already ended for
+  // every row — the invariant under test is that reading `.stdout` is safe,
+  // not that the bytes are still retrievable.
+  test.each([
+    [["pipe", "pipe"]],
+    [["ignore", "pipe"]],
+    [["pipe", "pipe", "pipe"]], // 3-element control row
+  ])("stdio %j: stdout is a usable Readable when first accessed after exit", async stdio => {
+    const child = spawn(bunExe(), ["-e", "process.stdout.write('ok')"], { env: bunEnv, stdio });
+    const [code, signal] = await once(child, "exit");
+    expect(signal).toBeNull();
+    expect(code).toBe(0);
+
+    // First `.stdout` access of this ChildProcess' lifetime: must not throw.
+    const stdout = child.stdout;
+    expect(stdout).not.toBeNull();
+    expect(typeof stdout.on).toBe("function");
+    expect(stdout.readableEnded).toBe(true);
   });
 });

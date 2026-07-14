@@ -29,11 +29,14 @@ describe("Bun.main", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode }).toEqual({
+    // Releasing the `Bun.main` Strong after the JSC HandleSet is gone is a UAF
+    // in Bun__StrongRef__delete: ASAN aborts the process, so a clean exit is
+    // the signal. `stderr` is in the assertion only so a failure shows why.
+    expect({ stdout: stdout.trim(), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
       stdout: "ok",
-      stderr: expect.not.stringContaining("AddressSanitizer"),
+      stderr: "",
+      exitCode: 0,
       signalCode: null,
     });
-    expect(exitCode).toBe(0);
   });
 });

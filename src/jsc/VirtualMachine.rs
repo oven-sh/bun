@@ -4468,6 +4468,13 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // The `global_exit`/worker paths already released these before tearing
+        // the JSC VM down, which makes this a no-op there (every `deinit()`
+        // leaves its slot empty). `bake::production`'s unwind guard reaches
+        // `destroy()` with the JSC VM still live and no prior release, so this
+        // is where its handles are reclaimed.
+        self.release_strong_refs_before_teardown();
+
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 

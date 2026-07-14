@@ -1,9 +1,9 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { once } from "node:events";
+import net from "node:net";
 import { join } from "node:path";
 import tls from "node:tls";
-import net from "node:net";
-import { once } from "node:events";
 
 type TLSOptions = {
   cert: string;
@@ -746,11 +746,7 @@ describe.concurrent("fetch-tls", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ result: JSON.parse(stdout.trim() || "null"), stderr }).toEqual({
         result: {
           tunnelGarbage: "ERR_TLS_HANDSHAKE_FAILED",

@@ -195,8 +195,22 @@ describe.concurrent("node-module-module", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual([
-      { request: "./lvl2.cjs", parentType: "object", parentFilename: "main.cjs", isMain: false, argc: 4, thisIsModule: true },
-      { request: "./real.cjs", parentType: "object", parentFilename: "lvl2.cjs", isMain: false, argc: 4, thisIsModule: true },
+      {
+        request: "./lvl2.cjs",
+        parentType: "object",
+        parentFilename: "main.cjs",
+        isMain: false,
+        argc: 4,
+        thisIsModule: true,
+      },
+      {
+        request: "./real.cjs",
+        parentType: "object",
+        parentFilename: "lvl2.cjs",
+        isMain: false,
+        argc: 4,
+        thisIsModule: true,
+      },
       {
         request: "./real.cjs",
         parentType: "object",

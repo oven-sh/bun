@@ -8,7 +8,7 @@
 //! `NODE_OPTIONS` is surfaced instead of silently ignored.
 
 use bstr::BStr;
-use bun_core::{Global, Output, env_var};
+use bun_core::{Global, Output, env_var, strings};
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum TokenizeError {
@@ -74,7 +74,7 @@ pub struct Parsed {
 /// `-rpath`.
 fn split_name_value(tok: &[u8]) -> (&[u8], Option<&[u8]>) {
     if tok.len() >= 2 && tok[0] == b'-' && tok[1] == b'-' {
-        if let Some(eq) = tok.iter().position(|&b| b == b'=') {
+        if let Some(eq) = strings::index_of_char_usize(tok, b'=') {
             return (&tok[..eq], Some(&tok[eq + 1..]));
         }
     }
@@ -478,16 +478,16 @@ pub fn parse(raw: &[u8]) -> Parsed {
 
         let is_preload = matches!(&*normalized, b"--import" | b"--require" | b"-r");
         if is_preload {
-            let value: &[u8] = if let Some(v) = inline_value {
-                v
-            } else {
-                match tokens.get(i) {
+            let value: &[u8] = match inline_value {
+                Some(v) if !v.is_empty() => v,
+                Some(_) => fail_requires_argument(tok),
+                None => match tokens.get(i) {
                     Some(next) if !next.is_empty() && next[0] != b'-' => {
                         i += 1;
                         &**next
                     }
                     _ => fail_requires_argument(name),
-                }
+                },
             };
             parsed.preloads.push(Box::<[u8]>::from(value));
         }

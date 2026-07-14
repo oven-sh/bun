@@ -9,7 +9,9 @@ setDefaultTimeout(60_000);
 // Timeout for waiting on stream reader loops (30s matches runtime-inspector.test.ts)
 const STREAM_TIMEOUT_MS = 30_000;
 
-// Helper: read from a stream until condition is met, with a timeout to prevent hanging
+// Helper: read from a stream until condition is met. Each read is raced
+// against a timeout so a silent-but-alive child still fails with the
+// accumulated output in the message.
 async function readStreamUntil(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   condition: (output: string) => boolean,
@@ -17,13 +19,15 @@ async function readStreamUntil(
 ): Promise<string> {
   const decoder = new TextDecoder();
   let output = "";
-  const startTime = Date.now();
+  const timeout = new Promise<never>((_, reject) =>
+    setTimeout(
+      () => reject(new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: ${JSON.stringify(output)}`)),
+      timeoutMs,
+    ).unref(),
+  );
 
   while (!condition(output)) {
-    if (Date.now() - startTime > timeoutMs) {
-      throw new Error(`Timeout after ${timeoutMs}ms waiting for stream condition. Got: "${output}"`);
-    }
-    const { value, done } = await reader.read();
+    const { value, done } = await Promise.race([reader.read(), timeout]);
     if (done) break;
     output += decoder.decode(value, { stream: true });
   }

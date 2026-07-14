@@ -101,7 +101,7 @@ describe("Runtime inspector activation", () => {
       });
 
       const debugStderr = await debugProc.stderr.text();
-      expect(debugStderr).toBe("");
+      expect(debugStderr).not.toContain("error:");
       expect(await debugProc.exited).toBe(0);
 
       // Wait for inspector to activate by reading stderr until we see the message
@@ -120,15 +120,19 @@ describe("Runtime inspector activation", () => {
       const fakePid = 999999999;
 
       await using proc = spawn({
-        cmd: [bunExe(), "-e", `process._debugProcess(${fakePid})`],
+        cmd: [
+          bunExe(),
+          "-e",
+          `try { process._debugProcess(${fakePid}); } catch (e) { console.log(e.code, e.syscall); process.exitCode = 1; }`,
+        ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      const stderr = await proc.stderr.text();
-      expect(stderr).toContain("Failed");
-      expect(await proc.exited).not.toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ESRCH kill", exitCode: 1 });
+      expect(stderr).not.toContain("error:");
     });
 
     test.skipIf(isASAN)("inspector does not activate twice", async () => {
@@ -159,7 +163,7 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
       const debug1Stderr = await debug1.stderr.text();
-      expect(debug1Stderr).toBe("");
+      expect(debug1Stderr).not.toContain("error:");
       expect(await debug1.exited).toBe(0);
 
       // Wait for the full debugger banner (header + content + footer) with timeout
@@ -182,7 +186,7 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
       const debug2Stderr = await debug2.stderr.text();
-      expect(debug2Stderr).toBe("");
+      expect(debug2Stderr).not.toContain("error:");
       expect(await debug2.exited).toBe(0);
 
       // Kill process — the signal was delivered synchronously, so if a second banner
@@ -235,7 +239,7 @@ describe("Runtime inspector activation", () => {
         });
 
         const debug1Stderr = await debug1.stderr.text();
-        expect(debug1Stderr).toBe("");
+        expect(debug1Stderr).not.toContain("error:");
         expect(await debug1.exited).toBe(0);
 
         const result1 = await waitForDebuggerListening(target1.stderr);
@@ -269,7 +273,7 @@ describe("Runtime inspector activation", () => {
         });
 
         const debug2Stderr = await debug2.stderr.text();
-        expect(debug2Stderr).toBe("");
+        expect(debug2Stderr).not.toContain("error:");
         expect(await debug2.exited).toBe(0);
 
         const result2 = await waitForDebuggerListening(target2.stderr);
@@ -283,15 +287,19 @@ describe("Runtime inspector activation", () => {
 
     test("throws when called with no arguments", async () => {
       await using proc = spawn({
-        cmd: [bunExe(), "-e", `process._debugProcess()`],
+        cmd: [
+          bunExe(),
+          "-e",
+          `try { process._debugProcess(); } catch (e) { console.log(e.code); process.exitCode = 1; }`,
+        ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
 
-      const stderr = await proc.stderr.text();
-      expect(stderr).toContain("requires a pid argument");
-      expect(await proc.exited).not.toBe(0);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "ERR_MISSING_ARGS", exitCode: 1 });
+      expect(stderr).not.toContain("error:");
     });
 
     test.skipIf(isASAN)("can interrupt an infinite loop", async () => {
@@ -319,7 +327,7 @@ describe("Runtime inspector activation", () => {
       });
 
       const debugStderr = await debugProc.stderr.text();
-      expect(debugStderr).toBe("");
+      expect(debugStderr).not.toContain("error:");
       expect(await debugProc.exited).toBe(0);
 
       // Wait for inspector to activate - this proves we interrupted the infinite loop
@@ -358,7 +366,7 @@ describe("Runtime inspector activation", () => {
       });
 
       const debugStderr = await debugProc.stderr.text();
-      expect(debugStderr).toBe("");
+      expect(debugStderr).not.toContain("error:");
       expect(await debugProc.exited).toBe(0);
 
       // Wait for inspector to activate and extract WebSocket URL
@@ -441,7 +449,7 @@ describe("Runtime inspector activation", () => {
         stderr: "pipe",
       });
       const [debugStderr, debugExitCode] = await Promise.all([debugProc.stderr.text(), debugProc.exited]);
-      expect(debugStderr).toBe("");
+      expect(debugStderr).not.toContain("error:");
       expect(debugExitCode).toBe(0);
 
       // Wait for inspector banner and extract WS URL

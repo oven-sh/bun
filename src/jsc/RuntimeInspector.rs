@@ -241,6 +241,7 @@ mod platform {
     // Async-signal-safe semaphore (Mach on macOS, POSIX sem_t on Linux).
     unsafe extern "C" {
         fn Bun__Semaphore__create(value: core::ffi::c_uint) -> *mut c_void;
+        fn Bun__Semaphore__destroy(sem: *mut c_void);
         fn Bun__Semaphore__signal(sem: *mut c_void) -> bool;
         fn Bun__Semaphore__wait(sem: *mut c_void) -> bool;
     }
@@ -293,6 +294,8 @@ mod platform {
         if spawn.is_err() {
             bun_core::scoped_log!(RuntimeInspector, "thread spawn failed");
             SEMAPHORE.store(core::ptr::null_mut(), Ordering::Release);
+            // SAFETY: `sem` was just created above; no other thread holds it.
+            unsafe { Bun__Semaphore__destroy(sem) };
             return false;
         }
 

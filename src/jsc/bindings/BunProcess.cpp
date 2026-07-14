@@ -4292,22 +4292,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
 
     if (callFrame->argumentCount() < 1) {
-        throwVMError(globalObject, scope, "process._debugProcess requires a pid argument"_s);
-        return {};
+        return Bun::ERR::MISSING_ARGS(scope, globalObject, "The \"pid\" argument must be specified"_s);
     }
 
     int pid = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     if (pid <= 0) {
-        throwVMError(globalObject, scope, "process._debugProcess requires a positive pid"_s);
-        return {};
+        return Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "pid"_s, callFrame->argument(0), "must be a positive integer"_s);
     }
 
 #if !OS(WINDOWS)
     int result = kill(pid, SIGUSR1);
     if (result < 0) {
-        throwVMError(globalObject, scope, makeString("Failed to send SIGUSR1 to process "_s, pid, ": process may not exist or permission denied"_s));
+        throwSystemError(scope, globalObject, "kill"_s, errno);
         return {};
     }
 #else

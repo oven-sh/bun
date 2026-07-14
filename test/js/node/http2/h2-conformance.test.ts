@@ -832,7 +832,13 @@ describe("inbound stream lifecycle", () => {
         c.sendFrame(FrameType.RST_STREAM, 0, 1 + 2 * i, cancel);
       }
       await allClosed.promise;
-      for (let i = 0; i < 20 && refs.some(ref => ref.deref() !== undefined); i++) {
+      // The streams' native release rides the deferred teardown chain
+      // (setImmediate: rstNextTick / delayed destroy), so drain an immediate
+      // turn before each GC pass - gcTick's Bun.sleep(0) alone leaves the
+      // release pending on slow FinalizationRegistry lanes (alpine/musl
+      // needed a retry at 20 passes; collection is late there, not stuck).
+      for (let i = 0; i < 50 && refs.some(ref => ref.deref() !== undefined); i++) {
+        await new Promise(resolve => setImmediate(resolve));
         await gcTick(true);
       }
       expect(refs.filter(ref => ref.deref() !== undefined).length).toBe(0);

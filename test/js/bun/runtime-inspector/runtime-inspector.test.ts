@@ -302,7 +302,7 @@ describe("Runtime inspector activation", () => {
       expect(stderr).not.toContain("error:");
     });
 
-    test.skipIf(isASAN)("can interrupt an infinite loop", async () => {
+    test("can interrupt an infinite loop", async () => {
       // Start target process with infinite loop
       await using targetProc = spawn({
         cmd: [bunExe(), "--inspect-port=0", "-e", `console.log(process.pid); while (true) {}`],
@@ -397,12 +397,22 @@ describe("Runtime inspector activation", () => {
           }
         };
 
+        function withStepTimeout<T>(label: string, p: Promise<T>): Promise<T> {
+          let t!: ReturnType<typeof setTimeout>;
+          const timeout = new Promise<never>((_, reject) => {
+            t = setTimeout(() => reject(new Error(`Timed out after 20s waiting for ${label}`)), 20_000);
+            t.unref();
+          });
+          timeout.catch(() => {});
+          return Promise.race([p, timeout]).finally(() => clearTimeout(t)) as Promise<T>;
+        }
+
         function sendCDP(method: string, params: Record<string, any> = {}): Promise<any> {
           const id = msgId++;
           const { promise, resolve, reject } = Promise.withResolvers<any>();
           pendingResponses.set(id, { resolve, reject });
           ws.send(JSON.stringify({ id, method, params }));
-          return promise;
+          return withStepTimeout(`response to ${method}`, promise);
         }
 
         // Enable Runtime and Debugger domains
@@ -413,7 +423,7 @@ describe("Runtime inspector activation", () => {
         await sendCDP("Debugger.pause");
 
         // Wait for Debugger.paused event (proves the JS thread was interrupted and paused)
-        const pausedEvent = await pausedPromise;
+        const pausedEvent = await withStepTimeout("Debugger.paused event", pausedPromise);
         expect(pausedEvent.method).toBe("Debugger.paused");
 
         // Resume execution

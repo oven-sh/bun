@@ -4309,20 +4309,42 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
         return {};
     }
 #else
+    // Node.js on Windows throws a plain Error whose message is the
+    // FormatMessageW string (see winapi_strerror in node.cc), with no .code
+    // or .syscall. Match that so test/js/node/test/parallel/test-debug-process.js
+    // passes.
+    auto throwWinapiError = [&](DWORD err) {
+        LPWSTR buf = nullptr;
+        DWORD n = FormatMessageW(
+            FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_MAX_WIDTH_MASK,
+            NULL, err, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPWSTR)&buf, 0, NULL);
+        WTF::String message;
+        if (buf && n > 0) {
+            while (n > 0 && (buf[n - 1] == L'\r' || buf[n - 1] == L'\n' || buf[n - 1] == L' '))
+                n--;
+            message = WTF::String({ buf, n });
+        } else {
+            message = makeString("Unknown error "_s, static_cast<unsigned>(err));
+        }
+        if (buf)
+            LocalFree(buf);
+        throwVMError(globalObject, scope, message);
+    };
+
     wchar_t mappingName[64];
     swprintf(mappingName, 64, L"bun-debug-handler-%d", pid);
 
     HANDLE hMapping = OpenFileMappingW(FILE_MAP_READ, FALSE, mappingName);
     if (!hMapping) {
-        throwSystemError(scope, globalObject, "OpenFileMappingW"_s, uv_translate_sys_error(GetLastError()));
+        throwWinapiError(GetLastError());
         return {};
     }
 
     void* pFunc = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, sizeof(void*));
     if (!pFunc) {
-        int err = uv_translate_sys_error(GetLastError());
+        DWORD err = GetLastError();
         CloseHandle(hMapping);
-        throwSystemError(scope, globalObject, "MapViewOfFile"_s, err);
+        throwWinapiError(err);
         return {};
     }
 
@@ -4335,21 +4357,21 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDebugProcess, (JSC::JSGlobalObject * gl
     // the same as no mapping so the caller retries instead of CreateRemoteThread
     // failing (or worse, succeeding with a bogus entry point).
     if (!threadProc) {
-        throwSystemError(scope, globalObject, "OpenFileMappingW"_s, UV_ENOENT);
+        throwWinapiError(ERROR_FILE_NOT_FOUND);
         return {};
     }
 
     HANDLE hProcess = OpenProcess(PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ, FALSE, pid);
     if (!hProcess) {
-        throwSystemError(scope, globalObject, "OpenProcess"_s, uv_translate_sys_error(GetLastError()));
+        throwWinapiError(GetLastError());
         return {};
     }
 
     HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, threadProc, NULL, 0, NULL);
     if (!hThread) {
-        int err = uv_translate_sys_error(GetLastError());
+        DWORD err = GetLastError();
         CloseHandle(hProcess);
-        throwSystemError(scope, globalObject, "CreateRemoteThread"_s, err);
+        throwWinapiError(err);
         return {};
     }
 

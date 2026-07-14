@@ -3209,6 +3209,7 @@ mod v8_api {
         pub(super) fn _ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii() -> *mut c_void;
         pub(super) fn _ZN2v812api_internal12ToLocalEmptyEv() -> *mut c_void;
         pub(super) fn _ZNK2v86String6LengthEv() -> *mut c_void;
+        pub(super) fn _ZN2v86String5EmptyEPNS_7IsolateE() -> *mut c_void;
         pub(super) fn _ZN2v88External3NewEPNS_7IsolateEPv() -> *mut c_void;
         pub(super) fn _ZNK2v88External5ValueEv() -> *mut c_void;
         pub(super) fn _ZN2v88External3NewEPNS_7IsolateEPvt() -> *mut c_void;
@@ -3343,6 +3344,8 @@ mod v8_api {
         pub(super) fn v8_api_internal_ToLocalEmpty() -> *mut c_void;
         #[link_name = "?Length@String@v8@@QEBAHXZ"]
         pub(super) fn v8_String_Length() -> *mut c_void;
+        #[link_name = "?Empty@String@v8@@SA?AV?$Local@VString@v8@@@2@PEAVIsolate@2@@Z"]
+        pub(super) fn v8_String_Empty() -> *mut c_void;
         #[link_name = "?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z"]
         pub(super) fn v8_External_New() -> *mut c_void;
         #[link_name = "?Value@External@v8@@QEBAPEAXXZ"]
@@ -4350,7 +4353,8 @@ pub fn fix_dead_code_elimination() {
             _ZN2v86Number13NewFromUint32EPNS_7IsolateEj,
             _ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi,
             _ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii, _ZN2v812api_internal12ToLocalEmptyEv,
-            _ZNK2v86String6LengthEv, _ZN2v88External3NewEPNS_7IsolateEPv,
+            _ZNK2v86String6LengthEv, _ZN2v86String5EmptyEPNS_7IsolateE,
+            _ZN2v88External3NewEPNS_7IsolateEPv,
             _ZNK2v88External5ValueEv, _ZN2v86Object3NewEPNS_7IsolateE,
             _ZN2v88External3NewEPNS_7IsolateEPvt, _ZNK2v88External5ValueEt,
             _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_,
@@ -4427,6 +4431,7 @@ pub fn fix_dead_code_elimination() {
             v8_String_WriteUtf8,
             v8_api_internal_ToLocalEmpty,
             v8_String_Length,
+            v8_String_Empty,
             v8_External_New,
             v8_External_Value,
             v8_External_New_tagged,

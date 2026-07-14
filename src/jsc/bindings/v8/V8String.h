@@ -34,6 +34,9 @@ public:
 
     BUN_EXPORT static MaybeLocal<String> NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int length = -1);
     BUN_EXPORT static MaybeLocal<String> NewFromOneByte(Isolate* isolate, const uint8_t* data, NewStringType type, int length);
+    // V8_INLINE with an out-of-class body in v8-primitive.h; under MSVC /Od the addon imports it
+    // (V8_EXPORT on the class is dllimport) instead of emitting it, so it must exist as a real export.
+    BUN_EXPORT static Local<String> Empty(Isolate* isolate);
 
     // length:     number of bytes in buffer (if negative, assume it is large enough)
     // nchars_ref: store number of code units written here

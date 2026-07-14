@@ -318,4 +318,9 @@ int String::Length() const
     return static_cast<int>(jsString->length());
 }
 
+Local<String> String::Empty(Isolate* isolate)
+{
+    return Local<String>(isolate->emptyStringSlot());
+}
+
 } // namespace v8

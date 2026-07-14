@@ -901,14 +901,14 @@ impl ShellRmTask {
         }
         // SAFETY: a DirTask's non-atomic fields are single-owner-at-a-time.
         // Ownership starts on the worker that runs `remove_entry*` and is
-        // handed to the last child via `need_to_wait`: the parent
-        // release-stores `true` (SeqCst, `remove_entry_dir`) after its final
-        // append here, and the child acquire-loads it (SeqCst, `post_run`)
-        // before re-entering via `delete_after_waiting_for_children`. That
-        // release/acquire pair makes prior `deleted_entries` writes visible to
-        // the new owner, so this `&mut` is exclusive and race-free. The
-        // reborrow is also disjoint from every other live borrow (`&self`,
-        // `path`).
+        // handed off via `subtask_count`: the parent's final append here is
+        // sequenced-before its `subtask_count.fetch_sub(SeqCst)` in
+        // `remove_entry_dir`, and the child taking the counter to 0 in
+        // `post_run` acquire-reads from that release sequence before
+        // re-entering via `delete_after_waiting_for_children`. That pair
+        // makes prior `deleted_entries` writes visible to the new owner, so
+        // this `&mut` is exclusive and race-free. The reborrow is also
+        // disjoint from every other live borrow (`&self`, `path`).
         let entries = unsafe { &mut (*dir_task).deleted_entries };
         if entries.is_empty() {
             // `output_count` is a `BackRef` into the boxed `Rm` ExecState.
@@ -966,9 +966,9 @@ impl ShellRmTask {
         e.with_path(path)
     }
 
-    /// Returns `Ok(true)` when [`remove_entry_dir`] published
-    /// `need_to_wait = true` on `dir_task`. Once that store is visible, a
-    /// child finishing on another thread may run
+    /// Returns `Ok(true)` when [`remove_entry_dir`] handed `dir_task` off to
+    /// a child (its `subtask_count` slot was released without reaching 0).
+    /// Once that happens, a child finishing on another thread may run
     /// [`DirTask::delete_after_waiting_for_children`] → `post_run` → `deinit`
     /// (or, for the root, the main thread may free the whole
     /// [`ShellRmTask`]). Callers must therefore treat `dir_task` as
@@ -997,9 +997,9 @@ impl ShellRmTask {
         Ok(waiting)
     }
 
-    /// `need_to_wait_out` is set to `true` immediately before the
-    /// `need_to_wait` atomic store that hands `dir_task` off to its children;
-    /// see [`remove_entry`] for why the caller needs this on its own stack
+    /// `need_to_wait_out` is left `true` only when the hand-off in this
+    /// function gave ownership of `dir_task` to a child; see
+    /// [`remove_entry`] for why the caller needs this on its own stack
     /// rather than reading it back from `dir_task`.
     fn remove_entry_dir(
         &self,
@@ -1143,31 +1143,42 @@ impl ShellRmTask {
 
         // Stash any loop error before the hand-off — once `need_to_wait`
         // is published `self` may be freed, and `handle_err` takes a
-        // mutex so it must not sit between the `subtask_count` load and
-        // the `need_to_wait` store. The `error_signal` check below covers
-        // the no-children early-out.
+        // mutex so it must not sit inside the hand-off below. The
+        // `error_signal` check afterwards covers the no-children early-out.
         if let Err(e) = loop_result {
             self.handle_err(e);
         }
 
-        // Need to wait for children to finish.
-        // SAFETY: `dir_task` is live; only this thread reads `subtask_count`
-        // here (children atomically modify it). Atomics through a short-lived
-        // `&DirTask` — interior mutability.
+        // Hand off to children. Publish `need_to_wait` first, then release
+        // this task's own slot on `subtask_count` with the same `fetch_sub`
+        // the children use: whoever takes the counter to 0 owns the rmdir.
+        // A load-then-store here had a lost-wakeup window where the last
+        // child could decrement and read `need_to_wait == false` between
+        // the two operations, stranding `dir_task` forever.
+        //
+        // SAFETY: `dir_task` is live until `subtask_count` drains to 0, and
+        // we still hold one count. Atomics through a short-lived `&DirTask`
+        // — interior mutability.
         unsafe {
             let dt = &*dir_task;
-            if dt.subtask_count.load(Ordering::SeqCst) > 1 {
-                // Record locally first: once `need_to_wait` is published a
-                // child may immediately drive `delete_after_waiting_for_children`
-                // → `post_run` → `deinit` on `dir_task` (or free the owning
-                // ShellRmTask via the main thread for the root), so nothing
-                // after this store may dereference `dir_task`. The directory
-                // fd is closed by the `close_fd` scopeguard on return — that
-                // touches only a stack local, not `dir_task`.
-                *need_to_wait_out = true;
-                dt.need_to_wait.store(true, Ordering::SeqCst);
+            *need_to_wait_out = true;
+            dt.need_to_wait.store(true, Ordering::SeqCst);
+            if dt.subtask_count.fetch_sub(1, Ordering::SeqCst) != 1 {
+                // A child still holds a count. It (or a later child) will
+                // take the counter to 0 and drive
+                // `delete_after_waiting_for_children`; nothing after this
+                // may dereference `dir_task`. The directory fd is closed by
+                // the `close_fd` scopeguard on return — that touches only a
+                // stack local, not `dir_task`.
                 return Ok(());
             }
+            // Every child already released its count (each saw the counter
+            // > 1 and so did not take ownership). `dir_task` is exclusively
+            // ours again: restore the invariants `post_run` expects and
+            // fall through to delete inline.
+            dt.subtask_count.store(1, Ordering::SeqCst);
+            dt.need_to_wait.store(false, Ordering::SeqCst);
+            *need_to_wait_out = false;
         }
 
         if self.error_signal().load(Ordering::SeqCst) {
@@ -1448,25 +1459,16 @@ impl DirTask {
 
                 // If we have a parent and we are the last child, now we can delete the parent.
                 if !me.parent_task.is_null() {
-                    // It's possible that we queued this subdir task and it
-                    // finished, while the parent was still in `remove_entry_dir`.
                     let p = &*me.parent_task;
-                    let tasks_left = p.subtask_count.fetch_sub(1, Ordering::SeqCst);
-                    // Relaxed ordering here would be a
-                    // formal data race on the parent's non-atomic
-                    // `deleted_entries`: the parent thread may have appended
-                    // verbose paths for plain-file children *after* scheduling
-                    // this subtask and *before* its `need_to_wait.store(true,
-                    // SeqCst)` (the only release that covers those writes). A
-                    // Relaxed load reading `true` does not synchronize-with
-                    // that store, so the `Vec<u8>` writes would not
-                    // happen-before our `delete_after_waiting_for_children` →
-                    // `verbose_deleted(parent)` access below. Use SeqCst
-                    // (Acquire suffices) so observing `true` establishes the
-                    // ownership hand-off and makes the parent's
-                    // `deleted_entries` writes visible.
-                    let parent_still_in_remove_entry_dir = !p.need_to_wait.load(Ordering::SeqCst);
-                    if !parent_still_in_remove_entry_dir && tasks_left == 2 {
+                    // The parent releases its own slot on this counter in
+                    // `remove_entry_dir`; whoever takes it to 0 owns the
+                    // parent's rmdir. The parent's `fetch_sub` is sequenced
+                    // after its final `deleted_entries` write and its
+                    // `need_to_wait.store(true)`, and every decrement is a
+                    // SeqCst RMW, so reading 1 here synchronizes-with the
+                    // parent's release and makes those writes visible to
+                    // `delete_after_waiting_for_children`.
+                    if p.subtask_count.fetch_sub(1, Ordering::SeqCst) == 1 {
                         Self::delete_after_waiting_for_children(me.parent_task);
                     }
                     if will_queue_verbose {
@@ -1506,6 +1508,9 @@ impl DirTask {
                 .deleting_after_waiting_for_children
                 .store(true, Ordering::SeqCst);
             (*this).need_to_wait.store(false, Ordering::SeqCst);
+            // The caller just took `subtask_count` to 0; restore the slot
+            // `post_run`'s own decrement expects.
+            (*this).subtask_count.store(1, Ordering::SeqCst);
             let tm = &*(*this).task_manager;
             let mut do_post_run = true;
             if !tm.error_signal().load(Ordering::SeqCst) {

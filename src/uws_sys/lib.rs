@@ -474,7 +474,7 @@ pub use socket::{
 pub use internal_loop_data::InternalLoopData;
 #[cfg(windows)]
 pub use loop_::WindowsLoop;
-pub use loop_::{Loop, PosixLoop};
+pub use loop_::{Loop, NOW_NS_UNKNOWN, PosixLoop};
 pub use socket_kind::SocketKind;
 #[cfg(windows)]
 pub use timer::Timer;

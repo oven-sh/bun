@@ -40,10 +40,11 @@
 # (listenerCount("secureConnect") === 0 in done()) and the net.createConnection
 # sibling test passes on every lane, so the once() contract itself holds. The
 # robust fix is gcUntil(), but the file is a verbatim upstream port.
-# Still runs on glibc Linux, FreeBSD, and Windows.
+# Still runs on glibc Linux and FreeBSD.
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC conservative scan pins gcObject on musl x64
 [ DARWIN-AARCH64 ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC conservative scan pins gcObject after WebKit 0e86b490 marking change
 [ ASAN ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC conservative scan pins gcObject on release-ASan after WebKit 0e86b490
+[ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC conservative scan pins gcObject after WebKit 0e86b490 marking change
 
 # Same class as test-tls-connect-memleak.js above, but here `req` lives in an
 # `async function main()` frame and the conservative scan keeps reaching it

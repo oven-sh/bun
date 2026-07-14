@@ -92,15 +92,26 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
       } else if (peeked < 0 && !bsd_would_block()) {
         error = 1;
         events |= UV_READABLE;
-      } else if (peeked > 0 && us_socket_get_error(us_internal_poll_cb_adopted_socket(wp)) != 0) {
-        /* Data is buffered ahead of whatever ended the connection. If the
-         * peer ABORTED, the kernel already discarded the stream's tail and a
-         * paused socket that never resumes would otherwise never learn -
-         * node's paused sockets error immediately on a reset, buffered data
-         * included. SO_ERROR separates that from a graceful FIN behind data,
-         * which stays deferred until resume. */
-        error = 1;
-        events |= UV_READABLE;
+      } else if (peeked > 0) {
+        struct us_socket_t *sock = us_internal_poll_cb_adopted_socket(wp);
+        if (us_socket_get_error(sock) != 0) {
+          /* Data is buffered ahead of whatever ended the connection. If the
+           * peer ABORTED, the kernel already discarded the stream's tail and
+           * a paused socket that never resumes would otherwise never learn -
+           * node's paused sockets error immediately on a reset, buffered
+           * data included. SO_ERROR separates that from a graceful FIN
+           * behind data, which stays deferred until resume. */
+          error = 1;
+          events |= UV_READABLE;
+        } else if (!sock->fin_deferred) {
+          /* Graceful FIN deferred behind data. This one-shot DISCONNECT
+           * report is now consumed, so a LATER reset (an error-path peer
+           * ends, flushes, then destroys - FIN, then RST) has no event left
+           * to ride. Mark the socket; the sweep timer escalates via
+           * SO_ERROR. */
+          sock->fin_deferred = 1;
+          sock->group->loop->data.fin_deferred_count++;
+        }
       }
     } else {
       events |= UV_READABLE;

@@ -385,6 +385,28 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_LIBUV
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
+    /* Escalate paused sockets whose peer FIN was deferred behind buffered
+     * data and whose peer has since reset (poll_cb consumed the only
+     * DISCONNECT report on the FIN; AFD has no event left to deliver the
+     * abort to a read-less poll). Zero cost unless such sockets exist;
+     * closing unlinks the socket, so restart the walk after each close. */
+    while (cb->loop->data.fin_deferred_count > 0) {
+        struct us_socket_t *victim = 0;
+        for (struct us_socket_group_t *g = cb->loop->data.head; g && !victim; g = g->next) {
+            for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
+                if (s->fin_deferred && !s->flags.is_closed && us_socket_get_error(s) != 0) {
+                    victim = s;
+                    break;
+                }
+            }
+        }
+        if (!victim) {
+            break;
+        }
+        victim->fin_deferred = 0;
+        cb->loop->data.fin_deferred_count--;
+        us_internal_socket_close_raw(victim, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+    }
 }
 #endif
 

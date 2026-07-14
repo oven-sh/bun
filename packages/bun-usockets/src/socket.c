@@ -261,6 +261,12 @@ void us_connecting_socket_close(struct us_connecting_socket_t *c) {
  * handshake/secureConnection event. openssl.c re-enters here once that
  * graceful path is done. */
 struct us_socket_t *us_internal_socket_close_raw(struct us_socket_t *s, int code, void *reason) {
+#ifdef LIBUS_USE_LIBUV
+    if (s->fin_deferred) {
+        s->fin_deferred = 0;
+        s->group->loop->data.fin_deferred_count--;
+    }
+#endif
   if (s->ssl && s->ssl_in_use) {
     /* A JS callback running from inside SSL_do_handshake/SSL_read (ALPN, SNI,
      * keylog, ...) destroyed this socket. Closing now frees the SSL and
@@ -833,6 +839,14 @@ void us_socket_pause(struct us_socket_t *s) {
 }
 
 void us_socket_resume(struct us_socket_t *s) {
+#ifdef LIBUS_USE_LIBUV
+    /* Reads flow again: normal delivery discovers the deferred FIN (and any
+     * reset behind it), so the sweep no longer owns this socket. */
+    if (s->fin_deferred) {
+        s->fin_deferred = 0;
+        s->group->loop->data.fin_deferred_count--;
+    }
+#endif
     if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
     // closed cannot be resumed

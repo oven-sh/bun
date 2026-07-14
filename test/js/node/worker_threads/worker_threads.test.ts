@@ -712,6 +712,45 @@ test("transferred FileHandles are not neutered when name/filename validation rej
   }
 });
 
+test("worker name survives parent-side GC and terminate cycles", async () => {
+  // options.name is materialized as a worker-heap JSString, so it must not
+  // share a (possibly atomized) parent-heap StringImpl — both threads would
+  // ref/deref a non-atomic refcount. Stress the path in a subprocess so
+  // ASAN/debug assertions fail the test loudly.
+  const fixture = `
+    const { Worker } = require("node:worker_threads");
+    const src = \`
+      const { threadName, parentPort } = require("node:worker_threads");
+      globalThis.keep = [];
+      for (let i = 0; i < 50; i++) keep.push(threadName + i);
+      keep.length = 0;
+      Bun.gc(true);
+      parentPort.postMessage(threadName);
+    \`;
+    for (let i = 0; i < 6; i++) {
+      // Object.keys returns strings backed by atomized property-name impls.
+      const holder = { ["workerNameStress" + i + "Abcdefghij"]: 1 };
+      const name = Object.keys(holder)[0];
+      const w = new Worker(src, { eval: true, name });
+      const got = await new Promise((res, rej) => { w.on("message", res); w.on("error", rej); });
+      if (got !== name) throw new Error("name mismatch: " + got);
+      await w.terminate();
+      Bun.gc(true);
+    }
+    console.log("done");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout.trim()).toBe("done");
+  expect(exitCode).toBe(0);
+});
+
 test("partially transferred FileHandles are restored when a later transfer throws", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");

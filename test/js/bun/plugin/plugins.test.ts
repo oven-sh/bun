@@ -749,6 +749,56 @@ it.concurrent("onResolve registered after a node builtin was imported does not f
   expect(exitCode).toBe(0);
 });
 
+it.concurrent("onResolve registered after a CJS-only require of a node builtin does not fork module identity", async () => {
+  using dir = tempDir("plugin-onresolve-builtin-cjs-first", {
+    "entry.ts": `
+      const cjsBefore = require("node:querystring");
+
+      Bun.plugin({
+        name: "late-intercept-cjs",
+        setup(build) {
+          build.onResolve({ filter: /^querystring$/, namespace: "node" }, (args) => ({
+            path: args.path,
+            namespace: "fake-qs",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "fake-qs" }, () => ({
+            exports: { FAKE: 1 },
+            loader: "object",
+          }));
+        },
+      });
+
+      const cjsAfter = require("node:querystring");
+      const esmAfter = await import("node:querystring");
+
+      console.log(
+        JSON.stringify({
+          cjsIdentity: cjsAfter === cjsBefore,
+          cjsAfterFAKE: cjsAfter.FAKE ?? null,
+          esmAfterFAKE: esmAfter.FAKE ?? null,
+          hasRealStringify: typeof cjsAfter.stringify === "function",
+        }),
+      );
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { crashed: stderr }).toEqual({
+    cjsIdentity: true,
+    cjsAfterFAKE: null,
+    esmAfterFAKE: null,
+    hasRealStringify: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 it.concurrent("onResolve registered before first import of a node builtin still intercepts it", async () => {
   using dir = tempDir("plugin-onresolve-builtin-fresh", {
     "entry.ts": `

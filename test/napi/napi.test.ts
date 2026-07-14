@@ -687,13 +687,14 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
   describe("napi_get_typedarray_info / napi_get_dataview_info type check", () => {
     it("returns napi_invalid_arg when given the wrong view type", async () => {
-      const output = await checkSameOutput("test_napi_view_info_type_check", []);
+      const output = await checkSameOutput("test_napi_view_info_type_check", "[new Float16Array(4)]");
       expect(output).toContain("get_dataview_info(Uint8Array): status=1");
       expect(output).toContain("get_dataview_info(ArrayBuffer): status=1");
       expect(output).toContain("get_dataview_info(DataView): status=0 len=8 off=0");
       expect(output).toContain("get_typedarray_info(DataView): status=1");
       expect(output).toContain("get_typedarray_info(ArrayBuffer): status=1");
       expect(output).toContain("get_typedarray_info(DataView, all-null out): status=1");
+      expect(output).toContain("get_typedarray_info(Float16Array, type=null): status=0 len=4");
       expect(output).toContain("get_typedarray_info(Uint8Array): status=0 type=1 len=8");
     });
   });

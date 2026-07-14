@@ -1405,13 +1405,20 @@ pub(super) extern "C" fn napi_get_typedarray_info(
     let Some(array_buffer) = typedarray.as_array_buffer(env.to_js()) else {
         return env.invalid_arg();
     };
-    // Node.js checks IsTypedArray() and returns napi_invalid_arg for DataView,
-    // ArrayBuffer, Float16Array, or anything else without a napi_typedarray_type.
-    let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type) else {
+    // Node.js gates on IsTypedArray(), which rejects DataView and ArrayBuffer
+    // but accepts Float16Array (even though Bun has no napi_float16_array yet).
+    if matches!(
+        array_buffer.typed_array_type,
+        jsc::JSType::DataView | jsc::JSType::ArrayBuffer
+    ) {
         return env.invalid_arg();
-    };
+    }
     // SAFETY: `maybe_type` is null or a valid exclusive out-param per N-API contract.
     if let Some(ty) = unsafe { maybe_type.as_mut() } {
+        let Some(napi_ty) = napi_typedarray_type::from_js_type(array_buffer.typed_array_type)
+        else {
+            return env.invalid_arg();
+        };
         *ty = napi_ty;
     }
 

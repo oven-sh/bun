@@ -2707,6 +2707,7 @@ test_napi_view_info_type_check(const Napi::CallbackInfo &info) {
   NODE_API_CALL(env, napi_create_dataview(env, 8, arraybuffer, 0, &dataview));
   napi_value plain;
   NODE_API_CALL(env, napi_create_object(env, &plain));
+  napi_value float16 = info[1];
 
   size_t len = 12345;
   void *p = nullptr;
@@ -2732,6 +2733,10 @@ test_napi_view_info_type_check(const Napi::CallbackInfo &info) {
   s = napi_get_typedarray_info(env, dataview, nullptr, nullptr, nullptr,
                                nullptr, nullptr);
   printf("get_typedarray_info(DataView, all-null out): status=%d\n", s);
+  s = napi_get_typedarray_info(env, float16, nullptr, &len, nullptr, nullptr,
+                               &off);
+  printf("get_typedarray_info(Float16Array, type=null): status=%d len=%zu\n", s,
+         len);
   s = napi_get_typedarray_info(env, plain, &ty, &len, &p, &ab, &off);
   printf("get_typedarray_info(Object): status=%d\n", s);
   s = napi_get_typedarray_info(env, uint8, &ty, &len, &p, &ab, &off);

@@ -1815,7 +1815,8 @@ extern "C" napi_status napi_create_typedarray(
         napi_throw_range_error(env, "ERR_NAPI_INVALID_TYPEDARRAY_ALIGNMENT", alignment_msg);
         return napi_set_last_error(env, napi_generic_failure);
     }
-    if (length * size_of_element + byte_offset > arraybufferPtr->impl()->byteLength()) {
+    size_t buffer_len = arraybufferPtr->impl()->byteLength();
+    if (byte_offset > buffer_len || length > (buffer_len - byte_offset) / size_of_element) {
         napi_throw_range_error(env, "ERR_NAPI_INVALID_TYPEDARRAY_LENGTH", "Invalid typed array length");
         return napi_set_last_error(env, napi_generic_failure);
     }

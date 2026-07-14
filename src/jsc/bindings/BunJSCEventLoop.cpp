@@ -82,16 +82,16 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
             vm->heap.stopIfNecessary();
             vm->didEnterVM = false;
 
-#if USE(MIMALLOC)
+#if USE(MIMALLOC) && OS(WINDOWS)
             // Collect retired pages, punch free-block holes, hand the arena purge to
             // the scavenger. Rate-limited; nowNs is the tick's shared reading (0 = take
             // one), compared by addition so an out-of-order reading cannot underflow.
+            //
+            // Windows only: everywhere else `us_loop_run_bun_tick` hands the heaps to the
+            // scavenger across the poll instead, so this thread never does the sweep itself.
+            // The libuv loop has no handoff yet, so it keeps paying for it here.
             static constexpr uint64_t idleSweepIntervalNs = 100 * 1000000ULL;
             static thread_local uint64_t lastIdleSweepNs = 0;
-#if !OS(WINDOWS)
-            if (nowNs == 0)
-                nowNs = us_internal_monotonic_ns();
-#endif
             if (nowNs >= lastIdleSweepNs + idleSweepIntervalNs) {
                 lastIdleSweepNs = nowNs;
                 mi_on_thread_idle();

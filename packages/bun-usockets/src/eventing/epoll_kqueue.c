@@ -355,6 +355,10 @@ void us_loop_run(struct us_loop_t *loop) {
 }
 
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
+/* Declared here rather than pulled from <mimalloc.h>: WebKit vendors its own, older mimalloc
+ * whose header has neither of these. */
+extern void mi_on_thread_idle_start(void);
+extern void mi_on_thread_idle_end(void);
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -391,6 +395,24 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
         Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
 
+    /* Hand this thread's heaps to mimalloc's scavenger for the duration of the wait: it does the
+     * sweep (~99% madvise) while we are blocked in the kernel, instead of us doing it before we
+     * get there. Must come after Bun__JSC_onBeforeWait -- JSC allocates in it, and the handoff's
+     * whole premise is that we do not touch our heaps until the matching _end.
+     * Same 100ms rate limit the inline sweep used (see BunJSCEventLoop.cpp): the handoff is cheap
+     * for us, but the sweep it triggers is not free for the scavenger. */
+    int did_idle_handoff = 0;
+    if (will_idle_inside_event_loop) {
+        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
+        static _Thread_local uint64_t last_idle_sweep_ns = 0;
+        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
+        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
+            last_idle_sweep_ns = sweep_now_ns;
+            mi_on_thread_idle_start();
+            did_idle_handoff = 1;
+        }
+    }
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -410,6 +432,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
+
+    /* Take the heaps back before anything can allocate again. */
+    if (did_idle_handoff)
+        mi_on_thread_idle_end();
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);

@@ -1,3 +1,7 @@
+// The 127.0.0.1 sibling of test-http-halfclose-midupload-traced.ts: same
+// scenario, same runner phase, explicit IPv4. If this passes while the
+// localhost sibling stalls in the same 2-wide phase, the family matters only
+// under concurrency; if both stall, it is pure loopback collision.
 // Verbatim shape of test-http-should-not-emit-or-throw-error-when-writing-
 // after-socket.end.ts, which times out silently (three 20s attempts, zero
 // output) on the Windows agents while semantically-equivalent bun:test twins
@@ -45,9 +49,9 @@ await using server = http.createServer((req, res) => {
     reject(err);
   }
 });
-await once(server.listen(0), "listening");
+await once(server.listen(0, "127.0.0.1"), "listening");
 step("listening");
-const url = `http://localhost:${server.address().port}`;
+const url = `http://127.0.0.1:${server.address().port}`;
 
 await fetch(url, {
   method: "POST",

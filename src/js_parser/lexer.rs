@@ -185,7 +185,6 @@ pub enum Error {
 }
 bun_core::impl_tag_error!(Error);
 bun_core::oom_from_alloc!(Error);
-bun_core::named_error_set!(Error);
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum StringLiteralRawFormat {

@@ -538,7 +538,7 @@ impl<Id> ComptimeClap<Id> {
         params: &'static [Param<Id>],
         iter: &mut I,
         opt: ParseOptions<'_>,
-    ) -> Result<Self, bun_core::Error>
+    ) -> crate::Result<Self>
     where
         I: ArgIter<'static>,
     {
@@ -551,7 +551,7 @@ impl<Id> ComptimeClap<Id> {
         table: &'static ConvertedTable,
         iter: &mut I,
         opt: ParseOptions<'_>,
-    ) -> Result<Self, bun_core::Error>
+    ) -> crate::Result<Self>
     where
         I: ArgIter<'static>,
     {

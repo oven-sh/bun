@@ -12,6 +12,8 @@
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -20,6 +22,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -33,6 +36,7 @@ static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_close);
 static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototypeFunction_getWriter);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_locked);
 static JSC_DECLARE_CUSTOM_GETTER(jsWritableStreamPrototypeGetter_constructor);
+static JSC_DECLARE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom);
 
 class JSWritableStreamPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -118,18 +122,6 @@ template<> void JSWritableStreamConstructor::finishCreation(VM& vm, JSDOMGlobalO
     m_instanceStructure.set(vm, this, getDOMStructure<JSWritableStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSC::VM& vm, JSWritableStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSWritableStream>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWritableStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -178,10 +170,40 @@ static const HashTableValue JSWritableStreamPrototypeTableValues[] = {
 
 const ClassInfo JSWritableStreamPrototype::s_info = { "WritableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWritableStreamPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsWritableStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSWritableStream>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "locked"_s), jsBoolean(isWritableStreamLocked(thisObject)), 0);
+    ASCIILiteral state;
+    switch (thisObject->m_state) {
+    case WritableStreamState::Writable:
+        state = "writable"_s;
+        break;
+    case WritableStreamState::Erroring:
+        state = "erroring"_s;
+        break;
+    case WritableStreamState::Errored:
+        state = "errored"_s;
+        break;
+    case WritableStreamState::Closed:
+        state = "closed"_s;
+        break;
+    }
+    data->putDirect(vm, Identifier::fromString(vm, "state"_s), jsNontrivialString(vm, state), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "WritableStream"_s, data));
+}
+
 void JSWritableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSWritableStream::info(), JSWritableStreamPrototypeTableValues, *this);
+    Bun::WebStreams::installInspectCustom(vm, this, jsWritableStreamPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -254,19 +276,44 @@ void JSWritableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_writer);
-    visitor.append(thisObject->m_storedError);
-    visitor.append(thisObject->m_closeRequest);
-    visitor.append(thisObject->m_inFlightWriteRequest);
-    visitor.append(thisObject->m_inFlightCloseRequest);
-    visitor.append(thisObject->m_closedPromise);
-    visitor.append(thisObject->m_pendingAbortRequest.promise);
-    visitor.append(thisObject->m_pendingAbortRequest.reason);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_writer);
+    visitor.appendHidden(thisObject->m_storedError);
+    visitor.appendHidden(thisObject->m_closeRequest);
+    visitor.appendHidden(thisObject->m_inFlightWriteRequest);
+    visitor.appendHidden(thisObject->m_inFlightCloseRequest);
+    visitor.appendHidden(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_pendingAbortRequest.promise);
+    visitor.appendHidden(thisObject->m_pendingAbortRequest.reason);
     {
         WTF::Locker locker { thisObject->cellLock() };
         for (auto& writeRequest : thisObject->m_writeRequests)
-            visitor.append(writeRequest);
+            visitor.appendHidden(writeRequest);
+    }
+}
+
+void JSWritableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSWritableStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writer, "writer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_storedError, "storedError"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closeRequest, "closeRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_inFlightWriteRequest, "inFlightWriteRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_inFlightCloseRequest, "inFlightCloseRequest"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingAbortRequest.promise, "pendingAbortRequestPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pendingAbortRequest.reason, "pendingAbortRequestReason"_s);
+    {
+        WTF::Locker locker { thisObject->cellLock() };
+        uint32_t i = 0;
+        for (auto& entry : thisObject->m_writeRequests) {
+            if (auto* value = entry.get())
+                analyzer.analyzeIndexEdge(cell, value, i);
+            ++i;
+        }
     }
 }
 

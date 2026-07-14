@@ -137,7 +137,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 Ok(_) => {}
                 Err(_) => {
                     return CompileResult::Css {
-                        result: Err(bun_core::err!("PrintError")),
+                        result: Err(crate::Error::PrintError),
                         source_index: Index::INVALID.get(),
                         source_map: None,
                     };
@@ -180,7 +180,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 Ok(_) => {}
                 Err(_) => {
                     return CompileResult::Css {
-                        result: Err(bun_core::err!("PrintError")),
+                        result: Err(crate::Error::PrintError),
                         source_index: Index::INVALID.get(),
                         source_map: None,
                     };
@@ -216,7 +216,7 @@ fn generate_compile_result_for_css_chunk_impl(
                 Ok(_) => {}
                 Err(_) => {
                     return CompileResult::Css {
-                        result: Err(bun_core::err!("PrintError")),
+                        result: Err(crate::Error::PrintError),
                         source_index: idx.get(),
                         source_map: None,
                     };

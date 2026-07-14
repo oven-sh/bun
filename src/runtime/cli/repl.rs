@@ -183,7 +183,7 @@ impl History {
         }
     }
 
-    pub(crate) fn load(&mut self) -> Result<(), bun_core::Error> {
+    pub(crate) fn load(&mut self) -> Result<(), crate::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -1735,7 +1735,7 @@ impl<'a> Repl<'a> {
     }
 
     /// Write text to clipboard using OSC 52 escape sequence.
-    fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), bun_core::Error> {
+    fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), crate::Error> {
         let mut it = strings::ANSIIterator::init(text);
         let Some(first) = it.next() else {
             return Ok(());
@@ -1969,7 +1969,7 @@ impl<'a> Repl<'a> {
     pub(super) fn run_with_vm(
         &mut self,
         vm: Option<&'a VirtualMachine>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.vm = vm;
         if let Some(v) = vm {
             self.global = Some(v.global());
@@ -2130,7 +2130,7 @@ impl<'a> Repl<'a> {
         Ok(())
     }
 
-    fn handle_enter(&mut self) -> Result<(), bun_core::Error> {
+    fn handle_enter(&mut self) -> Result<(), crate::Error> {
         self.print(format_args!("\n"));
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods

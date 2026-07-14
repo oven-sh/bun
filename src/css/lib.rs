@@ -44,6 +44,9 @@ pub mod sourcemap;
 #[path = "targets.rs"]
 pub mod targets;
 
+#[path = "crate_error.rs"]
+pub mod crate_error;
+pub use crate_error::{Error as CrateError, Result as CrateResult};
 #[path = "css_modules.rs"]
 pub mod css_modules;
 #[path = "dependencies.rs"]

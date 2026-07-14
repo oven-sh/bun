@@ -1563,7 +1563,7 @@ impl JSValkeyClient {
         }
     }
 
-    fn connect(&self) -> Result<(), bun_core::Error> {
+    fn connect(&self) -> Result<(), crate::Error> {
         self.client_mut().flags.needs_to_open_socket = false;
 
         self.ref_();
@@ -1676,7 +1676,7 @@ impl JSValkeyClient {
         global_this: &JSGlobalObject,
         _this_value: JSValue,
         command: &Command,
-    ) -> Result<*mut JSPromise, bun_core::Error> {
+    ) -> Result<*mut JSPromise, crate::Error> {
         if self.client.get().flags.needs_to_open_socket {
             bun_core::hint::cold();
 

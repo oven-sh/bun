@@ -115,7 +115,7 @@ impl Expr {
 }
 
 impl Expr {
-    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, crate::Error> {
         Ok(Expr {
             loc: self.loc,
             data: Data::clone_in(self.data, bump)?,
@@ -134,7 +134,7 @@ impl Expr {
         })
     }
 
-    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, crate::Error> {
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(S::Return { value: Some(this) }, this.loc)
         });
@@ -2391,7 +2391,7 @@ impl Data {
     /// which is sound because every
     /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
     /// stores a raw pointer + len/cap into the arena).
-    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
+    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, crate::Error> {
         macro_rules! shallow {
             ($variant:ident, $el:expr) => {{
                 // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is

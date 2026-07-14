@@ -1120,13 +1120,14 @@ class ChildProcess extends EventEmitter {
     {
       if (this.#stdin) {
         this.#stdin.destroy();
-      } else {
+      } else if (this.#stdioOptions[0] === "pipe") {
         this.#stdioOptions[0] = "destroyed";
       }
 
       // If there was an error while spawning the subprocess, then we will never have any IO to drain.
       if (err) {
-        this.#stdioOptions[1] = this.#stdioOptions[2] = "destroyed";
+        if (this.#stdioOptions[1] === "pipe") this.#stdioOptions[1] = "destroyed";
+        if (this.#stdioOptions[2] === "pipe") this.#stdioOptions[2] = "destroyed";
       }
 
       const stdout = this.#stdout,

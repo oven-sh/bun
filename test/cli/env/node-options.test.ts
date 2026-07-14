@@ -14,11 +14,7 @@ async function run(
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 
@@ -84,11 +80,7 @@ describe("NODE_OPTIONS environment variable", () => {
 
   test.concurrent("unknown flag is rejected with exit code 9", async () => {
     using dir = tempDir("node-options-unknown", fixtures);
-    const { stdout, stderr, exitCode } = await run(
-      String(dir),
-      ["app.mjs"],
-      "--definitely-not-a-real-flag",
-    );
+    const { stdout, stderr, exitCode } = await run(String(dir), ["app.mjs"], "--definitely-not-a-real-flag");
     expect(stderr).toContain("--definitely-not-a-real-flag is not allowed in NODE_OPTIONS");
     expect(stdout).toBe("");
     expect(exitCode).toBe(9);
@@ -141,11 +133,7 @@ describe("NODE_OPTIONS environment variable", () => {
 
   test.concurrent("ignores non-option tokens", async () => {
     using dir = tempDir("node-options-positional", fixtures);
-    const { stdout, exitCode } = await run(
-      String(dir),
-      ["app.mjs"],
-      "positional.js --import ./pre.mjs",
-    );
+    const { stdout, exitCode } = await run(String(dir), ["app.mjs"], "positional.js --import ./pre.mjs");
     expect({ stdout, exitCode }).toEqual({ stdout: "PRELOADED\n", exitCode: 0 });
   });
 
@@ -172,11 +160,7 @@ describe("NODE_OPTIONS environment variable", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("is not allowed in NODE_OPTIONS");
     expect(stdout).not.toContain("is not allowed in NODE_OPTIONS");
     expect(exitCode).toBe(0);

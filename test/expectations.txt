@@ -99,9 +99,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # RST delivery surfacing as ECONNRESET, and EADDRINUSE on a second listen on
 # the same pipe path.
 [ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close (FIN) handling
-[ WINDOWS ] test/js/node/test/parallel/test-net-socket-reset-send.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-after-destroy.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-until-connected.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
 [ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # named-pipe connect errors are not mapped to ENOENT/EACCES on Windows yet
 [ WINDOWS ] test/js/node/test/parallel/test-net-server-listen-path.js [ FAIL ] # EADDRINUSE not reported for a second listen on the same pipe path
 

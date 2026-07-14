@@ -746,11 +746,14 @@ function hasWebKitChanges(options) {
  * @returns {Step}
  */
 function getVerifyBaselineStep(platform, options) {
-  const { os } = platform;
+  const { os, abi } = platform;
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
   const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+  // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
+  // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
+  const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
 
   // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
   // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>
@@ -806,7 +809,7 @@ function getVerifyBaselineStep(platform, options) {
     command: [
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
-      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
     ],
   };
 }

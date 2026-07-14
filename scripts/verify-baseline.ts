@@ -20,6 +20,7 @@ const { values } = parseArgs({
     binary: { type: "string" },
     emulator: { type: "string" },
     "jit-stress": { type: "boolean", default: false },
+    "skip-emulation": { type: "boolean", default: false },
   },
   strict: true,
 });
@@ -216,12 +217,21 @@ if (await Bun.file(staticChecker).exists()) {
   console.log();
 }
 
-// Phase 1: SIMD code path verification (always runs)
-const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
-await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
+// Phase 1/2: emulated runs. --skip-emulation (CI sets this for Android, whose
+// binary needs /system/bin/linker64 and has no sysroot on the build host)
+// leaves only the static scan.
+if (values["skip-emulation"]) {
+  console.log("--- Skipping emulated runs (--skip-emulation)");
+} else {
+  // Phase 1: SIMD code path verification
+  const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
+  await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
+}
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)
-if (values["jit-stress"]) {
+if (values["skip-emulation"]) {
+  // already reported the skip above
+} else if (values["jit-stress"]) {
   const jsFixtures = readdirSync(fixturesDir)
     .filter(f => f.endsWith(".js"))
     .sort();

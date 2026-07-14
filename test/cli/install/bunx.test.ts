@@ -1204,7 +1204,7 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
     return new Uint8Array(await Bun.file(tgz).arrayBuffer());
   }
 
-  function registry(tag: string, tgz: Uint8Array, hits: string[]) {
+  function registry(tgz: Uint8Array, hits: string[]) {
     const server = Bun.serve({
       port: 0,
       fetch(req) {
@@ -1228,13 +1228,24 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
     return server;
   }
 
+  function bunxEnv(env: Record<string, string>, home: string) {
+    return {
+      ...env,
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: home,
+      PATH: pathWithout("px-probe", env.PATH),
+      npm_config_registry: undefined as any,
+      NPM_CONFIG_REGISTRY: undefined as any,
+      BUN_CONFIG_REGISTRY: undefined as any,
+    };
+  }
+
   it("prefers the project bunfig registry over the global one", async () => {
-    const tgzA = await makePkgTarball("PROJECT");
-    const tgzB = await makePkgTarball("GLOBAL");
     const hitsA: string[] = [];
     const hitsB: string[] = [];
-    await using srvA = registry("PROJECT", tgzA, hitsA);
-    await using srvB = registry("GLOBAL", tgzB, hitsB);
+    await using srvA = registry(await makePkgTarball("PROJECT"), hitsA);
+    await using srvB = registry(await makePkgTarball("GLOBAL"), hitsB);
 
     const { x_dir, env } = setup();
     const home = tmpdirSync();
@@ -1248,16 +1259,7 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
       stdout: "pipe",
       stdin: "ignore",
       stderr: "pipe",
-      env: {
-        ...env,
-        HOME: home,
-        USERPROFILE: home,
-        XDG_CONFIG_HOME: home,
-        PATH: pathWithout("px-probe", env.PATH),
-        npm_config_registry: undefined as any,
-        NPM_CONFIG_REGISTRY: undefined as any,
-        BUN_CONFIG_REGISTRY: undefined as any,
-      },
+      env: bunxEnv(env, home),
     });
     const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
@@ -1271,9 +1273,8 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
   });
 
   it("honors the cwd bunfig.toml even without a package.json in the project", async () => {
-    const tgz = await makePkgTarball("PROJECT");
     const hits: string[] = [];
-    await using srv = registry("PROJECT", tgz, hits);
+    await using srv = registry(await makePkgTarball("PROJECT"), hits);
 
     const { x_dir, env } = setup();
     const home = tmpdirSync();
@@ -1289,21 +1290,49 @@ describe("bunx honors the project-local bunfig.toml [install] registry", () => {
       stdout: "pipe",
       stdin: "ignore",
       stderr: "pipe",
-      env: {
-        ...env,
-        HOME: home,
-        USERPROFILE: home,
-        XDG_CONFIG_HOME: home,
-        PATH: pathWithout("px-probe", env.PATH),
-        npm_config_registry: undefined as any,
-        NPM_CONFIG_REGISTRY: undefined as any,
-        BUN_CONFIG_REGISTRY: undefined as any,
-      },
+      env: bunxEnv(env, home),
     });
     const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
 
     expect(out.trim()).toBe("SERVED-BY-PROJECT");
     expect(hits).toEqual(["/px-probe", "/px-probe-1.0.0.tgz"]);
+    expect(err).not.toContain("error:");
+    expect(exited).toBe(0);
+  });
+
+  it("finds the workspace-root bunfig.toml when run from a workspace member", async () => {
+    const hitsA: string[] = [];
+    const hitsB: string[] = [];
+    await using srvA = registry(await makePkgTarball("PROJECT"), hitsA);
+    await using srvB = registry(await makePkgTarball("GLOBAL"), hitsB);
+
+    const { x_dir, env } = setup();
+    const home = tmpdirSync();
+    const appDir = join(x_dir, "packages", "app");
+    await mkdir(appDir, { recursive: true });
+    await writeFile(
+      join(x_dir, "package.json"),
+      JSON.stringify({ name: "root", version: "1.0.0", workspaces: ["packages/*"] }),
+    );
+    await writeFile(join(x_dir, "bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srvA.port}/"\n`);
+    await writeFile(join(appDir, "package.json"), JSON.stringify({ name: "app", version: "1.0.0" }));
+    await writeFile(join(home, ".bunfig.toml"), `[install]\nregistry = "http://127.0.0.1:${srvB.port}/"\n`);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "x", "px-probe"],
+      cwd: appDir,
+      stdout: "pipe",
+      stdin: "ignore",
+      stderr: "pipe",
+      env: bunxEnv(env, home),
+    });
+    const [err, out, exited] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+
+    expect({ out: out.trim(), hitsA, hitsB }).toEqual({
+      out: "SERVED-BY-PROJECT",
+      hitsA: ["/px-probe", "/px-probe-1.0.0.tgz"],
+      hitsB: [],
+    });
     expect(err).not.toContain("error:");
     expect(exited).toBe(0);
   });

@@ -1222,35 +1222,49 @@ impl BunxCommand {
 
         // The spawned `bun add` runs with cwd = `bunx_cache_dir`, so it cannot
         // discover a project-local bunfig.toml on its own. Resolve it here from
-        // the invoking directory (nearest enclosing package.json dir, else cwd)
-        // and forward it via `--config=<path>` so `[install]` settings such as
-        // `registry` are honored. `--config`'s value is optional in the install
-        // arg parser, so the `=` form is required for the path to be consumed.
-        let bunfig_dir: &[u8] = match root_dir_info.enclosing_package_json {
-            Some(pkg) => bun_paths::dirname(pkg.source.path.text).unwrap_or(top_level_dir),
-            None => top_level_dir,
-        };
+        // the invoking directory and forward it via `--config=<path>` so
+        // `[install]` settings such as `registry` are honored. `--config`'s
+        // value is optional in the install arg parser, so the `=` form is
+        // required for the path to be consumed.
+        //
+        // `bun add` run directly from a workspace member chdirs to the
+        // workspace root before loading bunfig.toml; replicating that walk
+        // would require parsing each ancestor package.json's `workspaces`, so
+        // instead walk up from the invoking cwd and take the first
+        // bunfig.toml found. This is a superset of what `bun add` would find,
+        // which is the safe direction for registry pinning.
         let mut local_bunfig_buf = PathBuffer::uninit();
-        let local_bunfig_arg: Option<&[u8]> = {
+        let local_bunfig_arg: Option<&[u8]> = 'find_bunfig: {
             const PREFIX: &[u8] = b"--config=";
-            let len = {
-                let total = local_bunfig_buf.len();
-                let mut cursor: &mut [u8] = &mut local_bunfig_buf[..];
-                write!(
-                    cursor,
-                    "--config={dir}{sep}bunfig.toml",
-                    dir = BStr::new(strings::without_trailing_slash(bunfig_dir)),
-                    sep = bun_paths::SEP as char,
-                )
-                .map_err(|_| crate::Error::PathTooLong)?;
-                total - cursor.len()
-            };
-            local_bunfig_buf[len] = 0;
-            let path_z = ZStr::from_buf(&local_bunfig_buf[PREFIX.len()..], len - PREFIX.len());
-            if bun_sys::exists_z(path_z) {
-                Some(&local_bunfig_buf[..len])
-            } else {
-                None
+            let mut dir: &[u8] = strings::without_trailing_slash(top_level_dir);
+            loop {
+                let len = {
+                    let total = local_bunfig_buf.len();
+                    let mut cursor: &mut [u8] = &mut local_bunfig_buf[..];
+                    write!(
+                        cursor,
+                        "--config={dir}{sep}bunfig.toml",
+                        dir = BStr::new(dir),
+                        sep = bun_paths::SEP as char,
+                    )
+                    .map_err(|_| crate::Error::PathTooLong)?;
+                    total - cursor.len()
+                };
+                local_bunfig_buf[len] = 0;
+                let path_z = ZStr::from_buf(&local_bunfig_buf[PREFIX.len()..], len - PREFIX.len());
+                if bun_sys::exists_z(path_z) {
+                    break 'find_bunfig Some(&local_bunfig_buf[..len]);
+                }
+                match bun_paths::dirname(dir) {
+                    Some(parent) => {
+                        let parent = strings::without_trailing_slash(parent);
+                        if parent.len() >= dir.len() {
+                            break 'find_bunfig None;
+                        }
+                        dir = parent;
+                    }
+                    None => break 'find_bunfig None,
+                }
             }
         };
 

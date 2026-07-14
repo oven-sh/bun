@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { isIPv6 } from "harness";
 import http2 from "node:http2";
 import net from "node:net";
 
@@ -12,7 +13,7 @@ const kClientMagic = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
 const kSettings = Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0]);
 const kPing = Buffer.from([0, 0, 8, 6, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8]);
 
-test("PING flood tears the session down at every stage", async () => {
+async function runFloodStages(host: string) {
   const stages: string[] = [];
   const stage = (name: string) => {
     stages.push(name);
@@ -37,10 +38,10 @@ test("PING flood tears the session down at every stage", async () => {
     });
   });
 
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  await new Promise<void>(resolve => server.listen(0, host, resolve));
   stage("listening");
 
-  const client = net.connect((server.address() as any).port, "127.0.0.1");
+  const client = net.connect((server.address() as any).port, host);
   client.on("error", () => {});
   let interval: ReturnType<typeof setInterval> | undefined;
   const startFlood = () => {
@@ -72,4 +73,13 @@ test("PING flood tears the session down at every stage", async () => {
     server.close();
   }
   expect(stages).toContain("session-close");
-}, 45_000);
+}
+
+test("PING flood tears the session down at every stage (IPv4 loopback)", () => runFloodStages("127.0.0.1"), 45_000);
+
+// The vendored test-http2-ping-flood.js floods over the default-host connect
+// path, which resolves to the IPv6 loopback on the Windows agents - and times
+// out there while the IPv4 variant passes. If the v6 loopback absorbs the
+// flood without ever jamming, no queue-depth guard (ours or nghttp2's) can
+// trip; this subtest measures whether the family is the variable.
+test.skipIf(!isIPv6())("PING flood tears the session down at every stage (IPv6 loopback)", () => runFloodStages("::1"), 45_000);

@@ -485,12 +485,12 @@ pub mod node_module_module;
 pub mod plugin_runner;
 #[path = "PosixSignalHandle.rs"]
 pub mod posix_signal_handle;
-#[path = "RuntimeInspector.rs"]
-pub mod runtime_inspector;
 #[path = "resolve_path_jsc.rs"]
 pub mod resolve_path_jsc;
 #[path = "resolver_jsc.rs"]
 pub mod resolver_jsc;
+#[path = "RuntimeInspector.rs"]
+pub mod runtime_inspector;
 #[path = "virtual_machine_exports.rs"]
 pub mod virtual_machine_exports;
 

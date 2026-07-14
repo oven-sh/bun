@@ -346,10 +346,10 @@ describe("other loaders do not crash", () => {
 describe("?raw", () => {
   for (const [name, fn, expected] of [
     ["bun run", testBunRun, {}],
-    // ["bun build", testBunBuild, {}], // TODO: bun.build doesn't support query params at all yet
+    // ["bun build", testBunBuild], // TODO: bun.build doesn't support query params at all yet
     ["bun run await import", testBunRunAwaitImport, {}],
     ["require", testBunRunRequire, { __esModule: true }],
-    // ["bun build require", testBunBuildRequire, {}], // TODO: bun.build doesn't support query params at all yet
+    // ["bun build require", testBunBuildRequire], // TODO: bun.build doesn't support query params at all yet
   ] as const) {
     test(name, async () => {
       const filename = "abcd.js";

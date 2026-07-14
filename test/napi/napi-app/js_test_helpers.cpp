@@ -3,6 +3,7 @@
 #include "utils.h"
 #include <map>
 #include <string>
+#include <vector>
 
 namespace napitests {
 
@@ -226,6 +227,19 @@ static napi_value perform_set(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// create_latin1_string(byte_length): returns a JS string created via
+// napi_create_string_latin1. Used by the leak test in napi.test.ts.
+static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  uint32_t len;
+  NODE_API_CALL(env, napi_get_value_uint32(env, info[0], &len));
+  std::vector<char> buf(len, 'a');
+  napi_value result;
+  NODE_API_CALL(env,
+                napi_create_string_latin1(env, buf.data(), buf.size(), &result));
+  return result;
+}
+
 static napi_value make_empty_array(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value js_size = info[0];
@@ -430,6 +444,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, perform_set);
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);
+  REGISTER_FUNCTION(env, exports, create_latin1_string);
   REGISTER_FUNCTION(env, exports, make_empty_array);
   REGISTER_FUNCTION(env, exports, make_empty_object);
   REGISTER_FUNCTION(env, exports, add_tag);

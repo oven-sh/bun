@@ -351,6 +351,9 @@ impl WindowsNamedPipe {
 // Snake-case names are what `bun_uws` imports; `#[path]` points at the
 // PascalCase source files on disk.
 
+pub mod error;
+pub use error::{Error, Result};
+
 #[path = "App.rs"]
 pub mod app;
 #[path = "BodyReaderMixin.rs"]
@@ -379,6 +382,8 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
+// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
+#[cfg(windows)]
 #[path = "Timer.rs"]
 pub mod timer;
 #[path = "udp.rs"]
@@ -444,6 +449,7 @@ pub use internal_loop_data::InternalLoopData;
 pub use loop_::WindowsLoop;
 pub use loop_::{Loop, PosixLoop};
 pub use socket_kind::SocketKind;
+#[cfg(windows)]
 pub use timer::Timer;
 #[cfg(not(windows))]
 pub type WindowsLoop = loop_::PosixLoop; // unified on non-Windows

@@ -4,7 +4,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_core::Error;
+use crate::Error;
 use bun_http::headers::api::StringPointer;
 use bun_http::headers::append_etag;
 use bun_http::{Headers, Method};
@@ -267,9 +267,9 @@ impl StaticRoute {
     pub unsafe fn on_head_request(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
-            // Check If-None-Match for HEAD requests with 200 status
+            // Evaluate conditional request preconditions for HEAD with 200 status
             if (*this).status_code == 200 {
-                if Self::render_304_not_modified_if_none_match(this, &mut req, resp) {
+                if Self::render_304_if_not_modified(this, &mut req, resp) {
                     return;
                 }
             }
@@ -334,9 +334,9 @@ impl StaticRoute {
     pub unsafe fn on_get(this: *mut Self, mut req: AnyRequest, resp: AnyResponse) {
         // SAFETY: caller contract.
         unsafe {
-            // Check If-None-Match for GET requests with 200 status
+            // Evaluate conditional request preconditions for GET with 200 status
             if (*this).status_code == 200 {
-                if Self::render_304_not_modified_if_none_match(this, &mut req, resp) {
+                if Self::render_304_if_not_modified(this, &mut req, resp) {
                     return;
                 }
             }
@@ -532,24 +532,41 @@ impl StaticRoute {
     /// # Safety
     /// See [`on_head_request`]. May free `*this` via `on_response_complete` when it
     /// returns `true`.
-    unsafe fn render_304_not_modified_if_none_match(
+    unsafe fn render_304_if_not_modified(
         this: *mut Self,
         req: &mut AnyRequest,
         resp: AnyResponse,
     ) -> bool {
         // SAFETY: caller contract.
         unsafe {
-            let Some(if_none_match) = req.header(b"if-none-match") else {
-                return false;
+            // RFC 9110 §13.2.2: If-None-Match takes precedence; If-Modified-Since
+            // is evaluated only when If-None-Match is absent.
+            let not_modified = if let Some(if_none_match) = req.header(b"if-none-match") {
+                match (*this).headers.get(b"etag") {
+                    Some(etag) if !if_none_match.is_empty() && !etag.is_empty() => {
+                        ETag::if_none_match(etag, if_none_match)
+                    }
+                    _ => false,
+                }
+            } else if let Some(ims) = req
+                .header(b"if-modified-since")
+                .and_then(crate::jsc_hooks::parse_http_date)
+            {
+                // §13.1.3: 304 when Last-Modified <= If-Modified-Since. HTTP-date
+                // is second-granular, so compare at second precision.
+                match (*this)
+                    .headers
+                    .get(b"last-modified")
+                    .and_then(crate::jsc_hooks::parse_http_date)
+                {
+                    Some(last_modified) => last_modified / 1000 <= ims / 1000,
+                    None => false,
+                }
+            } else {
+                false
             };
-            let Some(etag) = (*this).headers.get(b"etag") else {
-                return false;
-            };
-            if if_none_match.is_empty() || etag.is_empty() {
-                return false;
-            }
 
-            if !ETag::if_none_match(etag, if_none_match) {
+            if !not_modified {
                 return false;
             }
 

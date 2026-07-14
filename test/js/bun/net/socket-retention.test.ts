@@ -159,7 +159,7 @@ test.skipIf(isWindows)("upgradeTLS raw + tls wrappers are both collectable after
         },
       });
       const [raw, tls] = socket.upgradeTLS({
-        tls: tlsCert,
+        tls: { ...tlsCert, ca: tlsCert.cert },
         socket: {
           drain(s) {
             s.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");

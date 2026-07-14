@@ -1,16 +1,30 @@
-# Documentation: http://trac.webkit.org/wiki/TestExpectations
 # Format: [modifier] test-name [[ expectations ]] [# comment]
+#
+# READ THIS BEFORE ADDING AN ENTRY.
+#
+# An entry does ONE thing: it removes the file from the run on every platform
+# the modifier matches. The runner parses the expectation kind (FAIL / SKIP /
+# CRASH / FLAKY / LEAK / TIMEOUT) but never reads it — see getRelevantTests in
+# scripts/runner.node.mjs. They are all the same thing, and there is no
+# "run it and expect failure" mode.
+#
+# So: quarantining ONE broken case here silently deletes the whole file's
+# coverage. If a single test is broken, skip THAT test in the file
+# (test.skip / test.skipIf(isASAN) / test.todo, with a comment naming the
+# failure) and do not add an entry here. Reserve this file for a file that
+# cannot be run at all — it hangs, crashes the runner, or trips LeakSanitizer.
+#
+# Entries match by SUBSTRING, so a path prefix quarantines an entire family.
+# A stale entry is invisible: the file simply never runs and nobody finds out.
 
 # Tests that are broken
-test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
-test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires node 24: @angular/cli@latest needs a newer Node.js than Bun reports (24.3.0), unskip after the Node.js version bump
 [ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
-test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
-test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
 
-# Exposed by the bun -e/--eval fix that stopped swallowing uncaught exceptions (see PR #31826):
-# the spawned child needs process.binding('inspector'), which is not implemented
-test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
+# The whole file's beforeAll builds a napi addon with node-gyp, and the Windows
+# agents have no ClangCL toolset ("MSB8020: The build tools for ClangCL cannot
+# be found"), so nothing in the file can run there. Remove once the agent image
+# ships ClangCL. Runs everywhere else.
+[ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
 # Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
@@ -45,12 +59,6 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
-
-# Tests skipped due to different log/line outputs
-[ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch
-[ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # Unexpected identifier "WARNING"
-[ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ] # bunshell > quiet > basic
-[ ASAN ] test/bundler/cli.test.ts [ SKIP ] # debug logs
 
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
@@ -89,43 +97,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
 [ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
-
-# node:repl vendored suite (107 tests; see PR #31827). 85 pass on Linux/macOS.
-# The eight below time out only on the Windows lanes: they use in-memory
-# ArrayStream (no ConPTY), so the hangs are JS-level, likely (A) `.load` with a
-# backslash path in terminal-mode write(), (B) globalPaths readdir walk in the
-# require/import completer, (C) inspector/preview stubs — not console I/O.
-[ WINDOWS ] test/js/node/test/parallel/test-repl-mode.js [ FAIL ] # (C) inspector/preview stub — testStrictModeTerminal
-[ WINDOWS ] test/js/node/test/parallel/test-repl-load-multiline-no-trailing-newline.js [ FAIL ] # (A) .load with backslash path
-[ WINDOWS ] test/js/node/test/parallel/test-repl-tab-complete-require.js [ FAIL ] # (B) globalPaths readdir walk
-[ WINDOWS ] test/js/node/test/parallel/test-repl-inspector.js [ FAIL ] # (C) inspector/preview stub
-[ WINDOWS ] test/js/node/test/parallel/test-repl-load-multiline.js [ FAIL ] # (A) .load with backslash path
-[ WINDOWS ] test/js/node/test/parallel/test-repl-pretty-stack.js [ FAIL ] # (A) .load with backslash path
-[ WINDOWS ] test/js/node/test/parallel/test-repl-preview-newlines.js [ FAIL ] # (C) inspector/preview stub
-[ WINDOWS ] test/js/node/test/parallel/test-repl-tab-complete-import.js [ FAIL ] # (B) globalPaths readdir walk
-# 22 remaining upstream divergences (kept in-tree so gaps are tracked):
-test/js/node/test/parallel/test-repl-autocomplete.js [ FAIL ] # result previews need inspector side-effect-free eval
-test/js/node/test/parallel/test-repl-cli-eval.js [ FAIL ] # CLI child-process behavior divergence
-test/js/node/test/parallel/test-repl-custom-eval-previews.js [ FAIL ] # result previews need inspector side-effect-free eval
-test/js/node/test/parallel/test-repl-domain.js [ FAIL ] # node:domain integration incomplete
-test/js/node/test/parallel/test-repl-history-navigation.js [ FAIL ] # result previews need inspector side-effect-free eval
-test/js/node/test/parallel/test-repl-import-referrer.js [ FAIL ] # inspect renders module namespaces differently (JSC)
-test/js/node/test/parallel/test-repl-pretty-custom-stack.js [ FAIL ] # JSC stack frame format differs from V8
-test/js/node/test/parallel/test-repl-preview.js [ FAIL ] # result previews need inspector side-effect-free eval
-test/js/node/test/parallel/test-repl-require.js [ FAIL ] # REPL module resolution edge cases
-test/js/node/test/parallel/test-repl-reverse-search.js [ FAIL ] # result previews need inspector side-effect-free eval
-test/js/node/test/parallel/test-repl-sigint-nested-eval.js [ FAIL ] # SIGINT-during-eval not interrupting vm execution yet
-test/js/node/test/parallel/test-repl-sigint.js [ FAIL ] # SIGINT-during-eval not interrupting vm execution yet
-test/js/node/test/parallel/test-repl-strict-mode-previews.js [ FAIL ] # result previews need inspector side-effect-free eval
-test/js/node/test/parallel/test-repl-tab-complete-nested-repls.js [ FAIL ] # completion subtests: getters/proxies edge cases
-test/js/node/test/parallel/test-repl-tab-complete-unary-expressions.js [ FAIL ] # completion subtests: getters/proxies edge cases
-test/js/node/test/parallel/test-repl-tab-complete.js [ FAIL ] # completion subtests: lexical-scope names, getters/proxies edge cases
-test/js/node/test/parallel/test-repl-top-level-await.js [ FAIL ] # JSC syntax-error wording differs from V8
-test/js/node/test/parallel/test-repl-unsafe-array-iteration.js [ FAIL ] # JSC error message wording differs from V8
-test/js/node/test/parallel/test-repl-unsupported-option.js [ FAIL ] # --input-type validation not implemented
-test/js/node/test/parallel/test-repl-user-error-handler.js [ FAIL ] # JSC stack frame format differs from V8
-test/js/node/test/parallel/test-repl.js [ FAIL ] # large integration test; multiple remaining divergences
-test/js/node/test/sequential/test-repl-timeout-throw.js [ FAIL ] # SIGINT-during-eval not interrupting vm execution yet
 
 # Windows-only gaps in named-pipe / socket teardown for ported Node net tests
 # (these pass on Linux and macOS): half-close (FIN) handling on named pipes,
@@ -241,8 +212,6 @@ test/js/node/test/parallel/test-http2-util-asserts.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-headers-list.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-nghttp2error.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-util-update-options-buffer.js [ FAIL ] # not yet passing
-test/js/node/test/sequential/test-http2-timeout-large-write-file.js [ FAIL ] # not yet passing
-test/js/node/test/sequential/test-http2-timeout-large-write.js [ FAIL ] # not yet passing
 test/js/node/test/parallel/test-http2-autoselect-protocol.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-client-connection-tunnelling.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-client-jsstream-destroy.js [ SKIP ] # hangs; skip until the underlying feature lands
@@ -251,9 +220,6 @@ test/js/node/test/parallel/test-http2-max-invalid-frames.js [ SKIP ] # hangs; sk
 test/js/node/test/parallel/test-http2-pack-end-stream-flag.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-ping-unsolicited-ack.js [ SKIP ] # hangs; skip until the underlying feature lands
 test/js/node/test/parallel/test-http2-session-cleanup-on-nghttp2-goaway.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-max-session-memory.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-ping-flood.js [ SKIP ] # hangs; skip until the underlying feature lands
-test/js/node/test/sequential/test-http2-settings-flood.js [ SKIP ] # hangs; skip until the underlying feature lands
 
 # AddressSanitizer findings under investigation on the HTTP/2 inbound path
 [ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js [ SKIP ] # ASan report under investigation

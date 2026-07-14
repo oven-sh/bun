@@ -115,6 +115,7 @@
 #include "JSMessageEvent.h"
 #include "JSMessagePort.h"
 #include "JSNextTickQueue.h"
+#include "JSSocketHandlers.h"
 #include "JSPerformance.h"
 #include "JSPerformanceEntry.h"
 #include "JSPerformanceMark.h"
@@ -569,6 +570,13 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
+            } else if (options.sharedEnvStore) {
+                // worker_threads SHARE_ENV: join the env tree the spawning thread
+                // resolved. Consumed like options.env, and published on the context
+                // before the view, which resolves its store through the context.
+                RefPtr<Bun::SharedEnvStore> store = std::exchange(options.sharedEnvStore, nullptr);
+                globalObject->scriptExecutionContext()->setSharedEnvStore(*store);
+                globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
             }
 
             // Ensure that the TerminationException singleton is constructed. Workers need this so
@@ -637,6 +645,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // into the dead cell via NapiHandleScope::open. Point those envs at the
     // new global and adopt the refs before unprotecting the old one.
     globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
+
+    // The swap replaces this thread's ScriptExecutionContext. If the thread had
+    // joined a worker_threads SHARE_ENV tree, carry it over (store + the
+    // write-through process.env) so it doesn't silently leave the tree.
+    if (auto* sharedEnvStore = oldContext->sharedEnvStore()) {
+        globalObject->scriptExecutionContext()->setSharedEnvStore(*sharedEnvStore);
+        globalObject->m_processEnvObject.set(vm, globalObject, Bun::createSharedEnvironmentVariablesMap(globalObject).getObject());
+    }
 
     // Drop the permanent root on the previous global so its module registry,
     // require.cache, and user objects become collectable. JSC's CodeCache and
@@ -1512,6 +1528,38 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     return {};
 }
 
+extern "C" JSC::EncodedJSValue Bun__createTypedArrayForCopy(JSC::JSGlobalObject* globalObject, TypedArrayType ty, const void* ptr, size_t byteLength)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    RefPtr<ArrayBuffer> buffer = ArrayBuffer::tryCreateUninitialized(byteLength, 1);
+    if (!buffer) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+    if (byteLength > 0 && ptr != nullptr)
+        memcpy(buffer->data(), ptr, byteLength);
+
+    unsigned elementByteSize = elementSize(ty);
+    size_t offset = 0;
+    size_t length = byteLength / elementByteSize;
+    bool isResizableOrGrowableShared = buffer->isResizableOrGrowableShared();
+
+    switch (ty) {
+#define JSC_TYPED_ARRAY_COPY_FACTORY(type) \
+    case Type##type:                       \
+        RELEASE_AND_RETURN(scope, JSValue::encode(JS##type##Array::create(globalObject, globalObject->typedArrayStructure(Type##type, isResizableOrGrowableShared), WTF::move(buffer), offset, length)));
+        FOR_EACH_TYPED_ARRAY_TYPE_EXCLUDING_DATA_VIEW(JSC_TYPED_ARRAY_COPY_FACTORY)
+#undef JSC_TYPED_ARRAY_COPY_FACTORY
+    case NotTypedArray:
+    case TypeDataView:
+        ASSERT_NOT_REACHED();
+    }
+
+    return {};
+}
+
 JSC_DECLARE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer);
 JSC_DEFINE_HOST_FUNCTION(functionCreateUninitializedArrayBuffer,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2294,6 +2342,11 @@ void GlobalObject::finishCreation(VM& vm)
     this->m_pendingVirtualModuleResultStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::PendingVirtualModuleResult::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
+        });
+
+    this->m_JSSocketHandlersStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(Bun::JSSocketHandlers::createStructure(init.vm, init.owner, JSC::jsNull()));
         });
 
     m_bunObject.initLater(
@@ -3950,6 +4003,13 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 }
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
+void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
+{
+    if (hook)
+        m_nodeWorkerEntryEvaluatedHook.set(vm(), this, hook);
+    else
+        m_nodeWorkerEntryEvaluatedHook.clear();
+}
 
 extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject*);
 
@@ -3959,6 +4019,11 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     if (vm.entryScope) {
         vm.entryScope = nullptr;
     }
+    // Mirror WebWorker__teardownJSCVM: mark this context terminating so late
+    // worker→parent posts (scheduleDrain/notifyPeerClosed) return false instead
+    // of enqueueing a ConcurrentTask that leaks past the last drain.
+    if (auto* ctx = globalObject->scriptExecutionContext())
+        ctx->markTerminating();
     Bun__InspectorConnection__disconnectAllOnExit(globalObject);
     // Hold a Ref so the RunLoop is guaranteed to outlive the VM teardown below.
     Ref<WTF::RunLoop> runLoop = vm.runLoop();

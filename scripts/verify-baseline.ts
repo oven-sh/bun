@@ -163,8 +163,9 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
   } else {
     if (!live && output.trim()) console.log(output.trim());
     const how = exitCode === null ? `signal ${signalCode}` : `exit code ${exitCode}`;
-    console.log(`    WARN: ${how} (${elapsed}s, not a CPU instruction issue)`);
+    console.log(`    FAIL: ${how} (${elapsed}s, not a CPU instruction issue)`);
     otherFailures++;
+    failedTests.push(label);
   }
   return false;
 }
@@ -204,8 +205,9 @@ if (await Bun.file(staticChecker).exists()) {
     instructionFailures++;
     failedTests.push("Static instruction scan");
   } else {
-    console.log(`    WARN: checker exited ${code} (${elapsed}s, tool error)`);
+    console.log(`    FAIL: checker exited ${code} (${elapsed}s, tool error)`);
     otherFailures++;
+    failedTests.push("Static instruction scan (tool error)");
   }
   console.log();
 } else {
@@ -253,20 +255,26 @@ console.log();
 console.log("--- Summary");
 console.log(`    Passed: ${passed}`);
 console.log(`    Instruction failures: ${instructionFailures}`);
-console.log(`    Other failures: ${otherFailures} (warnings, not CPU instruction issues)`);
+console.log(`    Other failures: ${otherFailures} (not CPU instruction issues)`);
 console.log();
+
+const platform = isWindows
+  ? isAarch64
+    ? "Windows aarch64"
+    : "Windows x64"
+  : isAarch64
+    ? "Linux aarch64"
+    : "Linux x64";
+
+function annotate(html: string) {
+  Bun.spawnSync(["buildkite-agent", "annotate", "--append", "--style", "error", "--context", "verify-baseline"], {
+    stdin: new Blob([html]),
+  });
+}
 
 if (instructionFailures > 0) {
   console.error("    FAILED: Code uses unsupported CPU instructions.");
 
-  // Report to Buildkite annotations tab
-  const platform = isWindows
-    ? isAarch64
-      ? "Windows aarch64"
-      : "Windows x64"
-    : isAarch64
-      ? "Linux aarch64"
-      : "Linux x64";
   const parts = [
     `<details open>`,
     `<summary>❌ CPU instruction violation on <b>${platform}</b> — ${instructionFailures} check(s) failed</summary>`,
@@ -290,19 +298,26 @@ if (instructionFailures > 0) {
     );
   }
   parts.push(`</details>`);
-  const annotation = parts.join("\n");
-
-  Bun.spawnSync(["buildkite-agent", "annotate", "--append", "--style", "error", "--context", "verify-baseline"], {
-    stdin: new Blob([annotation]),
-  });
+  annotate(parts.join("\n"));
 
   process.exit(1);
 }
 
 if (otherFailures > 0) {
-  console.log(
-    `    Baseline verification passed with ${otherFailures} non-instruction warning(s) on ${config.cpuDesc}.`,
+  console.error(`    FAILED: ${otherFailures} check(s) failed under emulation on ${config.cpuDesc}.`);
+
+  annotate(
+    [
+      `<details open>`,
+      `<summary>❌ Baseline verification failed on <b>${platform}</b> — ${otherFailures} check(s)</summary>`,
+      `<p>The baseline build crashed or failed tests under <code>${config.cpuDesc}</code> emulation ` +
+        `(not an unsupported-instruction fault). See the step log for the crash output.</p>`,
+      `<ul>${failedTests.map(t => `<li><code>${t}</code></li>`).join("")}</ul>`,
+      `</details>`,
+    ].join("\n"),
   );
-} else {
-  console.log(`    All baseline verification passed on ${config.cpuDesc}.`);
+
+  process.exit(1);
 }
+
+console.log(`    All baseline verification passed on ${config.cpuDesc}.`);

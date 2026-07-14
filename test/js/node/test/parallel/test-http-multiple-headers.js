@@ -58,7 +58,7 @@ const server = createServer(
         'x-res-d': ['JJJ', 'KKK', 'LLL']
       });
       res.addTrailers({
-        'x-res-x': ['VVV', 'YYY'],
+        'x-res-x': ['XXX', 'YYY'],
         'X-Res-Y': ['ZZZ', 'WWW']
       });
       res.write('BODY');
@@ -143,17 +143,17 @@ server.listen(0, common.mustCall(() => {
 
     res.on('end', common.mustCall(() => {
       assert.deepStrictEqual(res.rawTrailers, [
-        'x-res-x', 'VVV',
+        'x-res-x', 'XXX',
         'x-res-x', 'YYY',
         'X-Res-Y', 'ZZZ; WWW',
       ]);
       assert.deepStrictEqual(
         res.trailers,
-        { 'x-res-x': 'VVV, YYY', 'x-res-y': 'ZZZ; WWW' }
+        { 'x-res-x': 'XXX, YYY', 'x-res-y': 'ZZZ; WWW' }
       );
       assert.deepStrictEqual(
         res.trailersDistinct,
-        Object.assign({ __proto__: null }, { 'x-res-x': ['VVV', 'YYY'], 'x-res-y': ['ZZZ; WWW'] })
+        Object.assign({ __proto__: null }, { 'x-res-x': ['XXX', 'YYY'], 'x-res-y': ['ZZZ; WWW'] })
       );
       server.close();
     }));

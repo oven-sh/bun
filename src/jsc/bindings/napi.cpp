@@ -1733,6 +1733,8 @@ static JSC::TypedArrayType getTypedArrayTypeFromNAPI(napi_typedarray_type type)
         return JSC::TypedArrayType::TypeBigInt64;
     case napi_biguint64_array:
         return JSC::TypedArrayType::TypeBigUint64;
+    case napi_float16_array:
+        return JSC::TypedArrayType::TypeFloat16;
     default:
         ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected napi_typedarray_type");
     }
@@ -1769,6 +1771,8 @@ static JSC::JSArrayBufferView* createArrayBufferView(
         return JSC::JSBigInt64Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     case napi_biguint64_array:
         return JSC::JSBigUint64Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
+    case napi_float16_array:
+        return JSC::JSFloat16Array::create(globalObject, structure, WTF::move(arrayBuffer), byteOffset, length);
     default:
         ASSERT_NOT_REACHED_WITH_MESSAGE("Unexpected napi_typedarray_type");
     }
@@ -1801,7 +1805,8 @@ extern "C" napi_status napi_create_typedarray(
     case napi_float32_array:
     case napi_float64_array:
     case napi_bigint64_array:
-    case napi_biguint64_array: {
+    case napi_biguint64_array:
+    case napi_float16_array: {
         break;
     }
     default: {

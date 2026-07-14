@@ -322,6 +322,7 @@ pub(super) enum napi_typedarray_type {
     float64_array = 8,
     bigint64_array = 9,
     biguint64_array = 10,
+    float16_array = 11,
 }
 
 impl napi_typedarray_type {
@@ -340,6 +341,7 @@ impl napi_typedarray_type {
             jsc::JSType::Float64Array => napi_typedarray_type::float64_array,
             jsc::JSType::BigInt64Array => napi_typedarray_type::bigint64_array,
             jsc::JSType::BigUint64Array => napi_typedarray_type::biguint64_array,
+            jsc::JSType::Float16Array => napi_typedarray_type::float16_array,
             _ => return None,
         })
     }

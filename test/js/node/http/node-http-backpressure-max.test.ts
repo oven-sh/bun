@@ -11,7 +11,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 
 describe("backpressure", () => {
-  // Linux CI only have 8GB with is not enought because we will clone all or most of this 4GB into memory
+  // Linux CI only has 8GB which is not enough because we clone all or most of this 4GB into memory.
   it.skipIf(isCI && isLinux)(
     "should handle backpressure with the maximum allowed bytes",
     async () => {
@@ -45,9 +45,6 @@ describe("backpressure", () => {
 
       expect(totalBytes).toBe(payloadSize);
     },
-    // Moving 4 GiB through the server and the fetch reader takes ~60s on the
-    // slowest CI runners (darwin x64), which sat exactly at the old 60s
-    // limit and made the test flaky there.
-    120_000,
+    30_000,
   );
 });

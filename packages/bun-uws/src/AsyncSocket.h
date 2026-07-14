@@ -183,8 +183,8 @@ public:
 
     /* Returns the user space backpressure. */
     size_t getBufferedAmount() {
-        /* We return the actual amount of bytes in backbuffer, including pendingRemoval */
-        return getAsyncSocketData()->buffer.totalLength();
+        /* Unsent bytes only; already-written bytes waiting for compaction are not backpressure. */
+        return getAsyncSocketData()->buffer.length();
     }
 
     /* Returns the text representation of an IPv4 or IPv6 address */
@@ -253,7 +253,7 @@ public:
             /* Check if we couldn't write the entire buffer */
             if ((unsigned int) written < buffer_len) {
                 /* Remove the successfully written data from the buffer */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 /* If we wrote less than we attempted, the socket buffer is likely full
                 * likely is used as an optimization hint to the compiler
@@ -301,7 +301,7 @@ public:
             /* On failure return, otherwise continue down the function */
             if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
-                asyncSocketData->buffer.erase((unsigned int) written);
+                asyncSocketData->buffer.erase((size_t) written);
 
                 if (optionally) {
                     /* Thankfully we can exit early here */

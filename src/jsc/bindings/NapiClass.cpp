@@ -124,12 +124,8 @@ napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback 
     for (size_t i = 0; i < property_count; i++) {
         const napi_property_descriptor& property = properties[i];
 
-        napi_status status;
-        if (property.attributes & napi_static) {
-            status = Napi::defineProperty(env, this, property, true, throwScope);
-        } else {
-            status = Napi::defineProperty(env, prototype, property, false, throwScope);
-        }
+        JSC::JSObject* target = (property.attributes & napi_static) ? static_cast<JSC::JSObject*>(this) : prototype;
+        napi_status status = Napi::defineProperty(env, target, property, throwScope);
 
         if (throwScope.exception()) {
             result = napi_pending_exception;

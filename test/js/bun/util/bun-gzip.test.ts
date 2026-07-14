@@ -106,4 +106,11 @@ describe.each(["gunzipSync", "inflateSync"] as const)("Bun.%s numeric options", 
     const out = fn(compressed, { level: NaN, memLevel: NaN, strategy: NaN } as any);
     expect(Buffer.from(out).equals(payload)).toBe(true);
   });
+
+  test("accepts the same libdeflate options object the compress side accepts", () => {
+    const opts = { level: 12, library: "libdeflate" } as const;
+    const encoded = (name === "gunzipSync" ? Bun.gzipSync : Bun.deflateSync)(payload, opts);
+    const out = fn(encoded, opts);
+    expect(Buffer.from(out).equals(payload)).toBe(true);
+  });
 });

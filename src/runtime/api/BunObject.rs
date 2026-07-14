@@ -2521,9 +2521,16 @@ pub mod JSZlib {
                 library = Library::Zlib;
             }
 
-            if let Some(level) =
-                get_i32_option(global_this, options_val, b"level", b"options.level", -1, 9)?
-            {
+            // level/memLevel/strategy are ignored by inflate; type-check only so
+            // a shared compress options object (e.g. libdeflate level 12) still works.
+            if let Some(level) = get_i32_option(
+                global_this,
+                options_val,
+                b"level",
+                b"options.level",
+                i32::MIN,
+                i32::MAX,
+            )? {
                 opts.level = level;
             }
 
@@ -2532,8 +2539,8 @@ pub mod JSZlib {
                 options_val,
                 b"memLevel",
                 b"options.memLevel",
-                1,
-                9,
+                i32::MIN,
+                i32::MAX,
             )? {
                 opts.mem_level = mem_level;
                 library = Library::Zlib;
@@ -2544,8 +2551,8 @@ pub mod JSZlib {
                 options_val,
                 b"strategy",
                 b"options.strategy",
-                0,
-                4,
+                i32::MIN,
+                i32::MAX,
             )? {
                 opts.strategy = strategy;
                 library = Library::Zlib;

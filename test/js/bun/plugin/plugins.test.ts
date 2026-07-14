@@ -355,7 +355,7 @@ describe("module", () => {
     expect(mod).toEqual({ fromOnLoad: true });
   });
 
-  it("module() returning CommonJS source does not populate the --isolate provider cache", async () => {
+  it.concurrent("module() returning CommonJS source does not populate the --isolate provider cache", async () => {
     using dir = tempDir("plugin-cjs-isolate", {
       "preload.ts": `
         Bun.plugin({
@@ -383,7 +383,7 @@ describe("module", () => {
   // https://github.com/oven-sh/bun/issues/21369
   // https://github.com/oven-sh/bun/issues/22683
   // https://github.com/oven-sh/bun/issues/10083
-  it("onLoad in the file namespace returning CommonJS source works", async () => {
+  it.concurrent("onLoad in the file namespace returning CommonJS source works", async () => {
     using dir = tempDir("plugin-onload-file-cjs", {
       "preload.ts": `
         Bun.plugin({

@@ -42,10 +42,11 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
    * is Windows-only and best-effort; readable polling stays the primary
    * signal). */
   int eof = status == UV_EOF;
+  int error = status < 0 && status != UV_EOF;
   if (events & UV_DISCONNECT) {
     struct us_poll_t *wp = (struct us_poll_t *)p->data;
     uv_poll_start(p, us_poll_events(wp), poll_cb);
-    events |= UV_READABLE;
+    int kind = us_internal_poll_type(wp) & POLL_TYPE_KIND_MASK;
     /* For a socket whose write side we already shut down, AFD delivers no
      * readable event for the peer's FIN at all - the exact half-closed state
      * that hung server.close() - and with our writes closed there is no
@@ -53,12 +54,32 @@ static void poll_cb(uv_poll_t *p, int status, int events) {
      * DISCONNECT mapped to the eof hint (like kqueue's EV_EOF); every other
      * socket keeps recv()-owned EOF discovery so mid-stream transfers are
      * never cut at an EAGAIN. */
-    if ((us_internal_poll_type(wp) & POLL_TYPE_KIND_MASK) == POLL_TYPE_SOCKET_SHUT_DOWN) {
+    if (kind == POLL_TYPE_SOCKET_SHUT_DOWN) {
       eof = 1;
+      events |= UV_READABLE;
+    } else if (kind == POLL_TYPE_SOCKET && ((struct us_socket_t *)wp)->flags.is_paused) {
+      /* A paused socket polls without READABLE, so the read loop cannot
+       * discover terminal states for it - and the pause contract forbids
+       * consuming deferred bytes. MSG_PEEK discriminates without consuming:
+       * an error is an abortive reset (our libuv patch reports AFD_POLL_ABORT
+       * as DISCONNECT so it reaches write-only polls at all) and must close
+       * now like epoll's unmaskable EPOLLERR; 0 is a graceful FIN with no
+       * data, deferred by the shared dispatch's existing paused-EOF contract
+       * until resume; pending data keeps the pause honored untouched. */
+      char probe;
+      ssize_t peeked = bsd_recv(us_poll_fd(wp), &probe, 1, MSG_PEEK);
+      if (peeked == 0) {
+        eof = 1;
+        events |= UV_READABLE;
+      } else if (peeked < 0 && !bsd_would_block()) {
+        error = 1;
+        events |= UV_READABLE;
+      }
+    } else {
+      events |= UV_READABLE;
     }
   }
-  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, status < 0 && status != UV_EOF, eof,
-                                  events);
+  us_internal_dispatch_ready_poll((struct us_poll_t *)p->data, error, eof, events);
 }
 
 static void prepare_cb(uv_prepare_t *p) {

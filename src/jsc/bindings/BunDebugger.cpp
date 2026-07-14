@@ -744,9 +744,20 @@ static bool postNodeInspectorControlMessage(const String& message)
         if (!controlCallback || !controlCallback.isCallable())
             return;
         auto* globalObject = context.jsGlobalObject();
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         MarkedArgumentBuffer arguments;
-        arguments.append(jsString(globalObject->vm(), message));
+        arguments.append(jsString(vm, message));
         JSC::call(globalObject, controlCallback.getObject(), arguments, "postNodeInspectorControlMessage - controlCallback"_s);
+        // The callback runs internal/debugger.ts, which can throw (a malformed
+        // forwarded command reaching the CDP adapter, a failing stop()). This
+        // task is the top of the stack on the debugger thread, so an escaping
+        // exception has no handler and would otherwise stay pending for
+        // whatever runs next on this VM.
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        }
     });
 
     return true;

@@ -10,6 +10,7 @@ tmpdir.refresh();
 const requirePath = JSON.stringify(tmpdir.resolve('non-existent.json'));
 
 // Use -i to force node into interactive mode, despite stdout not being a TTY
+// bun: '-i' is --install=fallback in bun, so the long form is used instead.
 const child = spawn(process.execPath, ['--interactive']);
 
 let out = '';

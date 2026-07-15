@@ -596,6 +596,40 @@ function testRunInContext({ fn, isIsolated, isNew }: TestRunInContextArg) {
     }
     expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
   });
+
+  test("a throwing Error.prepareStackTrace does not escape the compile-time SyntaxError", () => {
+    // Building the error materializes its stack, running a user
+    // prepareStackTrace; if that throws, the SyntaxError must still be what is
+    // thrown (node does the same) and the arrow header must survive.
+    const prev = Error.prepareStackTrace;
+    Error.prepareStackTrace = () => {
+      throw new Error("boom-from-prepareStackTrace");
+    };
+    try {
+      let err: any;
+      try {
+        new Script("%%");
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(SyntaxError);
+      expect(err.message).toBe("Unexpected token '%'");
+      expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
+
+      // Same eager-materialization path via vm.compileFunction.
+      let fnErr: any;
+      try {
+        compileFunction("%%");
+      } catch (e) {
+        fnErr = e;
+      }
+      expect(fnErr).toBeInstanceOf(SyntaxError);
+      expect(fnErr.message).toBe("Unexpected token '%'");
+    } finally {
+      Error.prepareStackTrace = prev;
+    }
+  });
+
   test.todo("can specify timeout", () => {
     //
   });

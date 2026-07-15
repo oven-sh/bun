@@ -138,6 +138,11 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     JSC::ParserError parseError;
     if (!JSC::checkSyntax(vm, source, parseError)) {
         auto exception = parseError.toErrorObject(globalObject, source, -1);
+        // Building the error materializes its stack, running a user
+        // Error.prepareStackTrace that may throw; Node throws the SyntaxError
+        // anyway. tryClearException leaves a termination for the check below.
+        if (exception)
+            (void)scope.tryClearException();
         RETURN_IF_EXCEPTION(scope, {});
         // Node always attaches the arrow header to compile-time SyntaxErrors
         // (node_contextify.cc DecorateErrorStack), independent of displayErrors.

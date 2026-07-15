@@ -167,6 +167,11 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 
             if (actuallyValid) {
                 auto exception = error.toErrorObject(globalObject, sourceCode, -1);
+                // Building the error materializes its stack, running a user
+                // Error.prepareStackTrace that may throw; Node throws the
+                // SyntaxError anyway. Terminations survive tryClearException.
+                if (exception)
+                    (void)throwScope.tryClearException();
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
@@ -596,6 +601,8 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     if (!errorInstance)
         return;
 
+    // The caller's toErrorObject() already materialized the stack (running any
+    // user Error.prepareStackTrace), so this cannot re-enter JS or throw.
     errorInstance->materializeErrorInfoIfNeeded(vm, vm.propertyNames->stack);
     JSValue stackValue = errorInstance->getDirect(vm, vm.propertyNames->stack);
     if (!stackValue || !stackValue.isString())

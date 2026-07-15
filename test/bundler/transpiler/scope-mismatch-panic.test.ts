@@ -101,13 +101,9 @@ describe("TypeScript 'declare' statements discard scopes of dropped statements",
   // Each of these parses a statement after "declare" that records scopes during the
   // parse pass and is then dropped. The recorded scopes used to be left behind, so
   // visiting the following class statement hit "Scope mismatch while visiting".
+  // Two earlier cases ("declare foo: bar" and "declare module : es2015") have since
+  // become parse errors (matching esbuild) and are covered in transpiler.test.js.
   const cases: [name: string, source: string, expected: string[]][] = [
-    [
-      "declare module with an invalid name followed by a class",
-      "declare module : es2015\nclass Foo {}\n",
-      ["class Foo"],
-    ],
-    ["declare followed by a labeled statement and a class", "declare foo: bar\nclass Foo {}\n", ["class Foo"]],
     [
       "declare const with an arrow function initializer followed by a class",
       "declare const x = () => {};\nclass Foo {}\n",

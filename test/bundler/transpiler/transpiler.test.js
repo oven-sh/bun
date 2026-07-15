@@ -237,6 +237,8 @@ describe("Bun.Transpiler", () => {
       err("declare module\nFoo { sideEffect() }", 'Unexpected "module"');
       err("declare declare\nlet x = 1", 'Unexpected "declare"');
       err("declare foo", 'Unexpected "foo"');
+      err("declare foo: bar", 'Unexpected "foo"');
+      err("declare module : es2015", 'Unexpected "module"');
       err("export declare interface\nFoo {}", 'Unexpected "interface"');
       err("export declare abstract\nclass Foo {}", 'Unexpected "abstract"');
       // All valid "declare X" forms still emit nothing.

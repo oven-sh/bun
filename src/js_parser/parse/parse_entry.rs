@@ -869,20 +869,14 @@ impl<'a> Parser<'a> {
                     js_ast::StmtData::SExportDefault(_)
                     | js_ast::StmtData::SExportStar(_)
                     | js_ast::StmtData::SExportFrom(_) => p.has_nonempty_export_stmt = true,
-                    js_ast::StmtData::SLocal(s) if s.is_export => {
-                        p.has_nonempty_export_stmt = true
-                    }
-                    js_ast::StmtData::SClass(s) if s.is_export => {
-                        p.has_nonempty_export_stmt = true
-                    }
+                    js_ast::StmtData::SLocal(s) if s.is_export => p.has_nonempty_export_stmt = true,
+                    js_ast::StmtData::SClass(s) if s.is_export => p.has_nonempty_export_stmt = true,
                     js_ast::StmtData::SFunction(s)
                         if s.func.flags.contains(js_ast::Flags::Function::IsExport) =>
                     {
                         p.has_nonempty_export_stmt = true
                     }
-                    js_ast::StmtData::SEnum(s) if s.is_export => {
-                        p.has_nonempty_export_stmt = true
-                    }
+                    js_ast::StmtData::SEnum(s) if s.is_export => p.has_nonempty_export_stmt = true,
                     js_ast::StmtData::SNamespace(s) if s.is_export => {
                         p.has_nonempty_export_stmt = true
                     }

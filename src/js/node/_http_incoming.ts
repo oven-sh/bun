@@ -19,7 +19,6 @@ const {
   NodeHTTPBodyReadState,
   emitEOFIncomingMessage,
   NodeHTTPResponseAbortEvent,
-  setRequestTimeout,
   kAbortController,
 } = require("internal/http");
 
@@ -55,6 +54,7 @@ function onIncomingMessageResumeNodeHTTPResponse(this: IncomingMessage) {
   if (handle && !this.destroyed) {
     const resumed = handle.resume();
     if (resumed && resumed !== true) {
+      this.socket?._unrefTimer?.();
       const bodyReadState = handle.hasBody;
       if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0) {
         emitEOFIncomingMessage(this);
@@ -302,13 +302,7 @@ ObjectDefineProperty(IncomingMessage.prototype, "signal", {
 
 IncomingMessage.prototype.setTimeout = function setTimeout(msecs, callback) {
   if (callback) this.on("timeout", callback);
-
-  const handle = this[kHandle];
-  if (handle) {
-    setRequestTimeout(handle, Math.ceil(msecs / 1000));
-  } else {
-    this.socket?.setTimeout(msecs);
-  }
+  this.socket?.setTimeout(msecs);
   return this;
 };
 
@@ -357,6 +351,7 @@ IncomingMessage.prototype._read = function _read(_n) {
   if ((bodyReadState & NodeHTTPBodyReadState.hasBufferedDataDuringPause) !== 0) {
     const drained = handle.drainRequestBody();
     if (drained && !this._dumped) {
+      socket?._unrefTimer?.();
       this.push(drained);
     }
   }
@@ -377,6 +372,8 @@ function onDataIncomingMessage(
     this.destroy();
     return;
   }
+
+  this.socket?._unrefTimer?.();
 
   if (chunk && !this._dumped) this.push(chunk);
 

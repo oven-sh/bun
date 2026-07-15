@@ -3560,58 +3560,6 @@ pub enum AnyUserRouteList<'a> {
 }
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
-#[unsafe(no_mangle)]
-pub(super) extern "C" fn Server__setIdleTimeout(
-    server: JSValue,
-    seconds: JSValue,
-    global: &JSGlobalObject,
-) {
-    match server_set_idle_timeout_(server, seconds, global) {
-        Ok(()) => {}
-        Err(JsError::Thrown) => {}
-        Err(JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory_value();
-        }
-        Err(JsError::Terminated) => {}
-    }
-}
-
-pub(super) fn server_set_idle_timeout_(
-    server: JSValue,
-    seconds: JSValue,
-    global: &JSGlobalObject,
-) -> JsResult<()> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
-    }
-
-    if !seconds.is_number() {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The provided value is not of type 'number'."
-        )));
-    }
-    let value = seconds.to_u32();
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
-    }
-    Ok(())
-}
 
 pub(super) fn server_set_on_client_error_(
     global: &JSGlobalObject,

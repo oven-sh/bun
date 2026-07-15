@@ -15,6 +15,7 @@ const {
   validateInteger,
   validateFunction,
 } = require("internal/validators");
+const { getTimerDuration } = require("internal/timers");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
@@ -27,7 +28,6 @@ const {
   kRealListen,
   tlsSymbol,
   optionsSymbol,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   headerStateSymbol,
   NodeHTTPHeaderState,
@@ -51,7 +51,6 @@ const {
   eofInProgress,
   runSymbol,
   drainMicrotasks,
-  setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
   fakeSocketSymbol,
@@ -254,6 +253,7 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
   this[kInternalSocketData] = undefined;
@@ -609,6 +609,18 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           socket = new NodeHTTPServerSocket(server, socketHandle, !!tls);
         }
 
+        // Like Node.js's connectionListenerInternal: the server timeout is
+        // applied once per connection (before any request routing, so it also
+        // covers CONNECT and upgrade tunnels) and before 'connection' fires so
+        // a user listener can override it; subsequent keep-alive requests only
+        // refresh the existing timer.
+        if (isSocketNew) {
+          const serverTimeoutMs = server.timeout;
+          if (serverTimeoutMs) socket.setTimeout(serverTimeoutMs);
+        } else {
+          socket._unrefTimer();
+        }
+
         const http_req = new RequestClass(kHandle, url, method, headersObject, headersArray, handle, hasBody, socket);
         if (isAncientHTTP) {
           http_req.httpVersion = "1.0";
@@ -920,25 +932,16 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this.once("listening", onListen);
     }
 
-    if (this[kDeferredTimeouts]) {
-      for (const { msecs, callback } of this[kDeferredTimeouts]) {
-        this.setTimeout(msecs, callback);
-      }
-      delete this[kDeferredTimeouts];
-    }
-
     setTimeout(emitListeningNextTick, 1, this, this[serverSymbol]?.hostname, this[serverSymbol]?.port);
   }
 };
 
+// Like Node.js: the server records the value and applies it to each new
+// connection via socket.setTimeout(); the socket emits 'timeout' and a
+// listener on any of req/res/server vetoes the default destroy.
 Server.prototype.setTimeout = function (msecs, callback) {
-  const server = this[serverSymbol];
-  if (server) {
-    setServerIdleTimeout(server, Math.ceil(msecs / 1000));
-    if (typeof callback === "function") this.once("timeout", callback);
-  } else {
-    (this[kDeferredTimeouts] ??= []).push({ msecs, callback });
-  }
+  this.timeout = msecs;
+  if (typeof callback === "function") this.on("timeout", callback);
   return this;
 };
 
@@ -1042,6 +1045,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _httpMessage;
   _secureEstablished = false;
   #pendingCallback = null;
+  #timeoutTimer = null;
+  #boundOnTimeout = null;
+  #lastBufferedAmount = 0;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
@@ -1086,6 +1092,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
   }
   #onDrain() {
+    this._unrefTimer();
     const handle = this[kHandle];
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
     const callback = this.#pendingCallback;
@@ -1096,6 +1103,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     this.emit("drain");
   }
   #onData(chunk, last) {
+    this._unrefTimer();
     if (chunk) {
       this.push(chunk);
     }
@@ -1122,6 +1130,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
   #onClose() {
     this[kHandle] = null;
+    const timer = this.#timeoutTimer;
+    if (timer) {
+      clearTimeout(timer);
+      this.#timeoutTimer = null;
+    }
     this.server?.[kTrackedConnections]?.delete(this);
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
@@ -1180,15 +1193,20 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _onTimeout() {
     const handle = this[kHandle];
     const response = handle?.response;
-    // If there is a response, and it has pending data,
-    // we suppress the timeout because a write is in progress.
-    if (response && response.writableLength > 0) {
+    // Like Node.js's net.Socket._onTimeout: only suppress when the buffered
+    // amount has changed since the last check (progress), so a stalled write
+    // still emits 'timeout' instead of looping forever.
+    const buffered = response ? response.bufferedAmount : 0;
+    if (buffered > 0 && buffered !== this.#lastBufferedAmount) {
+      this.#lastBufferedAmount = buffered;
+      this._unrefTimer();
       return;
     }
+    this.#lastBufferedAmount = buffered;
     this.emit("timeout");
   }
   _unrefTimer() {
-    // for compatibility
+    this.#timeoutTimer?.refresh();
   }
 
   address() {
@@ -1324,7 +1342,26 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(_timeout, _callback) {
+  setTimeout(msecs, callback) {
+    if (this.destroyed) return this;
+    this.timeout = msecs;
+    msecs = getTimerDuration(msecs, "msecs");
+    const existing = this.#timeoutTimer;
+    if (existing) clearTimeout(existing);
+    if (msecs === 0) {
+      this.#timeoutTimer = null;
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+    } else {
+      const bound = (this.#boundOnTimeout ??= this._onTimeout.bind(this));
+      this.#timeoutTimer = setTimeout(bound, msecs).unref();
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.once("timeout", callback);
+      }
+    }
     return this;
   }
 
@@ -1339,6 +1376,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   _write(_chunk, _encoding, _callback) {
+    this._unrefTimer();
     const handle = this[kHandle];
     let err;
     try {
@@ -1687,6 +1725,8 @@ function stopServerResponsePerf(this: any) {
 function endSocketOnFinishIfNeeded(socket, res) {
   if (res[kMustCloseConnection]) {
     socket?.end();
+  } else {
+    socket?._unrefTimer();
   }
 }
 
@@ -2189,6 +2229,8 @@ ServerResponse.prototype.write = function (chunk, encoding, callback) {
     result = handle.write(chunk, encoding, allowWritesToContinue.bind(this), strictContentLength(this));
   }
 
+  this[fakeSocketSymbol]?._unrefTimer();
+
   if (result < 0) {
     if (callback) {
       // The write was buffered due to backpressure.
@@ -2352,6 +2394,7 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
   } else {
     handle.write(data, encoding, callback, strictContentLength(this));
   }
+  this[fakeSocketSymbol]?._unrefTimer();
 };
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
@@ -2501,6 +2544,7 @@ function callWriteHeadIfObservable(self, headerState) {
 }
 
 function allowWritesToContinue() {
+  this[fakeSocketSymbol]?._unrefTimer();
   this._callPendingCallbacks();
   this.emit("drain");
 }

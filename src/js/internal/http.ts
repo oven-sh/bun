@@ -5,19 +5,16 @@ const {
   setHeader,
   Headers,
   assignHeaders: assignHeadersFast,
-  setRequestTimeout,
   headersTuple,
   webRequestOrResponseHasBodyValue,
   setServerCustomOptions,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
-  setServerIdleTimeout,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
   Headers: (typeof globalThis)["Headers"];
   assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
-  setRequestTimeout: (req: Request, timeout: number) => boolean;
   headersTuple: any;
   webRequestOrResponseHasBodyValue: (arg: any) => boolean;
   setServerCustomOptions: (
@@ -29,7 +26,6 @@ const {
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
-  setServerIdleTimeout: (server: any, timeout: number) => void;
 };
 
 const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
@@ -88,7 +84,6 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-const kDeferredTimeouts = Symbol("deferredTimeouts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -543,7 +538,6 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,
@@ -584,9 +578,7 @@ export {
   setHeader,
   setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
-  setRequestTimeout,
   setServerCustomOptions,
-  setServerIdleTimeout,
   statusCodeSymbol,
   statusMessageSymbol,
   timeoutTimerSymbol,

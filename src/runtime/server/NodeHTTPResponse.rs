@@ -1,5 +1,5 @@
 use core::cell::Cell;
-use core::ffi::{c_uint, c_void};
+use core::ffi::c_void;
 use core::ptr;
 
 use bitflags::bitflags;
@@ -2125,32 +2125,4 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
     // SAFETY: out-param provided by caller.
     unsafe { *node_response_ptr = response };
     js_this
-}
-
-impl NodeHTTPResponse {
-    #[uws::uws_callback(export = "NodeHTTPResponse__setTimeout")]
-    pub(crate) fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) -> bool {
-        if !seconds.is_number() {
-            let _: jsc::JsError =
-                global_this.throw_invalid_argument_type_value(b"timeout", b"number", seconds);
-            return false;
-        }
-
-        let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else {
-            return false;
-        };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
-        {
-            return false;
-        }
-
-        // ECMAScript ToUint32 — same bit pattern as
-        // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
-        let secs = (seconds.to_int32() as c_uint).min(255) as u8;
-        raw.timeout(secs);
-        true
-    }
 }

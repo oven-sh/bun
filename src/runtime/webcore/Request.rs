@@ -1,7 +1,6 @@
 //! https://developer.mozilla.org/en-US/docs/Web/API/Request
 
 use core::cell::Cell;
-use core::ffi::c_uint;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
@@ -396,20 +395,6 @@ impl Request {
             .set(InternalJSEventCallback::init(callback, global_this));
         // we always have the abort event but we need to enable the timeout event as well in case of `node:http`.Server.setTimeout is set
         self.request_context.enable_timeout_events();
-    }
-
-    #[bun_uws::uws_callback(export = "Request__setTimeout")]
-    pub fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) {
-        if !seconds.is_number() {
-            let _ = global_this.throw(format_args!(
-                "Failed to set timeout: The provided value is not of type 'number'."
-            ));
-            return;
-        }
-
-        // `JSValue.toU32` clamps via JS ToUint32 rules,
-        // not signed wrap-then-reinterpret like `to_int32() as c_uint` would do.
-        self.set_timeout(seconds.to_u32() as c_uint);
     }
 
     /// `BunRequest.prototype.clone` (the `Bun.serve` `routes:` subclass) goes
@@ -1697,10 +1682,6 @@ impl Request {
         // Box<Request> drops on the error path automatically
         self.clone_into(&mut req, global_this, false)?;
         Ok(req)
-    }
-
-    pub fn set_timeout(&self, seconds: c_uint) {
-        let _ = self.request_context.set_timeout(seconds);
     }
 }
 

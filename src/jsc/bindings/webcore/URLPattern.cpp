@@ -90,7 +90,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.hostname.isNull()
             && init.port.isNull()
             && init.username.isNull())
-            result.username = processBaseURLString(baseURL.user(), type);
+            result.username = processBaseURLString(baseURL.encodedUser(), type);
 
         if (type != BaseURLStringType::Pattern
             && init.protocol.isNull()
@@ -98,7 +98,7 @@ static ExceptionOr<URLPatternInit> processInit(URLPatternInit&& init, BaseURLStr
             && init.port.isNull()
             && init.username.isNull()
             && init.password.isNull())
-            result.password = processBaseURLString(baseURL.password(), type);
+            result.password = processBaseURLString(baseURL.encodedPassword(), type);
 
         if (init.protocol.isNull()
             && init.hostname.isNull()) {
@@ -361,8 +361,8 @@ ExceptionOr<void> URLPattern::compileAllComponents(ScriptExecutionContext& conte
 static inline void matchHelperAssignInputsFromURL(const URL& input, String& protocol, String& username, String& password, String& hostname, String& port, String& pathname, String& search, String& hash)
 {
     protocol = input.protocol().toString();
-    username = input.user();
-    password = input.password();
+    username = input.encodedUser().toString();
+    password = input.encodedPassword().toString();
     hostname = input.host().toString();
     port = input.port() ? String::number(*input.port()) : emptyString();
     pathname = input.path().toString();

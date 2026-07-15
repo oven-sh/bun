@@ -281,13 +281,7 @@ private:
         auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
-            /* For every request we reset the timeout and hang until user makes action */
-            /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
-            us_socket_timeout((us_socket_t *) s, 0);
-
-            /* Reset httpResponse */
             HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
-            httpResponseData->offset = 0;
 
             /* Are we not ready for another request yet? Terminate the connection.
              * Important for denying async pipelining until, if ever, we want to support it.
@@ -296,6 +290,29 @@ private:
                 us_socket_close((us_socket_t *) s, 0, nullptr);
                 return nullptr;
             }
+
+            /* Non-persistent (HTTP/1.0 or Connection: close, RFC 9112 9.3/9.6):
+             * drop pipelined follow-ups. Uncork first (end_without_body/sendfile
+             * don't) so corked bytes flush; placed before the per-request resets. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+                auto *asyncSocket = (AsyncSocket<SSL> *) s;
+                asyncSocket->uncork();
+                if (asyncSocket->getBufferedAmount() == 0) {
+                    asyncSocket->shutdown();
+                    asyncSocket->close();
+                } else {
+                    /* Balance onData's us_socket_ref: the nullptr tail skips it. */
+                    us_socket_unref((us_socket_t *) s);
+                }
+                return nullptr;
+            }
+
+            /* For every request we reset the timeout and hang until user makes action */
+            /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
+            us_socket_timeout((us_socket_t *) s, 0);
+
+            /* Reset httpResponse */
+            httpResponseData->offset = 0;
 
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;

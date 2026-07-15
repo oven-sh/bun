@@ -613,6 +613,106 @@ it.each([
   expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
 });
 
+describe("non-persistent connection never dispatches a pipelined follow-up", () => {
+  // RFC 9112 9.3/9.6: an HTTP/1.0 request (absent an advertised keep-alive),
+  // or any request carrying Connection: close, makes the connection
+  // non-persistent. The server sends exactly one response and closes,
+  // regardless of whether a second request arrived in the same TCP segment.
+  async function send(port: number, payload: string, secondWriteAfterFirstResponse: boolean) {
+    const chunks: Buffer[] = [];
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    const { promise: gotData, resolve: onData } = Promise.withResolvers<void>();
+    const socket = net.connect(port, "127.0.0.1");
+    socket.setNoDelay(true);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      onData();
+    });
+    socket.on("close", () => onClose());
+    // The sequential second write goes into a socket the server has already
+    // closed, so EPIPE/ECONNRESET there is expected; `close` always follows
+    // `error`, so the awaits below still settle.
+    socket.on("error", () => {});
+    await new Promise<void>((resolve, reject) => {
+      socket.once("connect", resolve);
+      socket.once("close", () => reject(new Error("socket closed before connect")));
+    });
+    if (secondWriteAfterFirstResponse) {
+      socket.write(payload);
+      await Promise.race([gotData, closed]);
+      socket.write(payload);
+    } else {
+      socket.write(payload + payload);
+    }
+    await closed;
+    socket.destroy();
+    const raw = Buffer.concat(chunks).toString("latin1");
+    return {
+      responses: (raw.match(/HTTP\/1\.[01] \d{3} /g) ?? []).length,
+      advertisedKeepAlive: /^connection:\s*keep-alive\s*$/im.test(raw.split("\r\n\r\n")[0] ?? ""),
+      body: raw.slice(raw.indexOf("\r\n\r\n") + 4),
+    };
+  }
+
+  it.each([
+    ["HTTP/1.0, no Connection header", "GET / HTTP/1.0\r\nHost: a\r\n\r\n", "one-response-only"],
+    [
+      "HTTP/1.0, client offered keep-alive",
+      "GET / HTTP/1.0\r\nHost: a\r\nConnection: keep-alive\r\n\r\n",
+      "one-response-only",
+    ],
+    ["HTTP/1.1, Connection: close", "GET / HTTP/1.1\r\nHost: a\r\nConnection: close\r\n\r\n", "one-response-only"],
+    ["HTTP/1.0, HEAD (end-without-body path)", "HEAD / HTTP/1.0\r\nHost: a\r\n\r\n", ""],
+  ])("%s", async (_label, payload, body) => {
+    let handled = 0;
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        handled++;
+        return new Response("one-response-only");
+      },
+    });
+
+    const pipelined = await send(server.port, payload, false);
+    expect(pipelined).toEqual({ responses: 1, advertisedKeepAlive: false, body });
+
+    const sequential = await send(server.port, payload, true);
+    expect(sequential).toEqual({ responses: 1, advertisedKeepAlive: false, body });
+
+    expect(handled).toBe(2);
+  });
+
+  it("HTTP/1.1 keep-alive still pipelines", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response("ok");
+      },
+    });
+    const payload = "GET / HTTP/1.1\r\nHost: a\r\n\r\n";
+    const chunks: Buffer[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const responses = () =>
+      (
+        Buffer.concat(chunks)
+          .toString("latin1")
+          .match(/HTTP\/1\.1 200/g) ?? []
+      ).length;
+    const socket = net.connect(server.port, "127.0.0.1", () => socket.write(payload + payload));
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (responses() === 2) resolve();
+    });
+    socket.on("error", reject);
+    socket.on("close", resolve);
+    await promise;
+    socket.destroy();
+    expect(responses()).toBe(2);
+  });
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {

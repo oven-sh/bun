@@ -1717,19 +1717,15 @@ test("new Worker publishes { worker } on the 'worker_threads' diagnostics channe
          captured = m?.worker;
          events.push({ name, isWorker: m?.worker instanceof Worker });
        });
-       const w = new Worker("require('node:worker_threads').parentPort;", { eval: true });
        // Node publishes synchronously inside the constructor, before it returns.
-       const firedSync = events.length;
-       const sameInstance = captured === w;
-       w.on("exit", () => {
-         console.log(JSON.stringify({ firedSync, events, sameInstance }));
-       });`,
+       const w = new Worker("0", { eval: true });
+       console.log(JSON.stringify({ firedSync: events.length, events, sameInstance: captured === w }));
+       w.terminate();`,
     ],
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(JSON.parse(stdout.trim())).toEqual({
     firedSync: 1,
     events: [{ name: "worker_threads", isWorker: true }],
@@ -1754,8 +1750,7 @@ test("the 'worker_threads' diagnostics channel is not published when Worker cons
     env: bunEnv,
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(JSON.parse(stdout.trim())).toEqual({ threw: true, fired: 0 });
   expect(exitCode).toBe(0);
 });

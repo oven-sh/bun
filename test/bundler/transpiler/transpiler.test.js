@@ -676,10 +676,7 @@ describe("Bun.Transpiler", () => {
       );
       // The enclosing context is restored after the body: top-level await is
       // still accepted immediately after a namespace.
-      exp(
-        "namespace x { export const y = 1; } await 1;",
-        "var x;\n((x) => {\n  x.y = 1;\n})(x ||= {});\nawait 1",
-      );
+      exp("namespace x { export const y = 1; } await 1;", "var x;\n((x) => {\n  x.y = 1;\n})(x ||= {});\nawait 1");
     });
 
     it("doesn't crash with functions assigned to enum values", () => {

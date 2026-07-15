@@ -281,15 +281,10 @@ console.table([{ b: 1 }, { a: 2, "7": 3 }]);`,
       expect(tables[0]).toContain("[Object");
       expect(tables[0]).not.toContain("z: 9");
 
-      const cols = (t: string) =>
-        (t.split("\n")[1] ?? "")
-          .split("│")
-          .slice(2, -1)
-          .map(s => s.trim());
-      expect(cols(tables[1])).toEqual(["a"]);
-      expect(cols(tables[2])).toEqual(["b", "a"]);
-      expect(cols(tables[3])).toEqual(["Values"]);
-      expect(cols(tables[4])).toEqual(["7", "b", "a"]);
+      expect(columnNames(tables[1])).toEqual(["a"]);
+      expect(columnNames(tables[2])).toEqual(["b", "a"]);
+      expect(columnNames(tables[3])).toEqual(["Values"]);
+      expect(columnNames(tables[4])).toEqual(["7", "b", "a"]);
 
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);

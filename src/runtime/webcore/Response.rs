@@ -618,7 +618,10 @@ impl Response {
     }
 
     #[allow(clippy::mut_from_ref)]
-    fn get_or_create_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
+    pub(crate) fn get_or_create_headers(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<&mut HeadersRef> {
         // R-2 escape hatch via `init_mut()` — the returned `&mut HeadersRef`
         // borrows `self.init`; callers (`get_headers`, `construct_*`) do not
         // hold the borrow across calls that re-enter Response host-fns.
@@ -676,7 +679,7 @@ impl Response {
         W: core::fmt::Write,
     {
         // return type narrowed to `core::fmt::Result`. The trait
-        // methods produce `fmt::Error`/`JsError`/`bun_core::Error`; none of
+        // methods produce `fmt::Error`/`JsError`/`crate::Error`; none of
         // those convert into the others, so funnel everything through
         // `fmt::Error`.
         let js_err = |_: JsError| core::fmt::Error;

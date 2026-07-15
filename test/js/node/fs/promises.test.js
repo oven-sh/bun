@@ -120,11 +120,11 @@ describe("access", () => {
 
 describe("open", () => {
   it("should work", async () => {
-    await open(__filename);
+    await using _ = await open(__filename);
   });
 
   it("should return an object", async () => {
-    const fh = await open(__filename);
+    await using fh = await open(__filename);
     assert.strictEqual(typeof fh, "object");
     assert.strictEqual(typeof fh.fd, "number");
   });

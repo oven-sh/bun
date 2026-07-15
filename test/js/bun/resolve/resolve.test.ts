@@ -589,6 +589,113 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+describe("package.json exports targets longer than the maximum path length", () => {
+  it.concurrent("reports a resolution error for an oversized string exports target", async () => {
+    using dir = tempDir("resolver-exports-long-target", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: "./" + Buffer.alloc(8192, "a").toString(),
+      }),
+      "index.js": `try {\n  require.resolve("test-pkg");\n  console.log("resolved");\n} catch {\n  console.log("caught");\n}\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, exitCode }).toEqual({ stdout: "caught\n", exitCode: 0 });
+  });
+
+  it.concurrent(
+    "reports a resolution error when a wildcard exports target expands past the maximum path length",
+    async () => {
+      using dir = tempDir("resolver-exports-long-wildcard-target", {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/test-pkg/package.json": JSON.stringify({
+          name: "test-pkg",
+          version: "1.0.0",
+          exports: { "./*": "./" + Buffer.alloc(8192, "a").toString() + "/*" },
+        }),
+        "index.js": `try {\n  require.resolve("test-pkg/sub");\n  console.log("resolved");\n} catch {\n  console.log("caught");\n}\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "caught\n", exitCode: 0 });
+    },
+  );
+
+  // These two targets pass the coarse pre-expansion length check (the package URL,
+  // target and subpath together are far below the maximum path length) and only
+  // exceed it once every "*" is replaced with the matched subpath.
+  it.concurrent(
+    "reports a resolution error when repeated wildcard substitution expands an exports target past the maximum path length",
+    async () => {
+      using dir = tempDir("resolver-exports-multi-wildcard-target", {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/test-pkg/package.json": JSON.stringify({
+          name: "test-pkg",
+          version: "1.0.0",
+          exports: { "./*": "./" + "*/".repeat(100) + "x" },
+        }),
+        "index.js": `const sub = Buffer.alloc(300, "s").toString();\ntry {\n  require.resolve("test-pkg/" + sub);\n  console.log("resolved");\n} catch (e) {\n  console.log("caught", e.code);\n}\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "caught MODULE_NOT_FOUND\n", exitCode: 0 });
+    },
+  );
+
+  it.concurrent(
+    "reports a resolution error when repeated wildcard substitution expands an imports target past the maximum path length",
+    async () => {
+      using dir = tempDir("resolver-imports-multi-wildcard-target", {
+        "package.json": JSON.stringify({ name: "host" }),
+        "node_modules/imports-pkg/package.json": JSON.stringify({
+          name: "imports-pkg",
+          version: "1.0.0",
+          imports: { "#deep/*": "./" + "*/".repeat(100) + "x" },
+        }),
+        "node_modules/imports-pkg/inner.js": `const sub = Buffer.alloc(300, "s").toString();\ntry {\n  require.resolve("#deep/" + sub);\n  console.log("resolved");\n} catch (e) {\n  console.log("caught", e.code);\n}\n`,
+        "index.js": `require("imports-pkg/inner.js");\n`,
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "index.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "caught MODULE_NOT_FOUND\n", exitCode: 0 });
+    },
+  );
+});
+
 // A package.json `imports` entry whose value is a bare package specifier
 // (e.g. `"#res": "@myproject/resolver"`) is handed back to package-resolve
 // for a second pass. Per the Node.js packages spec these are URL-like

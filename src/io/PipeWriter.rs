@@ -745,6 +745,11 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.is_not_empty()
     }
 
+    /// Bytes accepted from callers that have not reached the fd yet.
+    pub fn buffered_len(&self) -> usize {
+        self.outgoing.size()
+    }
+
     pub fn should_buffer(&self, addition: usize) -> bool {
         !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }
@@ -1205,24 +1210,12 @@ pub trait BaseWindowsPipeWriter {
                         // detach() schedules start_close() (now or after the pending
                         // op completes); on_close_complete heap::take()s `raw`.
                         (*raw).detach();
-                    } else {
-                        // Don't own fd: stop any in-flight op and detach parent so
-                        // on_fs_write_complete won't touch the (possibly freed)
-                        // writer. We must still reclaim the Box<File>.
-                        (*raw).stop();
-                        (*raw).fs.data = core::ptr::null_mut();
-                        if (*raw).state == crate::source::FileState::Deinitialized {
-                            // No callback will ever fire for this fs_t — sole
-                            // owner, free now.
-                            // SAFETY: `raw` is the Box<File> leaked above via
-                            // into_raw; no libuv request references it.
-                            drop(bun_core::heap::take(raw));
-                        }
-                        // else: state is Operating/Canceling — libuv still owns a
-                        // request pointing into *raw. on_fs_write_complete sees
-                        // parent_ptr null, observes state == Deinitialized after
-                        // complete(), and heap::take()s there.
+                    } else if !(*raw).detach_borrowed_fd() {
+                        // Idle and the fd is parent-owned: nothing pending,
+                        // nothing to close. Reclaim and drop the Box.
+                        drop(bun_core::heap::take(raw));
                     }
+                    // else: on_fs_write_complete heap::take()s the detached Box.
                 }
             }
             Source::Pipe(pipe) => {
@@ -2093,6 +2086,12 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
+    }
+
+    /// Bytes accepted from callers that have not reached the fd yet: queued in
+    /// `outgoing` or handed to libuv in `current_payload`.
+    pub fn buffered_len(&self) -> usize {
+        self.outgoing.size() + self.current_payload.size()
     }
 
     fn on_write_complete(&mut self, status: uv::ReturnCode) {

@@ -741,8 +741,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 Some(signal_ref),
                 body_hive,
             )));
-        // SAFETY: freshly allocated; uniquely owned here.
-        ctx_mut.request_weakref = bun_ptr::WeakPtr::init_ref(unsafe { &mut *request_object });
+        // SAFETY: freshly leaked from `heap::into_raw`, so `request_object`
+        // carries the allocation's provenance, as `init_ref` requires.
+        ctx_mut.request_weakref = unsafe { bun_ptr::WeakPtr::init_ref(request_object) };
 
         // (H3 eager-url/header population is unreachable on this path.)
 
@@ -3621,11 +3622,11 @@ impl AnyServer {
         path: &[u8],
         route: AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         any_server_dispatch_mut!(self, |s| s.config.append_static_route(path, route, method))
     }
 
-    pub fn reload_static_routes(&self) -> Result<bool, bun_core::Error> {
+    pub fn reload_static_routes(&self) -> Result<bool, crate::Error> {
         any_server_dispatch_mut!(self, |s| s.reload_static_routes())
     }
 

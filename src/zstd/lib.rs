@@ -173,7 +173,7 @@ pub enum Result {
     Err(&'static ZStr),
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZstdError {
     InvalidZstdData,
     DecompressionFailed,
@@ -183,8 +183,6 @@ pub enum ZstdError {
 }
 
 bun_core::impl_tag_error!(ZstdError);
-
-bun_core::named_error_set!(ZstdError);
 
 /// ZSTD_compress() :
 ///  Compresses `src` content as a single zstd compressed frame into already allocated `dst`.

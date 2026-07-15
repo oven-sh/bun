@@ -12,6 +12,9 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 // ── submodules ──────────────────────────────────────────────────────────────
 
+pub mod error;
+pub use error::Error;
+
 // ── merged from bun_io ──────────────────────────────────────────────────────
 //
 // `bun_io`'s `FilePoll`/`EventLoopCtx`/`ParentDeathWatchdog`/`Loop`/`Waker`
@@ -24,8 +27,6 @@
 // the discriminant — a SIGABRT-at-best bug class. With both halves in one
 // crate, `EventLoopHandle` is `EventLoopCtx` (the by-value `{kind, owner}`
 // pair) and the seam is type-checked.
-
-pub mod stub_event_loop;
 
 #[cfg(windows)]
 pub mod windows_event_loop;
@@ -2008,10 +2009,12 @@ pub mod waker {
             Self { fd: Fd::INVALID }
         }
 
-        pub fn init() -> Result<Self, bun_core::Error> {
+        pub fn init() -> crate::error::Result<Self> {
             match bun_sys::eventfd(0, 0) {
                 Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
-                Err(err) => Err(bun_core::Error::from_errno(i32::from(err.errno))),
+                Err(err) => Err(bun_errno::SystemErrno::init(i64::from(err.errno))
+                    .map(crate::Error::Sys)
+                    .unwrap_or(crate::Error::Unexpected)),
             }
         }
 
@@ -2115,15 +2118,19 @@ pub mod waker {
             }
         }
 
-        pub fn init() -> Result<Self, bun_core::Error> {
+        pub fn init() -> crate::error::Result<Self> {
             let kq = crate::safe_c::kqueue();
             if kq < 0 {
-                return Err(bun_core::Error::from_errno(bun_errno::posix::errno()));
+                return Err(
+                    bun_errno::SystemErrno::init(bun_errno::posix::errno() as i64)
+                        .map(crate::Error::Sys)
+                        .unwrap_or(crate::Error::Unexpected),
+                );
             }
             Self::init_with_file_descriptor(kq)
         }
 
-        pub fn init_with_file_descriptor(kq: i32) -> Result<Self, bun_core::Error> {
+        pub fn init_with_file_descriptor(kq: i32) -> crate::error::Result<Self> {
             debug_assert!(kq > -1);
             // Box<[u8]> owns the buffer for the machport's lifetime.
             let mut machport_buf = vec![0u8; 1024].into_boxed_slice();
@@ -2132,7 +2139,7 @@ pub mod waker {
                 io_darwin_create_machport(kq, machport_buf.as_mut_ptr().cast::<c_void>(), 1024)
             };
             if machport == 0 {
-                return Err(bun_core::err!("MachportCreationFailed"));
+                return Err(crate::Error::MachportCreationFailed);
             }
             Ok(Self {
                 kq,
@@ -2170,7 +2177,7 @@ pub mod waker {
             Self { loop_: None }
         }
 
-        pub fn init() -> Result<Self, bun_core::Error> {
+        pub fn init() -> crate::Result<Self> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
                     core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())

@@ -527,3 +527,87 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
     }
   },
 });
+devTest("hot update frames are not delivered to application websocket topics", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("initial");
+      import.meta.hot.accept();
+    `,
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        static: {
+          "/": html,
+        },
+        fetch(req, server) {
+          if (new URL(req.url).pathname === "/app-ws") {
+            if (server.upgrade(req)) return;
+            return new Response("upgrade failed", { status: 400 });
+          }
+          return new Response("Not Found", { status: 404 });
+        },
+        websocket: {
+          open(ws) {
+            ws.subscribe("h");
+            ws.subscribe("e");
+            ws.subscribe("E");
+            ws.send("subscribed");
+          },
+          message(ws, message) {
+            ws.send("echo:" + message);
+          },
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("initial");
+
+    const received: string[] = [];
+    const ws = new WebSocket(dev.baseUrl.replace("http", "ws") + "/app-ws");
+    try {
+      const opened = Promise.withResolvers<void>();
+      const echoed = Promise.withResolvers<void>();
+      ws.onerror = () => {
+        opened.reject(new Error("application websocket errored"));
+        echoed.reject(new Error("application websocket errored"));
+      };
+      ws.onclose = () => {
+        opened.reject(new Error("application websocket closed"));
+        echoed.reject(new Error("application websocket closed"));
+      };
+      ws.onmessage = event => {
+        if (event.data === "subscribed") {
+          opened.resolve();
+          return;
+        }
+        received.push(typeof event.data === "string" ? event.data : "<binary frame>");
+        if (event.data === "echo:after-update") {
+          echoed.resolve();
+        }
+      };
+      await opened.promise;
+
+      await dev.write(
+        "index.ts",
+        `
+          console.log("updated");
+          import.meta.hot.accept();
+        `,
+      );
+      await c.expectMessage("updated");
+
+      ws.send("after-update");
+      await echoed.promise;
+      expect(received).toEqual(["echo:after-update"]);
+    } finally {
+      ws.onclose = null;
+      ws.close();
+    }
+  },
+});

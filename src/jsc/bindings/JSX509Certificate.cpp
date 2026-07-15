@@ -623,12 +623,12 @@ static bool handleMatchResult(JSGlobalObject* globalObject, ASCIILiteral errorMe
     }
 }
 
-bool JSX509Certificate::checkHost(JSGlobalObject* globalObject, std::span<const char> name, uint32_t flags)
+bool JSX509Certificate::checkHost(JSGlobalObject* globalObject, std::span<const char> name, uint32_t flags, ncrypto::DataPointer* peerName)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto result = view().checkHost(name, flags);
+    auto result = view().checkHost(name, flags, peerName);
     return handleMatchResult(globalObject, "Invalid name"_s, scope, result);
 }
 

@@ -28,8 +28,6 @@ pub enum ToFileSystemPathError {
     InvalidHost,
 }
 
-bun_core::named_error_set!(ToFileSystemPathError);
-
 impl DOMURL {
     pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
         // DOMURL is a GC-owned C++ cell; the returned reference is only valid

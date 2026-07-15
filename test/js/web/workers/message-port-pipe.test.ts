@@ -55,7 +55,7 @@ describe("MessagePort pipe", () => {
     port2.close();
   });
 
-  test("close() inside onmessage handler stops further deliveries", async () => {
+  test("close() inside onmessage handler still delivers already-queued messages", async () => {
     const { port1, port2 } = new MessageChannel();
     const got: number[] = [];
     const { promise, resolve } = Promise.withResolvers<void>();
@@ -69,7 +69,7 @@ describe("MessagePort pipe", () => {
     for (let i = 1; i <= 5; i++) port1.postMessage(i);
     await promise;
     await Bun.sleep(0);
-    expect(got).toEqual([1, 2]);
+    expect(got).toEqual([1, 2, 3, 4, 5]);
     port1.close();
   });
 

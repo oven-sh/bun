@@ -708,29 +708,21 @@ describe.concurrent("fetch-tls", () => {
     direct.listen(0, "127.0.0.1");
     await once(direct, "listening");
 
-    // A port we know is refused.
-    const refused = net.createServer();
-    refused.listen(0, "127.0.0.1");
-    await once(refused, "listening");
-    const refusedPort = (refused.address() as net.AddressInfo).port;
-    refused.close();
-    await once(refused, "close");
-
     try {
       const proxyPort = (proxy.address() as net.AddressInfo).port;
       const directPort = (direct.address() as net.AddressInfo).port;
 
       // Spawn a subprocess with proxy-bypass env cleared so the explicit
       // `proxy:` option is honored for loopback targets regardless of the
-      // ambient environment.
+      // ambient environment. Port 1 (tcpmux) is the refused-connection control.
       const fixture = `
         const probe = async (url, proxy) => {
           try { await fetch(url, proxy ? { proxy } : {}); return "RESOLVED"; }
           catch (e) { return e?.code ?? "NO_CODE"; }
         };
         const [tunnelGarbage, proxyRefused, directGarbage] = await Promise.all([
-          probe("https://127.0.0.1:${refusedPort}/x", "http://127.0.0.1:${proxyPort}"),
-          probe("https://127.0.0.1:${refusedPort}/x", "http://127.0.0.1:${refusedPort}"),
+          probe("https://127.0.0.1:1/x", "http://127.0.0.1:${proxyPort}"),
+          probe("https://127.0.0.1:1/x", "http://127.0.0.1:1"),
           probe("https://127.0.0.1:${directPort}/x"),
         ]);
         console.log(JSON.stringify({ tunnelGarbage, proxyRefused, directGarbage }));

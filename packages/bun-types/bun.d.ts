@@ -9531,6 +9531,13 @@ declare module "bun" {
   /**
    * A `tarball` package (local or remote): `["name@spec", info]`, with a
    * trailing integrity hash when a supported one is known.
+   *
+   * This is the fallback shape: its `pkg` is a plain `string`, not a prefixed
+   * template literal, so it structurally overlaps the two-element
+   * {@link BunLockFilePathPackage} (a `@link:`/`@file:` tuple is also a valid
+   * tarball). A tarball specifier carries no fixed prefix, so it is not a hard
+   * discriminant — a tarball is the entry whose specifier matches no other
+   * resolution's prefix.
    */
   type BunLockFileTarballPackage =
     | [pkg: string, info: BunLockFilePackageInfo]

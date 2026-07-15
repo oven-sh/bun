@@ -586,9 +586,7 @@ describe("exit code when a worker dies from an error", () => {
 
   test.concurrent("synchronous throw exits 1", async () => {
     expect(
-      await run(
-        `require("node:worker_threads").parentPort.on("message", () => { throw new Error("task-throw"); });`,
-      ),
+      await run(`require("node:worker_threads").parentPort.on("message", () => { throw new Error("task-throw"); });`),
     ).toEqual({ err: "Error: task-throw", code: 1 });
   });
 

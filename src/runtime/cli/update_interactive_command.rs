@@ -939,8 +939,10 @@ impl UpdateInteractiveCommand {
         let mut version_buf: String = String::new();
 
         for &workspace_pkg_id in workspace_pkg_ids {
-            let current_package_json =
-                Self::load_current_workspace_package_json(manager, workspace_pkg_id)?;
+            let current_package_json = match Self::load_current_workspace_package_json(manager, workspace_pkg_id) {
+                Ok(json) => json,
+                Err(_) => continue,
+            };
             let pkg_deps =
                 manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
             for dep_id in pkg_deps.begin()..pkg_deps.end() {

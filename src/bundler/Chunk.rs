@@ -530,6 +530,69 @@ impl IntermediateOutput {
         dst
     }
 
+    /// Extra bytes needed to render `path` inside a double-quoted JS string
+    /// literal. The printer emits every unique-key placeholder inside `"..."`,
+    /// so only the characters that terminate or corrupt such a literal need
+    /// escaping here: `"`, `\`, LF, CR, and U+2028/U+2029.
+    fn js_string_extra_escape_bytes(path: &[u8]) -> usize {
+        let mut extra: usize = 0;
+        let mut i: usize = 0;
+        while i < path.len() {
+            match path[i] {
+                b'"' | b'\\' | b'\n' | b'\r' => extra += 1,
+                0xE2 if i + 2 < path.len() && path[i + 1] == 0x80 && (path[i + 2] & !1) == 0xA8 => {
+                    extra += "\\u2028".len() - 3;
+                    i += 2;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        extra
+    }
+
+    /// Copy `path` into `dest`, escaping the bytes counted by
+    /// `js_string_extra_escape_bytes`. Returns bytes written.
+    fn memcpy_js_string_escaped(dest: &mut [u8], path: &[u8]) -> usize {
+        let mut dst: usize = 0;
+        let mut i: usize = 0;
+        while i < path.len() {
+            let b = path[i];
+            match b {
+                b'"' | b'\\' => {
+                    dest[dst] = b'\\';
+                    dest[dst + 1] = b;
+                    dst += 2;
+                }
+                b'\n' => {
+                    dest[dst] = b'\\';
+                    dest[dst + 1] = b'n';
+                    dst += 2;
+                }
+                b'\r' => {
+                    dest[dst] = b'\\';
+                    dest[dst + 1] = b'r';
+                    dst += 2;
+                }
+                0xE2 if i + 2 < path.len() && path[i + 1] == 0x80 && (path[i + 2] & !1) == 0xA8 => {
+                    dest[dst..][..6].copy_from_slice(if path[i + 2] == 0xA8 {
+                        b"\\u2028"
+                    } else {
+                        b"\\u2029"
+                    });
+                    dst += 6;
+                    i += 2;
+                }
+                _ => {
+                    dest[dst] = b;
+                    dst += 1;
+                }
+            }
+            i += 1;
+        }
+        dst
+    }
+
     pub fn get_size(&self) -> usize {
         match self {
             IntermediateOutput::Pieces(pieces) => {
@@ -663,6 +726,10 @@ impl IntermediateOutput {
             graph.input_files.items_unique_key_for_additional_file();
         let mut relative_platform_buf = bun_paths::path_buffer_pool::get();
         let mut file_path_buf = bun_paths::path_buffer_pool::get();
+        // In JS chunks every placeholder lands inside a printer-emitted `"..."`
+        // literal; the substituted path must be JS-string-escaped so filename
+        // bytes cannot terminate the literal.
+        let escape_for_js = chunk.content.is_javascript();
         match self {
             IntermediateOutput::Pieces(pieces) => {
                 let entry_point_chunks_for_scb = linker_graph.files.items_entry_point_chunk_index();
@@ -788,6 +855,10 @@ impl IntermediateOutput {
                                 },
                             );
                             count += cheap_normalizer[0].len() + cheap_normalizer[1].len();
+                            if escape_for_js {
+                                count += Self::js_string_extra_escape_bytes(cheap_normalizer[0])
+                                    + Self::js_string_extra_escape_bytes(cheap_normalizer[1]);
+                            }
                         }
                         QueryKind::None => {}
                     }
@@ -969,22 +1040,20 @@ impl IntermediateOutput {
                                 },
                             );
 
-                            if !cheap_normalizer[0].is_empty() {
-                                remain[..cheap_normalizer[0].len()]
-                                    .copy_from_slice(cheap_normalizer[0]);
-                                remain = &mut remain[cheap_normalizer[0].len()..];
-                                if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[0]);
+                            for part in cheap_normalizer {
+                                if part.is_empty() {
+                                    continue;
                                 }
-                            }
-
-                            if !cheap_normalizer[1].is_empty() {
-                                remain[..cheap_normalizer[1].len()]
-                                    .copy_from_slice(cheap_normalizer[1]);
-                                remain = &mut remain[cheap_normalizer[1].len()..];
+                                let written = if escape_for_js {
+                                    Self::memcpy_js_string_escaped(remain, part)
+                                } else {
+                                    remain[..part.len()].copy_from_slice(part);
+                                    part.len()
+                                };
                                 if ENABLE_SOURCE_MAP_SHIFTS {
-                                    shift.after.advance(cheap_normalizer[1]);
+                                    shift.after.advance(&remain[..written]);
                                 }
+                                remain = &mut remain[written..];
                             }
 
                             if ENABLE_SOURCE_MAP_SHIFTS {

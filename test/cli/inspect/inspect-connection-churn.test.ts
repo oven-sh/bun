@@ -26,13 +26,16 @@ test("rapid inspector connect/close does not unref the debuggee's event loop", a
   });
 
   let stderr = "";
+  let stderrTail = "";
   let inspectorUrl: URL | undefined;
   for await (const chunk of proc.stderr) {
-    stderr += Buffer.from(chunk).toString();
-    const lines = stderr.split("\n");
+    const text = Buffer.from(chunk).toString();
+    stderr += text;
+    stderrTail += text;
+    const lines = stderrTail.split("\n");
     // Leave the unterminated tail for the next chunk so a URL split across
     // reads is not parsed as a truncated endpoint.
-    stderr = lines.pop() ?? "";
+    stderrTail = lines.pop() ?? "";
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith("ws://")) {

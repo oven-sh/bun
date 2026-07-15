@@ -408,10 +408,14 @@ impl PosixBufferedReader {
         // Unregister a level-triggered poll before dispatching: a fd with a
         // persistent error (PTY master `EIO` after slave close, with
         // `EPOLLHUP` set) would otherwise re-fire every `epoll_wait`. One-shot
-        // callers are unchanged (the kernel already disarmed the fd).
-        // `on_reader_error` may free the struct embedding `self`, so close
-        // first.
-        if self.flags.contains(PosixFlags::LEVEL_TRIGGERED) {
+        // callers are unchanged (the kernel already disarmed the fd). Gated on
+        // POLLABLE so a regular-file pread error on the synchronous on_pull
+        // path isn't swallowed as Done. `on_reader_error` may free the struct
+        // embedding `self`, so close first.
+        if self
+            .flags
+            .contains(PosixFlags::LEVEL_TRIGGERED | PosixFlags::POLLABLE)
+        {
             self.close_without_reporting();
         }
         self.vtable.on_reader_error(err);

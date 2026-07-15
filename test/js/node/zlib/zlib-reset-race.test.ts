@@ -95,6 +95,40 @@ const deflateFixture = /* js */ `
   }
 `;
 
+const paramsFixture = /* js */ `
+  const zlib = require("zlib");
+  const crypto = require("crypto");
+  const assert = require("assert");
+
+  const buf = crypto.randomBytes(2 * 1024 * 1024);
+
+  let remaining = 0;
+  for (let i = 0; i < 4; i++) {
+    remaining++;
+    const z = zlib.createDeflate({ chunkSize: 2 * 1024 * 1024, level: 9 });
+    const chunks = [];
+    z.on("error", err => {
+      throw err;
+    });
+    z.on("data", c => chunks.push(c));
+    z.on("end", () => {
+      assert.deepStrictEqual(zlib.inflateSync(Buffer.concat(chunks)), buf);
+      if (--remaining === 0) console.log("OK");
+    });
+    z.write(buf, () => {
+      z.end();
+    });
+    // Spin briefly so the threadpool starts deflate() before params().
+    const start = Date.now();
+    while (Date.now() - start < 10) {}
+    // Call the native handle directly, bypassing the JS-level flush queue, so
+    // the call deterministically lands while a write is in progress. Before
+    // the fix this calls deflateParams() on the z_stream while the worker
+    // thread is inside deflate() -> data race / state corruption.
+    z._handle.params(0, zlib.constants.Z_DEFAULT_STRATEGY);
+  }
+`;
+
 // These tests are intentionally sequential (not test.concurrent): each
 // subprocess launches several threadpool compression jobs at high quality
 // levels, and running three of them at once makes individual test wall
@@ -127,6 +161,13 @@ test("brotli: reset() while an async write is in flight does not use-after-free"
 
 test("deflate: reset() while an async write is in flight does not race", async () => {
   const { stdout, stderr, exitCode } = await run(deflateFixture);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
+test("deflate: params() while an async write is in flight does not race", async () => {
+  const { stdout, stderr, exitCode } = await run(paramsFixture);
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);

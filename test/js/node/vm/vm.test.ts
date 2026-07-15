@@ -1175,7 +1175,17 @@ describe("createContext with a non-extensible sandbox", () => {
     const sandbox = Object.freeze({});
     createContext(sandbox);
     expect(runInContext("'use strict'; globalThis.toString = 5; typeof toString", sandbox)).toBe("function");
-    expect(runInContext("globalThis.hasOwnProperty = 1; typeof hasOwnProperty", sandbox)).toBe("function");
+    expect(runInContext("'use strict'; globalThis.hasOwnProperty = 1; typeof hasOwnProperty", sandbox)).toBe(
+      "function",
+    );
+  });
+
+  test("writing a read-only property inherited from the sandbox's prototype does not throw in strict mode", () => {
+    const proto = Object.defineProperty({}, "foo", { value: 1, writable: false, enumerable: true, configurable: true });
+    const sandbox = Object.create(proto);
+    createContext(sandbox);
+    expect(runInContext("'use strict'; globalThis.foo = 2; foo", sandbox)).toBe(1);
+    expect(Object.getOwnPropertyDescriptor(sandbox, "foo")).toBeUndefined();
   });
 });
 

@@ -9500,38 +9500,58 @@ declare module "bun" {
   type BunLockFileRootPackageInfo = Pick<BunLockFileBasePackageInfo, "bin" | "binDir">;
 
   /**
+   * A Subresource Integrity hash as written to the lockfile, e.g. `sha512-...`.
+   * Doubles as the discriminant that separates a tarball's trailing integrity
+   * from a git package's `resolved` commit-ish.
+   */
+  type BunLockFileIntegrity = `sha${number}-${string}`;
+
+  /**
    * An npm package: `["name@version", registry, info, integrity]`.
    *
    * `registry` is the empty string `""` for the default registry, otherwise the
    * registry URL. `integrity` is always present.
    */
-  type BunLockFileNpmPackage = [pkg: string, registry: string, info: BunLockFilePackageInfo, integrity: string];
+  type BunLockFileNpmPackage = [
+    pkg: string,
+    registry: string,
+    info: BunLockFilePackageInfo,
+    integrity: BunLockFileIntegrity,
+  ];
 
   /** A `workspace` package: `["name@workspace:path"]` — the path is the only field. */
-  type BunLockFileWorkspacePackageArray = [pkg: string];
+  type BunLockFileWorkspacePackageArray = [pkg: `${string}@workspace:${string}`];
 
   /** A `symlink` (`link:`) or `folder` (`file:`) package: `["name@spec", info]`. */
-  type BunLockFilePathPackage = [pkg: string, info: BunLockFilePackageInfo];
+  type BunLockFilePathPackage = [
+    pkg: `${string}@link:${string}` | `${string}@file:${string}`,
+    info: BunLockFilePackageInfo,
+  ];
 
   /**
    * A `tarball` package (local or remote): `["name@spec", info]`, with a
-   * trailing `integrity` string when a supported hash is known.
+   * trailing integrity hash when a supported one is known.
    */
   type BunLockFileTarballPackage =
     | [pkg: string, info: BunLockFilePackageInfo]
-    | [pkg: string, info: BunLockFilePackageInfo, integrity: string];
+    | [pkg: string, info: BunLockFilePackageInfo, integrity: BunLockFileIntegrity];
 
   /**
    * A `git` or `github` package: `["name@spec", info, resolved]`, with a
-   * trailing `integrity` string when a supported hash is known. `resolved` is
-   * the exact resolved commit-ish that was checked out.
+   * trailing integrity hash when a supported one is known. `resolved` is the
+   * exact resolved commit-ish that was checked out.
    */
   type BunLockFileGitPackage =
-    | [pkg: string, info: BunLockFilePackageInfo, resolved: string]
-    | [pkg: string, info: BunLockFilePackageInfo, resolved: string, integrity: string];
+    | [pkg: `${string}@git+${string}` | `${string}@github:${string}`, info: BunLockFilePackageInfo, resolved: string]
+    | [
+        pkg: `${string}@git+${string}` | `${string}@github:${string}`,
+        info: BunLockFilePackageInfo,
+        resolved: string,
+        integrity: BunLockFileIntegrity,
+      ];
 
   /** The `root` package: `["name@root:", { bin?, binDir? }]`. */
-  type BunLockFileRootPackage = [pkg: string, info: BunLockFileRootPackageInfo];
+  type BunLockFileRootPackage = [pkg: `${string}@root:`, info: BunLockFileRootPackageInfo];
 
   /**
    * An entry in {@link BunLockFile.packages}. The tuple's shape identifies how

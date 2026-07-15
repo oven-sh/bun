@@ -33,6 +33,10 @@ const ArrayPrototypePush = Array.prototype.push;
 // frame reads or writes.
 const AlsGetStore = AsyncLocalStorage.prototype.getStore;
 const AlsEnterWith = AsyncLocalStorage.prototype.enterWith;
+// Same reason: retiring the token (below) is a frame-lifetime write, so it
+// must not run through a patched process.nextTick — a fake-timer library that
+// swallows the tick would silently disable every later retire.
+const ProcessNextTick = process.nextTick;
 
 const setDomainErrorHandler = $newCppFunction("BunProcess.cpp", "jsFunctionSetDomainErrorHandler", 2);
 
@@ -147,6 +151,27 @@ function adopt() {
   }
 }
 
+// enter()/exit() bump the token themselves, so a box they wrote is already
+// stale by the time a callback restores it. The process.domain setter is the
+// one write that makes a domain active without pushing it onto the stack, so
+// nothing bumps the token after it and the box still reads as the current
+// execution inside the callback — leaving the pairing un-entered. Retire the
+// token when this tick's callbacks are done: same-tick code still sees the
+// live globals, later executions see a restored pairing and adopt() enters it,
+// exactly like node's before() hook.
+let tokenRetireQueued = false;
+
+function retireToken() {
+  tokenRetireQueued = false;
+  ++currentToken;
+}
+
+function retireTokenAfterTick() {
+  if (tokenRetireQueued) return;
+  tokenRetireQueued = true;
+  ProcessNextTick.$call(process, retireToken);
+}
+
 // Overwrite process.domain with a getter/setter. Node backs this with
 // _domain[0]; here it reads through to the async-local active domain.
 ObjectDefineProperty(process, "domain", {
@@ -163,6 +188,9 @@ ObjectDefineProperty(process, "domain", {
     // the global stack.
     adopt();
     setActive(arg);
+    // node's async-hooks init hook reads process.domain (lib/domain.js:102),
+    // so resources created after this setter pair with `arg`.
+    retireTokenAfterTick();
   },
 } as PropertyDescriptor);
 
@@ -209,7 +237,18 @@ function domainWouldClaim(): boolean {
   const len = s.length;
   for (let i = 0; i < len; i++) {
     const d = s[i];
-    if (d != null && typeof d.listenerCount === "function" && d.listenerCount("error") > 0) return true;
+    // _errorHandler keeps a non-Domain value (userland `process.domain = {}`)
+    // from suppressing the abort: fatalErrorDispatch never routes into one, so
+    // claiming for it would abort neither here nor there. It gates per element,
+    // where the dispatcher gates on `active` and then scans the stack.
+    if (
+      d != null &&
+      typeof d._errorHandler === "function" &&
+      typeof d.listenerCount === "function" &&
+      d.listenerCount("error") > 0
+    ) {
+      return true;
+    }
   }
   return false;
 }

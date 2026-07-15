@@ -1206,6 +1206,60 @@ describe.concurrent(() => {
     expect(aborted(r)).toBe(false);
   });
 
+  // node's async-hooks init hook pairs the resource with process.domain and
+  // before() enter()s it, clearing should_abort_on_uncaught_toggle — so the
+  // setter suppresses the abort for callbacks scheduled after it, but NOT for
+  // a synchronous throw (nothing ever pushed the domain onto the stack).
+  // Both directions verified against node v26.3.0.
+  const setterCases = [
+    [
+      "async callback pairs with the setter's domain",
+      `setTimeout(() => { throw new Error("x") }, 0)`,
+      "handled x",
+      false,
+      0,
+    ],
+    [
+      "nextTick queued after the setter pairs too",
+      `process.nextTick(() => { throw new Error("x") })`,
+      "handled x",
+      false,
+      0,
+    ],
+    ["a synchronous throw still aborts", `throw new Error("x")`, "", true, undefined],
+  ];
+  for (const [name, tail, stdout, willAbort, code] of setterCases) {
+    const src = `const d = require("domain").create();
+       d.on("error", e => console.log("handled", e.message));
+       process.domain = d;
+       ${tail}`;
+    it(`--abort-on-uncaught-exception: process.domain setter — ${name}`, async () => {
+      const r = await spawnAbort(src);
+      expect(r.stdout.trim()).toBe(stdout);
+      expect(aborted(r)).toBe(willAbort);
+      if (code !== undefined) expect(r.exitCode).toBe(code);
+    });
+
+    it.skipIf(!nodeExe())(
+      `--abort-on-uncaught-exception: process.domain setter — ${name} (node differential)`,
+      async () => {
+        const r = await spawnAbort(src, [], nodeExe());
+        expect(r.stdout.trim()).toBe(stdout);
+        expect(aborted(r)).toBe(willAbort);
+        if (code !== undefined) expect(r.exitCode).toBe(code);
+      },
+    );
+  }
+
+  it("--abort-on-uncaught-exception: a non-Domain process.domain never suppresses the abort", async () => {
+    // fatalErrorDispatch only routes into a value with _errorHandler, so the
+    // predicate must not claim for one without it. node aborts here too.
+    const r = await spawnAbort(
+      `require("domain"); process.domain = { listenerCount: () => 1 }; setTimeout(() => { throw new Error("x") }, 0)`,
+    );
+    expect(aborted(r)).toBe(true);
+  });
+
   // Node latches the abort decision at throw time (should_abort_on_uncaught_toggle
   // was already 0), and removeAllListeners does not re-run updateExceptionCapture,
   // so the error falls through to the normal uncaught path (exit 1) instead of

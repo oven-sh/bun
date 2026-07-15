@@ -1058,6 +1058,65 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
   expect(exitCode).toBe(0);
 });
 
+test("node:vm SourceTextModule.link() rejects holey and mismatched argument arrays", async () => {
+  // Holes in the argument arrays surface as empty JSValues from getDirectIndex,
+  // which pass isCell() with a null cell — link() must reject them (and a
+  // specifiers/moduleNatives length mismatch) instead of crashing.
+  const fixture = `
+    const vm = require("node:vm");
+    const mod = new vm.SourceTextModule('import { z } from "x"; export const w = z;');
+    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
+    const native = mod[kNative];
+    native.createModuleRecord();
+
+    const results = [];
+    const attempt = (label, specifiers, moduleNatives) => {
+      try {
+        native.link(specifiers, moduleNatives, 0);
+        results.push(label + ": returned");
+      } catch (e) {
+        results.push(label + ": " + (e instanceof TypeError ? "TypeError" : e.constructor.name) + " " + e.code);
+      }
+    };
+
+    const dep = new vm.SourceTextModule("export const z = 1;");
+    const depNative = dep[kNative];
+    depNative.createModuleRecord();
+
+    attempt("holey both", new Array(1), new Array(1));
+    attempt("holey specifiers", new Array(1), [depNative]);
+    attempt("holey moduleNatives", ["x"], new Array(1));
+    attempt("length mismatch", ["x"], []);
+    attempt("non-string specifier", [42], [depNative]);
+    results.push("status: " + native.getStatus());
+    attempt("valid", ["x"], [depNative]);
+    results.push("status: " + native.getStatus());
+    console.log(results.join("\\n"));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "holey both: TypeError ERR_INVALID_ARG_TYPE
+    holey specifiers: TypeError ERR_INVALID_ARG_TYPE
+    holey moduleNatives: TypeError ERR_INVALID_THIS
+    length mismatch: TypeError ERR_INVALID_ARG_VALUE
+    non-string specifier: TypeError ERR_INVALID_ARG_TYPE
+    status: unlinked
+    valid: returned
+    status: unlinked"
+  `);
+  expect(exitCode).toBe(0);
+});
+
 describe("node:vm SourceTextModule cyclic graph linking", () => {
   // Building a cyclic SourceTextModule graph and linking + evaluating each
   // module from inside the linker callback (instead of linking the whole graph

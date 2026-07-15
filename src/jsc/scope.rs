@@ -224,21 +224,3 @@ impl Deref for ArrayBufferBytes<'_, '_> {
         self.ab.byte_slice()
     }
 }
-
-/// Positive control for the `compile_fail` doctests above: the same
-/// operations, correctly ordered, pass the borrow checker.
-#[allow(dead_code)]
-fn positive_control<'s>(scope: &mut Scope<'s>, ab: Local<'s>, cb: Local<'s>) -> JsResult<u8> {
-    let first = {
-        let bytes = ab.array_buffer_bytes(scope);
-        bytes
-            .as_deref()
-            .and_then(|b| b.first().copied())
-            .unwrap_or(0)
-    };
-    let undef = scope.undefined();
-    cb.call(scope, undef, &[])?;
-    let strong = scope.persist(ab);
-    let _reopened = scope.open(&strong);
-    Ok(first)
-}

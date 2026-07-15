@@ -243,11 +243,7 @@ describe("preload export conditions", () => {
       stderr: "pipe",
     });
 
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout, exitCode, stderr: stderr.includes("error") ? stderr : "" }).toEqual({
       stdout: `${expected}\nmain\n`,

@@ -199,7 +199,9 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "-r, --preload <STR>...            Import a module before other modules are loaded"
     ),
-    parse_param!("--require <STR>...                Like --preload, but resolves with CommonJS require semantics, for Node.js compatibility"),
+    parse_param!(
+        "--require <STR>...                Like --preload, but resolves with CommonJS require semantics, for Node.js compatibility"
+    ),
     parse_param!("--import <STR>...                 Alias of --preload, for Node.js compatibility"),
     parse_param!("--inspect <STR>?                  Activate Bun's debugger"),
     parse_param!(

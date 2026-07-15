@@ -327,7 +327,7 @@ pub static TOKEN_TO_STRING: TokenEnumType = TokenEnumType({
     token_enums[T::TCloseBrace as usize] = b"\"}\"";
     token_enums[T::TCloseBracket as usize] = b"\"]\"";
     token_enums[T::TCloseParen as usize] = b"\")\"";
-    token_enums[T::TColon as usize] = b"\" =\"";
+    token_enums[T::TColon as usize] = b"\":\"";
     token_enums[T::TComma as usize] = b"\",\"";
     token_enums[T::TDot as usize] = b"\".\"";
     token_enums[T::TDotDotDot as usize] = b"\"...\"";

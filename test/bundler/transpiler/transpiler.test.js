@@ -153,6 +153,13 @@ describe("Bun.Transpiler", () => {
       );
     });
 
+    it('reports Expected ":" for a conditional expression missing its colon', () => {
+      const err = ts.expectParseError;
+      err("let x = a ? b;", 'Expected ":" but found ";"');
+      err("(a ? b)", 'Expected ":" but found ")"');
+      err("x = a ? b c", 'Expected ":" but found "c"');
+    });
+
     it("contextual keywords used as plain identifiers keep their statements", () => {
       const exp = ts.expectPrinted_;
 

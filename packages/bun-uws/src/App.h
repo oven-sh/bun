@@ -753,6 +753,10 @@ public:
         httpContext->getSocketContextData()->onClientError = std::move(onClientError);
     }
 
+    void setOnHandshakeError(HttpContextData<SSL>::OnHandshakeErrorCallback onHandshakeError) {
+        httpContext->getSocketContextData()->onHandshakeError = std::move(onHandshakeError);
+    }
+
     void setOnSocketUpgraded(HttpContextData<SSL>::OnSocketUpgradedCallback onUpgraded) {
         httpContext->getSocketContextData()->onSocketUpgraded = onUpgraded;
     }

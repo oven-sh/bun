@@ -48,6 +48,9 @@ private:
     using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    /* A TLS handshake this context accepted never completed. `code`/`reason` carry
+     * the us_bun_verify_error_t strings, valid only for the duration of the call. */
+    using OnHandshakeErrorCallback = MoveOnlyFunction<void(struct us_socket_t *rawSocket, int error, const char *code, const char *reason)>;
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
@@ -68,6 +71,7 @@ private:
     OnSocketDataCallback onSocketData = nullptr;
     OnSocketUpgradedCallback onSocketUpgraded = nullptr;
     OnClientErrorCallback onClientError = nullptr;
+    OnHandshakeErrorCallback onHandshakeError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
 

@@ -474,7 +474,7 @@ describe("ES Decorators", () => {
         const ns = { dec(cls, ctx) { return cls; } };
         @ns!.dec class Foo {}
       `);
-      expect(stderr).toContain("!");
+      expect(stderr).toContain("error: Unexpected !");
       expect(exitCode).not.toBe(0);
     });
 

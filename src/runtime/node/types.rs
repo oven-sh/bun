@@ -1362,9 +1362,7 @@ pub struct Valid;
 impl Valid {
     pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
         match zig_str.slice().len() {
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            0..MAX_PATH_BYTES => Ok(()),
+            0..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1378,9 +1376,7 @@ impl Valid {
 
     pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
         match len {
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            0..MAX_PATH_BYTES => Ok(()),
+            0..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1402,9 +1398,7 @@ impl Valid {
                 Err(ctx
                     .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
             }
-            // Exclusive: `PathBuffer` is `[u8; MAX_PATH_BYTES]` and
-            // `slice_z_with_force_copy` needs `len + NUL ≤ MAX_PATH_BYTES`.
-            1..MAX_PATH_BYTES => Ok(()),
+            1..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)

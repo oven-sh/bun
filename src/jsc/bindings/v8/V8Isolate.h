@@ -17,7 +17,7 @@ class GlobalInternals;
 // they need to have the correct layout.
 class Isolate final {
 public:
-    // v8-internal.h:1107
+    // v8-internal.h (Node.js 26.3.0+)
     static constexpr int kUndefinedValueRootIndex = 0;
     static constexpr int kTheHoleValueRootIndex = 1;
     static constexpr int kNullValueRootIndex = 2;
@@ -50,12 +50,12 @@ public:
     shim::GlobalInternals* m_globalInternals;
     Zig::GlobalObject* m_globalObject;
 
-    // Padding so that m_roots is at Internals::kIsolateRootsOffset (688 on 64-bit: 16 bytes of
-    // fields above plus 84 words). V8 14.x inserted kIsolateJSDispatchTableOffset
-    // (kExternalEntityTableSize) into the isolate-data layout ahead of the roots array.
+    // Padding so that m_roots is aligned with V8's kIsolateRootsOffset.
+    // Computed as: kIsolateRootsOffset - sizeof(fields above).
+    // For V8 in Node 26.3.0+: 688 - 16 = 672 = 84 words.
     uintptr_t m_padding[84];
 
-    std::array<TaggedPointer, 5> m_roots;
+    std::array<TaggedPointer, 6> m_roots;
 };
 
 } // namespace v8

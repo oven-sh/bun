@@ -40,10 +40,10 @@ struct HttpRouter {
 
 private:
     UserDataType userData;
-    static constexpr unsigned int MAX_URL_SEGMENTS = 100;
+    static const unsigned int MAX_URL_SEGMENTS = 100;
 
     /* Handler ids are 32-bit */
-    static constexpr uint32_t HANDLER_MASK = 0x0fffffff;
+    static const uint32_t HANDLER_MASK = 0x0fffffff;
 
     /* List of handlers */
     std::vector<MoveOnlyFunction<bool(HttpRouter *)>> handlers;

@@ -135,6 +135,13 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
     "/data/misc/user/0/cacerts-added",      // user-installed
     NULL
   };
+#elif defined(__OHOS__)
+  // OHOS: hashed PEM files (c_rehash format <hash>.0)
+  static const char* bundle_paths[] = { NULL };
+  static const char* dir_paths[] = {
+    "/system/etc/security/certificates",  // OHOS system CA store
+    NULL
+  };
 #else
   // Common certificate bundle locations (single file with multiple certs)
   // These paths are based on common Linux distributions and OpenSSL defaults
@@ -171,7 +178,7 @@ extern "C" void us_load_system_certificates_linux(STACK_OF(X509) **system_certs)
   }
   
   // Then try loading from directories
-#ifdef __ANDROID__
+#if defined(__ANDROID__) || defined(__OHOS__)
   const bool accept_hashed = true;
 #else
   const bool accept_hashed = false;

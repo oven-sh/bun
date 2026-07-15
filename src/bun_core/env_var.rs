@@ -183,6 +183,10 @@ pub mod feature_flag {
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});
 
+    // Force rebuild native addons from source even when install/preinstall scripts exist.
+    // When set, Bun adds "node-gyp rebuild" if binding.gyp is present, regardless of scripts.
+    new_feature_flag!(pub BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE, "BUN_FEATURE_FLAG_FORCE_BUILD_FROM_SOURCE", {});
+
     // Disable "ignoreScripts" in package.json
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS, "BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS", {});
 

@@ -32,7 +32,7 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <string.h> // memset
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns);
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -107,6 +107,10 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 #include <signal.h>
 #include <errno.h>
 
+// OHOS seccomp blocks epoll_pwait2 (441) via SECCOMP_RET_TRAP → SIGSYS.
+// The SIGSYS handler installed by ohos_setup_sigsys_handler() (c-bindings.cpp)
+// intercepts the signal so the syscall returns ENOSYS instead of killing the
+// process, making the runtime probe below safe on all platforms.
 static int has_epoll_pwait2 = -1;
 
 #ifndef SYS_epoll_pwait2
@@ -354,9 +358,9 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
         return;
 
@@ -385,11 +389,8 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
-    /* `now_ns` is the reading the JS side took to pick `timeout`
-     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
-     * if it had none to share. Nothing measures a deadline against it. */
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL

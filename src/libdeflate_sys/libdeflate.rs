@@ -20,15 +20,8 @@ impl Default for Options {
     }
 }
 
-/// Valid `compression_level` range for `libdeflate_alloc_compressor`. Values
-/// outside this range make the allocator return NULL (indistinguishable from OOM),
-/// so callers must range-check first.
-pub const MIN_COMPRESSION_LEVEL: c_int = 0;
-pub const MAX_COMPRESSION_LEVEL: c_int = 12;
-
 unsafe extern "C" {
-    // Allocation: scalar arg, no preconditions; returns null on OOM or
-    // compression_level outside MIN..=MAX_COMPRESSION_LEVEL.
+    // Allocation: scalar arg, no preconditions; returns null on OOM.
     pub(crate) safe fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
     // NOT safe: `Options` carries caller-supplied `malloc_func`/`free_func`
     // callbacks that libdeflate will invoke and write through. A bogus callback
@@ -261,8 +254,7 @@ impl Compressor {
 pub struct OwnedCompressor(NonNull<Compressor>);
 
 impl OwnedCompressor {
-    /// Allocate a compressor at `level` ([`MIN_COMPRESSION_LEVEL`]..=[`MAX_COMPRESSION_LEVEL`]).
-    /// Returns `None` on OOM or if `level` is out of range.
+    /// Allocate a compressor at `level` (0..=12). Returns `None` on OOM.
     #[inline]
     pub fn new(level: c_int) -> Option<Self> {
         NonNull::new(Compressor::alloc(level)).map(Self)

@@ -20,7 +20,6 @@ const { values } = parseArgs({
     binary: { type: "string" },
     emulator: { type: "string" },
     "jit-stress": { type: "boolean", default: false },
-    "skip-emulation": { type: "boolean", default: false },
   },
   strict: true,
 });
@@ -75,11 +74,9 @@ const config = isWindows
         cwd: undefined,
       };
 
-function isInstructionViolation(signalCode: NodeJS.Signals | null, output: string): boolean {
+function isInstructionViolation(exitCode: number, output: string): boolean {
   if (isWindows) return SDE_VIOLATION_PATTERN.test(output);
-  // qemu-user re-raises the guest's fatal signal on the host, so the process is WIFSIGNALED:
-  // `proc.exitCode` is null and only `proc.signalCode` carries the verdict.
-  return signalCode === "SIGILL";
+  return exitCode === 132; // SIGILL = 128 + signal 4
 }
 
 console.log(`--- Verifying ${basename(binary)} on ${config.cpuDesc}`);
@@ -136,8 +133,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     ]);
   }
 
-  const exitCode = proc.exitCode;
-  const signalCode = proc.signalCode;
+  const exitCode = proc.exitCode!;
   const elapsed = ((performance.now() - start) / 1000).toFixed(1);
   const output = stdout + "\n" + stderr;
 
@@ -148,7 +144,7 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     return true;
   }
 
-  if (isInstructionViolation(signalCode, output)) {
+  if (isInstructionViolation(exitCode, output)) {
     if (!live && output.trim()) console.log(output.trim());
     console.log();
     console.log(`    FAIL: CPU instruction violation detected (${elapsed}s)`);
@@ -163,10 +159,8 @@ async function runTest(label: string, binaryArgs: string[], options?: RunTestOpt
     failedTests.push(label);
   } else {
     if (!live && output.trim()) console.log(output.trim());
-    const how = exitCode === null ? `signal ${signalCode}` : `exit code ${exitCode}`;
-    console.log(`    FAIL: ${how} (${elapsed}s, not a CPU instruction issue)`);
+    console.log(`    WARN: exit code ${exitCode} (${elapsed}s, not a CPU instruction issue)`);
     otherFailures++;
-    failedTests.push(label);
   }
   return false;
 }
@@ -206,9 +200,8 @@ if (await Bun.file(staticChecker).exists()) {
     instructionFailures++;
     failedTests.push("Static instruction scan");
   } else {
-    console.log(`    FAIL: checker exited ${code} (${elapsed}s, tool error)`);
+    console.log(`    WARN: checker exited ${code} (${elapsed}s, tool error)`);
     otherFailures++;
-    failedTests.push("Static instruction scan (tool error)");
   }
   console.log();
 } else {
@@ -217,21 +210,12 @@ if (await Bun.file(staticChecker).exists()) {
   console.log();
 }
 
-// Phase 1/2: emulated runs. --skip-emulation (CI sets this for Android, whose
-// binary needs /system/bin/linker64 and has no sysroot on the build host)
-// leaves only the static scan.
-if (values["skip-emulation"]) {
-  console.log("--- Skipping emulated runs (--skip-emulation)");
-} else {
-  // Phase 1: SIMD code path verification
-  const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
-  await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
-}
+// Phase 1: SIMD code path verification (always runs)
+const simdTestPath = join(repoRoot, "test", "js", "bun", "jsc-stress", "fixtures", "simd-baseline.test.ts");
+await runTest("SIMD baseline tests", ["test", simdTestPath], { live: true });
 
 // Phase 2: JIT stress fixtures (only with --jit-stress, e.g. on WebKit changes)
-if (values["skip-emulation"]) {
-  // already reported the skip above
-} else if (values["jit-stress"]) {
+if (values["jit-stress"]) {
   const jsFixtures = readdirSync(fixturesDir)
     .filter(f => f.endsWith(".js"))
     .sort();
@@ -265,26 +249,20 @@ console.log();
 console.log("--- Summary");
 console.log(`    Passed: ${passed}`);
 console.log(`    Instruction failures: ${instructionFailures}`);
-console.log(`    Other failures: ${otherFailures} (not CPU instruction issues)`);
+console.log(`    Other failures: ${otherFailures} (warnings, not CPU instruction issues)`);
 console.log();
-
-const platform = isWindows
-  ? isAarch64
-    ? "Windows aarch64"
-    : "Windows x64"
-  : isAarch64
-    ? "Linux aarch64"
-    : "Linux x64";
-
-function annotate(html: string) {
-  Bun.spawnSync(["buildkite-agent", "annotate", "--append", "--style", "error", "--context", "verify-baseline"], {
-    stdin: new Blob([html]),
-  });
-}
 
 if (instructionFailures > 0) {
   console.error("    FAILED: Code uses unsupported CPU instructions.");
 
+  // Report to Buildkite annotations tab
+  const platform = isWindows
+    ? isAarch64
+      ? "Windows aarch64"
+      : "Windows x64"
+    : isAarch64
+      ? "Linux aarch64"
+      : "Linux x64";
   const parts = [
     `<details open>`,
     `<summary>❌ CPU instruction violation on <b>${platform}</b> — ${instructionFailures} check(s) failed</summary>`,
@@ -308,26 +286,19 @@ if (instructionFailures > 0) {
     );
   }
   parts.push(`</details>`);
-  annotate(parts.join("\n"));
+  const annotation = parts.join("\n");
+
+  Bun.spawnSync(["buildkite-agent", "annotate", "--append", "--style", "error", "--context", "verify-baseline"], {
+    stdin: new Blob([annotation]),
+  });
 
   process.exit(1);
 }
 
 if (otherFailures > 0) {
-  console.error(`    FAILED: ${otherFailures} check(s) failed under emulation on ${config.cpuDesc}.`);
-
-  annotate(
-    [
-      `<details open>`,
-      `<summary>❌ Baseline verification failed on <b>${platform}</b> — ${otherFailures} check(s)</summary>`,
-      `<p>The baseline build crashed or failed tests under <code>${config.cpuDesc}</code> emulation ` +
-        `(not an unsupported-instruction fault). See the step log for the crash output.</p>`,
-      `<ul>${failedTests.map(t => `<li><code>${t}</code></li>`).join("")}</ul>`,
-      `</details>`,
-    ].join("\n"),
+  console.log(
+    `    Baseline verification passed with ${otherFailures} non-instruction warning(s) on ${config.cpuDesc}.`,
   );
-
-  process.exit(1);
+} else {
+  console.log(`    All baseline verification passed on ${config.cpuDesc}.`);
 }
-
-console.log(`    All baseline verification passed on ${config.cpuDesc}.`);

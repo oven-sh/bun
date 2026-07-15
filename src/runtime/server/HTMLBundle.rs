@@ -543,9 +543,9 @@ impl Route {
         let _drop_build_ref = unsafe { bun_ptr::ScopedRef::<Route>::adopt(self.as_ctx_ptr()) };
 
         match &mut completion_task.result {
-            BundleV2Result::Err(err) => {
+            BundleV2Result::Err(_err) => {
                 if bun_core::Environment::ENABLE_LOGS {
-                    bun_output::scoped_log!(debug, "onComplete: err - {}", err);
+                    bun_output::scoped_log!(debug, "onComplete: err - {}", _err);
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
@@ -752,7 +752,7 @@ impl Route {
                         unsafe { StaticRoute::on(*html, resp) };
                     }
                 }
-                State::Err(_log) => {
+                State::Err(log) => {
                     if self
                         .server
                         .get()
@@ -761,9 +761,16 @@ impl Route {
                         .is_development()
                     {
                         // TODO: use the code from DevServer.rs to render the error
+                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+                        let _ = log.print(writer);
+                        bun_output::flush();
                     } else {
-                        // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
+                        // Print build errors to stderr so production-mode failures
+                        // can be diagnosed (they would otherwise return a silent 500).
+                        let writer: *mut bun_core::io::Writer = bun_output::error_writer_buffered();
+                        let _ = log.print(writer);
+                        bun_output::flush();
                     }
                     resp.write_status(b"500 Build Failed");
                     resp.end_without_body(false);

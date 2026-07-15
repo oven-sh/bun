@@ -1,4 +1,11 @@
 // Must be first
+// BitsFromMask only defined for fixed-size SVE (SVE2_128/SVE_256) and
+// NEON, not for scalable SVE/SVE2. Disable all SVE on ARM64 and use NEON
+// instead. Must not be gated on __OHOS__ — the CI host build
+// (aarch64-linux-gnu on Ampere SVE) hits the same missing symbol.
+#if defined(__aarch64__)
+#define HWY_DISABLED_TARGETS (HWY_ALL_SVE)
+#endif
 #include "root.h"
 #undef HWY_TARGET_INCLUDE
 // Correct path to this file relative to the build root (CMakeLists.txt)
@@ -29,12 +36,16 @@ using D8 = hn::ScalableTag<uint8_t>;
 size_t IndexOfCharImpl(const uint8_t* HWY_RESTRICT haystack, size_t haystack_len,
     uint8_t needle)
 {
+#if defined(__aarch64__)
+    // memchr avoids find-inl.h toggle guard issues when Highway is restricted to
+    // a single HWY target (which happens on all ARM64 now due to BitsFromMask).
+    auto* found = static_cast<const uint8_t*>(memchr(haystack, needle, haystack_len));
+    return found ? static_cast<size_t>(found - haystack) : haystack_len;
+#else
     D8 d;
-    // Use the Find function from find-inl.h which handles both vectorized and scalar cases
     const size_t pos = hn::Find<D8>(d, needle, haystack, haystack_len);
-
-    // Convert to int64_t and return -1 if not found
     return (pos < haystack_len) ? pos : haystack_len;
+#endif
 }
 
 // --- Implementation Details ---

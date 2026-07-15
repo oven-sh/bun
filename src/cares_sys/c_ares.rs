@@ -1922,13 +1922,23 @@ impl Error {
                 _ => {}
             }
 
+            // musl libc (OHOS, Alpine) may return EAI_FAIL for hostname
+            // lookups that glibc would return EAI_NONAME/EAI_NODATA for.
+            // Match libuv/Windows behavior: EAI_FAIL → ENOTFOUND.
+            // Guarded to OHOS only to avoid swallowing genuine resolution
+            // errors on glibc/macOS where EAI_FAIL means something else.
+            #[cfg(target_env = "ohos")]
+            if eai == EAI::FAIL {
+                return Some(Error::ENOTFOUND);
+            }
+
             if rc == 0 {
                 return None;
             }
             match eai {
                 EAI::ADDRFAMILY => Some(Error::EBADFAMILY),
                 EAI::BADFLAGS => Some(Error::EBADFLAGS), // Invalid hints
-                EAI::FAIL => Some(Error::EBADRESP),
+                EAI::FAIL => Some(Error::ENOTFOUND),
                 EAI::FAMILY => Some(Error::EBADFAMILY),
                 EAI::MEMORY => Some(Error::ENOMEM),
                 EAI::SERVICE => Some(Error::ESERVICE),

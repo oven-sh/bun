@@ -1466,27 +1466,20 @@ impl SourceData for webcore::AnyBlob {
         webcore::AnyBlob::memory_cost(self)
     }
 }
-/// Local newtype so the [`SourceData`] impl satisfies coherence —
-/// `ArrayBufferStrong` lives in `bun_jsc` and the trait in `bun_spawn`, so
-/// implementing it directly would be an orphan.
-struct ArrayBufferSource(jsc::array_buffer::ArrayBufferStrong);
-impl SourceData for ArrayBufferSource {
-    fn slice(&self) -> &[u8] {
-        self.0.slice()
-    }
-    fn detach(&mut self) { /* GC-owned; Drop releases the Strong handle */
-    }
-    fn memory_cost(&self) -> usize {
-        0
-    }
-}
 #[inline]
 pub fn source_from_blob(b: webcore::AnyBlob) -> Source {
-    Source::Any(Box::new(b))
+    let data: Box<[u8]> = b.slice().to_vec().into_boxed_slice();
+    Source::OwnedBytes(data)
 }
+/// Copy the ArrayBuffer bytes into an owned allocation so the async pipe
+/// writer holds independent storage. Without the copy, the StaticPipeWriter
+/// retains a raw pointer into the JS ArrayBuffer's backing store; if JS
+/// mutates or detaches that buffer before the event-loop-driven write
+/// completes, the child process receives corrupted or truncated data.
+/// Synchronous spawnSync is unaffected because it writes inline.
 #[inline]
 pub fn source_from_array_buffer(ab: jsc::array_buffer::ArrayBufferStrong) -> Source {
-    Source::Any(Box::new(ArrayBufferSource(ab)))
+    Source::OwnedBytes(ab.array_buffer.byte_slice().to_vec().into_boxed_slice())
 }
 
 #[cfg(windows)]

@@ -6,7 +6,6 @@ use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
 
-use crate::Error;
 use crate::webcore::Lifetime;
 #[cfg(not(windows))]
 use crate::webcore::blob::ClosingState;
@@ -15,8 +14,9 @@ use crate::webcore::blob::{Blob, FileCloser, FileOpener, MAX_SIZE, SizeType, Sto
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_collections::ByteVecExt as _;
-use bun_core;
 use bun_core::String as BunString;
+use bun_core;
+use crate::Error;
 use bun_io::{self as io, FileAction};
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
@@ -485,7 +485,7 @@ impl ReadFile {
     /// `do_read_loop` can carry it across the `&mut self` `do_read` call
     /// without two live `&mut` covering overlapping memory (Stacked-Borrows
     /// UB). The slice is materialised only at the syscall boundary.
-    #[cfg(not(windows))]
+    #[cfg(all(not(windows), not(target_env = "ohos")))]
     fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
         // `spare_capacity_mut()` is the safe spelling of
         // `as_mut_ptr().add(len) .. as_mut_ptr().add(cap)`; we immediately
@@ -687,7 +687,7 @@ impl ReadFile {
         }
 
         if bun_sys::S::ISDIR(stat.st_mode as _) {
-            self.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
+            self.errno = Some(crate::Error::IsDir);
             self.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
                 path: if self.file_store.pathlike.is_path() {
@@ -813,6 +813,33 @@ impl ReadFile {
                 // to `self.buffer`'s spare capacity is ever live alongside
                 // `&mut self`.
                 let stack_ptr = stack_buffer.as_mut_ptr();
+                // OHOS anti-aliasing fix: when spare >= 64KB, the original code
+                // passed self.buffer's spare pointer into do_read while do_read
+                // also holds &mut self. Under Stacked Borrows this is UB and
+                // manifests on OHOS as Vec.len() appearing to grow during do_read
+                // even though do_read never touches self.buffer (verified via
+                // instrumented trace). Always read into the stack buffer first,
+                // then extend_from_slice into self.buffer — this keeps the &mut
+                // self borrow in do_read disjoint from self.buffer's storage.
+                //
+                // The stack buffer's length must still be capped the same way
+                // `remaining_buffer()` caps it (`max_length - read_off`) — using
+                // the raw `stack_buffer.len()` here reads up to the full 64KB
+                // (or whole file, whichever is smaller) regardless of a
+                // caller-requested `max_length`, and nothing downstream
+                // truncates `self.buffer` back down afterward. That silently
+                // broke `Bun.file(path).slice(start, end)`: the loop's
+                // `buffer.len() >= max_length` check still stops iterating at
+                // the right point, but by then this single oversized read
+                // already delivered everything past `end`.
+                #[cfg(target_env = "ohos")]
+                let (buf_ptr, buf_len) = {
+                    let cap = stack_buffer
+                        .len()
+                        .min((self.max_length.saturating_sub(self.read_off)) as usize);
+                    (stack_ptr, cap)
+                };
+                #[cfg(not(target_env = "ohos"))]
                 let (buf_ptr, buf_len) = self.remaining_buffer(&mut stack_buffer);
 
                 if buf_len > 0 && self.errno.is_none() && !self.read_eof {
@@ -1218,7 +1245,7 @@ impl<'a> ReadFileUV<'a> {
         }
 
         if bun_sys::S::ISDIR(u32::try_from(stat.mode()).expect("int cast")) {
-            this.errno = Some(crate::Error::Sys(bun_errno::SystemErrno::EISDIR));
+            this.errno = Some(crate::Error::IsDir);
             this.system_error = Some(SystemError {
                 code: BunString::static_("EISDIR"),
                 path: if this.file_store.pathlike.is_path() {

@@ -1553,12 +1553,6 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
-                                .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
-                                    self.current_tree_id,
-                                    log_level,
-                                ),
                         }
                     }
                     resolution::Tag::LocalTarball => {
@@ -1585,12 +1579,6 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
-                                .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
-                                    self.current_tree_id,
-                                    log_level,
-                                ),
                         }
                     }
                     resolution::Tag::Npm => {
@@ -1623,12 +1611,6 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
-                            Err(ForTarballError::AlreadyFailed) => self
-                                .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
-                                    self.current_tree_id,
-                                    log_level,
-                                ),
                         }
                     }
                     _ => {
@@ -2389,5 +2371,107 @@ impl<'a> PackageInstaller<'a> {
             name,
             &resolutions[package_id as usize],
         );
+    }
+}
+
+// ───────────────────────────── OHOS install-time signing ─────────────────────────────
+
+/// On OHOS, scan a package directory for native binaries (.so, .node) and
+/// sign any that are not already signed. Called after a package is installed
+/// into node_modules, before lifecycle scripts run.
+#[cfg(target_env = "ohos")]
+pub(crate) fn ohos_sign_native_binaries(pkg_dir: &[u8]) {
+    let verbose = PackageManager::verbose_install();
+
+    // Resolve symlinks so the walker operates on the real directory,
+    // not a dangling symlink (common in workspaces).
+    let pkg_dir_canonical: Vec<u8>;
+    let pkg_dir = {
+        let p = std::path::Path::new(unsafe { core::str::from_utf8_unchecked(pkg_dir) });
+        match std::fs::canonicalize(p) {
+            Ok(real) => {
+                pkg_dir_canonical = real.as_os_str().as_encoded_bytes().to_vec();
+                pkg_dir_canonical.as_slice()
+            }
+            Err(_) => pkg_dir,
+        }
+    };
+
+    if verbose {
+        let p = std::path::Path::new(unsafe { core::str::from_utf8_unchecked(pkg_dir) });
+        bun_core::pretty_errorln!("<d>[sign]<r> <d>scan<r> {}", p.display());
+    }
+
+    let dir = match Dir::open(pkg_dir) {
+        Ok(d) => d,
+        Err(_) => return,
+    };
+    let w = match Syscall::walker_skippable::walk(dir.fd(), &[], &[]) {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    let mut signed: u32 = 0;
+    let mut skipped: u32 = 0;
+    let mut errors: u32 = 0;
+    let mut w = w;
+    while let Ok(Some(entry)) = w.next() {
+        if entry.kind != Syscall::EntryKind::File {
+            continue;
+        }
+        let name = entry.basename.as_bytes();
+        let needs_sign = if name.len() > 3 {
+            name.ends_with(b".so") || name.ends_with(b".node")
+        } else {
+            false
+        };
+        if !needs_sign {
+            continue;
+        }
+        // Use entry.path (relative path from walk root) instead of basename
+        // so signing works both for per-package dirs (path == basename)
+        // and for recursive walks of node_modules/ (path includes subdirs).
+        let rel = entry.path.as_bytes();
+        let mut full = Vec::with_capacity(pkg_dir.len() + 1 + rel.len());
+        full.extend_from_slice(pkg_dir);
+        full.push(b'/');
+        full.extend_from_slice(rel);
+        let full_str = unsafe { core::str::from_utf8_unchecked(&full) };
+        let p = std::path::Path::new(full_str);
+        if ohos_sign::has_codesign(&std::fs::read(p).unwrap_or_default()) {
+            skipped += 1;
+            if verbose {
+                bun_core::pretty_errorln!("<d>[sign]<r> <d>skip<r> {}", p.display());
+            }
+            continue;
+        }
+        match ohos_sign::sign_selfsign_inplace(p) {
+            Ok(()) => {
+                signed += 1;
+                if verbose {
+                    bun_core::pretty_errorln!("<d>[sign]<r> <green>OK<r>  {}", p.display());
+                }
+            }
+            Err(e) => {
+                errors += 1;
+                bun_core::pretty_errorln!("<d>[sign]<r> <red>FAIL<r> {}: {:?}", p.display(), e);
+            }
+        }
+    }
+    let total = signed + skipped + errors;
+    if errors > 0 {
+        bun_core::pretty_errorln!(
+            "<d>[sign]<r> {} native {} signed, {} error(s)",
+            total,
+            if total == 1 { "file" } else { "files" },
+            errors,
+        );
+    } else if total > 0 {
+        bun_core::pretty_errorln!(
+            "<d>[sign]<r> {} native {} signed",
+            total,
+            if total == 1 { "file" } else { "files" },
+        );
+    } else if verbose {
+        bun_core::pretty_errorln!("<d>[sign]<r> <d>no<r> native files found");
     }
 }

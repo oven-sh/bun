@@ -53,6 +53,7 @@ export function rustTarget(cfg: Config): string {
   // linux
   assert(cfg.abi !== undefined, "linux build missing abi");
   if (cfg.abi === "android") return `${arch}-linux-android`;
+  if (cfg.ohos) return `${arch}-unknown-linux-ohos`;
   if (cfg.abi === "musl") return `${arch}-unknown-linux-musl`;
   return `${arch}-unknown-linux-gnu`;
 }
@@ -118,6 +119,7 @@ export const allRustTargets = [
   "aarch64-unknown-linux-gnu",
   "x86_64-unknown-linux-musl",
   "aarch64-unknown-linux-musl",
+  "aarch64-unknown-linux-ohos",
   "x86_64-apple-darwin",
   "aarch64-apple-darwin",
   "x86_64-pc-windows-msvc",
@@ -689,7 +691,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     // `lld-link.exe` (`cfg.ld`); both speak the `/X` dialect rustc emits.
     [`CARGO_TARGET_${triple.toUpperCase().replace(/-/g, "_")}_LINKER`]: cfg.windows
       ? (cfg.msvcLinker ?? cfg.ld)
-      : cfg.cxx,
+      : (cfg.ohos && process.env.OHOS_BUN_SIGNING_LINKER ? process.env.OHOS_BUN_SIGNING_LINKER : cfg.cxx),
   };
   if (cfg.cargoHome !== undefined) env.CARGO_HOME = cfg.cargoHome;
   if (cfg.rustupHome !== undefined) env.RUSTUP_HOME = cfg.rustupHome;

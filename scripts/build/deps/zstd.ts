@@ -35,17 +35,20 @@ export const zstd: Dependency = {
   name: "zstd",
   versionMacro: "ZSTD_HASH",
 
-  source: () => ({
+  source: cfg => ({
     kind: "github-archive",
     repo: "facebook/zstd",
     commit: ZSTD_COMMIT,
   }),
+
+  patches: cfg => (cfg.ohos ? ["patches/zstd/ohos-qsort-r.patch"] : []),
 
   build: cfg => {
     const sources = [...SOURCES];
     const defines: Record<string, number | true> = {
       ZSTD_MULTITHREAD: true,
       ZSTD_LEGACY_SUPPORT: 0,
+
     };
 
     // Upstream's if(MSVC) block sets these for the static target.

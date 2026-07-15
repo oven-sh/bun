@@ -8,7 +8,7 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsSignOneShot);
 JSC_DECLARE_HOST_FUNCTION(jsVerifyOneShot);
 
-inline constexpr unsigned int NoDsaSignature = static_cast<unsigned int>(-1);
+static const unsigned int NoDsaSignature = static_cast<unsigned int>(-1);
 
 struct SignJobCtx {
     WTF_MAKE_TZONE_ALLOCATED(SignJobCtx);

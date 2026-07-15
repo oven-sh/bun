@@ -703,6 +703,28 @@ struct CollectedRow {
 
 const PADDING: u32 = 1;
 
+/// Parse `s` as a canonical ES array index (0 .. 2^32-2, no leading zeros).
+fn parse_array_index(s: &[u8]) -> Option<u32> {
+    if s.is_empty() || s.len() > 10 {
+        return None;
+    }
+    if s[0] == b'0' {
+        return if s.len() == 1 { Some(0) } else { None };
+    }
+    let mut n: u64 = 0;
+    for &c in s {
+        if !c.is_ascii_digit() {
+            return None;
+        }
+        n = n * 10 + u64::from(c - b'0');
+    }
+    if n < u64::from(u32::MAX) {
+        Some(n as u32)
+    } else {
+        None
+    }
+}
+
 impl<'a> TablePrinter<'a> {
     pub fn init(
         global_object: &'a JSGlobalObject,
@@ -722,7 +744,7 @@ impl<'a> TablePrinter<'a> {
                 // from a temporary is rejected (E0509).
                 let mut f = Formatter::new(global_object);
                 f.single_line = true;
-                f.max_depth = 5;
+                f.max_depth = 0;
                 f.can_throw_stack_overflow = true;
                 f.stack_check = StackCheck::init();
                 f
@@ -792,6 +814,16 @@ impl<'a> TablePrinter<'a> {
             return Ok(row);
         }
 
+        // Set entries always go to the "Values" column as a whole, even when
+        // the entry is an object (Node.js routes Set/SetIterator through a
+        // dedicated setlike branch that never explodes per-property columns).
+        if self.jstype.is_set() {
+            let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, row_value)?;
+            self.values_col_width = Some(self.values_col_width.unwrap_or(1).max(cell.width));
+            row.values_cell = Some(cell);
+            return Ok(row);
+        }
+
         if let Some(obj) = row_value.get_object() {
             // object ->
             //  - if "properties" arg was provided: iterate the already-created
@@ -812,9 +844,11 @@ impl<'a> TablePrinter<'a> {
                 let mut cols_iter = jsc::JSPropertyIterator::init(
                     self.global_object,
                     obj,
-                    jsc::PropertyIteratorOptions {
+                    jsc::JSPropertyIteratorOptions {
                         skip_empty_name: false,
                         include_value: true,
+                        include_symbols: false,
+                        ..Default::default()
                     },
                 )?;
 
@@ -965,10 +999,12 @@ impl<'a> TablePrinter<'a> {
         if !self.properties.is_undefined() {
             let mut properties_iter = jsc::JSArrayIterator::init(self.properties, global_object)?;
             while let Some(value) = properties_iter.next()? {
-                columns.push(Column {
-                    name: value.to_bun_string(global_object)?,
-                    width: 1,
-                });
+                let name = value.to_bun_string(global_object)?;
+                if columns[1..].iter().any(|col| col.name.eql(&name)) {
+                    name.deref();
+                    continue;
+                }
+                columns.push(Column { name, width: 1 });
             }
         }
 
@@ -1035,9 +1071,11 @@ impl<'a> TablePrinter<'a> {
                 let mut rows_iter = jsc::JSPropertyIterator::init(
                     global_object,
                     tabular_obj,
-                    jsc::PropertyIteratorOptions {
+                    jsc::JSPropertyIteratorOptions {
                         skip_empty_name: false,
                         include_value: true,
+                        include_symbols: false,
+                        ..Default::default()
                     },
                 )?;
 
@@ -1050,6 +1088,47 @@ impl<'a> TablePrinter<'a> {
                         rows_iter.value,
                     )?;
                     rows.push(row);
+                }
+            }
+        }
+
+        // Node builds the column set by assigning into a null-proto object and
+        // then reading it back via `Object.keys`, so the final column order is
+        // the spec's OrdinaryOwnPropertyKeys order: array-index names sorted
+        // numerically first, then string names in first-seen (insertion) order.
+        // Reproduce that by stably partitioning the data columns.
+        if columns.len() > 2 && !self.jstype.is_map() {
+            let n = columns.len() - 1;
+            let mut order: Vec<usize> = (0..n).collect();
+            let keys: Vec<Option<u32>> = columns[1..]
+                .iter()
+                .map(|c| {
+                    let utf8 = c.name.to_utf8();
+                    parse_array_index(utf8.slice())
+                })
+                .collect();
+            order.sort_by(|&a, &b| match (keys[a], keys[b]) {
+                (Some(x), Some(y)) => x.cmp(&y),
+                (Some(_), None) => core::cmp::Ordering::Less,
+                (None, Some(_)) => core::cmp::Ordering::Greater,
+                (None, None) => a.cmp(&b),
+            });
+            if order.iter().enumerate().any(|(i, &o)| i != o) {
+                let mut new_cols: Vec<Column> = Vec::with_capacity(columns.len());
+                new_cols.push(core::mem::take(&mut columns[0]));
+                for &o in &order {
+                    new_cols.push(core::mem::take(&mut columns[1 + o]));
+                }
+                *columns = new_cols;
+                for row in rows.iter_mut() {
+                    let old = core::mem::take(&mut row.cells);
+                    let mut new_cells: Vec<Option<CellRef>> = vec![None; n];
+                    for (new_i, &old_i) in order.iter().enumerate() {
+                        if let Some(cell) = old.get(old_i).copied().flatten() {
+                            new_cells[new_i] = Some(cell);
+                        }
+                    }
+                    row.cells = new_cells;
                 }
             }
         }

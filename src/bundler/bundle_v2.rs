@@ -1668,7 +1668,6 @@ pub mod bv2_impl {
             self.client_transpiler = Some(NonNull::from(&mut *ct).into());
             Ok(ct)
         }
-
     }
 
     /// Applies the target 'bun' builtin externalization to an `ImportRecord` whose

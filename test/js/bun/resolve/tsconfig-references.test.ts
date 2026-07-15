@@ -171,6 +171,67 @@ test.concurrent("referenced config with extends and no include covers its own di
   expectRan(await run(String(dir), "app/main.ts"), "inherited\n");
 });
 
+test.concurrent("references are not inherited through extends", async () => {
+  using dir = tempDir("tsconfig-refs-no-inherit", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }],
+    }),
+    "tsconfig.app.json": JSON.stringify({
+      extends: "./tsconfig.base.json",
+      include: ["src"],
+      compilerOptions: { paths: { "#app/*": ["./src/*"] } },
+    }),
+    // "references" is the one top-level key excluded from extends
+    // inheritance, so this entry must never be followed via the app config.
+    "tsconfig.base.json": JSON.stringify({
+      references: [{ path: "./tsconfig.extra.json" }],
+    }),
+    "tsconfig.extra.json": JSON.stringify({
+      include: ["extra"],
+      compilerOptions: { paths: { "#x/*": ["./extra/impl/*"] } },
+    }),
+    "src/index.ts": `import { v } from "#app/v"; console.log(v);`,
+    "src/v.ts": `export const v = "app";`,
+    "extra/main.ts": `import { m } from "#x/m"; console.log(m);`,
+    "extra/impl/m.ts": `export const m = "leaked";`,
+  });
+
+  expectRan(await run(String(dir), "src/index.ts"), "app\n");
+
+  // If base's references leaked through extends, tsconfig.extra.json would
+  // load transitively and "#x/m" would resolve.
+  const leaked = await run(String(dir), "extra/main.ts");
+  expect(leaked.stderr).toContain("Cannot find module '#x/m'");
+  expect(leaked.exitCode).not.toBe(0);
+});
+
+test.concurrent("transitive reference loading stops at the 64-config cap", async () => {
+  const files: Record<string, string> = {
+    "tsconfig.json": JSON.stringify({ files: [], references: [{ path: "./tsconfig.c1.json" }] }),
+    "p64/index.ts": `import { v } from "#p64/v"; console.log(v);`,
+    "p64/v.ts": `export const v = "64";`,
+    "p65/index.ts": `import { v } from "#p65/v"; console.log(v);`,
+    "p65/v.ts": `export const v = "65";`,
+  };
+  for (let i = 1; i <= 65; i++) {
+    files[`tsconfig.c${i}.json`] = JSON.stringify({
+      ...(i < 65 ? { references: [{ path: `./tsconfig.c${i + 1}.json` }] } : {}),
+      include: [`p${i}`],
+      compilerOptions: { paths: { [`#p${i}/*`]: [`./p${i}/*`] } },
+    });
+  }
+  using dir = tempDir("tsconfig-refs-cap", files);
+
+  // The 64th config is the last one within the load budget.
+  expectRan(await run(String(dir), "p64/index.ts"), "64\n");
+
+  // The 65th is past the cap, so its paths never apply.
+  const past = await run(String(dir), "p65/index.ts");
+  expect(past.stderr).toContain("Cannot find module '#p65/v'");
+  expect(past.exitCode).not.toBe(0);
+});
+
 test.concurrent("referenced project using 'files' instead of 'include'", async () => {
   using dir = tempDir("tsconfig-refs-files", {
     "tsconfig.json": JSON.stringify({
@@ -279,8 +340,15 @@ test.concurrent("a missing referenced config is skipped and stays out of error l
   using dir = tempDir("tsconfig-refs-missing", {
     "tsconfig.json": JSON.stringify({
       files: [],
-      references: [{ path: "./tsconfig.missing.json" }, { path: "./tsconfig.app.json" }],
+      references: [
+        { path: "./tsconfig.missing.json" },
+        { path: "./tsconfig.broken.json" },
+        { path: "./tsconfig.app.json" },
+      ],
     }),
+    // Syntax errors in a referenced config are skipped without polluting the
+    // resolver log either.
+    "tsconfig.broken.json": `{ "include": [invalid`,
     // The broken "extends" exercises the quiet chain walk for referenced
     // projects; the config still contributes its own paths.
     "tsconfig.app.json": JSON.stringify({

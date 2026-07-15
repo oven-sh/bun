@@ -3998,10 +3998,14 @@ impl<'a> Resolver<'a> {
         }
     }
 
+    /// `quiet` parses into a scratch log, keeping syntax errors and content
+    /// warnings from a referenced project's config out of the resolver Log
+    /// (where they would surface in unrelated resolution errors).
     pub fn parse_tsconfig(
         &mut self,
         file: &[u8],
         dirname_fd: FD,
+        quiet: bool,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
@@ -4044,14 +4048,17 @@ impl<'a> Resolver<'a> {
         let source = bun_ast::Source::init_path_string_owned(key_path, contents);
         let file_dir = source.path.source_dir();
 
-        // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
-        // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let mut scratch_log = quiet.then(bun_ast::Log::init);
+        let log: &mut bun_ast::Log = match scratch_log.as_mut() {
+            Some(scratch) => scratch,
+            // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from
+            // `self.caches`, narrow `&mut` for this call only.
+            None => unsafe { &mut *self.log() },
+        };
+        let mut result = match TSConfigJSON::parse(log, &source, &mut self.caches.json)? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         if result.has_base_url() {
             // this might leak
@@ -4150,7 +4157,7 @@ impl<'a> Resolver<'a> {
                 bun_paths::Platform::AUTO,
             );
             let parent_config_maybe: Option<*mut TSConfigJSON> =
-                match self.parse_tsconfig(abs_path, FD::INVALID) {
+                match self.parse_tsconfig(abs_path, FD::INVALID, quiet) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
                         self.log_tsconfig_chain_debug(
@@ -4297,18 +4304,19 @@ impl<'a> Resolver<'a> {
             // A load failure must not touch the resolver Log: a missing
             // referenced project is normal, and extra log entries make
             // unrelated resolution failures surface as AggregateError.
-            let parsed: *mut TSConfigJSON = match self.parse_tsconfig(config_path, FD::INVALID) {
-                Ok(Some(v)) => bun_core::heap::into_raw(v),
-                Ok(None) => continue,
-                Err(err) => {
-                    debuglog!(
-                        "{} loading tsconfig.json reference {}",
-                        bstr::BStr::new(err.name()),
-                        bun_core::fmt::quote(&visited[visited.len() - 1])
-                    );
-                    continue;
-                }
-            };
+            let parsed: *mut TSConfigJSON =
+                match self.parse_tsconfig(config_path, FD::INVALID, true) {
+                    Ok(Some(v)) => bun_core::heap::into_raw(v),
+                    Ok(None) => continue,
+                    Err(err) => {
+                        debuglog!(
+                            "{} loading tsconfig.json reference {}",
+                            bstr::BStr::new(err.name()),
+                            bun_core::fmt::quote(&visited[visited.len() - 1])
+                        );
+                        continue;
+                    }
+                };
             let Ok(merged_ptr) = self.merge_tsconfig_extends_chain(parsed, true) else {
                 continue;
             };
@@ -6666,6 +6674,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         FD::ZERO
                     },
+                    false,
                 ) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {

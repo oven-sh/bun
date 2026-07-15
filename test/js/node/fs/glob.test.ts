@@ -79,6 +79,12 @@ describe("fs.glob", () => {
       expect(() => fs.glob("*.txt", { cwd: tmp })).toThrow(TypeError);
       expect(() => fs.glob("*.txt", { cwd: tmp }, undefined)).toThrow(TypeError);
     });
+
+    it("throws ERR_INVALID_ARG_TYPE synchronously if options is null", () => {
+      expect(() => fs.glob("*.txt", null, () => {})).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    });
   });
 
   it("matches directories", () => {
@@ -146,6 +152,27 @@ describe("fs.globSync", () => {
     } finally {
       process.cwd = oldProcessCwd;
     }
+  });
+
+  describe("invalid arguments", () => {
+    it.each([[null], [42], ["str"], [true]] as any[][])(
+      "throws ERR_INVALID_ARG_TYPE if options is %p",
+      options => {
+        expect(() => fs.globSync("*.txt", options)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+        );
+      },
+    );
+
+    it("accepts undefined options", () => {
+      const oldProcessCwd = process.cwd;
+      try {
+        process.cwd = () => tmp;
+        expect(fs.globSync("*.txt", undefined)).toStrictEqual(["foo.txt"]);
+      } finally {
+        process.cwd = oldProcessCwd;
+      }
+    });
   });
 
   it("matches directories", () => {

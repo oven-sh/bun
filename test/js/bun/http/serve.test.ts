@@ -2592,10 +2592,6 @@ describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
     expect(output).toContain("echo:hello");
   });
 
-  // The interim 100 is only written BEFORE the handler runs; when the handler
-  // is not waiting on the body there is nothing observable to gate on except
-  // the interim itself. Send the body in the same write so the final response
-  // arrives regardless, then assert the 100 was prepended.
   it.each(["100-continues", "x100-continue", "muffins"])(
     "responds with 417 Expectation Failed for Expect: %s",
     async expectValue => {

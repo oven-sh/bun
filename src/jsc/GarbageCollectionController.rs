@@ -215,38 +215,8 @@ impl GarbageCollectionController {
         self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
     }
 
-    /// Hand this thread's empty mimalloc pages back to the arena, which schedules their purge
-    /// and wakes the scavenger to do the madvise off this thread.
-    ///
-    /// JSC's own hook cannot stand in for this. `Heap::didFinishCollection` fires
-    /// `scavengeThisThread`, but it runs under whichever `GCConductor` holds the conn --
-    /// `collectInCollectorThread` conducts async collections -- and `mi_theap_get_default()`
-    /// returns the CALLING thread's theap, so on that path it collects the collector's
-    /// near-empty one. It is also gated on `CollectionScope::Full`, and sustained load runs
-    /// eden for minutes. Here we are on the JS thread by construction.
-    ///
-    /// Cheap enough to do per collection: `mi_theap_collect` walks the page queues and frees
-    /// empty pages, with no free-list hole scan, and the madvise is the scavenger's job.
-    #[inline]
-    fn return_pages_to_arena() {
-        if bun_core::USE_MIMALLOC {
-            let theap = bun_alloc::mimalloc::mi_theap_get_default();
-            if !theap.is_null() {
-                bun_alloc::mimalloc::mi_theap_collect(theap, false);
-            }
-        }
-    }
-
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
         let prev = self.gc_last_heap_size;
-
-        // The heap moved, so a collection freed JS objects and their mimalloc blocks with them.
-        // Eden does that far more often than full, and until the pages go back to the arena the
-        // scavenger cannot see them -- no arena-side purge knob reaches memory still parked in a
-        // theap's page queues.
-        if this_heap_size != prev {
-            Self::return_pages_to_arena();
-        }
 
         match self.gc_timer_state {
             GCTimerState::RunOnNextTick => {

@@ -315,6 +315,16 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
+    /// Returns the underlying OS file descriptor (or Windows SOCKET) for this
+    /// response's socket, regardless of SSL. Unlike `get_native_handle`, which
+    /// returns the OpenSSL `SSL*` pointer for TLS connections, this always
+    /// goes straight to `us_socket_get_fd` so the value is a real descriptor
+    /// suitable for `getsockopt`/`setsockopt`.
+    pub fn get_fd(&mut self) -> Fd {
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+        us_socket_t::opaque_mut(self.downcast_socket()).get_fd()
+    }
+
     pub fn get_remote_address_as_text(&mut self) -> Option<&[u8]> {
         let mut buf: *const u8 = core::ptr::null();
         let size = c::uws_res_get_remote_address_as_text(Self::ssl_flag(), self.as_raw(), &mut buf);
@@ -831,6 +841,17 @@ impl AnyResponse {
             AnyResponse::H3(_) => bun_core::Fd::INVALID,
             AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_native_handle(),
             AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_native_handle(),
+        }
+    }
+
+    /// Returns the underlying OS file descriptor for this response's socket,
+    /// bypassing SSL so the result is a real `us_socket_get_fd` value.
+    /// HTTP/3 multiplexes streams over one UDP socket — no per-response fd.
+    pub fn get_fd(self) -> Fd {
+        match self {
+            AnyResponse::H3(_) => bun_core::Fd::INVALID,
+            AnyResponse::SSL(ptr) => TLSResponse::as_handle(ptr).get_fd(),
+            AnyResponse::TCP(ptr) => TCPResponse::as_handle(ptr).get_fd(),
         }
     }
 

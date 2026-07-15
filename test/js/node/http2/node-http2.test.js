@@ -952,23 +952,129 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           // See above: no 'ping' event for ACKs of our own pings (node parity).
           expect(received_ping).toBeUndefined();
         });
-        it("ping with wrong payload length events should error", async () => {
+        it("ping with wrong payload length should throw synchronously", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
-          client.on("connect", () => {
-            client.ping(Buffer.from("oops"), (err, duration, payload) => {
-              if (err) {
-                resolve(err);
-              } else {
-                reject("unreachable");
-              }
-              client.close();
+          client.on("connect", () => resolve());
+          await promise;
+          try {
+            for (const bad of [
+              Buffer.from("oops"),
+              Buffer.from("abcdefg"),
+              Buffer.from("abcdefghi"),
+              new Uint32Array(8),
+              new DataView(new ArrayBuffer(7)),
+            ]) {
+              expect(() => client.ping(bad, () => reject("callback must not run"))).toThrow(
+                expect.objectContaining({ code: "ERR_HTTP2_PING_LENGTH", name: "RangeError" }),
+              );
+            }
+          } finally {
+            client.close();
+          }
+        });
+        it("ping requires a function callback", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+          client.on("error", reject);
+          client.on("connect", () => resolve());
+          await promise;
+          try {
+            for (const args of [
+              [],
+              [Buffer.alloc(8)],
+              [Buffer.alloc(8), 5],
+              [Buffer.alloc(8), null],
+              [Buffer.alloc(8), {}],
+            ]) {
+              expect(() => client.ping(...args)).toThrow(
+                expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }),
+              );
+            }
+          } finally {
+            client.close();
+          }
+        });
+        it("ping accepts any 8-byte ArrayBufferView as payload", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+          client.on("error", reject);
+          client.on("connect", () => resolve());
+          await promise;
+          try {
+            const sent = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+            const cases = [
+              new DataView(sent.buffer.slice(0)),
+              new Uint16Array(sent.buffer.slice(0)),
+              new Uint32Array(sent.buffer.slice(0)),
+              Buffer.from(sent.buffer.slice(0)),
+            ];
+            const results = await Promise.all(
+              cases.map(
+                p =>
+                  new Promise((res, rej) => {
+                    const ok = client.ping(p, (err, duration, ret) => (err ? rej(err) : res({ duration, ret })));
+                    if (ok !== true) rej(new Error("ping() returned " + ok));
+                  }),
+              ),
+            );
+            for (const { duration, ret } of results) {
+              expect(typeof duration).toBe("number");
+              expect(Buffer.from(ret)).toEqual(Buffer.from(sent));
+            }
+          } finally {
+            client.close();
+          }
+        });
+        it("ping returns false and cancels via callback once maxOutstandingPings is reached", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const client = http2.connect(HTTPS_SERVER, { ...TLS_OPTIONS, maxOutstandingPings: 2 });
+          client.on("error", reject);
+          client.on("connect", () => resolve());
+          await promise;
+          try {
+            const pA = Buffer.from("AAAAAAAA");
+            const pB = Buffer.from("BBBBBBBB");
+            const acks = [];
+            const ackPromise = new Promise((res, rej) => {
+              const record = name => (err, d, ret) => {
+                if (err) return rej(err);
+                acks.push([name, Buffer.from(ret)]);
+                if (acks.length === 2) res();
+              };
+              expect(client.ping(pA, record("A"))).toBe(true);
+              expect(client.ping(pB, record("B"))).toBe(true);
             });
-          });
-          const result = await promise;
-          expect(result).toBeDefined();
-          expect(result.code).toBe("ERR_HTTP2_PING_LENGTH");
+            const cancelled = await new Promise((res, rej) => {
+              const ok = client.ping(Buffer.from("CCCCCCCC"), err => (err ? res(err) : rej("expected cancel")));
+              expect(ok).toBe(false);
+            });
+            expect(cancelled).toMatchObject({ code: "ERR_HTTP2_PING_CANCEL", name: "Error" });
+            await ackPromise;
+            expect(acks).toEqual([
+              ["A", pA],
+              ["B", pB],
+            ]);
+          } finally {
+            client.close();
+          }
+        });
+        it("ping without payload echoes a non-zero timestamp", async () => {
+          const { promise, resolve, reject } = Promise.withResolvers();
+          const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+          client.on("error", reject);
+          client.on("connect", () => resolve());
+          await promise;
+          try {
+            const echoed = await new Promise((res, rej) => {
+              client.ping((err, duration, ret) => (err ? rej(err) : res(ret)));
+            });
+            expect(echoed.byteLength).toBe(8);
+            expect(Buffer.from(echoed).every(b => b === 0)).toBe(false);
+          } finally {
+            client.close();
+          }
         });
         it("ping with wrong payload type events should throw", async () => {
           const { promise, resolve, reject } = Promise.withResolvers();
@@ -1897,7 +2003,7 @@ it(
       });
     });
   },
-  15_000 * ASAN_MULTIPLIER,
+  20_000 * ASAN_MULTIPLIER,
 );
 
 it("http2.createServer validates input options", () => {

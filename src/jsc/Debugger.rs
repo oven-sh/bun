@@ -156,6 +156,7 @@ unsafe extern "C" {
         from_env: c_int,
         is_connect: bool,
     );
+    safe fn Bun__debugger__drain();
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
@@ -339,6 +340,28 @@ impl Debugger {
                 Wait::Off => break,
             }
         }
+    }
+
+    /// Block (briefly, with a cap) until the debugger thread has written any
+    /// inspector protocol messages queued for it to the frontend socket, and
+    /// give it a further short grace period to flush anything still sitting
+    /// in the WebSocket layer's own send buffer to a still-reading consumer.
+    ///
+    /// Call this from the main thread immediately before process exit (see
+    /// [`VirtualMachine::global_exit`](crate::virtual_machine::VirtualMachine::global_exit))
+    /// so the detached debugger thread isn't killed mid-delivery. Without
+    /// this, `exit()` can tear down the debugger thread while the final
+    /// events of a run (e.g. `bun test`'s last `TestReporter.end` events)
+    /// are still queued or buffered, and the frontend never sees them.
+    ///
+    /// Both waits inside are capped, so a wedged debugger thread -- or a
+    /// frontend that has stopped reading entirely -- cannot block process
+    /// exit indefinitely. See `Bun__debugger__drain` in `BunDebugger.cpp`
+    /// for the full design (it covers two distinct loss layers: the
+    /// main-to-debugger-thread message handoff, and WebSocket-level
+    /// backpressure buffering).
+    pub fn drain() {
+        Bun__debugger__drain();
     }
 
     /// `Debugger.create(vm, global)` — first-time debugger setup: create the

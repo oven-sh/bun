@@ -1387,7 +1387,6 @@ function Socket(options?) {
   this._host = undefined;
   this._port = undefined;
   this[bunTLSConnectOptions] = null;
-  this.timeout = 0;
   this[kwriteCallback] = undefined;
   this._pendingData = undefined;
   this._pendingEncoding = undefined; // for compatibility
@@ -1490,11 +1489,7 @@ function Socket(options?) {
 $toClass(Socket, "Socket", Duplex);
 
 Socket.prototype.address = function address() {
-  return {
-    address: this.localAddress,
-    family: this.localFamily,
-    port: this.localPort,
-  };
+  return this._getsockname();
 };
 
 Socket.prototype._onTimeout = function () {
@@ -1515,7 +1510,9 @@ Socket.prototype._onTimeout = function () {
 
 Object.defineProperty(Socket.prototype, "bufferSize", {
   get: function () {
-    return this.writableLength;
+    if (this._handle) {
+      return this.writableLength;
+    }
   },
 });
 
@@ -2106,8 +2103,8 @@ Socket.prototype._getpeername = function () {
     const family = this._handle.remoteFamily;
     if (!family) return {};
     this._peername = {
-      family,
       address: this._handle.remoteAddress,
+      family,
       port: this._handle.remotePort,
     };
   }
@@ -2121,8 +2118,8 @@ Socket.prototype._getsockname = function () {
     const family = this._handle.localFamily;
     if (!family) return {};
     this._sockname = {
-      family,
       address: this._handle.localAddress,
+      family,
       port: this._handle.localPort,
     };
   }
@@ -2762,6 +2759,13 @@ function internalConnect(self, options, address, port, addressType, localAddress
 
     traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
+    if (err) {
+      // libuv defers the pipe connect callback even when connect(2) fails
+      // immediately, so Node reports the failure through afterConnect, which
+      // emits 'connectionAttemptFailed'. doConnect returns the errno instead.
+      process.nextTick(afterConnect, err, self._handle, req, true, true);
+      return;
+    }
   }
 
   if (err) {

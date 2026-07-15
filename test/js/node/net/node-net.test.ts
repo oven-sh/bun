@@ -683,6 +683,161 @@ it("should handle connection error (unix)", done => {
   });
 });
 
+describe("net.Socket node compatibility shapes", () => {
+  type ConnectError = NodeJS.ErrnoException & { address?: string; port?: number };
+
+  it("timeout and bufferSize are undefined until the socket has a handle", () => {
+    const socket = new Socket();
+    socket.on("error", () => {});
+    try {
+      expect(socket.timeout).toBeUndefined();
+      expect(socket.bufferSize).toBeUndefined();
+
+      socket.setTimeout(60_000);
+      expect(socket.timeout).toBe(60_000);
+    } finally {
+      socket.destroy();
+    }
+  });
+
+  it("bufferSize reports writableLength once a handle exists", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<number | undefined>();
+    const server = createServer(socket => socket.resume());
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const socket = connect(port, "127.0.0.1", () => {
+        resolve(socket.bufferSize);
+        socket.destroy();
+      });
+      socket.on("error", reject);
+      expect(await promise).toBe(0);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("address() on an IPC socket is an empty object", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const path = join(socket_domain, `address-${randomUUID()}.sock`);
+    const server = createServer(connection => {
+      connection.on("error", () => {});
+      connection.destroy();
+    });
+    try {
+      await new Promise<void>(r => server.listen(path, r));
+      const socket = connect({ path });
+      socket.on("error", reject);
+      socket.on("connect", () => {
+        resolve(Object.keys(socket.address()));
+        socket.destroy();
+      });
+      // Node's Pipe handle has no getsockname(), so address() is `{}`.
+      expect(await promise).toEqual([]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("address() on a TCP socket keeps node's key order", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+    const server = createServer(socket => socket.destroy());
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const socket = connect(port, "127.0.0.1", () => {
+        resolve(Object.keys(socket.address()));
+        socket.destroy();
+      });
+      socket.on("error", reject);
+      expect(await promise).toEqual(["address", "family", "port"]);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("a failed IPC connect emits 'connectionAttemptFailed' and an error without a port", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const path = join(socket_domain, `missing-${randomUUID()}.sock`);
+    const events: string[] = [];
+    let attemptArgs: unknown[] | undefined;
+    let error: ConnectError | undefined;
+
+    const socket = connect({ path });
+    socket.on("connectionAttemptFailed", (...args: unknown[]) => {
+      events.push("connectionAttemptFailed");
+      attemptArgs = args.slice(0, 3);
+    });
+    socket.on("error", err => {
+      events.push("error");
+      error = err;
+    });
+    socket.on("connect", () => resolve());
+    socket.on("close", () => resolve());
+    await promise;
+
+    expect(events).toEqual(["connectionAttemptFailed", "error"]);
+    // Node reports the pipe path as the address, with no port/addressType.
+    expect(attemptArgs).toEqual([path, undefined, undefined]);
+    expect(error?.code).toBe("ENOENT");
+    expect(error?.message).toBe(`connect ENOENT ${path}`);
+    expect(Object.hasOwn(error!, "port")).toBe(false);
+  });
+
+  it("a failed TCP connect still carries a port on the error", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const server = createServer();
+    await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+    const { port } = server.address() as import("node:net").AddressInfo;
+    await new Promise<void>(r => server.close(() => r()));
+
+    let error: ConnectError | undefined;
+    const socket = connect(port, "127.0.0.1");
+    socket.on("error", err => (error = err));
+    socket.on("connect", () => resolve());
+    socket.on("close", () => resolve());
+    await promise;
+
+    expect(error?.code).toBe("ECONNREFUSED");
+    expect(Object.hasOwn(error!, "port")).toBe(true);
+    expect(error?.port).toBe(port);
+  });
+
+  // The pipe connect error is delivered on a later tick, so a teardown can land
+  // in between. Mirrors the re-entrancy #32660 fixed on the TCP side.
+  it.each([
+    ["destroyed before the deferred connect error lands", (s: Socket) => s.destroy()],
+    [
+      "destroyed from the connectionAttemptFailed listener",
+      (s: Socket) => s.on("connectionAttemptFailed", () => s.destroy()),
+    ],
+  ])("an IPC socket %s still closes exactly once", async (_label, teardown) => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const path = join(socket_domain, `teardown-${randomUUID()}.sock`);
+    let closes = 0;
+    const uncaught: Error[] = [];
+    const onUncaught = (err: Error) => uncaught.push(err);
+    process.on("uncaughtException", onUncaught);
+    try {
+      const socket = connect({ path });
+      socket.on("error", () => {});
+      socket.on("close", () => {
+        closes++;
+        resolve();
+      });
+      teardown(socket);
+      await promise;
+      // Let the deferred afterConnect tick land on an already-dead socket.
+      await new Promise<void>(r => setImmediate(r));
+      expect(uncaught).toEqual([]);
+      expect(closes).toBe(1);
+      expect(socket.destroyed).toBe(true);
+    } finally {
+      process.removeListener("uncaughtException", onUncaught);
+    }
+  });
+});
+
 it("Socket has a prototype", () => {
   function Connection() {}
   function Connection2() {}

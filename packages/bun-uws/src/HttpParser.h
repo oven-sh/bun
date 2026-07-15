@@ -414,12 +414,46 @@ namespace uWS
     struct HttpParser
     {
 
+    public:
+        /* Set by the request handler when the response is asynchronous. While set, the
+         * parser will not dispatch the next pipelined request; any remaining bytes are
+         * buffered in pendingPipeline and re-parsed after the response completes. */
+        bool deferParsing = false;
+        bool pipelineOverflowed = false;
+
+        bool hasPendingPipeline() {
+            return pendingPipeline.length() > 0;
+        }
+
+        /* Move the buffered pipelined request bytes out, ensuring the parser's
+         * post-padding margin is available past the returned length. */
+        std::string takePendingPipeline() {
+            std::string out = std::move(pendingPipeline);
+            pendingPipeline.clear();
+            out.reserve(out.length() + MINIMUM_HTTP_POST_PADDING);
+            return out;
+        }
+
     private:
         std::string fallback;
+        std::string pendingPipeline;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+
+        void bufferPendingPipeline(const char *data, unsigned int length) {
+            if (pipelineOverflowed) {
+                return;
+            }
+            if (pendingPipeline.length() + length > MAX_FALLBACK_SIZE) {
+                pipelineOverflowed = true;
+                pendingPipeline.clear();
+                pendingPipeline.shrink_to_fit();
+                return;
+            }
+            pendingPipeline.append(data, length);
+        }
 
         /* Returns UINT64_MAX on error. Maximum 999999999 is allowed. */
         static uint64_t toUnsignedInteger(std::string_view str) {
@@ -868,6 +902,12 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
+            /* An earlier request on this connection started an async response and has not
+             * finished writing it. Stop here so the next pipelined request is buffered
+             * rather than dispatched on top of the in-flight one. */
+            if (deferParsing) {
+                break;
+            }
             auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
@@ -1156,6 +1196,15 @@ public:
             }
         }
 
+        /* A previous async response on this connection is still being written;
+         * buffer any further request bytes until it completes. */
+        if (deferParsing) {
+            if (length) {
+                bufferPendingPipeline(data, length);
+            }
+            return HttpParserResult::success(0, user);
+        }
+
         HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
@@ -1168,7 +1217,9 @@ public:
         length -= consumedBytes;
 
         if (length) {
-            if (length < MAX_FALLBACK_SIZE) {
+            if (deferParsing) {
+                bufferPendingPipeline(data, length);
+            } else if (length < MAX_FALLBACK_SIZE) {
                 fallback.append(data, length);
             } else {
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);

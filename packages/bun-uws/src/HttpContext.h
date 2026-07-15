@@ -146,6 +146,41 @@ public:
         return &fromSocket(s)->data;
     }
 
+    /* Re-run the parser over request bytes that were buffered while an earlier async
+     * response on this connection was still being written. Called from markDone(). */
+    static void drainPendingPipeline(us_socket_t *s) {
+        HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext(s);
+
+        httpResponseData->deferParsing = false;
+
+        if (!httpResponseData->hasPendingPipeline() && !httpResponseData->pipelineOverflowed) {
+            return;
+        }
+
+        if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
+            return;
+        }
+
+        /* When called from inside onData (a synchronous response completed inside the
+         * parse loop), the outer loop will dispatch the next pipelined request itself. */
+        if (getSocketContextDataS(s)->flags.isParsingHttp) {
+            return;
+        }
+
+        /* The just-finished response asked to close the connection, or the pipeline
+         * buffer overflowed: do not dispatch the buffered requests. The existing
+         * close-on-drain logic in internalEnd/onWritable tears down the connection. */
+        if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) || httpResponseData->pipelineOverflowed) {
+            httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            httpResponseData->pipelineOverflowed = false;
+            (void) httpResponseData->takePendingPipeline();
+            return;
+        }
+
+        std::string deferred = httpResponseData->takePendingPipeline();
+        onData(s, deferred.data(), (int) deferred.length());
+    }
+
 private:
     /* ── vtable handlers ─────────────────────────────────────────────────── */
 
@@ -358,6 +393,15 @@ private:
             /* If we have not responded and we have a data handler, we need to timeout to enfore client sending the data */
             if (!((HttpResponse<SSL> *) s)->hasResponded() && httpResponseData->inStream) {
                 ((HttpResponse<SSL> *) s)->resetTimeout();
+            }
+
+            /* If the handler started an asynchronous response, defer parsing any further
+             * pipelined requests until it completes (markDone clears this). node:http
+             * manages its own response queue and expects concurrent dispatch, so leave
+             * it to the existing guard above. */
+            if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING)
+                && !httpContextData->flags.usingCustomExpectHandler) {
+                httpResponseData->deferParsing = true;
             }
 
             /* Continue parsing */

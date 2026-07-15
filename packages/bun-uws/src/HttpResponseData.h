@@ -58,6 +58,8 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
+
+        HttpContext<SSL>::drainPendingPipeline((us_socket_t *) uwsRes);
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */

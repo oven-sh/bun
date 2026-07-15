@@ -81,14 +81,9 @@ private:
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
-// Counts finished collections for ONE VM, so the GC controller can tell whether a collection
-// actually ran since it last looked. Per-VM rather than process-wide: every worker has its own
-// heap and its own theap, and a shared counter would let one worker's collection convince
-// another to walk its page queues.
-//
-// Counts only; does no work. `Heap::didFinishCollection` runs under whichever GCConductor holds
-// the conn -- `collectInCollectorThread` conducts async collections -- and a theap may only be
-// walked by its owner, so the JS thread reads this and acts there. Atomic for the same reason.
+// Per-VM, not process-wide: each worker has its own heap and theap, and a shared count would let
+// one worker's collection convince another to walk its page queues. Counts only -- it fires under
+// whichever GCConductor holds the conn, so the owning JS thread reads this and does the work.
 class GCCycleObserver final : public JSC::HeapObserver {
 public:
     void willGarbageCollect() final {}

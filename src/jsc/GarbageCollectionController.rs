@@ -223,18 +223,9 @@ impl GarbageCollectionController {
         self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
     }
 
-    /// Hand this thread's empty mimalloc pages back to the arena, which schedules their purge
-    /// and wakes the scavenger to do the madvise off this thread.
-    ///
-    /// This is the operation that demonstrably fixes the sustained-load ratchet: sampling
-    /// `bun:jsc` heapStats() once a second cures it, and the reason is not the GC people assumed
-    /// -- heapStats' `collectNow` is guarded by `heap.size() == 0` and never fires on a live
-    /// process. It is `mi_collect(false)` (BunJSCModule.h), which is exactly
-    /// `mi_theap_collect(default theap)`. So do it deliberately instead of as a side effect of
-    /// asking for statistics.
-    ///
-    /// Cheap enough to do per collection: `mi_theap_collect` walks the page queues and frees
-    /// empty pages, with no free-list hole scan -- that is `purge_holes`, a different function.
+    /// The theap collect that `heapStats()` does incidentally via `mi_collect(false)`, which is
+    /// the only demonstrated cure for the sustained-load ratchet. Frees empty pages back to the
+    /// arena and wakes the scavenger to madvise them; no free-list hole scan.
     #[inline]
     fn return_pages_to_arena() {
         if bun_core::USE_MIMALLOC {
@@ -245,19 +236,10 @@ impl GarbageCollectionController {
         }
     }
 
-    /// Return this thread's now-empty mimalloc pages to the arena, once per finished collection,
-    /// for a loop that never parks.
-    ///
-    /// `mi_theap_collect` is the only demonstrated cure for the sustained-load ratchet: sampling
-    /// heapStats() once a second fixes it, and its one relevant action is `mi_collect(false)`
-    /// (BunJSCModule.h), which is exactly this call. Its `collectNow` is guarded by
-    /// `heap.size() == 0` and never fires on a live process, so no GC is involved in the cure.
-    ///
-    /// Two gates, both load-bearing. A loop that parks already gets its theap swept at the park,
-    /// so doing it here as well is pure cost -- an earlier revision that ignored this measured
-    /// -4.5% rps on fastify (66.1k -> 63.1k, n=6). And the cycle count is the only honest "a
-    /// collection finished" signal: `perform_gc` merely *requests* one via `collect_async`. It
-    /// also bounds this to once per collection, which is why no heap-size check is needed.
+    /// Give this thread's now-empty mimalloc pages back to the arena, once per finished
+    /// collection, for a loop that never parks -- a loop that parks is already swept there, and
+    /// doing it twice is measurable. `perform_gc` only *requests* a collection, so the cycle
+    /// count is the one honest "it finished" signal.
     pub fn maybe_return_pages(&mut self, vm: &VM) {
         if self.disabled {
             return;

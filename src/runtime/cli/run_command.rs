@@ -1144,8 +1144,32 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
         bun_ast::initialize_store();
 
-        // Load bunfig.toml unless disabled by compile flags. Config loading
-        // with execArgv is handled earlier in `Command::start` via `init()`.
+        // Load system-wide bunfig via BUN_SYSTEM_CONFIG (administrator policy
+        // override) even when DISABLE_AUTOLOAD_BUNFIG is set. Gated to match
+        // `load_config()`'s behavior — only loads when BUN_SYSTEM_CONFIG is
+        // explicitly set, so standalone binaries don't probe /etc/bunfig.toml
+        // on every invocation. The `has_loaded_system_config` guard inside
+        // `load_system_bunfig` makes this a no-op when `load_config` already
+        // ran via the execArgv branch in `Command::start`.
+        if bun_core::env_var::BUN_SYSTEM_CONFIG
+            .get_not_empty()
+            .is_some()
+        {
+            if let Err(err) = arguments::load_system_bunfig(CommandTag::RunCommand, ctx) {
+                // SAFETY: process-global Log; see `load_bunfig` note in arguments.rs.
+                let log = unsafe { &mut *ctx.log };
+                if log.has_any() {
+                    let _ = log.print(std::ptr::from_mut(bun_core::Output::error_writer()));
+                    bun_core::Output::print_error("\n");
+                }
+                bun_core::Output::err(err, "failed to load bunfig", ());
+                bun_core::Global::crash();
+            }
+        }
+
+        // Load project bunfig.toml unless disabled by compile flags. Config
+        // loading with execArgv is handled earlier in `Command::start` via
+        // `init()`.
         if !ctx.debug.loaded_bunfig && !graph.flags.contains(GraphFlags::DISABLE_AUTOLOAD_BUNFIG) {
             arguments::load_config_path(
                 CommandTag::RunCommand,

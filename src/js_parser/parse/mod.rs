@@ -1541,34 +1541,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(stmts)
     }
 
-    /// One-token lookahead: does "=>" immediately follow the current token?
-    /// The lexer is always restored, even if scanning the next token fails.
-    fn check_for_arrow_after_the_current_token(&mut self) -> bool {
+    /// One-token lookahead: advance past the current token, evaluate `pred`,
+    /// then unconditionally restore the lexer (including `is_log_disabled`).
+    #[inline]
+    pub(crate) fn next_token_matches(&mut self, pred: impl FnOnce(&Self) -> bool) -> bool {
         let old_lexer = self.lexer.snapshot();
-        let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
-
-        let is_arrow_after_this_token =
-            matches!(self.lexer.next(), Ok(())) && self.lexer.token == T::TEqualsGreaterThan;
-
+        let result = matches!(self.lexer.next(), Ok(())) && pred(self);
         self.lexer.restore(&old_lexer);
-        self.lexer.is_log_disabled = old_log_disabled;
-        is_arrow_after_this_token
+        result
     }
 
-    /// One-token lookahead: is the contextual keyword "of" the next token?
-    /// Used to detect the literal "async of" sequence in a for-loop header.
-    pub(crate) fn check_for_of_after_the_current_token(&mut self) -> bool {
-        let old_lexer = self.lexer.snapshot();
-        let old_log_disabled = self.lexer.is_log_disabled;
-        self.lexer.is_log_disabled = true;
-
-        let is_of_after_this_token =
-            matches!(self.lexer.next(), Ok(())) && self.lexer.is_contextual_keyword(b"of");
-
-        self.lexer.restore(&old_lexer);
-        self.lexer.is_log_disabled = old_log_disabled;
-        is_of_after_this_token
+    #[inline]
+    fn check_for_arrow_after_the_current_token(&mut self) -> bool {
+        self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
     }
 
     /// This parses an expression. This assumes we've already parsed the "async"

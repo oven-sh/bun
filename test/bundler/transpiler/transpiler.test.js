@@ -1276,6 +1276,7 @@ export default class {
       // lookahead above stops the arrow commit; see the [lookahead != async of]
       // restriction on the for-of grammar.
       ts.expectParseError("for (async of [7]);", 'For loop initializers cannot start with "async of"');
+      ts.expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
       ts.expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
       ts.expectPrinted_("for (async as any of [7]);", "for ((async) of [7])\n  ;\n");
       ts.expectPrinted_("for (async satisfies T of [7]);", "for ((async) of [7])\n  ;\n");
@@ -2271,6 +2272,11 @@ console.log(<div {...obj} key="after" />);`),
 
       // The keyword spelling is a syntax error, which is why the parentheses matter
       expect(() => parsed("for (async of [7]);", false, false)).toThrow();
+      expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
+      expectPrinted_(
+        "async function f() { for await (async\nof [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
     });
 
     it("await", () => {

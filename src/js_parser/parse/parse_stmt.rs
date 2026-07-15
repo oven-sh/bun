@@ -535,7 +535,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut bad_async_range: Option<bun_ast::Range> = None;
             if !is_for_await
                 && p.lexer.is_contextual_keyword(b"async")
-                && p.check_for_of_after_the_current_token()
+                && p.next_token_matches(|p| p.lexer.is_contextual_keyword(b"of"))
             {
                 bad_async_range = Some(p.lexer.range());
             }

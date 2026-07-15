@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { once } from "events";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, invalidTls, tmpdirSync } from "harness";
-import type { AddressInfo } from "node:net";
+import net, { type AddressInfo } from "node:net";
 import type { Server, TLSSocket } from "node:tls";
 import { join } from "path";
 import tls from "tls";
@@ -383,6 +383,35 @@ it("client sees a fatal TLS alert when the server rejects its certificate under 
       hadError: true,
       serverClientError: "DEPTH_ZERO_SELF_SIGNED_CERT",
     });
+  } finally {
+    server.close();
+  }
+});
+
+it("tlsClientError keeps the specific reason for non-verification handshake failures under requestCert + rejectUnauthorized", async () => {
+  // SSL_get_verify_result is X509_V_ERR_INVALID_CALL before verification runs,
+  // so the X509-reason dispatch must only fire when a peer cert was actually
+  // presented; plain-HTTP and no-cert clients keep their parked reason.
+  const errors: (string | undefined)[] = [];
+  const server = tls.createServer(
+    { key: serverTls.key, cert: serverTls.cert, ca: clientTls.ca, requestCert: true, rejectUnauthorized: true },
+    s => s.end(),
+  );
+  server.on("tlsClientError", e => errors.push(e?.code));
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const port = (server.address() as AddressInfo).port;
+  try {
+    await new Promise<void>(resolve => {
+      const sock = net.connect(port, "127.0.0.1", () => sock.write("GET / HTTP/1.1\r\n\r\n"));
+      sock.on("error", () => {});
+      sock.on("close", () => resolve());
+    });
+    await new Promise<void>(resolve => {
+      const c = tls.connect({ host: "127.0.0.1", port, rejectUnauthorized: false });
+      c.on("error", () => {});
+      c.on("close", () => resolve());
+    });
+    expect(errors).toEqual(["ERR_SSL_HTTP_REQUEST", "ERR_SSL_PEER_DID_NOT_RETURN_A_CERTIFICATE"]);
   } finally {
     server.close();
   }

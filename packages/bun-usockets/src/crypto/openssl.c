@@ -1512,20 +1512,24 @@ static void ssl_discard_parked_reason(struct us_socket_t *s) {
 static void ssl_trigger_handshake(struct us_socket_t *s, int success) {
   s->ssl_handshake_state = HANDSHAKE_COMPLETED;
   if (!success) {
-    /* Server cert-reject failures report SSL_get_verify_result directly; gate
-     * on the same mode us_verify_callback aborts under so a later protocol
-     * failure on a rejectUnauthorized:false server keeps its parked reason. */
+    /* Server cert-reject failures report SSL_get_verify_result directly. Gate
+     * on a presented peer cert so pre-verify failures (plain HTTP, no cert,
+     * bad record) keep their parked reason instead of INVALID_CALL. */
     if (s_ssl(s) && SSL_is_server(s_ssl(s)) &&
         (SSL_get_verify_mode(s_ssl(s)) & SSL_VERIFY_FAIL_IF_NO_PEER_CERT)) {
-      long x509_err = SSL_get_verify_result(s_ssl(s));
-      if (x509_err != X509_V_OK) {
-        ssl_discard_parked_reason(s);
-        struct us_bun_verify_error_t verify_error = {
-            .error = x509_err,
-            .code = us_X509_error_code(x509_err),
-            .reason = X509_verify_cert_error_string(x509_err)};
-        us_dispatch_handshake(s, 0, verify_error);
-        return;
+      X509 *peer_cert = SSL_get_peer_certificate(s_ssl(s));
+      if (peer_cert) {
+        X509_free(peer_cert);
+        long x509_err = SSL_get_verify_result(s_ssl(s));
+        if (x509_err != X509_V_OK) {
+          ssl_discard_parked_reason(s);
+          struct us_bun_verify_error_t verify_error = {
+              .error = x509_err,
+              .code = us_X509_error_code(x509_err),
+              .reason = X509_verify_cert_error_string(x509_err)};
+          us_dispatch_handshake(s, 0, verify_error);
+          return;
+        }
       }
     }
     /* Fatal protocol errors (wrong version number, bad record, ...) parked

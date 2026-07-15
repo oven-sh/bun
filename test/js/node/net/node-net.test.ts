@@ -1,7 +1,16 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectMaxObjectTypeCount,
+  isASAN,
+  isDebug,
+  isWindows,
+  tls as tlsCert,
+  tmpdirSync,
+} from "harness";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import {
@@ -17,6 +26,8 @@ import {
   Stream,
 } from "node:net";
 import { join } from "node:path";
+import { Duplex } from "node:stream";
+import tls from "node:tls";
 
 const socket_domain = tmpdirSync();
 
@@ -1063,4 +1074,669 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+describe("net.Socket onread", () => {
+  function pattern(length: number) {
+    const buf = Buffer.alloc(length);
+    for (let i = 0; i < length; i++) buf[i] = i & 0xff;
+    return buf;
+  }
+
+  // A generic Duplex in front of a socket, so tls.connect({ socket }) takes the
+  // TLS-over-Duplex path rather than upgrading the native handle.
+  class SocketProxy extends Duplex {
+    constructor(readonly socket: Socket) {
+      super();
+      socket.on("data", chunk => {
+        if (!this.push(chunk)) socket.pause();
+      });
+      socket.on("end", () => this.push(null));
+      socket.on("close", () => this.push(null));
+      socket.on("error", err => this.destroy(err));
+      socket.on("drain", () => this.emit("drain"));
+    }
+    _read() {
+      if (this.socket.isPaused()) this.socket.resume();
+    }
+    _write(chunk: Buffer, encoding: BufferEncoding, callback: (err?: Error | null) => void) {
+      this.socket.write(chunk, encoding, callback);
+    }
+    _final(callback: (err?: Error | null) => void) {
+      this.socket.end();
+      callback();
+    }
+  }
+
+  const listen = (server: Server | import("node:tls").Server) =>
+    new Promise<number>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve((server.address() as import("node:net").AddressInfo).port));
+    });
+
+  // `fail` races the server's errors against the test body, so a server-side
+  // failure surfaces as that error instead of hanging on a promise the server
+  // can no longer settle. The target carries the host the server bound to, so a
+  // connect can never fall back to resolving "localhost".
+  async function withServer(
+    onConnection: (c: Socket, fail: (err: Error) => void) => void,
+    run: (target: { port: number; host: string }) => Promise<void>,
+  ) {
+    const failed = Promise.withResolvers<never>();
+    failed.promise.catch(() => {}); // an error after the body finished is not a failure
+    const server = createServer(c => onConnection(c, failed.reject));
+    try {
+      const port = await listen(server);
+      await Promise.race([run({ port, host: "127.0.0.1" }), failed.promise]);
+    } finally {
+      server.close();
+    }
+  }
+
+  it("hands the callback the user's own buffer, never more than its length", async () => {
+    const payload = pattern(64 * 1024);
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.end(payload);
+      },
+      async target => {
+        const buffer = Buffer.alloc(100);
+        const received: Buffer[] = [];
+        const nreads: number[] = [];
+        let dataEvents = 0;
+        let sameBuffer = true;
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer,
+            callback(nread, buf) {
+              if (buf !== buffer) sameBuffer = false;
+              nreads.push(nread);
+              received.push(Buffer.from(buf.subarray(0, nread)));
+            },
+          },
+        });
+        try {
+          socket.on("data", () => dataEvents++);
+          socket.on("error", reject);
+          socket.on("end", resolve);
+          await promise;
+          expect({
+            sameBuffer,
+            // How many deliveries there are and how big each one is depends on
+            // how the kernel frames the payload; the bound does not.
+            outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
+            dataEvents,
+            payload: Buffer.concat(received),
+          }).toEqual({
+            sameBuffer: true,
+            outOfRange: [],
+            dataEvents: 0,
+            payload,
+          });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  it("stops reading when the callback returns false, and resumes on resume()", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(4096, 0x5a);
+    const secondWritten = Promise.withResolvers<void>();
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.write(first);
+        c.on("data", () => c.write(second, () => secondWritten.resolve()));
+      },
+      async target => {
+        const buffer = Buffer.alloc(512);
+        const received: Buffer[] = [];
+        const nreads: number[] = [];
+        let calls = 0;
+        let total = 0;
+        const firstCall = Promise.withResolvers<void>();
+        const everything = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer,
+            callback(nread, buf) {
+              calls++;
+              total += nread;
+              nreads.push(nread);
+              received.push(Buffer.from(buf.subarray(0, nread)));
+              if (calls === 1) {
+                firstCall.resolve();
+                return false;
+              }
+              if (total === first.length + second.length) everything.resolve();
+            },
+          },
+        });
+        try {
+          socket.on("error", err => {
+            firstCall.reject(err);
+            everything.reject(err);
+          });
+          await firstCall.promise;
+          // Ask for the second payload, then give the event loop every chance to
+          // deliver it: reads are stopped, so it cannot reach the callback.
+          socket.write("go");
+          await secondWritten.promise;
+          for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+          expect(calls).toBe(1);
+
+          socket.resume();
+          await everything.promise;
+          expect({
+            outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
+            payload: Buffer.concat(received),
+          }).toEqual({
+            outOfRange: [],
+            payload: Buffer.concat([first, second]),
+          });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  // Node documents pause() as behaving the way returning false does, and its
+  // readStop() halts the next delivery even part-way through a chunk.
+  it("stops reading when the callback pauses the socket rather than returning false", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.write(payload);
+      },
+      async target => {
+        const buffer = Buffer.alloc(64);
+        const received: Buffer[] = [];
+        let calls = 0;
+        let paused = true;
+        const firstCall = Promise.withResolvers<void>();
+        const everything = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer,
+            callback(nread, buf) {
+              calls++;
+              received.push(Buffer.from(buf.subarray(0, nread)));
+              if (paused) {
+                // Back-pressure through pause(), not a false return.
+                this.pause();
+                firstCall.resolve();
+              } else if (Buffer.concat(received).length === payload.length) {
+                everything.resolve();
+              }
+            },
+          },
+        });
+        try {
+          socket.on("error", err => {
+            firstCall.reject(err);
+            everything.reject(err);
+          });
+          await firstCall.promise;
+          for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+          // How big that one delivery was is up to how the kernel framed the
+          // payload; that there was exactly one of it, and that it counted
+          // towards bytesRead without overrunning the buffer, is not.
+          expect({
+            calls,
+            bytesOutOfRange: socket.bytesRead < 1 || socket.bytesRead > buffer.length,
+          }).toEqual({ calls: 1, bytesOutOfRange: false });
+
+          paused = false;
+          socket.resume();
+          await everything.promise;
+          expect(Buffer.concat(received)).toEqual(payload);
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  // Node delivers asynchronously, so the stream is already flowing again before
+  // a callback can pause it. Bun flushes the held bytes inside resume(), so the
+  // pause it takes there has to survive resume()'s own tail call.
+  it("keeps a pause() the callback takes during resume()'s flush", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.write(payload);
+      },
+      async target => {
+        const buffer = Buffer.alloc(64);
+        let calls = 0;
+        const firstCall = Promise.withResolvers<void>();
+        const secondCall = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer,
+            callback() {
+              calls++;
+              if (calls === 1) {
+                firstCall.resolve();
+                return false; // hold the rest of the chunk back
+              }
+              this.pause(); // ... and pause from inside the flush it gets handed to
+              secondCall.resolve();
+            },
+          },
+        });
+        try {
+          socket.on("error", err => {
+            firstCall.reject(err);
+            secondCall.reject(err);
+          });
+          await firstCall.promise;
+
+          socket.resume();
+          await secondCall.promise;
+          expect({ calls, isPaused: socket.isPaused() }).toEqual({ calls: 2, isPaused: true });
+
+          // And the pause is real, not just a flag: nothing more is delivered.
+          for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+          expect(calls).toBe(2);
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  // A pause() the user never lifted belongs to the socket, not to one handle:
+  // Node's afterConnect only starts reads when the stream isn't paused, and
+  // that flag survives both the first connect() and a later reconnect.
+  it("carries an unlifted pause() across connect() and a reconnect", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(256, 0xbb);
+    const serverA = createServer(c => {
+      // The client destroys mid-stream, so an unflushed write reports ECONNRESET.
+      c.on("error", () => {});
+      c.write(first);
+    });
+    const everything = Promise.withResolvers<void>();
+    const serverB = createServer(c => {
+      c.on("error", err => everything.reject(err));
+      c.write(second);
+    });
+    try {
+      const [portA, portB] = [await listen(serverA), await listen(serverB)];
+      const buffer = Buffer.alloc(64);
+      const received: Buffer[] = [];
+      let calls = 0;
+      const socket = new Socket({
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            received.push(Buffer.from(buf.subarray(0, nread)));
+            if (Buffer.concat(received).length === second.length) everything.resolve();
+          },
+        },
+      });
+      try {
+        socket.on("error", err => everything.reject(err));
+        socket.pause();
+
+        socket.connect(portA, "127.0.0.1");
+        for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+        expect(calls).toBe(0);
+
+        const closed = Promise.withResolvers<void>();
+        socket.once("close", () => closed.resolve());
+        socket.destroy();
+        await closed.promise;
+
+        socket.connect(portB, "127.0.0.1");
+        for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+        expect(calls).toBe(0);
+
+        // Only the second connection's bytes: the first's were dropped with it.
+        socket.resume();
+        await everything.promise;
+        expect(Buffer.concat(received)).toEqual(second);
+      } finally {
+        socket.destroy();
+      }
+    } finally {
+      serverA.close();
+      serverB.close();
+    }
+  });
+
+  it("calls the buffer factory before the first read and after every delivery", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.end(payload);
+      },
+      async target => {
+        const generated: Buffer[] = [];
+        const delivered: Buffer[] = [];
+        const received: Buffer[] = [];
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer() {
+              const buf = Buffer.alloc(512);
+              generated.push(buf);
+              return buf;
+            },
+            callback(nread, buf) {
+              delivered.push(buf);
+              received.push(Buffer.from(buf.subarray(0, nread)));
+            },
+          },
+        });
+        try {
+          socket.on("error", reject);
+          socket.on("end", resolve);
+          await promise;
+          expect({
+            // One call before the first read, one after each delivery.
+            generated: generated.length,
+            freshBufferEachTime: delivered.every((buf, i) => buf === generated[i]),
+            payload: Buffer.concat(received),
+          }).toEqual({
+            generated: delivered.length + 1,
+            freshBufferEachTime: true,
+            payload,
+          });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
+
+  // TLS over a generic Duplex decrypts and dispatches without re-checking the
+  // socket's pause flag, so a stopped callback can still be handed more bytes.
+  // Those have to queue up behind the ones it never took.
+  it("queues bytes that arrive after the callback stopped reads", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(4096, 0x5a);
+    const secondWritten = Promise.withResolvers<void>();
+    const firstCall = Promise.withResolvers<void>();
+    const everything = Promise.withResolvers<void>();
+    // Nothing tears the connection down mid-stream here, so a server-side error
+    // is a real failure: surface it instead of hanging on a promise it broke.
+    const fail = (err: Error) => {
+      secondWritten.reject(err);
+      firstCall.reject(err);
+      everything.reject(err);
+    };
+    const server = tls.createServer({ cert: tlsCert.cert, key: tlsCert.key }, c => {
+      c.on("error", fail);
+      c.write(first);
+      c.on("data", () => c.write(second, () => secondWritten.resolve()));
+    });
+    let raw: Socket | undefined;
+    let socket: import("node:tls").TLSSocket | undefined;
+    try {
+      const port = await listen(server);
+      raw = connect({ port, host: "127.0.0.1" });
+      const proxy = new SocketProxy(raw);
+
+      const buffer = Buffer.alloc(512);
+      const received: Buffer[] = [];
+      const nreads: number[] = [];
+      let calls = 0;
+      let total = 0;
+      socket = tls.connect({
+        socket: proxy,
+        servername: "localhost",
+        rejectUnauthorized: false,
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            total += nread;
+            nreads.push(nread);
+            received.push(Buffer.from(buf.subarray(0, nread)));
+            if (calls === 1) {
+              firstCall.resolve();
+              return false;
+            }
+            if (total === first.length + second.length) everything.resolve();
+          },
+        },
+      });
+      socket.on("error", err => {
+        firstCall.reject(err);
+        everything.reject(err);
+      });
+
+      await firstCall.promise;
+      socket.write("go");
+      await secondWritten.promise;
+      for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+      expect(calls).toBe(1);
+
+      socket.resume();
+      await everything.promise;
+      expect({
+        outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
+        payload: Buffer.concat(received),
+      }).toEqual({
+        outOfRange: [],
+        payload: Buffer.concat([first, second]),
+      });
+    } finally {
+      socket?.destroy();
+      raw?.destroy();
+      server.close();
+    }
+  });
+
+  // Same transport: the FIN arrives while the callback is stopped, and ending the
+  // readable side there would strand the bytes queued in front of it.
+  it("delays the end of the readable side until the callback takes the held bytes", async () => {
+    const payload = pattern(4096);
+    const firstCall = Promise.withResolvers<void>();
+    const endEvent = Promise.withResolvers<void>();
+    // The client only tears down once the body is finished, so a server-side
+    // error is a real failure rather than the expected mid-stream reset.
+    const fail = (err: Error) => {
+      firstCall.reject(err);
+      endEvent.reject(err);
+    };
+    const server = tls.createServer({ cert: tlsCert.cert, key: tlsCert.key }, c => {
+      c.on("error", fail);
+      c.end(payload); // payload and FIN in one go
+    });
+    let raw: Socket | undefined;
+    let socket: import("node:tls").TLSSocket | undefined;
+    try {
+      const port = await listen(server);
+      raw = connect({ port, host: "127.0.0.1" });
+      const proxy = new SocketProxy(raw);
+
+      const buffer = Buffer.alloc(512);
+      const received: Buffer[] = [];
+      let calls = 0;
+      let ended = false;
+      socket = tls.connect({
+        socket: proxy,
+        servername: "localhost",
+        rejectUnauthorized: false,
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            received.push(Buffer.from(buf.subarray(0, nread)));
+            if (calls === 1) {
+              firstCall.resolve();
+              return false;
+            }
+          },
+        },
+      });
+      socket.on("error", fail);
+      socket.on("end", () => {
+        ended = true;
+        endEvent.resolve();
+      });
+
+      await firstCall.promise;
+      for (let i = 0; i < 50; i++) await new Promise(r => setImmediate(r));
+      expect({ ended, calls }).toEqual({ ended: false, calls: 1 });
+
+      socket.resume();
+      await endEvent.promise;
+      expect(Buffer.concat(received)).toEqual(payload);
+    } finally {
+      socket?.destroy();
+      raw?.destroy();
+      server.close();
+    }
+  });
+
+  it("stops delivering a chunk the moment the callback destroys the socket", async () => {
+    const payload = pattern(4096);
+    await withServer(
+      c => {
+        // The client destroys mid-stream, so an unflushed write can surface here
+        // as ECONNRESET/EPIPE; that is the behavior under test, not a failure.
+        c.on("error", () => {});
+        c.end(payload);
+      },
+      async target => {
+        const buffer = Buffer.alloc(512);
+        const nreads: number[] = [];
+        const closed = Promise.withResolvers<void>();
+        const socket = connect({
+          ...target,
+          onread: {
+            buffer,
+            callback(nread) {
+              nreads.push(nread);
+              socket.destroy();
+            },
+          },
+        });
+        socket.on("error", closed.reject);
+        socket.on("close", () => closed.resolve());
+        await closed.promise;
+        // The remaining slices of that chunk must not reach a destroyed socket.
+        expect({
+          deliveries: nreads.length,
+          outOfRange: nreads.filter(nread => nread < 1 || nread > buffer.length),
+        }).toEqual({ deliveries: 1, outOfRange: [] });
+      },
+    );
+  });
+
+  // Bytes the callback never took belong to the connection they arrived on:
+  // Node leaves them unread in the fd it is about to close.
+  it("does not replay bytes held back from a previous connection", async () => {
+    const first = pattern(4096);
+    const second = Buffer.alloc(256, 0xbb);
+    const firstCall = Promise.withResolvers<void>();
+    const ended = Promise.withResolvers<void>();
+    const serverA = createServer(c => {
+      // The client destroys mid-stream, so an unflushed write reports ECONNRESET.
+      c.on("error", () => {});
+      c.write(first);
+    });
+    const serverB = createServer(c => {
+      // Nothing tears this one down early, so an error here is a real failure.
+      c.on("error", err => ended.reject(err));
+      c.end(second);
+    });
+    try {
+      const [portA, portB] = [await listen(serverA), await listen(serverB)];
+      const buffer = Buffer.alloc(64);
+      const afterReconnect: Buffer[] = [];
+      let reconnected = false;
+      let calls = 0;
+      const socket = new Socket({
+        onread: {
+          buffer,
+          callback(nread, buf) {
+            calls++;
+            if (reconnected) afterReconnect.push(Buffer.from(buf.subarray(0, nread)));
+            if (calls === 1) {
+              // Holds back the rest of the first connection's chunk.
+              firstCall.resolve();
+              return false;
+            }
+          },
+        },
+      });
+      try {
+        socket.on("error", err => {
+          firstCall.reject(err);
+          ended.reject(err);
+        });
+        socket.connect(portA, "127.0.0.1");
+        await firstCall.promise;
+
+        const closed = Promise.withResolvers<void>();
+        socket.once("close", () => closed.resolve());
+        socket.destroy();
+        await closed.promise;
+
+        reconnected = true;
+        socket.once("end", () => ended.resolve());
+        socket.connect(portB, "127.0.0.1");
+        await ended.promise;
+
+        expect({
+          outOfRange: afterReconnect.map(chunk => chunk.length).filter(length => length > buffer.length),
+          payload: Buffer.concat(afterReconnect),
+        }).toEqual({ outOfRange: [], payload: second });
+      } finally {
+        socket.destroy();
+      }
+    } finally {
+      serverA.close();
+      serverB.close();
+    }
+  });
+
+  it("ignores an onread option that does not match Node's shape", async () => {
+    // Node only installs onread when buffer is a Uint8Array or a function and
+    // callback is a function; anything else leaves the socket emitting 'data'.
+    expect(() => new Socket({ onread: "not an object" as any })).not.toThrow();
+    expect(() => new Socket({ onread: { buffer: Buffer.alloc(8) } as any })).not.toThrow();
+
+    const payload = pattern(1024);
+    await withServer(
+      (c, fail) => {
+        c.on("error", fail);
+        c.end(payload);
+      },
+      async target => {
+        const chunks: Buffer[] = [];
+        let onreadCalls = 0;
+        const { promise, resolve, reject } = Promise.withResolvers<void>();
+        const socket = connect({ ...target, onread: { callback: () => onreadCalls++ } } as any);
+        try {
+          socket.on("data", chunk => chunks.push(chunk));
+          socket.on("error", reject);
+          socket.on("end", resolve);
+          await promise;
+          expect({ onreadCalls, payload: Buffer.concat(chunks) }).toEqual({ onreadCalls: 0, payload });
+        } finally {
+          socket.destroy();
+        }
+      },
+    );
+  });
 });

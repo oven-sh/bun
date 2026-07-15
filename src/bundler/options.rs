@@ -111,6 +111,20 @@ pub fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
+/// Whether this path enables CSS modules, matching the parser gate in
+/// `ParseTask`. A bare `.module.css` basename does not qualify.
+pub(crate) fn is_css_module_path(pretty_path: &[u8]) -> bool {
+    const CSS_MODULE_SUFFIX: &[u8] = b".module.css";
+    pretty_path.len() > CSS_MODULE_SUFFIX.len()
+        && strings::has_suffix_comptime(pretty_path, CSS_MODULE_SUFFIX)
+}
+
+/// A CSS module whose JS stub (class-name map) ships as a dev-server HMR
+/// module. Server-target CSS keeps its CSS-only representation.
+pub(crate) fn is_client_css_module(target: bun_ast::Target, pretty_path: &[u8]) -> bool {
+    target == bun_ast::Target::Browser && is_css_module_path(pretty_path)
+}
+
 const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
     (b"/bun:", b""),
     // (b"/src:", b""),

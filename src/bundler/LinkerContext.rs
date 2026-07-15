@@ -883,6 +883,10 @@ impl<'a> LinkerContext<'a> {
         // has finished pushing wrapper / entry-point parts.
         {
             let loaders = self.parse_graph().input_files.items_loader();
+            let sources = self.parse_graph().input_files.items_source();
+            let targets = self.graph.ast.items_target();
+            let is_bake_dev =
+                self.options.output_format == crate::options::OutputFormat::InternalBakeDev;
             let parts_col = self.graph.ast.items_parts();
             let mut parts_live: Vec<bun_collections::AutoBitSet> =
                 Vec::with_capacity(parts_col.len());
@@ -894,6 +898,16 @@ impl<'a> LinkerContext<'a> {
                 // walks its parts, so seed the bit here to preserve the old
                 // `Part::is_live = true` initializer.
                 if loaders.get(i).is_some_and(|l| *l == Loader::Html) && parts.len() > 1 {
+                    bits.set(1);
+                }
+                // Same for a client CSS module's JS stub in the dev format:
+                // tree shaking short-circuits for CSS-repr files, and dev
+                // imports link at runtime, so nothing else marks it live.
+                if is_bake_dev
+                    && parts.len() > 1
+                    && loaders.get(i).is_some_and(|l| l.is_css())
+                    && crate::is_client_css_module(targets[i], sources[i].path.pretty)
+                {
                     bits.set(1);
                 }
                 parts_live.push(bits);
@@ -4008,6 +4022,19 @@ impl<'a> LinkerContext<'a> {
         source_index: crate::IndexInt,
     ) -> Result<(), AllocError> {
         crate::linker_context::generate_code_for_lazy_export::generate_code_for_lazy_export(
+            self,
+            source_index,
+        )
+    }
+
+    /// Thin inherent-method shim; the body lives in
+    /// `linker_context/generateCodeForLazyExport.rs`.
+    #[inline]
+    pub fn populate_css_module_lazy_export(
+        &mut self,
+        source_index: crate::IndexInt,
+    ) -> Result<(), AllocError> {
+        crate::linker_context::generate_code_for_lazy_export::populate_css_module_lazy_export(
             self,
             source_index,
         )

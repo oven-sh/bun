@@ -5135,6 +5135,7 @@ pub mod bv2_impl {
 
             self.dynamic_import_entry_points = ArrayHashMap::new();
             let mut html_files: ArrayHashMap<Index, ()> = ArrayHashMap::new();
+            let mut css_module_stubs: Vec<Index> = Vec::new();
 
             // Separate non-failing files into two lists: JS and CSS
             let js_reachable_files: &[Index] = 'reachable_files: {
@@ -5282,6 +5283,21 @@ pub mod bv2_impl {
                     }
                 }
 
+                // CSS modules also ship their JS stub (the class-name map) as a
+                // real HMR module so `import styles from "./x.module.css"`
+                // resolves in the client. Server-target CSS stays CSS-only.
+                for entry_point in start.css_entry_points.keys() {
+                    let idx = entry_point.get() as usize;
+                    if crate::is_client_css_module(
+                        asts.items_target()[idx],
+                        sources[idx].path.pretty,
+                    ) && asts.items_parts()[idx].len() > 1
+                    {
+                        js_files.push(*entry_point);
+                        css_module_stubs.push(*entry_point);
+                    }
+                }
+
                 // SAFETY: `alloc_slice_copy` returns into the bundler arena which outlives
                 // this function. Erase the `&self` lifetime via `*const` so the borrow on
                 // `self.arena()` does not extend across the `&mut self` calls below
@@ -5321,6 +5337,14 @@ pub mod bv2_impl {
                     .linker
                     .load(bundle_ptr, ep, scbs, js_reachable_files)
                     .map_err(|_| AllocError)?;
+            }
+
+            // Fill in each CSS-module stub's class-name map now; the reduced
+            // dev pipeline skips `generate_code_for_lazy_export`, which
+            // normally populates it during a full link.
+            for source_index in &css_module_stubs {
+                self.linker
+                    .populate_css_module_lazy_export(source_index.get())?;
             }
 
             // HMR skips tree-shaking, so size and seed the part-liveness bitsets

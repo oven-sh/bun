@@ -60,6 +60,7 @@ function onCreateConnection(this: any, err, socket) {
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
 const kError = Symbol("kError");
 const kPath = Symbol("kPath");
+const kRequestAsyncContext = Symbol("kRequestAsyncContext");
 
 const kLenientAll = HTTPParser.kLenientAll | 0;
 const kLenientNone = HTTPParser.kLenientNone | 0;
@@ -486,7 +487,13 @@ function ondrain() {
   const msg = this._httpMessage;
   if (msg && !msg.finished && msg[kNeedDrain]) {
     msg[kNeedDrain] = false;
-    msg.emit("drain");
+    const prev = $getInternalField($asyncContext, 0);
+    $putInternalField($asyncContext, 0, msg[kRequestAsyncContext]);
+    try {
+      msg.emit("drain");
+    } finally {
+      $putInternalField($asyncContext, 0, prev);
+    }
   }
 }
 
@@ -495,6 +502,16 @@ function socketCloseListener() {
   const req = socket._httpMessage;
   $debug("HTTP socket close");
 
+  const prev = $getInternalField($asyncContext, 0);
+  $putInternalField($asyncContext, 0, req[kRequestAsyncContext]);
+  try {
+    socketCloseListenerInner(socket, req);
+  } finally {
+    $putInternalField($asyncContext, 0, prev);
+  }
+}
+
+function socketCloseListenerInner(socket, req) {
   // NOTE: It's important to get parser here, because it could be freed by
   // the `socketOnData`.
   const parser = socket.parser;
@@ -543,6 +560,16 @@ function socketErrorListener(err) {
   const req = socket._httpMessage;
   $debug("SOCKET ERROR:", err);
 
+  const prev = $getInternalField($asyncContext, 0);
+  if (req) $putInternalField($asyncContext, 0, req[kRequestAsyncContext]);
+  try {
+    socketErrorListenerInner(socket, req, err);
+  } finally {
+    $putInternalField($asyncContext, 0, prev);
+  }
+}
+
+function socketErrorListenerInner(socket, req, err) {
   if (req) {
     // For Safety. Some additional errors might fire later on
     // and we need to make sure we don't double-fire the error event.
@@ -567,6 +594,16 @@ function socketOnEnd() {
   const req = this._httpMessage;
   const parser = this.parser;
 
+  const prev = $getInternalField($asyncContext, 0);
+  $putInternalField($asyncContext, 0, req[kRequestAsyncContext]);
+  try {
+    socketOnEndInner(socket, req, parser);
+  } finally {
+    $putInternalField($asyncContext, 0, prev);
+  }
+}
+
+function socketOnEndInner(socket, req, parser) {
   if (!req.res && !req.socket._hadError) {
     // If we don't have a response then we know that the socket
     // ended prematurely and we need to emit an error on the request.
@@ -587,6 +624,19 @@ function socketOnData(d) {
 
   $assert(parser && parser.socket === socket);
 
+  // A reused keep-alive socket fires 'data' in the context captured at
+  // connect time; re-enter the owning request's context (saved in onSocket)
+  // before the parser dispatches 'response'/'data'/'end' to user code.
+  const prev = $getInternalField($asyncContext, 0);
+  $putInternalField($asyncContext, 0, req[kRequestAsyncContext]);
+  try {
+    socketOnDataInner(socket, req, parser, d);
+  } finally {
+    $putInternalField($asyncContext, 0, prev);
+  }
+}
+
+function socketOnDataInner(socket, req, parser, d) {
   const ret = parser.execute(d);
   if (ret instanceof Error) {
     prepareError(ret, parser, d);
@@ -924,6 +974,10 @@ function listenSocketTimeout(req) {
 }
 
 ClientRequest.prototype.onSocket = function onSocket(socket, err) {
+  // Capture this request's async context so the socket-level listeners
+  // (which fire in the socket-creation context on a reused keep-alive
+  // connection) can dispatch to user code in the right AsyncLocalStorage scope.
+  this[kRequestAsyncContext] = $getInternalField($asyncContext, 0);
   // Attach the error listener synchronously so that any errors emitted on
   // the socket before onSocketNT runs (e.g. from a blocklist check or other
   // next-tick error) are forwarded to the request and can be caught by the

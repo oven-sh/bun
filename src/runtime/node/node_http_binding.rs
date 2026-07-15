@@ -1,44 +1,6 @@
-//! `node:http` native binding — `getBunServerAllClosedPromise` /
-//! `{get,set}MaxHTTPHeaderSize`.
+//! `node:http` native binding — `{get,set}MaxHTTPHeaderSize`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-
-use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
-
-pub(crate) fn get_bun_server_all_closed_promise(
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
-    if arguments.is_empty() {
-        return Err(global.throw_not_enough_arguments(
-            "getBunServerAllClosePromise",
-            1,
-            arguments.len(),
-        ));
-    }
-
-    let value = arguments[0];
-
-    // Try each heterogeneous server type in turn.
-    macro_rules! try_server {
-        ($ty:ty) => {
-            if let Some(server) = value.as_::<$ty>() {
-                // SAFETY: `JSValue::as_` returns a non-null pointer to the live
-                // JS-owned server instance; we hold the JS thread for the duration
-                // of this call so the GC cannot collect it under us.
-                return Ok(unsafe { &mut *server }.get_all_closed_promise(global));
-            }
-        };
-    }
-    try_server!(HTTPServer);
-    try_server!(HTTPSServer);
-    try_server!(DebugHTTPServer);
-    try_server!(DebugHTTPSServer);
-
-    Err(global.throw_invalid_argument_type_value("server", "bun.Server", value))
-}
 
 pub(crate) fn get_max_http_header_size(
     _global: &JSGlobalObject,

@@ -1,7 +1,17 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isLinux,
+  isMacOS,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -407,20 +417,22 @@ it("reload() works", () => {
 // PATH_MAX=4096 fits that, macOS's (1024) does not, and running 200*400 file
 // opens through Windows is too slow for CI. The leak and fix are
 // platform-independent (Route::parse).
-it.skipIf(!isLinux)("reload() does not leak route paths into the process-global intern store", async () => {
-  // Route::parse interns each route's public path, absolute path, and basename
-  // into the never-freed DirnameStore. Without content dedup, every reload()
-  // re-appended identical strings, leaking one heap buffer per append and
-  // eventually panicking with `unreachable: AllocError` when the store's slot
-  // capacity was exhausted.
-  const seg = Buffer.alloc(100, "d").toString();
-  const parts = Array.from({ length: 14 }, () => seg);
-  const files: Record<string, string> = {};
-  for (let i = 0; i < 200; i++) files[[...parts, "pages", `Page${i}.tsx`].join("/")] = "export default 1;\n";
-  using dir = tempDir("fsr-reload-intern", files);
-  const pagesDir = path.join(String(dir), ...parts, "pages");
+it.skipIf(!isLinux)(
+  "reload() does not leak route paths into the process-global intern store",
+  async () => {
+    // Route::parse interns each route's public path, absolute path, and basename
+    // into the never-freed DirnameStore. Without content dedup, every reload()
+    // re-appended identical strings, leaking one heap buffer per append and
+    // eventually panicking with `unreachable: AllocError` when the store's slot
+    // capacity was exhausted.
+    const seg = Buffer.alloc(100, "d").toString();
+    const parts = Array.from({ length: 14 }, () => seg);
+    const files: Record<string, string> = {};
+    for (let i = 0; i < 200; i++) files[[...parts, "pages", `Page${i}.tsx`].join("/")] = "export default 1;\n";
+    using dir = tempDir("fsr-reload-intern", files);
+    const pagesDir = path.join(String(dir), ...parts, "pages");
 
-  const code = /* ts */ `
+    const code = /* ts */ `
     const router = new Bun.FileSystemRouter({
       dir: ${JSON.stringify(pagesDir)},
       style: "nextjs",
@@ -440,18 +452,20 @@ it.skipIf(!isLinux)("reload() does not leak route paths into the process-global 
     if (growthMB > 110) throw new Error("leaked " + growthMB.toFixed(1) + "MB");
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--smol", "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("leaked");
-  expect(stderr).not.toContain("AllocError");
-  expect(stdout).toBe("");
-  expect(exitCode).toBe(0);
-}, 60_000);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--smol", "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("leaked");
+    expect(stderr).not.toContain("AllocError");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  60_000,
+);
 
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);

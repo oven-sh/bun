@@ -613,6 +613,39 @@ it.each([
   expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe("/helloooo");
 });
 
+// RFC 9110 15.2: a server MUST NOT send a 1xx response to an HTTP/1.0 client.
+it.each([
+  ["HTTP/1.0", false],
+  ["HTTP/1.1", true],
+])("%s request with Expect: 100-continue", async (version, expectsContinue) => {
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    async fetch(req) {
+      return new Response("body:" + (await req.text()));
+    },
+  });
+
+  const response = await new Promise<string>((resolve, reject) => {
+    const socket = net.connect(server.port, "127.0.0.1");
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(Buffer.concat(chunks).toString()));
+    socket.write(
+      `POST / ${version}\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\nExpect: 100-continue\r\n\r\nhello`,
+    );
+  });
+
+  if (expectsContinue) {
+    expect(response).toStartWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n");
+  } else {
+    expect(response).not.toContain("100 Continue");
+    expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  }
+  expect(response).toEndWith("body:hello");
+});
+
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {

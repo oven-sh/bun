@@ -658,8 +658,10 @@ public:
             user.httpRequest->setParameters(r->getParameters());
             user.httpRequest->setParameterOffsets(&parameterOffsets);
 
-            if (!httpContextData->flags.usingCustomExpectHandler) {
-                /* Middleware? Automatically respond to expectations */
+            if (!httpContextData->flags.usingCustomExpectHandler && !user.httpRequest->isAncient()) {
+                /* Middleware? Automatically respond to expectations. RFC 9110
+                 * 15.2: a server MUST NOT send a 1xx response to an HTTP/1.0
+                 * client, so skip the automatic 100 for ancient requests. */
                 std::string_view expect = user.httpRequest->getHeader("expect");
                 if (expect.length() && expect == "100-continue") {
                     user.httpResponse->writeContinue();

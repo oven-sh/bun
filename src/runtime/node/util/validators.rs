@@ -243,7 +243,7 @@ pub(crate) fn validate_string(
     value: JSValue,
     name: impl fmt::Display,
 ) -> JsResult<()> {
-    if !value.is_string() {
+    if !value.is_string_literal() {
         return Err(throw_err_invalid_arg_type(
             global_this,
             name,

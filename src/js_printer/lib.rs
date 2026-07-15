@@ -3613,13 +3613,17 @@ pub mod __gated_printer {
                     // When the target is part of the bundle, `path.text` is the
                     // build machine's absolute source path. Keep the original
                     // specifier so the output resolves at runtime instead of
-                    // leaking that path.
-                    let path_text =
-                        if record.source_index.is_valid() && !record.original_path.is_empty() {
-                            record.original_path
-                        } else {
-                            record.path.text
-                        };
+                    // leaking that path. InternalBakeDev deliberately writes
+                    // the resolved module Id into `path.text` for
+                    // `hmr.requireResolve`, so use it as-is there.
+                    let path_text = if record.source_index.is_valid()
+                        && !record.original_path.is_empty()
+                        && self.options.module_type != bundle_opts::Format::InternalBakeDev
+                    {
+                        record.original_path
+                    } else {
+                        record.path.text
+                    };
                     self.print_string_literal_utf8(path_text, true);
                     self.print(b")");
 

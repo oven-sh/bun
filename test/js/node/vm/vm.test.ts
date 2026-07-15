@@ -1141,6 +1141,18 @@ describe("createContext with a non-extensible sandbox", () => {
     expect(
       runInContext("Object.defineProperty(globalThis,'ac1',{get(){return 42},configurable:true}); ac1", sandbox),
     ).toBe(42);
+    expect(
+      runInContext(
+        "(d => [d.value, d.writable, d.enumerable, d.configurable])(Object.getOwnPropertyDescriptor(globalThis,'d1'))",
+        sandbox,
+      ),
+    ).toEqual([4, false, false, true]);
+    expect(
+      runInContext(
+        "(d => [typeof d.get, d.set, d.enumerable, d.configurable])(Object.getOwnPropertyDescriptor(globalThis,'ac1'))",
+        sandbox,
+      ),
+    ).toEqual(["function", undefined, false, true]);
     expect(runInContext("'use strict'; globalThis.s1 = 5; typeof s1", sandbox)).toBe("number");
     expect(runInContext("[Object.isFrozen(globalThis), Object.isExtensible(globalThis)]", sandbox)).toEqual([
       false,

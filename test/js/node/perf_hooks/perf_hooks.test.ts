@@ -39,6 +39,7 @@ describe("PerformanceObserver.supportedEntryTypes", () => {
     expect(Object.isFrozen(a)).toBe(true);
     expect(b).toBe(a);
     expect(() => (a as string[]).push("evil")).toThrow(TypeError);
+    expect(globalThis.PerformanceObserver.supportedEntryTypes.includes("evil")).toBe(false);
     expect(globalThis.PerformanceObserver.supportedEntryTypes).toBe(a);
   });
 });

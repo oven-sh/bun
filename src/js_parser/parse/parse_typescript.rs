@@ -212,7 +212,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !p.stack_check.is_safe_to_recurse() {
                 return Err(crate::Error::StackOverflow);
             }
-            stmts.push(p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?);
+            // Mirror `parse_stmts_up_to`: a type-only inner namespace is
+            // erased to `S::TypeScript`, which must not make the outer
+            // `namespace A.B` look instantiated.
+            let inner = p.parse_type_script_namespace_stmt(dot_loc, &mut _opts)?;
+            if !matches!(inner.data, StmtData::STypeScript(_)) {
+                stmts.push(inner);
+            }
         } else if opts.is_typescript_declare && p.lexer.token != T::TOpenBrace {
             p.lexer.expect_or_insert_semicolon()?;
         } else {
@@ -421,6 +427,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .insert(name.ref_, ns_member_data);
         }
 
+        p.record_ts_runtime_syntax(bun_ast::TsRuntimeSyntax::Namespace);
+
         // S::Namespace.stmts is `StoreSlice<Stmt>` (arena slice). BumpVec → bump slice.
         let stmts_slice: &'a mut [Stmt] = stmts.into_bump_slice_mut();
         Ok(p.s(
@@ -508,6 +516,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "import type foo = bar.baz;"
             return Ok(p.s(S::TypeScript {}, loc));
         }
+
+        p.record_ts_runtime_syntax(bun_ast::TsRuntimeSyntax::ImportEquals);
 
         let ref_ = p
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
@@ -717,6 +727,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // `scope_order_to_visit` may alias the same arena slice freely.
         let prev = p.scopes_in_order_for_enum.insert(loc, scope_order_clone);
         debug_assert!(prev.is_none());
+
+        p.record_ts_runtime_syntax(bun_ast::TsRuntimeSyntax::Enum);
 
         Ok(p.s(
             S::Enum {

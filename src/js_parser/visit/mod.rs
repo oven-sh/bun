@@ -1046,6 +1046,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             to_add += 1;
                         }
                     }
+                    if to_add > 0 {
+                        // `declare class` statements never reach the visit
+                        // pass, so this only fires for real (runtime)
+                        // parameter properties.
+                        self.record_ts_runtime_syntax(bun_ast::TsRuntimeSyntax::ParameterProperty);
+                    }
 
                     // if this is an expression, we can move statements after super() because there will be 0 decorators
                     let mut super_index: Option<usize> = None;

@@ -92,6 +92,26 @@ pub struct Ast<'a> {
     pub has_commonjs_export_names: bool,
     pub has_import_meta: bool,
     pub import_meta_ref: Ref,
+
+    /// First non-ambient TypeScript construct with runtime semantics (not
+    /// erasable by type stripping). `node:module`'s `stripTypeScriptTypes`
+    /// rejects these in `'strip'` mode, matching Node's amaro/swc strip-only
+    /// behavior. `declare` contexts never set this.
+    pub ts_runtime_syntax: Option<TsRuntimeSyntax>,
+    /// An identifier-named `module Foo {}` declaration was parsed. Node's
+    /// `stripTypeScriptTypes` rejects the `module` keyword in both modes
+    /// (string-named `declare module "foo"` is ambient and allowed).
+    pub uses_ts_module_keyword: bool,
+}
+
+/// TypeScript syntax with runtime semantics; see `Ast::ts_runtime_syntax`.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum TsRuntimeSyntax {
+    Enum,
+    Namespace,
+    ParameterProperty,
+    ImportEquals,
+    ExportAssignment,
 }
 
 // `parts`/`symbols`/`import_records` are now `ArenaVec`s and need an allocator,
@@ -137,6 +157,8 @@ impl<'a> Ast<'a> {
             has_commonjs_export_names: false,
             has_import_meta: false,
             import_meta_ref: Ref::NONE,
+            ts_runtime_syntax: None,
+            uses_ts_module_keyword: false,
         }
     }
 }

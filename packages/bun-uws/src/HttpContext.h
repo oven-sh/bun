@@ -281,21 +281,28 @@ private:
         auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
 
+            /* Reset httpResponse */
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
+
+            /* Are we not ready for another request yet? Async pipelining is not
+             * supported (one HttpResponseData per socket): drop this request and
+             * mark the in-flight response for connection-close so the socket
+             * closes once it drains. Closing now would lose the first response.
+             * Once the socket is marked for close no later pipelined request
+             * may be dispatched either (it would be misattributed). */
+            if (httpResponseData->state & (HttpResponseData<SSL>::HTTP_RESPONSE_PENDING | HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                /* getHeaders already set this for the dropped request; it must
+                 * not leak into the in-flight response's handling. */
+                httpResponseData->isConnectRequest = false;
+                return s;
+            }
+
             /* For every request we reset the timeout and hang until user makes action */
             /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
             us_socket_timeout((us_socket_t *) s, 0);
 
-            /* Reset httpResponse */
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
             httpResponseData->offset = 0;
-
-            /* Are we not ready for another request yet? Terminate the connection.
-             * Important for denying async pipelining until, if ever, we want to support it.
-             * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
-                us_socket_close((us_socket_t *) s, 0, nullptr);
-                return nullptr;
-            }
 
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;

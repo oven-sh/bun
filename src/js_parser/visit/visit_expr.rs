@@ -1259,7 +1259,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         let side_effects = SideEffects::to_boolean(p, &e_.value.data);
                         if side_effects.ok
-                            && side_effects.side_effects == SideEffects::NoSideEffects
+                            && (side_effects.side_effects == SideEffects::NoSideEffects
+                                || p.expr_can_be_removed_if_unused(&e_.value))
                         {
                             *e = p.new_expr(
                                 E::Boolean {

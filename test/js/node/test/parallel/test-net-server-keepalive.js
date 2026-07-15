@@ -10,7 +10,9 @@ const server = net.createServer({
   const setKeepAlive = socket._handle.setKeepAlive;
   socket._handle.setKeepAlive = common.mustCall((enable, initialDelay) => {
     assert.strictEqual(enable, true);
-    assert.match(String(initialDelay), /^2|3$/);
+    // Bun: _handle.setKeepAlive receives milliseconds (Bun.Socket semantics).
+    assert.match(String(initialDelay),
+                 typeof Bun !== 'undefined' ? /^2000|3000$/ : /^2|3$/);
     return setKeepAlive.call(socket._handle, enable, initialDelay);
   }, 2);
   socket.setKeepAlive(true, 1000);

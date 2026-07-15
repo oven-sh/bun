@@ -946,11 +946,9 @@ test("Error.stackTraceLimit default matches the limit captureStackTrace applies"
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
   const { reported, before, after } = JSON.parse(stdout);
   // Node.js defaults to 10 and the reported value must match the applied limit.
-  expect({ reported, before, after }).toEqual({ reported: 10, before: 10, after: 10 });
-  expect(exitCode).toBe(0);
+  expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
 });
 
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {

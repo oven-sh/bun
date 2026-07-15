@@ -710,7 +710,11 @@ impl Terminal {
         }
         // The writer poll stays for late `write()` calls but no longer keeps
         // the event loop alive; the child is gone so no drain will ever fire.
-        if !self.flags.get().intersects(Flags::CLOSED | Flags::WRITER_DONE) {
+        if !self
+            .flags
+            .get()
+            .intersects(Flags::CLOSED | Flags::WRITER_DONE)
+        {
             let ctx = self.event_loop_handle.as_event_loop_ctx();
             self.writer.with_mut(|w| w.update_ref(ctx, false));
         }

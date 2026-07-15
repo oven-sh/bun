@@ -3465,3 +3465,105 @@ it("survives aborted uploads while responding with a tee()d request-body branch"
     signalCode: null,
   });
 });
+
+// An HTTP/1.0 keep-alive request whose streamed Response errors before any
+// write ends on the chunk-terminator path with no Content-Length; HTTP/1.0
+// cannot chunk-frame, so the body is close-delimited and the socket must
+// still close or the client hangs waiting for FIN. (An empty stream that
+// close()s instead renders as Content-Length: 0 and may legitimately persist.)
+it("Bun.serve closes an HTTP/1.0 keep-alive socket after a ReadableStream body errors before any write", async () => {
+  await using server = serve({
+    port: 0,
+    // The erroring stream surfaces here; the response is already committed.
+    error() {},
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          start(c) {
+            c.error(new Error("boom"));
+          },
+        }),
+      );
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<string>();
+  const chunks: Buffer[] = [];
+  socket.on("data", c => chunks.push(c));
+  socket.on("error", () => {});
+  socket.on("close", () => onClose(Buffer.concat(chunks).toString()));
+  socket.on("connect", () => socket.write("GET / HTTP/1.0\r\nHost: x\r\nConnection: keep-alive\r\n\r\n"));
+
+  const out = await closed;
+  expect(out).toStartWith("HTTP/1.1 ");
+});
+
+// A static-route If-None-Match hit answers 304 via end_without_body with no
+// Content-Length (do_write_headers strips it): the response has no body
+// framing, so HTTP/1.0 keep-alive must still close the socket or the client
+// hangs waiting for FIN.
+it("Bun.serve closes an HTTP/1.0 keep-alive socket after an unframed end_without_body response", async () => {
+  await using server = serve({
+    port: 0,
+    routes: { "/s": new Response("static") },
+    fetch() {
+      return new Response("fallback");
+    },
+  });
+
+  // Learn the static route's ETag, then revalidate it over HTTP/1.0.
+  const first = await fetch(`${server.url}s`);
+  const etag = first.headers.get("etag")!;
+  await first.arrayBuffer();
+  expect(etag).toBeTruthy();
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<string>();
+  const chunks: Buffer[] = [];
+  socket.on("data", c => chunks.push(c));
+  socket.on("error", () => {});
+  socket.on("close", () => onClose(Buffer.concat(chunks).toString()));
+  socket.on("connect", () =>
+    socket.write(`GET /s HTTP/1.0\r\nHost: x\r\nConnection: keep-alive\r\nIf-None-Match: ${etag}\r\n\r\n`),
+  );
+
+  const out = await closed;
+  expect(out).toStartWith("HTTP/1.1 304 ");
+  expect(out).not.toContain("Content-Length");
+});
+
+// "close" must be matched as a token inside the comma-separated Connection
+// value list, not as the whole header value: a compound value such as
+// "Connection: close, TE" must still close the socket after the response.
+it("Bun.serve closes the socket on a compound HTTP/1.1 'Connection: close, TE' header", async () => {
+  let served = 0;
+  await using server = serve({
+    port: 0,
+    fetch() {
+      served++;
+      return new Response("ok");
+    },
+  });
+
+  const socket = net.connect(server.port, "127.0.0.1");
+  const { promise: closed, resolve: onClose } = Promise.withResolvers<string>();
+  let data = "";
+  let sentSecond = false;
+  socket.on("data", c => {
+    data += c;
+    // After the first response, reuse the socket: if "close" inside a
+    // compound value is missed, the socket persists and serves this too.
+    if (!sentSecond && data.includes("\r\n\r\nok")) {
+      sentSecond = true;
+      socket.write("GET /second HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    }
+  });
+  socket.on("error", () => {});
+  socket.on("close", () => onClose(data));
+  socket.on("connect", () => socket.write("GET /first HTTP/1.1\r\nHost: x\r\nConnection: close, TE\r\n\r\n"));
+
+  const out = await closed;
+  expect(served).toBe(1);
+  expect(out.match(/HTTP\/1\.1 200 OK/g)).toHaveLength(1);
+});

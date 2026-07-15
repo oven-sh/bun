@@ -237,6 +237,44 @@ namespace uWS
             return std::string_view(nullptr, 0);
         }
 
+        /* Token-match any Connection header's comma-separated value list
+         * (case-insensitive, OWS trimmed), like llhttp: a whole-value compare
+         * would miss compound values such as "keep-alive, TE". */
+        bool hasConnectionToken(std::string_view token)
+        {
+            if (!bf.mightHave("connection")) {
+                return false;
+            }
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() != 10 || strncasecmp(h->key.data(), "connection", 10)) {
+                    continue;
+                }
+                const auto value = h->value;
+                size_t pos = 0;
+                while (pos < value.length()) {
+                    while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                        pos++;
+                    }
+                    size_t tokenStart = pos;
+                    while (pos < value.length() && value[pos] != ',') {
+                        pos++;
+                    }
+                    size_t tokenEnd = pos;
+                    while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                        tokenEnd--;
+                    }
+                    if (tokenEnd - tokenStart == token.length()
+                        && !strncasecmp(value.data() + tokenStart, token.data(), token.length())) {
+                        return true;
+                    }
+                    if (pos < value.length() && value[pos] == ',') {
+                        pos++;
+                    }
+                }
+            }
+            return false;
+        }
+
         struct TransferEncoding {
             bool has: 1 = false;
             bool chunked: 1 = false;

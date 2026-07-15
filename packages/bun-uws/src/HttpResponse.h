@@ -179,15 +179,20 @@ public:
                 /* Write mark, this propagates to WebSockets too */
                 writeMark();
 
-                /* WebSocket upgrades does not allow content-length */
-                if (allowContentLength) {
-                    /* Even zero is a valid content-length */
-                    Super::write("Content-Length: ", 16);
-                    writeUnsigned64(totalSize);
-                    Super::write("\r\n\r\n", 4);
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                } else if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    Super::write("\r\n", 2);
+                /* The header block can only be terminated once. write() already
+                 * terminated it when HTTP_WRITE_CALLED is set, so anything
+                 * written here would land inside the body. */
+                if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+                    /* WebSocket upgrades does not allow content-length */
+                    if (allowContentLength) {
+                        /* Even zero is a valid content-length */
+                        Super::write("Content-Length: ", 16);
+                        writeUnsigned64(totalSize);
+                        Super::write("\r\n\r\n", 4);
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                    } else {
+                        Super::write("\r\n", 2);
+                    }
                 }
 
                 /* Mark end called */
@@ -535,6 +540,12 @@ public:
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED | HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER))) {
+            /* HTTP/1.0 cannot chunk-frame the body; without a Content-Length
+             * the body is close-delimited, so the socket must close even when
+             * the client asked for keep-alive. */
+            if (httpResponseData->fromAncientRequest) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            }
             /* Write mark on first call to write */
             writeMark();
 
@@ -572,6 +583,12 @@ public:
             }
 
          } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* HTTP/1.0 cannot chunk-frame the body; without a Content-Length
+             * the body is close-delimited, so the socket must close even when
+             * the client asked for keep-alive. */
+            if (httpResponseData->fromAncientRequest && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            }
             writeMark();
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
@@ -647,6 +664,12 @@ public:
             writeUnsignedHex((unsigned int) data.length());
             Super::write("\r\n", 2);
         } else if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* HTTP/1.0 cannot chunk-frame the body; without a Content-Length
+             * the body is close-delimited, so the socket must close even when
+             * the client asked for keep-alive. */
+            if (httpResponseData->fromAncientRequest && !(httpResponseData->state & HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER)) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+            }
             writeMark();
             Super::write("\r\n", 2);
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;

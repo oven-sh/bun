@@ -402,6 +402,18 @@ impl PosixBufferedReader {
     /// embedding `self` (the shell `PipeReader` does exactly that), so the
     /// caller must not touch `self` again after a `false` return.
     pub fn register_poll(&mut self) -> bool {
+        match self.try_register_poll() {
+            sys::Result::Ok(()) => true,
+            sys::Result::Err(err) => {
+                self.vtable.on_reader_error(err);
+                false
+            }
+        }
+    }
+
+    /// Like [`register_poll`] but returns the registration error instead of
+    /// dispatching it through `on_reader_error`, so the caller can recover.
+    fn try_register_poll(&mut self) -> sys::Result<()> {
         // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
@@ -411,7 +423,7 @@ impl PosixBufferedReader {
 
         if let PollOrFd::Fd(fd) = self.handle {
             if !self.flags.contains(PosixFlags::POLLABLE) {
-                return true;
+                return sys::Result::Ok(());
             }
             self.handle = PollOrFd::Poll(FilePollRef::init(
                 ev,
@@ -420,7 +432,7 @@ impl PosixBufferedReader {
             ));
         }
         let Some(poll) = self.handle.get_poll_mut() else {
-            return true;
+            return sys::Result::Ok(());
         };
         poll.set_owner(Owner::new(PollTag::BufferedReader, owner_ptr.cast()));
 
@@ -428,13 +440,7 @@ impl PosixBufferedReader {
             poll.enable_keeping_process_alive(ev);
         }
 
-        match poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd()) {
-            sys::Result::Err(err) => {
-                self.vtable.on_reader_error(err);
-                false
-            }
-            sys::Result::Ok(()) => true,
-        }
+        poll.register_with_fd(lp.cast(), FilePollKind::Readable, poll.fd())
     }
 
     pub fn start(&mut self, fd: Fd, is_pollable: bool) -> sys::Result<()> {
@@ -449,7 +455,24 @@ impl PosixBufferedReader {
         if self.get_fd() != fd {
             self.handle = PollOrFd::Fd(fd);
         }
-        self.register_poll();
+        if let sys::Result::Err(err) = self.try_register_poll() {
+            // On Linux, epoll_ctl(EPOLL_CTL_ADD) returns EPERM for fds whose
+            // file_operations lack .poll (e.g. /dev/null, /dev/zero). Such fds
+            // are always-readable, so fall back to the non-pollable path
+            // instead of tearing the reader down. Mirrors IOWriter::__start.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if err.get_errno() == sys::E::EPERM {
+                self.flags
+                    .remove(PosixFlags::POLLABLE | PosixFlags::NONBLOCKING);
+                if matches!(self.handle, PollOrFd::Poll(_)) {
+                    self.handle
+                        .close_impl(None, None::<fn(*mut c_void)>, false);
+                }
+                self.handle = PollOrFd::Fd(fd);
+                return sys::Result::Ok(());
+            }
+            self.vtable.on_reader_error(err);
+        }
 
         sys::Result::Ok(())
     }

@@ -496,8 +496,11 @@ impl FileResponseStream {
         if !self.state.contains(State::RESPONSE_DONE) {
             self.state.insert(State::RESPONSE_DONE);
             self.detach_resp();
-            self.resp
-                .end_without_body(self.resp.should_close_connection());
+            // `end` (not `end_without_body`): when no Content-Length has been
+            // written yet (non-regular files) uWS supplies the framing here,
+            // so an immediately-EOF fd like /dev/null still produces a valid
+            // empty response instead of leaving the client waiting.
+            self.resp.end(b"", self.resp.should_close_connection());
             (self.on_complete)(self.ctx, self.resp);
         }
 

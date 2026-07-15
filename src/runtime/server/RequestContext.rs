@@ -1835,7 +1835,10 @@ where
             });
         }
 
-        self.flags.set_needs_content_length(true);
+        // Non-regular files (FIFOs, character devices, sockets) have no
+        // meaningful stat size, so the body length is unknown up front and
+        // must be framed with chunked encoding.
+        self.flags.set_needs_content_length(is_regular);
         let blob_offset = match &self.blob {
             AnyBlob::Blob(b) => b.offset.get(),
             _ => unreachable!(),
@@ -1972,6 +1975,10 @@ where
             offset: self.sendfile.offset as u64,
             length: if is_regular {
                 Some(self.sendfile.remain as u64)
+            } else if original_size != crate::webcore::blob::MAX_SIZE {
+                // An explicit .slice() on a non-regular file caps the body at
+                // that many bytes; without it, read until EOF.
+                Some(original_size as u64)
             } else {
                 None
             },

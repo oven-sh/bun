@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test"
 import { bunEnv, bunExe, isASAN, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
 import { mkfifo } from "mkfifo";
 import { unlinkSync } from "node:fs";
+import * as net from "node:net";
 import { join } from "node:path";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
@@ -1138,3 +1139,87 @@ console.log("OK");
   },
   60_000,
 );
+
+// On Linux, epoll_ctl(EPOLL_CTL_ADD) on /dev/null-class character devices
+// returns EPERM (their file_operations have no .poll). The file response
+// stream used to treat that as a fatal reader error and force-close the
+// connection before any status line or header byte was written, without ever
+// invoking the error() callback.
+describe.skipIf(isWindows)("serving a character-device Bun.file from fetch()", () => {
+  // Use a raw TCP client so we can observe the zero-byte close that fetch()
+  // would otherwise report as a generic connection error.
+  async function rawGet(port: number, path: string): Promise<Buffer> {
+    const { promise, resolve } = Promise.withResolvers<Buffer>();
+    let acc = Buffer.alloc(0);
+    const s = net.connect(port, "127.0.0.1", () => {
+      s.write(`GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    });
+    s.on("data", d => {
+      acc = Buffer.concat([acc, d]);
+    });
+    // The pre-fix force_close sends RST, so swallow ECONNRESET and report
+    // whatever bytes arrived; the assertion on the status line catches the
+    // zero-byte case.
+    s.on("error", () => {});
+    s.on("close", () => resolve(acc));
+    await promise;
+    return acc;
+  }
+
+  test("/dev/null serves an empty 200 response", async () => {
+    let errorArg: unknown = undefined;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file("/dev/null"));
+      },
+      error(e) {
+        errorArg = e;
+        return new Response("ERR", { status: 500 });
+      },
+    });
+
+    const raw = await rawGet(server.port, "/");
+    const head = raw.toString("latin1").split("\r\n\r\n")[0];
+    expect(head.split("\r\n")[0]).toBe("HTTP/1.1 200 OK");
+    expect(errorArg).toBeUndefined();
+
+    const res = await fetch(server.url);
+    expect({
+      status: res.status,
+      body: await res.text(),
+      error: errorArg,
+    }).toEqual({ status: 200, body: "", error: undefined });
+  });
+
+  test("/dev/zero with .slice() serves the sliced length", async () => {
+    const len = 4096;
+    let errorArg: unknown = undefined;
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        return new Response(Bun.file("/dev/zero").slice(0, len));
+      },
+      error(e) {
+        errorArg = e;
+        return new Response("ERR", { status: 500 });
+      },
+    });
+
+    const raw = await rawGet(server.port, "/");
+    // The pre-fix behavior was a zero-byte close; after the fix we must at
+    // least receive a status line.
+    expect(raw.toString("latin1", 0, 15)).toBe("HTTP/1.1 200 OK");
+
+    const res = await fetch(server.url);
+    const body = new Uint8Array(await res.arrayBuffer());
+    expect({
+      status: res.status,
+      bodyLength: body.length,
+      allZero: body.every(b => b === 0),
+      error: errorArg,
+    }).toEqual({ status: 200, bodyLength: len, allZero: true, error: undefined });
+  });
+});

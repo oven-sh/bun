@@ -16,6 +16,7 @@ const {
   validateFunction,
 } = require("internal/validators");
 const { ConnResetException, hasObserver, startPerf, stopPerf } = require("internal/shared");
+const { getTimerDuration } = require("internal/timers");
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
@@ -51,6 +52,7 @@ const {
   eofInProgress,
   runSymbol,
   drainMicrotasks,
+  setRequestTimeout,
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
@@ -1324,7 +1326,25 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     return this;
   }
 
-  setTimeout(_timeout, _callback) {
+  setTimeout(msecs, callback) {
+    this.timeout = msecs;
+    msecs = getTimerDuration(msecs, "msecs");
+    if (msecs === 0) {
+      if (callback !== undefined) {
+        validateFunction(callback, "callback");
+        this.removeListener("timeout", callback);
+      }
+    } else if (callback !== undefined) {
+      validateFunction(callback, "callback");
+      this.once("timeout", callback);
+    }
+    // The per-connection inactivity timer lives on the native
+    // NodeHTTPResponse (handle.response); its onabort callback emits
+    // "timeout" on this socket via onServerRequestEvent.
+    const response = this[kHandle]?.response;
+    if (response) {
+      setRequestTimeout(response, Math.ceil(msecs / 1000));
+    }
     return this;
   }
 

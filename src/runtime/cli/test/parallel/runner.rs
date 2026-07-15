@@ -368,11 +368,20 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         argv.push(lit(b"-t\0"));
         argv.push(dupe_z(pattern));
     }
+    // `Arguments::parse` rebuilds `ctx.preloads` in fixed bucket order
+    // (--preload, --require, --import), so emit import-kind entries that
+    // follow a require as --import to reproduce the coordinator's order.
+    let mut seen_require = false;
     for preload in ctx.preloads.iter() {
-        argv.push(lit(match preload.kind {
-            PreloadKind::Require => b"--require\0",
+        let flag: &'static [u8] = match preload.kind {
+            PreloadKind::Require => {
+                seen_require = true;
+                b"--require\0"
+            }
+            PreloadKind::Import if seen_require => b"--import\0",
             PreloadKind::Import => b"--preload\0",
-        }));
+        };
+        argv.push(lit(flag));
         argv.push(dupe_z(&preload.specifier));
     }
     if let Some(define) = &ctx.args.define {

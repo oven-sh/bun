@@ -1048,7 +1048,7 @@ impl WebWorker {
         }
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
-        // `preload: Vec<Box<[u8]>>` — clone the boxes (cheap, ≤handful).
+        // Clone the entries into the VM (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
 
         // Resolve the entry point on the worker thread (the parent only stored

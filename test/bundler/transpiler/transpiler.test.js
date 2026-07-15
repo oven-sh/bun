@@ -589,7 +589,7 @@ describe("Bun.Transpiler", () => {
       err("enum [] { a }", 'Expected identifier but found "["');
     });
 
-    it("rejects yield/await/this in enum initializers", () => {
+    it("rejects yield/await/this/super in enum initializers", () => {
       const err = ts.expectParseError;
       const exp = ts.expectPrinted_;
 
@@ -597,10 +597,15 @@ describe("Bun.Transpiler", () => {
       // generator/async context must not leak into initializer expressions.
       err("function *f() { enum x { y = yield 1 } }", 'Cannot use "yield" outside a generator function');
       err("async function f() { enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("async function f() { const enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("let g = async () => { enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
       err("enum x { y = await 1 }", '"await" can only be used inside an "async" function');
       err("enum x { y = this }", 'Cannot use "this" here');
       err("enum x { y = () => this }", 'Cannot use "this" here');
       err("class C { m() { enum x { y = this } } }", 'Cannot use "this" here');
+      err("class C extends B { m() { enum x { y = super.foo } } }", 'Unexpected "super"');
+      err("class C extends B { constructor() { super(); enum x { y = super() } } }", 'Unexpected "super"');
+      err("class C { static { enum x { y = super.foo } } }", 'Unexpected "super"');
       err("declare enum x { y = await 1 }", '"await" can only be used inside an "async" function');
       err("declare enum x { y = this }", 'Cannot use "this" here');
 
@@ -616,6 +621,20 @@ describe("Bun.Transpiler", () => {
       exp(
         "enum x { y = (function() { return this })() }",
         'var x;\n((x) => {\n  x[x["y"] = function() {\n    return this;\n  }()] = "y";\n})(x ||= {})',
+      );
+      // The enclosing context is restored after the body: sibling statements
+      // keep their yield/await/super permissions.
+      exp(
+        "function *f() { enum x { y = 1 } yield 1; }",
+        'function* f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  yield 1;\n}',
+      );
+      exp(
+        "async function f() { enum x { y = 1 } await 1; }",
+        'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  await 1;\n}',
+      );
+      exp(
+        "class C extends B { m() { enum x { y = 1 } super.foo(); } }",
+        'class C extends B {\n  m() {\n    var x;\n    ((x) => {\n      x[x["y"] = 1] = "y";\n    })(x ||= {});\n    super.foo();\n  }\n}',
       );
     });
 
@@ -654,6 +673,12 @@ describe("Bun.Transpiler", () => {
       exp(
         "namespace x { export class C { f = this } }",
         "var x;\n((x) => {\n\n  class C {\n    f = this;\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      // The enclosing context is restored after the body: top-level await is
+      // still accepted immediately after a namespace.
+      exp(
+        "namespace x { export const y = 1; } await 1;",
+        "var x;\n((x) => {\n  x.y = 1;\n})(x ||= {});\nawait 1",
       );
     });
 

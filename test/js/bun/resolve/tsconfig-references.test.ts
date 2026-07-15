@@ -184,6 +184,40 @@ test.concurrent("reference cycles do not hang", async () => {
   expect(b.exitCode).toBe(0);
 });
 
+test.concurrent("a missing referenced config is skipped and stays out of error logs", async () => {
+  using dir = tempDir("tsconfig-refs-missing", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.missing.json" }, { path: "./tsconfig.app.json" }],
+    }),
+    "tsconfig.app.json": JSON.stringify({
+      include: ["src"],
+      compilerOptions: { paths: { "@/*": ["./src/*"] } },
+    }),
+    "src/index.ts": `import { n } from "@/n"; console.log(n);`,
+    "src/n.ts": `export const n = 5;`,
+    // A failed reference load must not add log messages: a worker startup
+    // failure would surface as AggregateError instead of the single
+    // BuildMessage (seen with bun's own repo tsconfig, which references a
+    // directory without a tsconfig.json).
+    "worker.ts": `
+      const worker = new Worker("blob:i dont exist!");
+      worker.addEventListener("error", e => {
+        console.log(e.message);
+        process.exit(0);
+      });
+    `,
+  });
+
+  const resolveResult = await run(String(dir), "src/index.ts");
+  expect(resolveResult.stdout).toBe("5\n");
+  expect(resolveResult.exitCode).toBe(0);
+
+  const workerResult = await run(String(dir), "worker.ts");
+  expect(workerResult.stdout).toBe('BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)\n');
+  expect(workerResult.exitCode).toBe(0);
+});
+
 test.concurrent("baseUrl from the referenced project is used", async () => {
   using dir = tempDir("tsconfig-refs-baseurl", {
     "tsconfig.json": JSON.stringify({

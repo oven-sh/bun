@@ -4243,7 +4243,7 @@ impl<'a> Resolver<'a> {
         const MAX_REFERENCES: usize = 64;
         let mut visited: Vec<Box<[u8]>> = vec![Box::from(&root_ref.abs_path[..])];
         let mut queue: Vec<Box<[u8]>> = root_ref.references.to_vec();
-        let mut configs: Vec<&'static TSConfigJSON> = Vec::new();
+        let mut configs: Vec<Box<TSConfigJSON>> = Vec::new();
         let mut cursor = 0;
         while cursor < queue.len() && visited.len() <= MAX_REFERENCES {
             let reference = core::mem::take(&mut queue[cursor]);
@@ -4261,32 +4261,32 @@ impl<'a> Resolver<'a> {
             }
             visited.push(Box::from(config_path));
 
+            // A load failure must not touch the resolver Log: a missing
+            // referenced project is normal, and extra log entries make
+            // unrelated resolution failures surface as AggregateError.
             let parsed: *mut TSConfigJSON = match self.parse_tsconfig(config_path, FD::INVALID) {
                 Ok(Some(v)) => bun_core::heap::into_raw(v),
                 Ok(None) => continue,
                 Err(err) => {
-                    let _ = self.log_mut().add_debug_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} loading tsconfig.json reference {}",
-                            bstr::BStr::new(err.name()),
-                            bun_core::fmt::quote(&visited[visited.len() - 1])
-                        ),
+                    debuglog!(
+                        "{} loading tsconfig.json reference {}",
+                        bstr::BStr::new(err.name()),
+                        bun_core::fmt::quote(&visited[visited.len() - 1])
                     );
                     continue;
                 }
             };
-            let Ok(merged) = self.merge_tsconfig_extends_chain(parsed) else {
+            let Ok(merged_ptr) = self.merge_tsconfig_extends_chain(parsed) else {
                 continue;
             };
-            // SAFETY: ARENA — interned like `DirInfo::tsconfig_json`; never
-            // freed while a resolver reader is live.
-            let merged_ref: &'static TSConfigJSON = unsafe { &*merged };
-            configs.push(merged_ref);
+            // SAFETY: `merged_ptr` came from heap::alloc in
+            // `merge_tsconfig_extends_chain` and is uniquely owned here; the
+            // Box hands ownership to the root config below.
+            let merged: Box<TSConfigJSON> = unsafe { bun_core::heap::take(merged_ptr) };
             if visited.len() <= MAX_REFERENCES {
-                queue.extend(merged_ref.references.iter().cloned());
+                queue.extend(merged.references.iter().cloned());
             }
+            configs.push(merged);
         }
 
         // SAFETY: `root` is still uniquely owned here (see above).

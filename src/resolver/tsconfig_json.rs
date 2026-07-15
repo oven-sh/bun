@@ -179,9 +179,10 @@ pub struct TSConfigJSON {
     /// which loads them into `reference_configs`.
     pub references: Box<[Box<[u8]>]>,
 
-    /// Parsed configs for `references`, interned like the owning config.
-    /// `for_source_dir` picks the one covering a given source directory.
-    pub reference_configs: Box<[&'static TSConfigJSON]>,
+    /// Parsed configs for `references`, owned by this (solution-style) config
+    /// and dropped with it. `for_source_dir` picks the one covering a given
+    /// source directory.
+    pub reference_configs: Box<[Box<TSConfigJSON>]>,
 
     /// Absolute directories derived from the "files" entries; `None` when the
     /// key is absent. Used only to select a referenced project for a source
@@ -308,7 +309,7 @@ impl TSConfigJSON {
         self.reference_configs
             .iter()
             .find(|r| r.covers_dir(source_dir))
-            .map_or(self, |r| r)
+            .map_or(self, |r| &**r)
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {

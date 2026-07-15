@@ -8,10 +8,12 @@
 // WINDOW_UPDATE, frame-size and stream-id rules. HPACK/HEADERS cases live in a sibling file.
 
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, gcTick, normalizeBunSnapshot, tempDir } from "harness";
 import { once } from "node:events";
+import fs from "node:fs";
 import http2 from "node:http2";
 import net from "node:net";
+import path from "node:path";
 
 const PREFACE = Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n", "latin1");
 
@@ -707,6 +709,225 @@ describe("request header and body framing (RFC 9113 §8.1)", () => {
   });
 });
 
+describe("server stream reset (RFC 9113 §6.4)", () => {
+  /** A one-shot h2c server plus a raw client that has handshaken and sent one request. */
+  async function resetServer(method: "GET" | "POST", onStream: (stream: any) => void) {
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      onStream(stream);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const c = await RawH2.connect((server.address() as net.AddressInfo).port);
+    c.sendPreface();
+    c.sendEmptySettings();
+    // A GET ends the request body, so the server stream is half-closed (remote); a POST leaves it
+    // open. Closing the local half lands them in different states, so both are covered.
+    c.sendFrame(FrameType.HEADERS, method === "GET" ? 0x4 | 0x1 : 0x4, 1, requestHeaderBlock(method));
+    return {
+      c,
+      cleanup() {
+        c.destroy();
+        server.close();
+      },
+    };
+  }
+
+  const endStreamOnStream1 = (f: Frame) => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0;
+
+  test("close(code) mid-body sends RST_STREAM rather than a clean end-of-stream", async () => {
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.respond({ ":status": 200 });
+      stream.write("partial");
+      stream.close(ErrorCode.INTERNAL_ERROR);
+    });
+    try {
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.INTERNAL_ERROR);
+      // An END_STREAM ahead of the reset tells the peer the aborted response completed.
+      expect(c.frames.find(endStreamOnStream1)).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("close(code) while the request body is still open does not also end the stream cleanly", async () => {
+    const { c, cleanup } = await resetServer("POST", stream => {
+      stream.respond({ ":status": 200 });
+      stream.write("partial");
+      stream.close(ErrorCode.INTERNAL_ERROR);
+    });
+    try {
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.INTERNAL_ERROR);
+      expect(c.frames.find(endStreamOnStream1)).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("close(code) before respond() sends RST_STREAM and nothing else", async () => {
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.close(ErrorCode.REFUSED_STREAM);
+    });
+    try {
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.REFUSED_STREAM);
+      // A bare DATA frame with no HEADERS ahead of it is not a response, it is a protocol error.
+      expect(c.frames.find(f => f.streamId === 1 && f.type !== FrameType.RST_STREAM)).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("destroy() mid-body sends RST_STREAM(NO_ERROR) rather than a clean end-of-stream", async () => {
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.respond({ ":status": 200 });
+      stream.write("partial");
+      stream.destroy();
+    });
+    try {
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
+      expect(c.frames.find(endStreamOnStream1)).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  // `end(body)` with the body larger than the 65535-byte flow-control window leaves DATA queued,
+  // so the writable side is ending but `_final` has not run. Resetting from there must still not
+  // let a clean end-of-stream escape once the queue drains.
+  test.each([
+    ["close", ErrorCode.INTERNAL_ERROR, (stream: any) => stream.close(ErrorCode.INTERNAL_ERROR)],
+    ["destroy", ErrorCode.NO_ERROR, (stream: any) => stream.destroy()],
+  ])("%s after end(body) resets the stream with data still queued", async (_name, expected, reset) => {
+    const { c, cleanup } = await resetServer("GET", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end(Buffer.alloc(200_000, 0x61));
+      reset(stream);
+    });
+    try {
+      // The client never sends WINDOW_UPDATE, so the tail of the body stays queued.
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(expected);
+      expect(c.frames.find(endStreamOnStream1)).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("every response entry point refuses a closed stream", async () => {
+    using dir = tempDir("h2-closed-stream", { "body.txt": "hello" });
+    const body = path.join(String(dir), "body.txt");
+    const entryPoints: Array<[string, (stream: any) => void]> = [
+      ["respond", stream => stream.respond({ ":status": 200 })],
+      ["respondWithFile", stream => stream.respondWithFile(body, { ":status": 200 })],
+      [
+        "respondWithFD",
+        stream => {
+          const fd = fs.openSync(body, "r");
+          try {
+            stream.respondWithFD(fd, { ":status": 200 });
+          } finally {
+            // The guard throws before respondWithFD takes ownership of the descriptor.
+            fs.closeSync(fd);
+          }
+        },
+      ],
+      ["additionalHeaders", stream => stream.additionalHeaders({ ":status": 103 })],
+    ];
+
+    const codes: Record<string, string | undefined> = {};
+    for (const [name, send] of entryPoints) {
+      const { c, cleanup } = await resetServer("GET", stream => {
+        stream.close(ErrorCode.REFUSED_STREAM);
+        try {
+          send(stream);
+        } catch (e: any) {
+          codes[name] = e.code;
+        }
+      });
+      try {
+        await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+        // The reset is all the peer gets: a closed stream emits no HEADERS and no DATA.
+        expect(c.frames.find(f => f.streamId === 1 && f.type !== FrameType.RST_STREAM)).toBeUndefined();
+      } finally {
+        cleanup();
+      }
+    }
+
+    expect(codes).toEqual({
+      respond: "ERR_HTTP2_INVALID_STREAM",
+      respondWithFile: "ERR_HTTP2_INVALID_STREAM",
+      respondWithFD: "ERR_HTTP2_INVALID_STREAM",
+      additionalHeaders: "ERR_HTTP2_INVALID_STREAM",
+    });
+  });
+
+  test("an inbound RST_STREAM(NO_ERROR) ends the client stream cleanly", async () => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      const events: string[] = [];
+      let error: any;
+      for (const ev of ["end", "close"] as const) req.on(ev, () => events.push(ev));
+      req.on("error", (e: any) => (error = e));
+      req.end();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0);
+      // The peer resets the stream with NO_ERROR before any response: a clean close, so the
+      // readable side still ends. Destroying on the reset would swallow 'end' and hang readers.
+      raw.sendFrame(FrameType.RST_STREAM, 0, 1, Buffer.alloc(4));
+      // once() rejects on 'error', which is the point: no error may fire for a NO_ERROR reset.
+      await once(req, "close");
+      expect({ events, code: error?.code, rstCode: req.rstCode }).toEqual({
+        events: ["end", "close"],
+        code: undefined,
+        rstCode: ErrorCode.NO_ERROR,
+      });
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  test("a response the server aborted reaches the client as an error, not a complete 200", async () => {
+    const server = http2.createServer();
+    server.on("stream", (stream: any) => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.write("partial");
+      stream.close(ErrorCode.INTERNAL_ERROR);
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const client = http2.connect(`http://127.0.0.1:${(server.address() as net.AddressInfo).port}`);
+    client.on("error", () => {});
+    try {
+      const req = client.request({ ":path": "/" });
+      let error: any;
+      let body = "";
+      req.on("error", (e: any) => (error = e));
+      req.on("data", (d: Buffer) => (body += d));
+      // `once()` rejects on 'error', and the error here is the thing under test.
+      await new Promise<void>(resolve => req.on("close", resolve));
+      expect({ code: error?.code, rstCode: req.rstCode, body }).toEqual({
+        code: "ERR_HTTP2_STREAM_ERROR",
+        rstCode: ErrorCode.INTERNAL_ERROR,
+        body: "partial",
+      });
+    } finally {
+      client.destroy();
+      server.close();
+    }
+  });
+});
+
 describe("inbound stream lifecycle", () => {
   test("releases server stream objects once the peer resets their streams", async () => {
     const total = 32;
@@ -812,12 +1033,13 @@ describe("inbound stream lifecycle", () => {
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The RST_STREAM(NO_ERROR) closes the stream cleanly, so the later client.destroy() has
+    // nothing left to cancel: no 'error' precedes 'close'.
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "wantTrailers id=1
       toString:start
       toString:end
       sendTrailers:returned
-      req error ERR_HTTP2_STREAM_CANCEL
       req close"
     `);
     expect(proc.signalCode).toBeNull();

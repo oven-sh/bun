@@ -757,6 +757,30 @@ static napi_value test_is_arraybuffer(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_detach_arraybuffer(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value value = info[i];
+
+    napi_status detach_status = napi_detach_arraybuffer(env, value);
+
+    bool is_detached = false;
+    napi_status is_detached_status =
+        napi_is_detached_arraybuffer(env, value, &is_detached);
+
+    size_t length = 0;
+    napi_status info_status =
+        napi_get_arraybuffer_info(env, value, nullptr, &length);
+
+    printf("napi_detach_arraybuffer=%d napi_is_detached_arraybuffer=%d "
+           "is_detached=%s napi_get_arraybuffer_info=%d length=%zu\n",
+           static_cast<int>(detach_status),
+           static_cast<int>(is_detached_status), is_detached ? "true" : "false",
+           static_cast<int>(info_status), length);
+  }
+  return ok(env);
+}
+
 static napi_value test_napi_get_default_values(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
 
@@ -1536,6 +1560,44 @@ test_napi_call_function_recv_null(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+// napi_new_instance status codes must match Node.js: non-functions return
+// napi_invalid_arg, callable-but-not-constructible values (arrow functions,
+// bound arrow functions) throw a TypeError and return napi_pending_exception.
+static napi_value
+test_napi_new_instance_status(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+
+#ifndef _WIN32
+  BlockingStdoutScope stdout_scope;
+#endif
+
+  // info[0] is the GC callback; remaining args are the construct targets
+  for (size_t i = 1; i < info.Length(); i++) {
+    napi_value target = info[i];
+    napi_value out = nullptr;
+    napi_status status = napi_new_instance(env, target, 0, nullptr, &out);
+
+    bool pending = false;
+    NODE_API_CALL(env, napi_is_exception_pending(env, &pending));
+
+    bool is_type_error = false;
+    if (pending) {
+      napi_value exc;
+      NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+      napi_value global, type_error;
+      NODE_API_CALL(env, napi_get_global(env, &global));
+      NODE_API_CALL(env, napi_get_named_property(env, global, "TypeError",
+                                                 &type_error));
+      NODE_API_CALL(env, napi_instanceof(env, exc, type_error, &is_type_error));
+    }
+
+    printf("target %zu: status=%d pending=%d type_error=%d\n", i, (int)status,
+           (int)pending, (int)is_type_error);
+  }
+
+  return ok(env);
+}
+
 // Test for napi_strict_equals - should match JavaScript === operator behavior
 // This tests that NaN !== NaN and -0 === 0
 static napi_value test_napi_strict_equals(const Napi::CallbackInfo &info) {
@@ -2176,6 +2238,59 @@ test_napi_create_external_buffer_empty(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static int empty_external_string_finalized = 0;
+
+static void empty_external_string_finalizer(napi_env env, void *data,
+                                            void *hint) {
+  empty_external_string_finalized++;
+}
+
+static napi_value test_napi_v10_surface(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  uint32_t version = 0;
+  NODE_API_CALL(env, napi_get_version(env, &version));
+  printf("napi_get_version >= 10 = %s\n", version >= 10 ? "true" : "false");
+
+  static char latin1_empty[1] = {0};
+  static char16_t utf16_empty[1] = {0};
+  static char16_t utf16_hi[] = u"hi";
+
+  const char *names[] = {"latin1", "utf16"};
+  for (int i = 0; i < 2; i++) {
+    empty_external_string_finalized = 0;
+    bool copied = true;
+    napi_value result = nullptr;
+    napi_status status;
+    if (i == 0) {
+      status = node_api_create_external_string_latin1(
+          env, latin1_empty, 0, empty_external_string_finalizer, nullptr,
+          &result, &copied);
+    } else {
+      status = node_api_create_external_string_utf16(
+          env, utf16_empty, 0, empty_external_string_finalizer, nullptr,
+          &result, &copied);
+    }
+    printf("external %s empty: status=%d copied=%d finalized=%d\n", names[i],
+           (int)status, (int)copied, empty_external_string_finalized);
+    if (status == napi_ok) {
+      size_t length = 99;
+      NODE_API_CALL(
+          env, napi_get_value_string_utf8(env, result, nullptr, 0, &length));
+      printf("external %s empty: length=%zu\n", names[i], length);
+    }
+  }
+
+  bool copied = true;
+  napi_value result = nullptr;
+  NODE_API_CALL(env,
+                node_api_create_external_string_utf16(
+                    env, utf16_hi, 2, nullptr, nullptr, &result, &copied));
+  printf("external utf16 nonempty: copied=%d\n", (int)copied);
+
+  return ok(env);
+}
+
 static napi_value test_napi_empty_buffer_info(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
@@ -2617,6 +2732,166 @@ static napi_value test_external_buffer_with_pending_exception(
   return ok(env);
 }
 
+// With an exception pending (via napi_throw_error), every napi call that
+// Node.js gates with NAPI_PREAMBLE must return napi_pending_exception and
+// perform NO side effects. Before the fix, NAPI_PREAMBLE only consulted the
+// JSC VM throw scope, but napi_throw* stashes the exception on the env
+// without raising a VM exception, so the gate never fired: napi_run_script
+// ran the script, napi_object_freeze froze the object, etc.
+static int pending_gate_script_ran = 0;
+
+static napi_value pending_gate_mark_script_ran(napi_env env,
+                                               napi_callback_info) {
+  pending_gate_script_ran++;
+  return nullptr;
+}
+
+static napi_value test_pending_exception_gate(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  pending_gate_script_ran = 0;
+
+  // Set up inputs BEFORE arming the exception.
+  napi_value obj, arr, five, script, global, fn_ctor, arraybuffer;
+  napi_value date_in;
+  void *ab_data;
+  NODE_API_CALL(env, napi_create_object(env, &obj));
+  NODE_API_CALL(env, napi_create_array_with_length(env, 3, &arr));
+  NODE_API_CALL(env, napi_create_int32(env, 5, &five));
+  NODE_API_CALL(env, napi_create_string_utf8(
+                         env, "globalThis.__napiGateMark()", NAPI_AUTO_LENGTH,
+                         &script));
+  NODE_API_CALL(env, napi_get_global(env, &global));
+  NODE_API_CALL(env,
+                napi_get_named_property(env, global, "Function", &fn_ctor));
+  NODE_API_CALL(env,
+                napi_create_arraybuffer(env, 16, &ab_data, &arraybuffer));
+  NODE_API_CALL(env, napi_create_date(env, 1234.0, &date_in));
+
+  // Install a global the script would call so we can observe it running.
+  napi_value mark_fn;
+  NODE_API_CALL(env, napi_create_function(env, "mark", NAPI_AUTO_LENGTH,
+                                          pending_gate_mark_script_ran,
+                                          nullptr, &mark_fn));
+  NODE_API_CALL(env,
+                napi_set_named_property(env, global, "__napiGateMark",
+                                        mark_fn));
+
+  // Create a real deferred/promise BEFORE throwing so resolve_deferred has
+  // a valid handle to refuse.
+  napi_deferred deferred_pre;
+  napi_value promise_pre;
+  NODE_API_CALL(env,
+                napi_create_promise(env, &deferred_pre, &promise_pre));
+
+  // Arm: exception now pending on the env (not the VM).
+  NODE_API_CALL(env, napi_throw_error(env, "EGATE", "armed"));
+
+  napi_status st;
+  napi_value out;
+  bool bool_out;
+  uint32_t u32_out;
+  double f64_out;
+  napi_deferred deferred_out = nullptr;
+
+  st = napi_object_freeze(env, obj);
+  printf("napi_object_freeze: status=%d\n", (int)st);
+  st = napi_object_seal(env, obj);
+  printf("napi_object_seal: status=%d\n", (int)st);
+  st = napi_set_element(env, arr, 7, five);
+  printf("napi_set_element: status=%d\n", (int)st);
+  st = napi_run_script(env, script, &out);
+  printf("napi_run_script: status=%d\n", (int)st);
+  st = napi_instanceof(env, obj, fn_ctor, &bool_out);
+  printf("napi_instanceof: status=%d\n", (int)st);
+  st = napi_strict_equals(env, five, five, &bool_out);
+  printf("napi_strict_equals: status=%d\n", (int)st);
+  st = napi_wrap(env, obj, nullptr, nullptr, nullptr, nullptr);
+  printf("napi_wrap: status=%d\n", (int)st);
+  st = napi_get_prototype(env, obj, &out);
+  printf("napi_get_prototype: status=%d\n", (int)st);
+  st = napi_get_date_value(env, date_in, &f64_out);
+  printf("napi_get_date_value: status=%d\n", (int)st);
+  st = napi_get_array_length(env, arr, &u32_out);
+  printf("napi_get_array_length: status=%d\n", (int)st);
+  st = napi_create_date(env, 42.0, &out);
+  printf("napi_create_date: status=%d\n", (int)st);
+  st = napi_create_dataview(env, 8, arraybuffer, 0, &out);
+  printf("napi_create_dataview: status=%d\n", (int)st);
+  st = napi_create_promise(env, &deferred_out, &out);
+  printf("napi_create_promise: status=%d\n", (int)st);
+  napi_status resolve_st = napi_resolve_deferred(env, deferred_pre, five);
+  printf("napi_resolve_deferred: status=%d\n", (int)resolve_st);
+
+  // Functions Node.js does NOT gate (CHECK_ENV): must still succeed with a
+  // pending exception. Pins the NO_PENDING_CHECK set so future preamble
+  // changes don't over-gate them.
+  napi_ref ref = nullptr;
+  void *inst_data;
+  st = napi_get_global(env, &out);
+  printf("napi_get_global: status=%d\n", (int)st);
+  st = napi_create_reference(env, obj, 1, &ref);
+  printf("napi_create_reference: status=%d\n", (int)st);
+  st = napi_reference_unref(env, ref, &u32_out);
+  printf("napi_reference_unref: status=%d\n", (int)st);
+  st = napi_get_reference_value(env, ref, &out);
+  printf("napi_get_reference_value: status=%d\n", (int)st);
+  napi_value bigint_val;
+  st = napi_create_bigint_int64(env, 42, &bigint_val);
+  printf("napi_create_bigint_int64: status=%d\n", (int)st);
+  st = napi_create_symbol(env, nullptr, &out);
+  printf("napi_create_symbol: status=%d\n", (int)st);
+  st = napi_is_buffer(env, arr, &bool_out);
+  printf("napi_is_buffer: status=%d\n", (int)st);
+  st = napi_is_typedarray(env, arr, &bool_out);
+  printf("napi_is_typedarray: status=%d\n", (int)st);
+  st = napi_get_instance_data(env, &inst_data);
+  printf("napi_get_instance_data: status=%d\n", (int)st);
+  uint64_t u64_out;
+  st = napi_get_value_bigint_uint64(env, bigint_val, &u64_out, &bool_out);
+  printf("napi_get_value_bigint_uint64: status=%d\n", (int)st);
+  napi_async_cleanup_hook_handle ach = nullptr;
+  st = napi_add_async_cleanup_hook(
+      env, +[](napi_async_cleanup_hook_handle, void *) {}, nullptr, &ach);
+  printf("napi_add_async_cleanup_hook: status=%d\n", (int)st);
+  if (st == napi_ok) {
+    st = napi_remove_async_cleanup_hook(ach);
+    printf("napi_remove_async_cleanup_hook: status=%d\n", (int)st);
+  }
+
+  // Clear the pending exception so we can inspect side effects.
+  napi_value exc;
+  NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exc));
+
+  // Side-effect checks (the part a status-only test can't catch).
+  napi_value frozen_obj, is_frozen;
+  NODE_API_CALL(env,
+                napi_get_named_property(env, global, "Object", &frozen_obj));
+  NODE_API_CALL(env, napi_get_named_property(env, frozen_obj, "isFrozen",
+                                             &frozen_obj));
+  NODE_API_CALL(env, napi_call_function(env, global, frozen_obj, 1, &obj,
+                                        &is_frozen));
+  bool frozen;
+  NODE_API_CALL(env, napi_get_value_bool(env, is_frozen, &frozen));
+  printf("side_effect frozen=%s\n", frozen ? "true" : "false");
+
+  bool has7;
+  NODE_API_CALL(env, napi_has_element(env, arr, 7, &has7));
+  printf("side_effect arr[7]=%s\n", has7 ? "set" : "undefined");
+
+  printf("side_effect script_ran=%s\n",
+         pending_gate_script_ran ? "true" : "false");
+
+  // The pre-created promise must still be pending: resolve_deferred was
+  // refused, so the deferred is still valid. Conclude it now so we don't
+  // leak the handle. Skip if a buggy runtime already consumed it.
+  if (resolve_st != napi_ok) {
+    NODE_API_CALL(env, napi_resolve_deferred(env, deferred_pre, five));
+  }
+  NODE_API_CALL(env, napi_delete_reference(env, ref));
+
+  return ok(env);
+}
+
 // Regression test: PROPERTY_NAME_FROM_UTF8 must copy string data.
 // Previously it used StringImpl::createWithoutCopying for ASCII strings,
 // which could leave dangling pointers in JSC's atom string table.
@@ -2908,10 +3183,31 @@ test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value
+test_napi_adjust_external_memory(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  const int64_t delta = 8192;
+  int64_t base = 0, after_add = 0, after_sub = 0, readback = 0;
+
+  NODE_API_CALL(env, napi_adjust_external_memory(env, 0, &base));
+  NODE_API_CALL(env, napi_adjust_external_memory(env, delta, &after_add));
+  NODE_API_CALL(env, napi_adjust_external_memory(env, -delta, &after_sub));
+  NODE_API_CALL(env, napi_adjust_external_memory(env, 0, &readback));
+
+  // The absolute baseline can differ between engines; only the deltas are
+  // part of the API contract.
+  printf("after_add-base=%" PRId64 "\n", after_add - base);
+  printf("after_sub-after_add=%" PRId64 "\n", after_sub - after_add);
+  printf("readback-after_sub=%" PRId64 "\n", readback - after_sub);
+  printf("readback-base=%" PRId64 "\n", readback - base);
+  return ok(env);
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);
+  REGISTER_FUNCTION(env, exports, test_napi_adjust_external_memory);
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
   REGISTER_FUNCTION(env, exports, test_napi_get_value_string_utf8_with_buffer);
@@ -2950,11 +3246,13 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_is_buffer);
   REGISTER_FUNCTION(env, exports, test_is_typedarray);
   REGISTER_FUNCTION(env, exports, test_is_arraybuffer);
+  REGISTER_FUNCTION(env, exports, test_detach_arraybuffer);
   REGISTER_FUNCTION(env, exports, test_napi_get_default_values);
   REGISTER_FUNCTION(env, exports, test_napi_numeric_string_keys);
   REGISTER_FUNCTION(env, exports, test_deferred_exceptions);
   REGISTER_FUNCTION(env, exports, test_napi_strict_equals);
   REGISTER_FUNCTION(env, exports, test_napi_call_function_recv_null);
+  REGISTER_FUNCTION(env, exports, test_napi_new_instance_status);
   REGISTER_FUNCTION(env, exports, test_napi_create_array_boundary);
   REGISTER_FUNCTION(env, exports, test_napi_dataview_bounds_errors);
   REGISTER_FUNCTION(env, exports, test_napi_typeof_empty_value);
@@ -2962,6 +3260,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_object_coercion);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
+  REGISTER_FUNCTION(env, exports, test_napi_v10_surface);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
@@ -2970,6 +3269,7 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
                     test_external_arraybuffer_with_pending_exception);
   REGISTER_FUNCTION(env, exports,
                     test_external_buffer_with_pending_exception);
+  REGISTER_FUNCTION(env, exports, test_pending_exception_gate);
   REGISTER_FUNCTION(env, exports, test_napi_get_named_property_copied_string);
   REGISTER_FUNCTION(env, exports, test_issue_25933);
   REGISTER_FUNCTION(env, exports, test_napi_make_callback_async_context_frame);

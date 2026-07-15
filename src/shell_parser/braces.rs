@@ -776,10 +776,19 @@ enum SequenceSpec {
 /// `(end - start).abs() / step_mag + 1`, rejecting anything over
 /// `MAX_SEQUENCE_EXPANSION`. Always >= 1 for `step_mag > 0` (asserted by
 /// callers), so this only ever rejects for being too large.
+///
+/// Callers currently only ever pass operands bounded to 18 decimal digits
+/// (`parse_int_operand` rejects longer ones), so `count` can't get anywhere
+/// near overflowing `usize` in practice — but comparing against the cap in
+/// the wide `i128` type, before ever casting to `usize`, means that stays
+/// true by construction instead of by the caller's current behavior.
 fn sequence_count(start: i128, end: i128, step_mag: i128) -> Option<usize> {
     debug_assert!(step_mag > 0);
     let count = (end - start).abs() / step_mag + 1;
-    (count as usize <= MAX_SEQUENCE_EXPANSION).then_some(count as usize)
+    if count > MAX_SEQUENCE_EXPANSION as i128 {
+        return None;
+    }
+    Some(count as usize)
 }
 
 fn parse_sequence_spec(text: &[u8]) -> Option<SequenceSpec> {
@@ -851,11 +860,15 @@ pub(crate) fn is_valid_brace_sequence(text: &[u8]) -> bool {
 /// `None` for anything else (comma lists, plain words, malformed sequences
 /// like `{1..}`), in which case the caller leaves the brace group untouched.
 pub(crate) fn parse_brace_sequence(text: &[u8]) -> Option<Vec<Vec<u8>>> {
-    // Iterate by offset, not by stepping a value until it equals the end:
-    // when the step doesn't evenly divide the distance (e.g. `{0..5..2}`,
-    // verified against bash to stop at 4, not reach 5), stepping until
-    // equal to `end` overshoots and never terminates — an infinite loop
-    // that would OOM well before any caller notices.
+    // Compute each value fresh from `start + offset * step` (`offset` bounded
+    // by `count <= MAX_SEQUENCE_EXPANSION`), not by repeatedly adding `step`
+    // to a running value: when the step doesn't evenly divide the distance
+    // (e.g. `{0..5..2}`, verified against bash to stop at 4, not reach 5),
+    // stepping until equal to `end` overshoots and never terminates — an
+    // infinite loop that would OOM well before any caller notices. Offset
+    // multiplication also means the loop never adds past the last value
+    // actually used, unlike a running `v += step` that still executes (and
+    // could in principle overflow) once more after the final push.
     match parse_sequence_spec(text)? {
         SequenceSpec::Int {
             start,
@@ -864,19 +877,15 @@ pub(crate) fn parse_brace_sequence(text: &[u8]) -> Option<Vec<Vec<u8>>> {
             count,
         } => {
             let mut out = Vec::with_capacity(count);
-            let mut v = start;
-            for _ in 0..count {
-                out.push(format_int_padded(v, pad_width));
-                v += step;
+            for offset in 0..count as i128 {
+                out.push(format_int_padded(start + offset * step, pad_width));
             }
             Some(out)
         }
         SequenceSpec::Char { start, step, count } => {
             let mut out = Vec::with_capacity(count);
-            let mut v = i128::from(start);
-            for _ in 0..count {
-                out.push(vec![v as u8]);
-                v += step;
+            for offset in 0..count as i128 {
+                out.push(vec![(i128::from(start) + offset * step) as u8]);
             }
             Some(out)
         }
@@ -1500,22 +1509,19 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         //   - Start at beginning of brace, replacing special tokens back with
         //     chars, skipping over actual closed braces
         let mut brace_stack: SmallVec<[u32; MAX_NESTED_BRACES]> = SmallVec::new();
-        // Parallel to `brace_stack`, but keyed by the Nth-Open-seen ordinal
-        // rather than token index: `flatten_tokens` (which runs before
-        // `expand_brace_sequences` consults `self.escaped_group_opens`)
-        // deletes merged Text tokens and shifts every later index, but it
-        // never removes or reorders Open tokens — so "the Nth Open" is a
-        // stable identity across that pass while a raw index isn't.
-        //
         // Tracks whether the innermost currently-open group has seen an
         // escaped byte directly at its own level (not a nested child's).
         // Bash disqualifies a group from sequence-expression recognition if
         // ANY byte inside it was backslash-escaped, even one unrelated to
         // the `..` — verified against bash 5.3.0: `{\1..3}`, `{1..\3}`, and
-        // `{1\..3}` all stay fully literal.
+        // `{1\..3}` all stay fully literal. Recorded into
+        // `self.escaped_group_opens` by raw token index on close; remapped
+        // to the stable "Nth Open" ordinal `expand_brace_sequences` uses
+        // once rollback (which can delete an outer unclosed Open while
+        // leaving an inner closed one intact — see
+        // `remap_escaped_group_opens_to_ordinals`) has settled which Opens
+        // actually survive.
         let mut brace_has_escape: SmallVec<[bool; MAX_NESTED_BRACES]> = SmallVec::new();
-        let mut brace_ordinal_stack: SmallVec<[u32; MAX_NESTED_BRACES]> = SmallVec::new();
-        let mut open_ordinal: u32 = 0;
 
         loop {
             let Some(input) = self.eat() else { break };
@@ -1532,17 +1538,14 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
                     c if c == u32::from(b'{') => {
                         brace_stack.push(u32::try_from(self.tokens.len()).expect("int cast"));
                         brace_has_escape.push(false);
-                        brace_ordinal_stack.push(open_ordinal);
-                        open_ordinal += 1;
                         self.tokens.push(Token::Open(ExpansionVariants::default()));
                         continue;
                     }
                     c if c == u32::from(b'}') => {
                         if brace_stack.len() > 0 {
-                            let _ = brace_stack.pop();
-                            let ordinal = brace_ordinal_stack.pop().unwrap();
+                            let open_idx = brace_stack.pop().unwrap();
                             if brace_has_escape.pop() == Some(true) {
-                                self.escaped_group_opens.push(ordinal);
+                                self.escaped_group_opens.push(open_idx);
                             }
                             self.tokens.push(Token::Close);
                             continue;
@@ -1570,11 +1573,52 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             self.rollback_braces(top_idx);
         }
 
+        self.remap_escaped_group_opens_to_ordinals();
         self.flatten_tokens()?;
         self.expand_brace_sequences()?;
         self.tokens.push(Token::Eof);
 
         Ok(self.contains_nested)
+    }
+
+    /// Converts `self.escaped_group_opens` from raw token indices (assigned
+    /// while `tokenize_impl`'s main loop runs, before rollback) to ordinals
+    /// — "the Nth `Open` token, 0-indexed" — counted over the *current*
+    /// (post-rollback) token stream. Must run after the unclosed-braces
+    /// rollback loop and before `flatten_tokens`/`expand_brace_sequences`.
+    ///
+    /// Rollback can convert an outer *unclosed* `Open` back into literal
+    /// `Text` while leaving an inner, already-closed group's `Open` intact
+    /// (`rollback_braces`'s "skip over actual closed braces"). A raw token
+    /// index recorded before that happens can point at content that is no
+    /// longer an `Open` at all once rollback settles, and — because the
+    /// disappeared token shifts every ordinal after it — a survivor's own
+    /// ordinal can change too. Recomputing ordinals from the token indices
+    /// fixes both: an index whose token is no longer `Open` is dropped (its
+    /// group doesn't exist as a candidate anymore anyway), and a surviving
+    /// index gets the ordinal it actually has *now*, matching what
+    /// `expand_brace_sequences`'s own left-to-right Open-count will later
+    /// see. `flatten_tokens`, which runs after this, never removes or
+    /// reorders `Open` tokens, so that ordinal stays valid through it.
+    fn remap_escaped_group_opens_to_ordinals(&mut self) {
+        if self.escaped_group_opens.is_empty() {
+            return;
+        }
+        let by_index = core::mem::take(&mut self.escaped_group_opens);
+        let mut ordinal: u32 = 0;
+        for (idx, tok) in self.tokens.iter().enumerate() {
+            if !matches!(tok, Token::Open(_)) {
+                continue;
+            }
+            if by_index.contains(&u32::try_from(idx).expect("int cast")) {
+                self.escaped_group_opens.push(ordinal);
+            }
+            ordinal += 1;
+        }
+        // Ascending by construction (`idx` is scanned in increasing order),
+        // which `expand_brace_sequences` relies on for a binary-search
+        // lookup instead of a linear scan.
+        debug_assert!(self.escaped_group_opens.is_sorted());
     }
 
     /// Rewrites every simple `Open, Text, Close` group (i.e. a brace group
@@ -1604,7 +1648,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
             let is_simple_group = i + 2 < self.tokens.len()
                 && matches!(self.tokens[i + 1], Token::Text(_))
                 && matches!(self.tokens[i + 2], Token::Close);
-            if !is_simple_group || self.escaped_group_opens.contains(&ordinal) {
+            if !is_simple_group || self.escaped_group_opens.binary_search(&ordinal).is_ok() {
                 i += 1;
                 continue;
             }
@@ -1986,5 +2030,37 @@ mod tests {
         // Open, Text("1"), Comma, Text("2"), Comma, Text("3"), Close, Eof.
         let unescaped = Lexer::tokenize(b"{1..3}").unwrap();
         assert_eq!(unescaped.tokens.len(), 8);
+    }
+
+    #[test]
+    fn escaped_group_survives_rollback_of_an_outer_unclosed_brace() {
+        // Regression test: an escaped, *closed* group nested inside an
+        // *unclosed* outer group. Rollback converts the outer `{` back to
+        // literal text (and everything at its level up to the surviving
+        // inner group), which used to desync the escaped-group bookkeeping
+        // — either because a raw token index went stale once
+        // `flatten_tokens` shifted indices, or (the bug this test guards
+        // against) because assigning the inner group's ordinal *before*
+        // rollback didn't account for the outer `Open` disappearing and
+        // shifting every ordinal after it. Both are closed by recording
+        // token indices during the scan and remapping them to ordinals
+        // only after rollback has settled which `Open`s survive.
+        let src = b"{a,{1\\..3}";
+        let result = Lexer::tokenize(src).unwrap();
+
+        // The outer `{` and `,` roll back to literal text and merge with
+        // the leading "a"; the inner group survives as real Open/Text/Close
+        // tokens, and — because it's escaped — its Text stays a single
+        // literal chunk instead of being split into a comma sequence.
+        assert_eq!(
+            result.tokens,
+            vec![
+                Token::Text(SmolStr::from_slice(b"{a,").unwrap()),
+                Token::Open(ExpansionVariants::default()),
+                Token::Text(SmolStr::from_slice(b"1..3").unwrap()),
+                Token::Close,
+                Token::Eof,
+            ]
+        );
     }
 }

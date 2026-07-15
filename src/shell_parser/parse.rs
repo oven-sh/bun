@@ -1933,12 +1933,19 @@ impl<'bump> Parser<'bump> {
                         ast::SimpleAtom::Text(txt),
                         ast::SimpleAtom::BraceEnd,
                     ] => {
-                        let is_escaped = last_text_range.is_some_and(|r| {
-                            self.escaped_positions
-                                .iter()
-                                .any(|&p| p >= r.start && p < r.end)
-                        });
-                        !is_escaped && crate::braces::is_valid_brace_sequence(txt)
+                        // Check the (cheap-ish, and usually-failing for
+                        // plain non-sequence text like `{foo}`) sequence
+                        // grammar first so it can short-circuit before ever
+                        // touching `escaped_positions`. That list is
+                        // populated in strictly increasing `self.j` order
+                        // (see its doc comment), so a sorted binary search
+                        // via `partition_point` replaces the linear scan.
+                        crate::braces::is_valid_brace_sequence(txt)
+                            && !last_text_range.is_some_and(|r| {
+                                let idx = self.escaped_positions.partition_point(|&p| p < r.start);
+                                idx < self.escaped_positions.len()
+                                    && self.escaped_positions[idx] < r.end
+                            })
                     }
                     _ => has_dotdot,
                 });

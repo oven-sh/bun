@@ -754,6 +754,13 @@ impl<'a> TablePrinter<'a> {
         })
     }
 
+    /// Node's `setlike` predicate: `isSet(v) || isSetIterator(v)`. `WeakSet`
+    /// is not setlike (no `[[SetData]]`), so it falls through to plain-object
+    /// handling just like any other non-iterable object.
+    fn is_setlike(&self) -> bool {
+        self.jstype == jsc::JSType::Set || self.jstype == jsc::JSType::SetIterator
+    }
+
     /// Format `value` exactly once (bare for strings, quoted otherwise),
     /// appending its rendered bytes to the shared `cell_text` scratch, and
     /// return the recorded byte range plus its visible width.
@@ -817,7 +824,7 @@ impl<'a> TablePrinter<'a> {
         // Set entries always go to the "Values" column as a whole, even when
         // the entry is an object (Node.js routes Set/SetIterator through a
         // dedicated setlike branch that never explodes per-property columns).
-        if self.jstype.is_set() || self.jstype == jsc::JSType::SetIterator {
+        if self.is_setlike() {
             let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, row_value)?;
             self.values_col_width = Some(self.values_col_width.unwrap_or(1).max(cell.width));
             row.values_cell = Some(cell);
@@ -998,11 +1005,10 @@ impl<'a> TablePrinter<'a> {
         // Map/Set route every row through fixed Key/Values columns and never
         // read the properties filter (Node returns from its map/setlike
         // branches before `properties` is consulted).
-        let setlike =
-            self.jstype.is_map() || self.jstype.is_set() || self.jstype == jsc::JSType::SetIterator;
+        let ignores_properties = self.jstype.is_map() || self.is_setlike();
 
         // if the "properties" arg was provided, pre-populate the columns
-        if !self.properties.is_undefined() && !setlike {
+        if !self.properties.is_undefined() && !ignores_properties {
             let mut properties_iter = jsc::JSArrayIterator::init(self.properties, global_object)?;
             while let Some(value) = properties_iter.next()? {
                 let name = value.to_bun_string(global_object)?;

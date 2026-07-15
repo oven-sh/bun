@@ -9,6 +9,7 @@ import {
   isIntelMacOS,
   isIPv4,
   isIPv6,
+  isLinux,
   isPosix,
   tempDir,
   tls,
@@ -1995,6 +1996,67 @@ it("propagates content-type from a Bun.file()'s file path in fetch()", async () 
   // but it does for Response
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
 });
+
+// procfs/sysfs regular files report st_size == 0 but are readable; the
+// sendfile path used to trust stat and serve a 200 Content-Length: 0 empty
+// body while Bun.file().text() and the .stream() route returned the content.
+it.skipIf(!isLinux)(
+  "serves the full content of a Bun.file() whose stat size is 0 (procfs)",
+  async () => {
+    const P = "/proc/self/status";
+    const apiText = await Bun.file(P).text();
+    expect(apiText.length).toBeGreaterThan(0);
+    expect(apiText).toContain("Name:");
+
+    using dir = tempDir("serve-procfs", { "empty.bin": "" });
+    const emptyPath = join(String(dir), "empty.bin");
+
+    using server = Bun.serve({
+      port: 0,
+      development: false,
+      routes: {
+        "/route": new Response(Bun.file(P)),
+      },
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        if (pathname === "/file") return new Response(Bun.file(P));
+        if (pathname === "/empty") return new Response(Bun.file(emptyPath));
+        return new Response("not found", { status: 404 });
+      },
+    });
+
+    // fetch-handler path (RequestContext.do_sendfile)
+    {
+      const res = await fetch(new URL("/file", server.url));
+      const body = await res.text();
+      expect({
+        status: res.status,
+        hasName: body.includes("Name:"),
+        nonEmpty: body.length > 0,
+      }).toEqual({ status: 200, hasName: true, nonEmpty: true });
+      expect(res.headers.get("content-length")).not.toBe("0");
+    }
+
+    // static-route path (FileRoute)
+    {
+      const res = await fetch(new URL("/route", server.url));
+      const body = await res.text();
+      expect({
+        status: res.status,
+        hasName: body.includes("Name:"),
+        nonEmpty: body.length > 0,
+      }).toEqual({ status: 200, hasName: true, nonEmpty: true });
+      expect(res.headers.get("content-length")).not.toBe("0");
+    }
+
+    // a real 0-byte file still serves as empty (one read() hits EOF)
+    {
+      const res = await fetch(new URL("/empty", server.url));
+      const body = await res.text();
+      expect({ status: res.status, body }).toEqual({ status: 200, body: "" });
+    }
+  },
+);
 
 it("does propagate type for Blob", async () => {
   using server = Bun.serve({

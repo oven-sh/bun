@@ -307,6 +307,14 @@ impl FileResponseStream {
     pub(crate) fn on_reader_done(&mut self) {
         // Adopts the in-flight read ref taken before `reader.read()`.
         let _guard = self.take_read_ref();
+        // BufferedReader skips on_read_chunk for empty chunks, so EOF-at-first-
+        // read (a genuinely empty file) lands here without RESPONSE_DONE set.
+        if !self.state.contains(State::RESPONSE_DONE) {
+            self.state.insert(State::RESPONSE_DONE);
+            self.detach_resp();
+            self.resp.end(b"", self.resp.should_close_connection());
+            (self.on_complete)(self.ctx, self.resp);
+        }
         self.finish();
     }
 

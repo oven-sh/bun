@@ -435,6 +435,14 @@ impl FileRoute {
             return;
         }
 
+        // procfs/sysfs regular files report st_size == 0 but yield content on
+        // read(); for an unsliced Bun.file() route, read to EOF (chunked, no
+        // Content-Length) instead of trusting stat and serving an empty body.
+        let stream_to_eof = file_type == FileType::File
+            && size == 0
+            && this.blob.offset.get() == 0
+            && this.blob.size.get() == crate::webcore::blob::MAX_SIZE;
+
         // Range applies to the slice the route was configured with, not the
         // underlying file: a Bun.file(p).slice(a,b) route exposes only [a,b).
         // RFC 9110 §14.2: Range is only defined for GET (HEAD mirrors GET's
@@ -442,6 +450,7 @@ impl FileRoute {
         // set Content-Range — they're managing partial responses themselves.
         let range: RangeRequest::Result = if (method == Method::GET || method == Method::HEAD)
             && file_type == FileType::File
+            && !stream_to_eof
             && this.status_code == 200
             && !this.has_content_range_header
         {
@@ -537,7 +546,7 @@ impl FileRoute {
                 } else {
                     0
                 },
-                if file_type == FileType::File && this.blob.size.get() > 0 {
+                if file_type == FileType::File && !stream_to_eof && this.blob.size.get() > 0 {
                     Some(size)
                 } else {
                     None
@@ -545,7 +554,10 @@ impl FileRoute {
             ),
         };
 
-        if file_type == FileType::File && !resp.state().has_written_content_length_header() {
+        if file_type == FileType::File
+            && !stream_to_eof
+            && !resp.state().has_written_content_length_header()
+        {
             resp.write_header_int(b"content-length", body_len.unwrap_or(size));
             resp.mark_wrote_content_length_header();
         }

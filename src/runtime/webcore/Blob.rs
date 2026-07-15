@@ -5385,6 +5385,21 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
             "Cannot write to a Blob backed by bytes, which are always read-only"
         )));
     }
+    if let store::Data::File(f) = &store.data {
+        if let PathOrFileDescriptor::Path(p) = &f.pathlike {
+            if bun_standalone_graph::Graph::get().is_some()
+                && bun_standalone_graph::is_bun_standalone_file_path(p.slice())
+            {
+                let err = bun_sys::Error {
+                    errno: bun_sys::E::EROFS as _,
+                    syscall: bun_sys::Tag::open,
+                    path: p.slice().into(),
+                    ..Default::default()
+                };
+                return Err(global_this.throw_value(err.to_js(global_this)));
+            }
+        }
+    }
     Ok(())
 }
 

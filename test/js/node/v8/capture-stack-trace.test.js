@@ -297,6 +297,63 @@ test("capture stack trace edge cases", () => {
   expect(Error.captureStackTrace({}, true)).toBe(undefined);
 });
 
+test("Error.captureStackTrace installs .stack as non-enumerable", () => {
+  // V8 installs .stack with enumerable: false regardless of target type.
+  const expectNonEnumerableStack = target => {
+    const d = Object.getOwnPropertyDescriptor(target, "stack");
+    expect({ enumerable: d.enumerable, configurable: d.configurable }).toEqual({
+      enumerable: false,
+      configurable: true,
+    });
+    expect(Object.prototype.propertyIsEnumerable.call(target, "stack")).toBe(false);
+  };
+
+  // plain object target
+  const o = { a: 1 };
+  Error.captureStackTrace(o);
+  expectNonEnumerableStack(o);
+  expect(Object.keys(o)).toEqual(["a"]);
+  expect(JSON.stringify(o)).toBe('{"a":1}');
+  const forIn = [];
+  for (const k in o) forIn.push(k);
+  expect(forIn).toEqual(["a"]);
+  expect(typeof o.stack).toBe("string");
+
+  // plain object with Error.prepareStackTrace set
+  Error.prepareStackTrace = (err, sites) => "from-prepare";
+  try {
+    const o2 = {};
+    Error.captureStackTrace(o2);
+    expectNonEnumerableStack(o2);
+    expect(Object.keys(o2)).toEqual([]);
+    expect(o2.stack).toBe("from-prepare");
+  } finally {
+    Error.prepareStackTrace = origPrepareStackTrace;
+  }
+
+  // ErrorInstance whose .stack has not been materialized yet
+  const lazy = new Error("lazy");
+  Error.captureStackTrace(lazy);
+  expectNonEnumerableStack(lazy);
+  expect(Object.keys(lazy)).toEqual([]);
+  void lazy.stack;
+  expectNonEnumerableStack(lazy);
+
+  // ErrorInstance whose .stack has already been materialized
+  const materialized = new Error("materialized");
+  void materialized.stack;
+  Error.captureStackTrace(materialized);
+  expectNonEnumerableStack(materialized);
+  expect(Object.keys(materialized)).toEqual([]);
+
+  // assigning to .stack after captureStackTrace keeps it non-enumerable
+  const assigned = new Error("assigned");
+  Error.captureStackTrace(assigned);
+  assigned.stack = "assigned-value";
+  expectNonEnumerableStack(assigned);
+  expect(assigned.stack).toBe("assigned-value");
+});
+
 test("prepare stack trace call sites", () => {
   function f1() {
     f2();
@@ -892,8 +949,7 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
     function recurse(depth) {
       if (depth === 0) return target();
       // Not a tail call — keeps each frame on the stack.
-      const r = recurse(depth - 1);
-      return { ...r };
+      return recurse(depth - 1) || null;
     }
     noInline(recurse);
 

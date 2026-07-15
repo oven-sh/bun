@@ -60,8 +60,7 @@ function fileURLToPath(path, options?: { windows?: boolean }) {
   if (path.protocol !== "file:") {
     throw $ERR_INVALID_URL_SCHEME("The URL must be of scheme file");
   }
-  const windows = options != null && options.windows !== undefined ? options.windows : process.platform === "win32";
-  return windows ? getPathFromURLWin32(path) : getPathFromURLPosix(path);
+  return (options?.windows ?? process.platform === "win32") ? getPathFromURLWin32(path) : getPathFromURLPosix(path);
 }
 
 function toPathIfFileURL(fileURLOrPath) {

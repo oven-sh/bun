@@ -179,11 +179,15 @@ describe("url.fileURLToPath", () => {
     assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp"), { windows: true }), "C:\\tmp");
     assert.strictEqual(url.fileURLToPath(duck("server", "/share"), { windows: true }), "\\\\server\\share");
 
-    // Host platform default (no options)
+    // Host platform default: no options, or `windows` nullish (Node uses `??`).
     if (isWindows) {
       assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp")), "C:\\tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp"), { windows: null }), "C:\\tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/C:/tmp"), { windows: undefined }), "C:\\tmp");
     } else {
       assert.strictEqual(url.fileURLToPath(duck("", "/tmp")), "/tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/tmp"), { windows: null }), "/tmp");
+      assert.strictEqual(url.fileURLToPath(duck("", "/tmp"), { windows: undefined }), "/tmp");
     }
 
     // Protocol mismatch

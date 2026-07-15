@@ -1285,6 +1285,12 @@ impl WebWorker {
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            // Same reason: `RareData` is dropped by `vm.destroy()` below, long
+            // after `teardownJSCVM`, so its `Strong`s must be released here
+            // while the HandleSet is still live. Mirrors global_exit().
+            if let Some(rare) = vm.rare_data.as_deref_mut() {
+                rare.release_js_handles();
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

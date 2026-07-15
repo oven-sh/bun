@@ -2233,6 +2233,10 @@ impl QuicSession {
         if max_size == 0 || buf.byte_slice().len() > max_size as usize {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
+        // Copy before anything below can run user JS: the drop-oldest branch
+        // invokes `ondatagramstatus`, which may detach or transfer
+        // `data.buffer` and free the store `buf` points into.
+        let payload = buf.byte_slice().to_vec();
         let id = self
             .next_datagram_id
             .replace(self.next_datagram_id.get() + 1);
@@ -2253,8 +2257,7 @@ impl QuicSession {
                 self.report_datagram_abandoned(global, dropped_id);
             }
         }
-        self.datagram_queue
-            .with_mut(|q| q.push_back((id, buf.byte_slice().to_vec())));
+        self.datagram_queue.with_mut(|q| q.push_back((id, payload)));
         // SAFETY: state buffer is live; ArrayBuffer storage is byte-aligned.
         unsafe { (&raw mut (*self.state_mut()).last_datagram_id).write_unaligned(id) };
         // SAFETY: `conn` is non-null (checked above) and live.

@@ -2088,3 +2088,50 @@ it("exit-time WAL checkpoint runs even with a never-finalized prepared statement
   verify.close();
   expect(exitCode).toBe(0);
 });
+
+// sqlite3_prepare_v3 treats an interior NUL byte as end-of-SQL. The exec/run
+// multi-statement loop used to re-prepare the same empty statement forever
+// once the head reached a NUL, pinning the event loop at 100% CPU.
+it("exec/run with an embedded NUL byte in the SQL string does not hang", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const db = new Database(":memory:");
+    const results = [];
+    const cases = [
+      ["lone", () => db.exec("\\0")],
+      ["trailing", () => db.exec("select 1\\0")],
+      ["leading", () => db.exec("\\0select 1")],
+      ["mid", () => db.exec("select 1\\0; select 2")],
+      ["run", () => db.run("select ?\\0x", [1])],
+    ];
+    for (const [name, fn] of cases) {
+      try {
+        fn();
+        results.push(name + ": ok");
+      } catch (e) {
+        results.push(name + ": " + e.message);
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: before the fix, the first case spun forever at 100% CPU.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const empty = "Query contained no valid SQL statement; likely empty query.";
+  expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: JSON.stringify(["lone: " + empty, "trailing: ok", "leading: " + empty, "mid: ok", "run: ok"]),
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
+});

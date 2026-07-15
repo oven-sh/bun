@@ -6201,7 +6201,10 @@ impl<'a> Resolver<'a> {
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
-                if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
+                // The only caller that reaches this with `parent` set
+                // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
+                // mutex is non-recursive, so go through the `_locked` accessor.
+                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()

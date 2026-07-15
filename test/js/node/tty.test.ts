@@ -10,6 +10,23 @@ describe("WriteStream.prototype is distinct from fs.WriteStream.prototype", () =
     expect(Object.getPrototypeOf(tty.WriteStream.prototype)).toBe(fs.WriteStream.prototype);
   });
 
+  test("tty.{Read,Write}Stream.prototype.constructor point at the tty classes", () => {
+    expect(tty.WriteStream.prototype.constructor).toBe(tty.WriteStream);
+    expect(tty.ReadStream.prototype.constructor).toBe(tty.ReadStream);
+    expect(Object.getOwnPropertyDescriptor(tty.WriteStream.prototype, "constructor")).toEqual({
+      value: tty.WriteStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect(Object.getOwnPropertyDescriptor(tty.ReadStream.prototype, "constructor")).toEqual({
+      value: tty.ReadStream,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
   test("fs.WriteStream instances do not carry tty methods and are not instanceof tty.WriteStream", async () => {
     using dir = tempDir("tty-writestream-proto", { "out.txt": "" });
     const ws = fs.createWriteStream(path.join(String(dir), "out.txt"));

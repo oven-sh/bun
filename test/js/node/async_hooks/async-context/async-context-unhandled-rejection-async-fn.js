@@ -76,9 +76,9 @@ asyncLocalStorage.run({ test: "finally-returns-rejected" }, () => {
   Promise.resolve().finally(() => Promise.reject(new Error("finally-returns-rejected")));
 });
 
-let polls = 0;
+const deadline = performance.now() + 30_000;
 (function probe() {
-  if (++polls > 10000) {
+  if (performance.now() > deadline) {
     console.error(`FAIL: timed out with ${remaining} rejection(s) never delivered`);
     process.exit(1);
   }

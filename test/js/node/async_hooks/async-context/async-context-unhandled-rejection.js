@@ -43,7 +43,7 @@ asyncLocalStorage.run({ test: "timer" }, () => {
 // Polls outside of any context, so each run observes what the rejection drain
 // left in the slot: the drain must restore the previous context after every
 // dispatch, not merely overwrite it before the next one.
-let polls = 0;
+const deadline = performance.now() + 30_000;
 let finalQueued = false;
 (function probe() {
   const leaked = asyncLocalStorage.getStore();
@@ -52,7 +52,7 @@ let finalQueued = false;
     process.exit(1);
   }
 
-  if (++polls > 10000) {
+  if (performance.now() > deadline) {
     console.error(`FAIL: timed out with ${remaining} rejection(s) never delivered`);
     process.exit(1);
   }

@@ -280,22 +280,22 @@ private:
 
         auto result = httpResponseData->consumePostPadded(httpContextData->maxHeaderSize, httpResponseData->isConnectRequest, httpContextData->flags.requireHostHeader,httpContextData->flags.useStrictMethodValidation, data, (unsigned int) length, s, proxyParser, [httpContextData](void *s, HttpRequest *httpRequest) -> void * {
 
+            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
+
+            /* A pipelined request arrived while the previous response body is still in flight
+             * (e.g. sendfile). RFC 9112 9.3.2: finish the committed response, then close; do not
+             * abort it. Sync pipelining (handler ends under cork) never reaches this branch. */
+            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
+                return nullptr;
+            }
 
             /* For every request we reset the timeout and hang until user makes action */
             /* Warning: if we are in shutdown state, resetting the timer is a security issue! */
             us_socket_timeout((us_socket_t *) s, 0);
 
             /* Reset httpResponse */
-            HttpResponseData<SSL> *httpResponseData = (HttpResponseData<SSL> *) us_socket_ext((us_socket_t *) s);
             httpResponseData->offset = 0;
-
-            /* Are we not ready for another request yet? Terminate the connection.
-             * Important for denying async pipelining until, if ever, we want to support it.
-             * Otherwise requests can get mixed up on the same connection. We still support sync pipelining. */
-            if (httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) {
-                us_socket_close((us_socket_t *) s, 0, nullptr);
-                return nullptr;
-            }
 
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
@@ -475,7 +475,10 @@ private:
             return (us_socket_t *) asyncSocket;
         }
 
-        /* It is okay to uncork a closed socket and we need to */
+        /* Parsing stopped without upgrading: the socket is either closed or still serving an
+         * in-flight response that a pipelined request tried to preempt. Balance the ref taken
+         * above; uncorking a closed socket is safe and required. */
+        us_socket_unref(s);
         ((AsyncSocket<SSL> *) s)->uncork();
 
         /* We cannot return nullptr to the underlying stack in any case */
@@ -523,7 +526,16 @@ private:
 
             /* The developer indicated that their onWritable failed. */
             if (!success) {
-                /* Skip testing if we can drain anything since that might perform an extra syscall */
+                /* Skip draining (saves a syscall). The callback may still have finished the response
+                 * (e.g. sendfile end), so honour HTTP_CONNECTION_CLOSE before returning. */
+                if (httpResponseData->state & HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE) {
+                    if ((httpResponseData->state & HttpResponseData<SSL>::HTTP_RESPONSE_PENDING) == 0) {
+                        if (asyncSocket->getBufferedAmount() == 0) {
+                            asyncSocket->shutdown();
+                            asyncSocket->close();
+                        }
+                    }
+                }
                 return s;
             }
 

@@ -1138,3 +1138,87 @@ console.log("OK");
   },
   60_000,
 );
+
+// RFC 9112 9.3.2: a pipelined request that arrives while a response body is
+// still in flight must not abort that response. uWS used to force-close the
+// connection here, truncating an 8MB file well short of its Content-Length.
+test("pipelined request mid-sendfile does not truncate the in-flight response", async () => {
+  using dir = tempDir("serve-file-pipeline-mid-body", {
+    "fixture.ts": `
+import { connect } from "node:net";
+import { join } from "node:path";
+
+const big = join(import.meta.dir, "big.bin");
+await Bun.write(big, Buffer.alloc(8 << 20, 0x41));
+
+const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  routes: { "/big": Bun.file(big), "/m": new Response("MARKER") },
+  fetch: () => new Response("x", { status: 404 }),
+});
+
+const result = await new Promise(resolve => {
+  const s = connect(server.port, "127.0.0.1");
+  s.setNoDelay(true);
+  let acc = Buffer.alloc(0), hdr = -1, cl = -1, pipelined = false, closed = false;
+  const fin = () => {
+    const body = hdr < 0 ? Buffer.alloc(0) : acc.subarray(hdr);
+    const got = Math.min(body.length, cl < 0 ? 0 : cl);
+    const marker = body.subarray(got).includes("MARKER");
+    resolve({ cl, got, full: cl > 0 && got === cl, closed, marker, pipelined });
+  };
+  s.on("connect", () => s.write("GET /big HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n"));
+  s.on("data", d => {
+    acc = Buffer.concat([acc, d]);
+    if (hdr < 0) {
+      const i = acc.indexOf("\\r\\n\\r\\n");
+      if (i < 0) return;
+      hdr = i + 4;
+      const m = /content-length: ?(\\d+)/i.exec(acc.toString("latin1", 0, i));
+      cl = m ? +m[1] : -1;
+    }
+    const got = acc.length - hdr;
+    if (!pipelined && got > 16 * 1024 && got < cl) {
+      pipelined = true;
+      s.write("GET /m HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+    }
+    if (pipelined && got >= cl && acc.subarray(hdr + cl).includes("MARKER")) {
+      s.destroy();
+      fin();
+    }
+  });
+  s.on("error", () => {});
+  s.on("close", () => { closed = true; fin(); });
+});
+
+console.log(JSON.stringify(result));
+server.stop(true);
+process.exit(0);
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const result = JSON.parse(stdout.trim());
+  // The pipelined GET must actually have been sent mid-body for the test to
+  // be meaningful; if the whole file drained in one tick we never raced it.
+  expect(result.pipelined).toBe(true);
+  // The in-flight 8MB body must be delivered in full. The server is free to
+  // either answer the pipelined request (keep-alive) or close after the full
+  // body; what it must not do is cut the body short.
+  expect({ cl: result.cl, got: result.got, full: result.full }).toEqual({
+    cl: 8 << 20,
+    got: 8 << 20,
+    full: true,
+  });
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+}, 30_000);

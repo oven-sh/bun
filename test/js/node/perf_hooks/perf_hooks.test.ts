@@ -84,7 +84,11 @@ test("export surface matches Node v26.3.0", () => {
   // Node names the PerformanceNodeEntry class but does not export it.
   expect(perf.PerformanceNodeEntry).toBeUndefined();
   // Known bun-only extra, pre-existing on main: PerformanceNodeTiming.
-  expect(Object.keys(perf).filter(k => !nodeExports.includes(k)).sort()).toEqual(["PerformanceNodeTiming"]);
+  expect(
+    Object.keys(perf)
+      .filter(k => !nodeExports.includes(k))
+      .sort(),
+  ).toEqual(["PerformanceNodeTiming"]);
 });
 
 test("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {

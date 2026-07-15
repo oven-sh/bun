@@ -317,6 +317,52 @@ describe("Bun.Transpiler", () => {
       exp("namespace M { export import M_A = M; }", "var M;\n((M) => {\n  M.M_A = M;\n})(M ||= {})");
     });
 
+    it("rejects this and return inside a namespace or enum body", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+      const thisErr = 'Cannot use "this" here';
+      const retErr = "A return statement cannot be used here";
+
+      // esbuild and tsc (TS2331) reject "this" in a namespace body. Bun used to
+      // silently rewrite it to the module-level "exports".
+      err("namespace x { export const z = this; }", thisErr);
+      err("namespace x { export const z = () => this; }", thisErr);
+      err("module x { export const z = this; }", thisErr);
+      err("namespace x.y { export const z = this; }", thisErr);
+      err("namespace x { namespace y { export const z = () => this; } }", thisErr);
+      err("declare namespace x { export const z = this; }", thisErr);
+      err("enum x { y = this }", thisErr);
+      err("enum x { y = () => this }", thisErr);
+      err("function f() { enum x { y = this } }", thisErr);
+      err("declare enum x { y = this }", thisErr);
+
+      // esbuild and tsc (TS1108) reject "return" in a namespace body.
+      err("namespace x { return }", retErr);
+      err("namespace x { return 1 }", retErr);
+
+      // Nested functions, methods, and class fields introduce their own "this".
+      exp(
+        "namespace x { export function f() { return this } }",
+        "var x;\n((x) => {\n  function f() {\n    return this;\n  }\n  x.f = f;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export class C { m() { return this } } }",
+        "var x;\n((x) => {\n\n  class C {\n    m() {\n      return this;\n    }\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export class C { f = this } }",
+        "var x;\n((x) => {\n\n  class C {\n    f = this;\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export class C { static f = this } }",
+        "var x;\n((x) => {\n\n  class C {\n    static f = this;\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      exp(
+        "enum x { y = (function() { return this })() }",
+        'var x;\n((x) => {\n  x[x["y"] = function() {\n    return this;\n  }()] = "y";\n})(x ||= {})',
+      );
+    });
+
     it("should parse empty type parameters", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

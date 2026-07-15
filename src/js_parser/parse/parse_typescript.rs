@@ -4,7 +4,7 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{ParseStatementOptions, Ref, ScopeOrder};
+use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -195,7 +195,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let old_has_non_local_export_declare_inside_namespace =
             p.has_non_local_export_declare_inside_namespace;
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         p.has_non_local_export_declare_inside_namespace = false;
+        p.fn_or_arrow_data_parse = FnOrArrowDataParse {
+            is_this_disallowed: true,
+            is_return_disallowed: true,
+            ..Default::default()
+        };
 
         // Parse the statements inside the namespace
         let mut stmts: BumpVec<'_, Stmt> = BumpVec::new_in(p.arena);
@@ -229,6 +235,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.has_non_local_export_declare_inside_namespace;
         p.has_non_local_export_declare_inside_namespace =
             old_has_non_local_export_declare_inside_namespace;
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         // Add any exported members from this namespace's body as members of the
         // associated namespace object.
@@ -568,6 +575,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.lexer.expect(T::TOpenBrace)?;
 
+        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
+        p.fn_or_arrow_data_parse = FnOrArrowDataParse {
+            is_this_disallowed: true,
+            ..Default::default()
+        };
+
         // Parse the body
         let mut values: BumpVec<'_, EnumValue> = BumpVec::new_in(p.arena);
         while p.lexer.token != T::TCloseBrace {
@@ -627,6 +640,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             p.lexer.next()?;
         }
+
+        p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         if !opts.is_typescript_declare {
             // Avoid a collision with the enum closure argument variable if the

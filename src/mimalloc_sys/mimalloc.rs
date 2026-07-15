@@ -57,6 +57,20 @@ unsafe extern "C" {
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
     pub safe fn mi_on_thread_idle();
+    /// Return this thread's empty mimalloc pages to the arena, which schedules their purge
+    /// and wakes the scavenger to do the madvise. Strictly shallower than
+    /// `mi_on_thread_idle`: it walks the page queues only, with no free-list hole scan.
+    ///
+    /// The precondition is that the theap's owner is not allocating, not that the caller owns
+    /// it -- `page->free`/`used` are plain fields, so what must not happen is a concurrent
+    /// mutation, which is why mimalloc's park protocol can hand a parked thread's theaps to
+    /// the scavenger. Calling it on the owner while the owner is running satisfies that too.
+    ///
+    /// `mi_theap_get_default()` returns the CALLING thread's theap, so calling this off the JS
+    /// thread silently collects the wrong (usually empty) one rather than failing.
+    pub safe fn mi_theap_collect(theap: *mut c_void, force: bool);
+    /// The calling thread's theap. No preconditions.
+    pub safe fn mi_theap_get_default() -> *mut c_void;
     /// No preconditions.
     pub safe fn mi_version() -> c_int;
     /// No preconditions.

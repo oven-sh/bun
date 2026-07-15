@@ -126,10 +126,15 @@ pub mod fs {
                 /// `bun:internal-for-testing` so leak tests can assert "N reloads
                 /// performed zero new appends".
                 pub fn append_count(&self) -> u32 {
-                    // SAFETY: see `append_slice`.
-                    let b = unsafe { &*$backing() };
-                    let _g = b.mutex.lock();
-                    b.slice_buf_used as u32 + b.overflow_list.count
+                    let this = $backing();
+                    // SAFETY: `this` is the live process-lifetime singleton; `Mutex: Sync`
+                    // so concurrent `&Mutex` formation is sound. With the inner mutex
+                    // held no other thread holds `&mut *this`, so the raw-place reads
+                    // of `slice_buf_used` / `overflow_list.count` are race-free.
+                    unsafe {
+                        let _g = (*this).mutex.lock();
+                        (*this).slice_buf_used as u32 + (*this).overflow_list.count
+                    }
                 }
             }
         };
@@ -137,11 +142,11 @@ pub mod fs {
     string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing);
     string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing);
 
-    thread_local! {
-        static DIRNAME_INTERN: core::cell::RefCell<
-            bun_collections::HashMap<&'static [u8], ()>,
-        > = core::cell::RefCell::new(bun_collections::HashMap::new());
-    }
+    // Process-wide (not thread-local): the backing store is process-global, so the
+    // dedupe index must match its lifetime or resolver worker threads each re-append.
+    static DIRNAME_INTERN: std::sync::LazyLock<
+        bun_core::Mutex<bun_collections::HashMap<&'static [u8], ()>>,
+    > = std::sync::LazyLock::new(Default::default);
 
     impl DirnameStore {
         /// Content-deduplicated [`append_slice`]. `BSSStringList::append` does not
@@ -154,14 +159,13 @@ pub mod fs {
                 // within the process-lifetime backing buffer, so widening is sound.
                 return Ok(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) });
             }
-            DIRNAME_INTERN.with_borrow_mut(|set| {
-                if let Some((interned, ())) = set.get_key_value(value) {
-                    return Ok(*interned);
-                }
-                let interned = self.append_slice(value)?;
-                set.insert(interned, ());
-                Ok(interned)
-            })
+            let mut set = DIRNAME_INTERN.lock();
+            if let Some((interned, ())) = set.get_key_value(value) {
+                return Ok(*interned);
+            }
+            let interned = self.append_slice(value)?;
+            set.insert(interned, ());
+            Ok(interned)
         }
 
         /// Content-deduplicated [`append_parts`]. See [`intern_slice`].

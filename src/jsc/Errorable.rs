@@ -1,6 +1,6 @@
 use crate::JSValue;
-use crate::error_code::ErrorCode;
 use crate::bun_error_type::BunErrorType;
+use crate::error_code::ErrorCode;
 
 #[repr(C)]
 pub struct Errorable<T: Copy> {

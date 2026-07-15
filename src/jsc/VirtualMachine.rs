@@ -18,9 +18,9 @@ use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM,
-    BunException,
+    self as jsc, BunException, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception,
+    JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop,
+    ResolvedSource, VM,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;

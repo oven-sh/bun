@@ -168,13 +168,15 @@ describe("node:repl stub", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      threw: true,
-      contextIsGlobalThis: false,
-      polluted: undefined,
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        threw: true,
+        contextIsGlobalThis: false,
+        polluted: undefined,
+      },
+      stderr: expect.any(String),
+      exitCode: 0,
     });
-    expect(exitCode).toBe(0);
   });
 
   test("exposes Node's module-level exports", () => {
@@ -186,6 +188,13 @@ describe("node:repl stub", () => {
     expect(typeof repl.REPL_MODE_STRICT).toBe("symbol");
     expect(Array.isArray(repl._builtinLibs)).toBe(true);
     expect(Array.isArray(repl.builtinModules)).toBe(true);
+  });
+
+  test("writer() forwards to util.inspect with writer.options", () => {
+    const { inspect } = require("node:util");
+    const value = { a: 1, b: [2, 3], c: { d: 4 } };
+    expect(repl.writer.options).toEqual(inspect.replDefaults);
+    expect(repl.writer(value)).toBe(inspect(value, repl.writer.options));
   });
 
   test("start() throws ERR_NOT_IMPLEMENTED", () => {

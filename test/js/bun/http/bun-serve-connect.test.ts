@@ -2,20 +2,18 @@ import { describe, expect, test } from "bun:test";
 import { once } from "node:events";
 import * as net from "node:net";
 
-// RFC 9110 9.3.6: an origin server that is not acting as a tunnel must not
-// respond 2xx to CONNECT. Bun.serve is never a proxy, so CONNECT is refused
-// (socket closed, no bytes written) and never reaches the fetch handler.
-// Matches Node.js http.Server with no 'connect' listener.
+// RFC 9110 9.3.6: a non-tunnel origin must not answer 2xx to CONNECT. Bun.serve
+// is never a proxy, so CONNECT is refused (socket closed, zero bytes) before the
+// fetch handler, matching Node's http.Server with no 'connect' listener.
 
 async function sendRaw(port: number, bytes: string): Promise<{ received: string; serverClosed: boolean }> {
   const chunks: Buffer[] = [];
   const socket = net.connect({ port, host: "127.0.0.1" });
   await once(socket, "connect");
   socket.write(bytes);
-  // Under the bug the server answers and leaves the connection open (keep-alive),
-  // so 'close' never fires on its own. Race data-vs-close; if any bytes arrive,
-  // tear the socket down ourselves so the test fails on the assertion instead
-  // of timing out.
+  // Race data-vs-close: if any bytes arrive, destroy the socket so a regression
+  // fails on the received/serverClosed assertion instead of hanging on a
+  // kept-alive connection until the test timeout.
   const serverClosed = await new Promise<boolean>((resolve, reject) => {
     socket.on("data", d => {
       chunks.push(d);

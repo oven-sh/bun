@@ -111,8 +111,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // "@decorator export declare abstract class Foo {}"
             // "@decorator export default class Foo {}"
             // "@decorator export default abstract class Foo {}"
+            // (but reject "export @decorator export class Foo {}")
             if p.lexer.token != T::TClass
-                && p.lexer.token != T::TExport
+                && !(p.lexer.token == T::TExport && !opts.is_export)
                 && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"abstract"))
                 && !(Self::IS_TYPESCRIPT_ENABLED && p.lexer.is_contextual_keyword(b"declare"))
             {

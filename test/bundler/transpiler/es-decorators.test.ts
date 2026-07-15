@@ -425,10 +425,38 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("private name in decorator member expression", async () => {
+    test("type arguments in decorator member expression are stripped", async () => {
       const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        function dec<T>(cls: any, ctx: any) {
+          console.log(ctx.kind, ctx.name);
+          return cls;
+        }
+        const ns = {
+          dec: function<T>(tag: string) {
+            return function(cls: any, ctx: any) {
+              console.log(tag, ctx.name);
+              return cls;
+            };
+          },
+        };
+        @dec<string>
+        class A {}
+        @ns.dec<string>("hello")
+        class B {}
+        @ns<string>.dec<number>("bye")
+        class C {}
+        console.log("done");
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class A\nhello B\nbye C\ndone\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test.each(["ts", "js"])("private name in decorator member expression (.%s)", async ext => {
+      const run = ext === "ts" ? runDecoratorTS : runDecorator;
+      const { stdout, stderr, exitCode } = await run(`
         class Outer {
-          static #dec(cls: any, ctx: any) {
+          static #dec(cls, ctx) {
             console.log(ctx.kind, ctx.name);
             return cls;
           }
@@ -442,23 +470,23 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("export before decorator", async () => {
+    test.each(["ts", "js"])("export before decorator (.%s)", async ext => {
       using dir = tempDir("es-dec-export", {
         "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-        "dep.ts": `
-          function dec(cls: any, ctx: any) {
+        [`dep.${ext}`]: `
+          function dec(cls, ctx) {
             console.log(ctx.kind, ctx.name);
             return cls;
           }
           export @dec class Foo {}
         `,
-        "test.ts": `
+        [`test.${ext}`]: `
           import { Foo } from "./dep";
           console.log(typeof Foo);
         `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "test.ts"],
+        cmd: [bunExe(), `test.${ext}`],
         env: bunEnv,
         cwd: String(dir),
         stderr: "pipe",
@@ -478,11 +506,36 @@ describe("ES Decorators", () => {
       expect(exitCode).not.toBe(0);
     });
 
+    test("optional chaining in decorator is rejected with a hint", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        @x?.y class Foo {}
+      `);
+      expect(stderr).toContain("Optional chaining is not allowed in decorator expressions");
+      expect(stderr).toContain("wrap the expression in parentheses");
+      expect(exitCode).not.toBe(0);
+    });
+
     test("property access after call in decorator is rejected", async () => {
       const { stderr, exitCode } = await runDecoratorTS(`
         @x().y class Foo {}
       `);
       expect(stderr).toContain("wrap the expression in parentheses");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("decorators on both sides of export are rejected", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        @x export @y class Foo {}
+      `);
+      expect(stderr).toContain('Expected "class" but found "@"');
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("repeated export around a decorator is rejected", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        export @dec export class Foo {}
+      `);
+      expect(stderr).toContain('Expected "class" but found "export"');
       expect(exitCode).not.toBe(0);
     });
   });

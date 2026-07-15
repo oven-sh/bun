@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, normalizeBunSnapshot, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import {
@@ -1063,4 +1063,109 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
   } finally {
     target.close();
   }
+});
+
+describe("diagnostics_channel", () => {
+  // https://nodejs.org/api/diagnostics_channel.html#built-in-channels
+  it("publishes net.client.socket, net.server.socket and net.server.listen tracing channels", async () => {
+    const fixture = `
+      const dc = require("node:diagnostics_channel");
+      const net = require("node:net");
+      const events = [];
+      dc.subscribe("net.client.socket", ({ socket }) => {
+        events.push("net.client.socket: " + (socket instanceof net.Socket));
+      });
+      dc.subscribe("net.server.socket", ({ socket }) => {
+        events.push("net.server.socket: " + (socket instanceof net.Socket));
+      });
+      dc.tracingChannel("net.server.listen").subscribe({
+        asyncStart({ server, options }) {
+          events.push("listen asyncStart: " + (server instanceof net.Server) + " " + JSON.stringify(options));
+        },
+        asyncEnd({ server }) {
+          events.push("listen asyncEnd: " + (server instanceof net.Server));
+        },
+        error({ server, error }) {
+          events.push("listen error: " + (server instanceof net.Server) + " " + error?.code);
+        },
+      });
+
+      const server = net.createServer(s => s.end());
+      server.listen({ port: 0, host: "127.0.0.1", customOption: true }, () => {
+        const port = server.address().port;
+        let closed = 0;
+        const done = () => {
+          if (++closed === 3) {
+            server.close(() => {
+              for (const e of events) console.log(e);
+            });
+          }
+        };
+        // All documented entry points that publish net.client.socket.
+        net.connect(port, "127.0.0.1").on("close", done).on("error", done);
+        net.createConnection(port, "127.0.0.1").on("close", done).on("error", done);
+        new net.Socket().connect(port, "127.0.0.1").on("close", done).on("error", done);
+      });
+      server.on("error", err => { throw err; });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "listen asyncStart: true {"port":0,"host":"127.0.0.1","customOption":true}
+      listen asyncEnd: true
+      net.client.socket: true
+      net.client.socket: true
+      net.client.socket: true
+      net.server.socket: true
+      net.server.socket: true
+      net.server.socket: true"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  it("publishes tracing:net.server.listen:error when listen fails", async () => {
+    const fixture = `
+      const dc = require("node:diagnostics_channel");
+      const net = require("node:net");
+      dc.tracingChannel("net.server.listen").subscribe({
+        asyncStart({ server, options }) {
+          console.log("asyncStart " + (server instanceof net.Server) + " " + (typeof options.port === "number"));
+        },
+        asyncEnd() {
+          console.log("asyncEnd");
+        },
+        error({ server, error }) {
+          console.log("error " + (server instanceof net.Server) + " " + error?.code);
+        },
+      });
+      const first = net.createServer();
+      first.listen(0, "127.0.0.1", () => {
+        const second = net.createServer();
+        second.on("error", () => {
+          first.close();
+          second.close();
+        });
+        second.listen({ port: first.address().port, host: "127.0.0.1" });
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "asyncStart true true
+      asyncEnd
+      asyncStart true true
+      error true EADDRINUSE"
+    `);
+    expect(exitCode).toBe(0);
+  });
 });

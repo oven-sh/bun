@@ -5,11 +5,13 @@ use super::jsc;
 use super::serialized_failure::SerializedFailure;
 use super::source_map_store;
 use crate::bake::framework_router;
+use crate::server::html_bundle::DevServerRouteId;
 use crate::server::{StaticRoute, html_bundle::HTMLBundleRoute};
 
-/// `bun.GenericIndex(u30, RouteBundle)`.
-pub enum RouteBundleMarker {}
-pub(crate) type Index = bun_core::GenericIndex<u32, RouteBundleMarker>;
+/// `bun.GenericIndex(u30, RouteBundle)`. Nominally the host's opaque
+/// [`DevServerRouteId`] token: `getOrPutRouteBundle` stores the index of a
+/// route's `RouteBundle` directly in the host's `dev_server_id` slot.
+pub(crate) type Index = DevServerRouteId;
 pub(crate) type IndexOptional = Option<Index>;
 
 /// `bun.GenericIndex(u32, u8)` — byte offset into `bundled_html_text`.

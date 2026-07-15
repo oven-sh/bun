@@ -20,7 +20,6 @@ pub(crate) mod bake_body;
 #[path = "DevServer.rs"]
 mod dev_server_body;
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
-pub(crate) use dev_server_body::is_allowed_dev_host;
 pub(crate) use dev_server_body::is_allowed_host_header;
 
 #[path = "FrameworkRouter.rs"]
@@ -28,6 +27,11 @@ pub(crate) mod framework_router_body;
 
 #[path = "production.rs"]
 mod production_body;
+
+// `Format::InternalBakeDev` statement conversion (the packed HMR-module
+// shape). Reached from the bundler via the
+// `__bun_bake_convert_stmts_for_chunk_hmr` link-time hook it defines.
+mod hmr_module_format;
 
 // `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
 // `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
@@ -52,6 +56,19 @@ pub mod jsc {
 
 pub const API_NAME: &str = "app";
 
+/// Enable the "app" option in Bun.serve. This option will likely be removed
+/// in favor of HTML loaders and configuring framework options in bunfig.toml
+pub fn is_enabled() -> bool {
+    // In canary or if an environment variable is specified.
+    bun_core::env::IS_CANARY
+        || bun_core::env::IS_DEBUG
+        || bun_core::feature_flag::BUN_FEATURE_FLAG_EXPERIMENTAL_BAKE.get()
+}
+
+/// Additional debugging features for bake.DevServer, such as the incremental visualizer.
+/// To use them, extra flags are passed in addition to this one.
+pub const DEBUGGING_FEATURES: bool = bun_core::env::IS_CANARY || bun_core::env::IS_DEBUG;
+
 // ══════════════════════════════════════════════════════════════════════════
 // Top-level types
 // ══════════════════════════════════════════════════════════════════════════
@@ -70,6 +87,19 @@ pub enum Mode {
     Development,
     ProductionDynamic,
     ProductionStatic,
+}
+
+/// Adds the Vite-style `import.meta.env.*` defines for a development
+/// server-components build: server-side values into `server_define` and
+/// client-side values into `client_define`. Single entry point for
+/// `bun build --server-components`, which always builds in development
+/// mode, so the CLI doesn't need to name `Mode`/`Side`.
+pub(crate) fn add_dev_server_components_defines(
+    server_define: &mut bun_bundler::options::Define,
+    client_define: &mut bun_bundler::options::Define,
+) -> crate::Result<()> {
+    bake_body::add_import_meta_defines(server_define, Mode::Development, Side::Server)?;
+    bake_body::add_import_meta_defines(client_define, Mode::Development, Side::Client)
 }
 
 /// `bake.Framework.ServerComponents`.
@@ -156,6 +186,27 @@ impl Default for Framework {
         }
     }
 }
+
+/// Bake's names for the two server-components manifest virtual modules,
+/// passed to the bundler through
+/// `FrameworkBundleOptions.server_component_manifests` (the bundler
+/// synthesizes the modules but hardcodes no specifier strings).
+/// The `specifier`s are the contract with framework JS
+/// (`import ... from "bun:bake/server"`); the `path`s are the stable internal
+/// names used for chunk naming and sourcemaps.
+pub(crate) const SERVER_COMPONENTS_MANIFESTS: bun_bundler::bundle_v2::ServerComponentsManifests =
+    bun_bundler::bundle_v2::ServerComponentsManifests {
+        server: bun_bundler::bundle_v2::VirtualModule {
+            specifier: b"bun:bake/server",
+            path: b"_bun/bake/server",
+            namespace: b"bun",
+        },
+        client: bun_bundler::bundle_v2::VirtualModule {
+            specifier: b"bun:bake/client",
+            path: b"_bun/bake/client",
+            namespace: b"bun",
+        },
+    };
 
 impl Framework {
     /// Project the runtime-side `bake::Framework` into the bundler crate's
@@ -497,8 +548,9 @@ pub struct SplitBundlerOptions {
 // duplicates of `Framework`/`SplitBundlerOptions`; `DevServer::Options`
 // (DevServer.rs) wants the keystone Cow-backed types defined above. Until the
 // two struct families unify (tracked by the `convert_file_system_router_type`
-// note in ServerConfig.rs), bridge by-value here so `server/mod.rs` can hand
-// `config.bake` straight into `DevServer::init`. All `&'static [u8]` →
+// note in bake_body.rs), bridge by-value here so `DevServer::from_server_config`
+// (DevServer.rs) can hand the `UserOptions` behind `config.dev_server_options`
+// straight into `DevServer::init`. All `&'static [u8]` →
 // `Cow::Borrowed` / `Box<[u8]>` projections are by-reference (no copy of the
 // underlying arena bytes).
 impl From<bake_body::FileSystemRouterType> for FileSystemRouterType {
@@ -623,12 +675,13 @@ pub struct HmrRuntime {
     pub line_count: u32,
 }
 pub use bake_body::get_hmr_runtime;
-// (Former `__bun_bake_get_hmr_runtime` link-time bridge deleted —
-// `bun_bundler::bake_types::get_hmr_runtime` now loads the codegen bytes
-// itself via `bun_core::runtime_embed_file!`, so the storage moved DOWN and
-// the cross-crate hook is gone. This crate's `HmrRuntime` keeps the
-// NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
-// `&[u8]`.)
+// The codegen'd `bake.client.js` / `bake.server.js` bytes are loaded only
+// here (via `bun_core::runtime_embed_file!` in `bake_body::get_hmr_runtime`);
+// the bundler's chunk codegen reaches them through the
+// `__bun_bake_get_hmr_runtime` link-time hook defined in `bake_body.rs`.
+// This crate's `HmrRuntime` keeps the NUL-terminated `&ZStr` form for JSC
+// handoff; the bundler-side view (`bun_bundler::bake_types::HmrRuntime`) is
+// plain `&[u8]`.
 
 pub use bake_body::StringRefList;
 

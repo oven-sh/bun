@@ -127,9 +127,6 @@ pub mod linker_context {
     #[path = "convertStmtsForChunk.rs"]
     pub mod convert_stmts_for_chunk;
 
-    #[path = "convertStmtsForChunkForDevServer.rs"]
-    pub mod convert_stmts_for_chunk_for_dev_server;
-
     #[path = "doStep5.rs"]
     pub mod do_step5;
 
@@ -298,7 +295,9 @@ pub mod options {
     /// Re-export of the canonical def in `crate::bake_types` (bundle_v2.rs).
     pub use crate::bake_types::Side;
 
-    pub use crate::bake_types::Framework;
+    // `Framework` (the minimal bundler-side view of `bake::Framework`) is
+    // defined in `options_impl` and exposed by the glob above; `bake_types`
+    // re-exports it for the bake seam.
 
     // `Env`, `EnvEntry`, `RouteConfig`, `jsx`/`JSX` are intentionally NOT
     // redefined here — the `pub use super::options_impl::*` glob above exposes
@@ -317,12 +316,10 @@ pub use cache::RuntimeTranspilerCacheExt;
 pub use cache::Set as Cache;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Re-export the canonical `bake_types` defs from
-// `bundle_v2` so there is exactly ONE nominal `Side`/`Graph`/`Framework` etc.
-// across the crate (the previous inline copy here diverged and produced
-// "expected `bake_types::Graph`, found `bake_types::Graph`" errors).
+// TYPE_ONLY seam module shared with `bun_runtime::bake` — the single nominal
+// `Side`/`Graph`/`Framework` etc. across the crate.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bundle_v2::bake_types;
+pub mod bake_types;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-export the canonical `dispatch` module from
@@ -333,17 +330,37 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
+/// The type of `CacheEntry.kind`. Seam type of the `DevServerHandle` vtable
+/// below (`is_file_cached` returns it); the implementing side translates its
+/// own cache-entry kind into this.
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub enum CacheKind {
+    Unknown = 0,
+    Js = 1,
+    Asset = 2,
+    Css = 3,
+}
+/// What the dev server has cached for a path+target; returned through the
+/// `DevServerHandle::is_file_cached` slot.
+#[derive(Copy, Clone)]
+pub struct CacheEntry {
+    pub kind: CacheKind,
+}
+
 // Erased handle to `bake::DevServer`. The struct stores a `&'a mut [Chunk]`
-// it mutates through, hence `*mut`.
+// it mutates through, hence `*mut`. Slots speak bundler vocabulary
+// (`bun_ast::Target`, not the dev server's graph model); the implementing
+// side maps targets onto its own graphs.
 bun_dispatch::link_interface! {
     pub DevServerHandle[Bake] {
         fn barrel_needed_exports() -> *mut bun_collections::StringArrayHashMap<bun_collections::StringHashMap<()>>;
-        fn log_for_resolution_failures(abs_path: &[u8], graph: bake_types::Graph) -> *mut bun_ast::Log;
+        fn log_for_resolution_failures(abs_path: &[u8], target: bun_ast::Target) -> *mut bun_ast::Log;
         fn finalize_bundle(bv2: *mut bundle_v2::BundleV2<'_>, result: *mut bundle_v2::DevServerOutput<'_>) -> Result<(), crate::Error>;
-        fn handle_parse_task_failure(err: crate::Error, graph: bake_types::Graph, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
+        fn handle_parse_task_failure(err: crate::Error, target: bun_ast::Target, abs_path: &[u8], log: *const bun_ast::Log, bv2: *mut bundle_v2::BundleV2<'_>) -> Result<(), crate::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
-        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
-        fn is_file_cached(abs_path: &[u8], side: bake_types::Graph) -> Option<bake_types::CacheEntry>;
+        fn track_resolution_failure(import_source: &[u8], specifier: &[u8], target: bun_ast::Target, loader: bun_ast::Loader) -> Result<(), crate::Error>;
+        fn is_file_cached(abs_path: &[u8], target: bun_ast::Target) -> Option<CacheEntry>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;
         fn current_bundle_start_data() -> *mut ();
         fn register_barrel_with_deferrals(path: &[u8]) -> Result<(), crate::Error>;
@@ -358,6 +375,39 @@ bun_dispatch::link_interface! {
 unsafe impl Send for DevServerHandle {}
 // SAFETY: see `Send` above — sharing the tagged pointer is sound for the same reason.
 unsafe impl Sync for DevServerHandle {}
+
+/// Statement conversion for `options::Format::InternalBakeDev` output: emits
+/// the packed HMR-module shape. The encoding is owned by the HMR runtime that
+/// decodes it, so the body lives in `bun_runtime`'s bake module; the bundler
+/// reaches it through the definer-prefixed extern hook below (same pattern as
+/// the `__bun_jsc_*` hooks in `bundle_v2::dispatch`). `loaders`/`sources` are
+/// the parse graph's input-file columns, computed once per part range by the
+/// caller.
+#[inline]
+pub(crate) fn convert_stmts_for_chunk_hmr(
+    stmts: &mut linker_context_mod::StmtList,
+    part_stmts: &[bun_ast::Stmt],
+    bump: &bun_alloc::Arena,
+    ast: &mut BundledAst<'_>,
+    loaders: &[bun_ast::Loader],
+    sources: &[bun_ast::Source],
+) -> Result<(), bun_alloc::AllocError> {
+    __bun_bake_convert_stmts_for_chunk_hmr(stmts, part_stmts, bump, ast, loaders, sources)
+}
+
+unsafe extern "Rust" {
+    /// Defined `#[no_mangle]` in `bun_runtime` (`bake/hmr_module_format.rs`).
+    /// All arguments are safe Rust types (no raw-pointer preconditions), so
+    /// the link-time-resolved body upholds Rust's invariants on its own.
+    safe fn __bun_bake_convert_stmts_for_chunk_hmr(
+        stmts: &mut linker_context_mod::StmtList,
+        part_stmts: &[bun_ast::Stmt],
+        bump: &bun_alloc::Arena,
+        ast: &mut BundledAst<'_>,
+        loaders: &[bun_ast::Loader],
+        sources: &[bun_ast::Source],
+    ) -> Result<(), bun_alloc::AllocError>;
+}
 
 // VirtualMachine accessors for `normalize_specifier` / `get_loader_and_virtual_source`.
 // `bun_runtime::jsc_hooks` provides the `Runtime` arm.

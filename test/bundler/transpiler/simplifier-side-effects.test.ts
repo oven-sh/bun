@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
-// Runtime proof that side effects inside array/object literals under `!` and
-// `typeof` are not discarded by the simplifier. The transpiler-output
-// assertions for these shapes live in transpiler.test.js under
-// "constant folding" and "property access inlining".
+// Runtime proof that side effects under `!`/`typeof` are preserved by the
+// simplifier. Transpiler-output assertions live in transpiler.test.js.
 
 test("side effects inside ![...] / typeof [...] run at runtime", async () => {
   await using proc = Bun.spawn({

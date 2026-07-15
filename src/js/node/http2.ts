@@ -2083,6 +2083,13 @@ function markStreamClosed(stream: Http2Stream) {
     markWritableDone(stream);
   }
 }
+// writeStream callback: a frame that settles after the stream is destroyed was dropped during
+// teardown, so report an error to the user's write callback (onwriteError never emits 'drain',
+// and errorOrDestroy is a no-op on a destroyed stream).
+function onWriteStreamDone(this: Http2Stream, callback, err) {
+  if (err == null && this.destroyed) return callback($ERR_HTTP2_INVALID_STREAM());
+  callback(err);
+}
 function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
@@ -2523,15 +2530,17 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(this.#id, chunk, undefined, false, callback);
+        native.writeStream(this.#id, chunk, undefined, false, onWriteStreamDone.bind(this, callback));
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: true, data, encoding: "" });
         }
         return;
       }
     }
+    // No session/native: the session was destroyed. Reporting success would emit 'drain' and make
+    // write() return true forever, so a backpressured producer never stops.
     if (typeof callback == "function") {
-      callback();
+      callback($ERR_HTTP2_INVALID_STREAM());
     }
   }
   _write(chunk, encoding, callback) {
@@ -2552,15 +2561,17 @@ class Http2Stream extends Duplex {
           wireChunk = Buffer.from(chunk, encoding);
           wireEncoding = undefined;
         }
-        native.writeStream(this.#id, wireChunk, wireEncoding, false, callback);
+        native.writeStream(this.#id, wireChunk, wireEncoding, false, onWriteStreamDone.bind(this, callback));
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: false, data: chunk, encoding });
         }
         return;
       }
     }
+    // No session/native: the session was destroyed. Reporting success would emit 'drain' and make
+    // write() return true forever, so a backpressured producer never stops.
     if (typeof callback == "function") {
-      callback();
+      callback($ERR_HTTP2_INVALID_STREAM());
     }
   }
 
@@ -4066,7 +4077,13 @@ class ServerHttp2Session extends Http2Session {
     if (parser) {
       // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
       // precedence over the destroy code when streams are torn down.
-      parser.emitErrorToAllStreams(this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR);
+      const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
+      // A non-numeric code is rejected by emitErrorToAllStreams below; only run the synchronous
+      // per-stream destroy when the code is valid so that rejection is still observable.
+      if (typeof streamRstCode === "number") {
+        parser.forEachStream(sessionDestroyStream.bind(this, streamRstCode));
+      }
+      parser.emitErrorToAllStreams(streamRstCode);
       parser.detach();
       this.#parser = null;
     }
@@ -4088,6 +4105,12 @@ function destroySelfOnEnd(this: Http2Stream) {
 }
 function streamCancel(stream: Http2Stream) {
   stream.close(NGHTTP2_CANCEL);
+}
+// session.destroy(): destroy still-open streams before native drops their queued DATA frames so
+// the dropped-frame Writable callback sees kDestroyed and afterWrite skips 'drain'. Streams
+// already marked closed completed normally and are not surfaced as errored here.
+function sessionDestroyStream(this: Http2Session, rstCode: number, stream: Http2Stream) {
+  if (stream && !stream.destroyed && !stream.closed) emitStreamErrorNT(this, stream, rstCode, true, false);
 }
 
 // After the socket is gone a graceful close can never complete — the parser
@@ -4881,7 +4904,13 @@ class ClientHttp2Session extends Http2Session {
       }
       // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
       // precedence over the destroy code when streams are torn down.
-      parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+      const streamRstCode = this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL);
+      // A non-numeric code is rejected by emitErrorToAllStreams below; only run the synchronous
+      // per-stream destroy when the code is valid so that rejection is still observable.
+      if (typeof streamRstCode === "number") {
+        parser.forEachStream(sessionDestroyStream.bind(this, streamRstCode));
+      }
+      parser.emitErrorToAllStreams(streamRstCode);
       parser.detach();
     }
     this.#parser = null;

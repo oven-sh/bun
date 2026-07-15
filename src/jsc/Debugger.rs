@@ -315,7 +315,8 @@ impl Debugger {
                         }
                     }
 
-                    this.uws_loop_mut().tick_with_timeout(Some(&deadline));
+                    this.uws_loop_mut()
+                        .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(

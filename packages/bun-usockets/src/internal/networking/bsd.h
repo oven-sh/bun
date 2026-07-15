@@ -244,6 +244,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, 
 int bsd_socket_export_size(void);
 int bsd_socket_export(LIBUS_SOCKET_DESCRIPTOR fd, unsigned int target_pid, void *info_out);
 LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err);
+int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd);
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error);
 

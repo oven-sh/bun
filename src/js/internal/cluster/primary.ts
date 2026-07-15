@@ -41,9 +41,7 @@ const schedulingPolicyEnv = process.env.NODE_CLUSTER_SCHED_POLICY;
 let schedulingPolicy = 0;
 if (schedulingPolicyEnv === "rr") schedulingPolicy = SCHED_RR;
 else if (schedulingPolicyEnv === "none") schedulingPolicy = SCHED_NONE;
-else if (process.platform === "win32") {
-  schedulingPolicy = SCHED_RR;
-} else schedulingPolicy = SCHED_RR;
+else schedulingPolicy = SCHED_RR;
 cluster.schedulingPolicy = schedulingPolicy;
 
 cluster.setupPrimary = function (options) {

@@ -103,7 +103,7 @@ test.skipIf(isWindows || !nodeExe())(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout: normalizeBunSnapshot(stdout), exitCode }).toEqual({
-      stdout: "handle-error: TODO case dgram.Socket\ndone",
+      stdout: "handle-error: dgram.Socket handles are not supported over IPC\ndone",
       exitCode: 0,
     });
   },

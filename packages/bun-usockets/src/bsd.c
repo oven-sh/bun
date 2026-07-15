@@ -1194,6 +1194,23 @@ LIBUS_SOCKET_DESCRIPTOR bsd_socket_import(void *info, int *err) {
 #endif
 }
 
+/* Windows rejects listen() on a duplicate of an already-listening socket, where POSIX
+ * no-ops it; cluster workers each listen on their own dup of one shared fd. libuv
+ * sidesteps this by listening before the xfer (UV_HANDLE_SHARED_TCP_SOCKET, win/tcp.c). */
+int bsd_socket_listen_error_is_benign(LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifdef _WIN32
+    int listening = 0;
+    int optlen = (int) sizeof(listening);
+    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (char *) &listening, &optlen) != 0) {
+        return 0;
+    }
+    return listening != 0;
+#else
+    (void) fd;
+    return 0;
+#endif
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int options, int *out_port, int *error) {
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));

@@ -185,7 +185,7 @@ export function parseHandle(target, serialized, fd) {
       return;
     }
     case "dgram.Socket": {
-      throw new Error("TODO case dgram.Socket");
+      throw new Error("dgram.Socket handles are not supported over IPC");
     }
     default: {
       throw new Error("failed to parse handle");

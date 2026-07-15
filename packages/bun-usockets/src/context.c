@@ -404,8 +404,11 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
     apple_no_sigpipe(fd);
     bsd_set_nonblocking(fd);
     if (listen(fd, backlog > 0 ? backlog : 512)) {
-        *error = LIBUS_ERR; /* WSAGetLastError() on Windows, errno on POSIX */
-        return 0;
+        int listen_err = LIBUS_ERR; /* WSAGetLastError() on Windows, errno on POSIX */
+        if (!bsd_socket_listen_error_is_benign(fd)) {
+            *error = listen_err;
+            return 0;
+        }
     }
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));

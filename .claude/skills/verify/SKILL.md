@@ -25,6 +25,8 @@ For worker/subprocess-shaped changes, spawn a subprocess (still `-e`) so worker 
 
 ## Gotchas
 
+- `node:cluster` changes can't be driven with `-e`: `cluster.fork()` re-execs `argv[1]`, so workers need a real file on disk. Write a scratch script and run `./build/debug/bun-debug <file>`.
+- Only one `bun bd` per worktree at a time — a second one blocks on the build lock and looks like a runtime hang. Build once, then drive `./build/debug/bun-debug` directly under `timeout`.
 - `BUN_DEBUG_QUIET_LOGS=1` suppresses debug-build log spam.
 - MessagePort's `.on/.off` are added by requiring `worker_threads` — plain `new MessageChannel()` ports only have `addEventListener` until then.
 - The debug+asan build is 10-100× slower than release; large-allocation stress tests can time out locally while passing in CI.

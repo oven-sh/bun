@@ -428,6 +428,45 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("ipv6 connect ok");
 });
 
+test("SCHED_NONE: a second worker listens on the same shared handle", () => {
+  const dir = tempDirWithFiles("bun-test", {
+    "main.ts": `
+const cluster = require("node:cluster");
+const net = require("node:net");
+
+cluster.schedulingPolicy = cluster.SCHED_NONE;
+
+if (cluster.isPrimary) {
+  const workers = [cluster.fork(), cluster.fork()];
+  let listening = 0;
+  const ports = new Set();
+  console.log("policy is SCHED_NONE:", cluster.schedulingPolicy === cluster.SCHED_NONE);
+  cluster.on("listening", (w, address) => {
+    ports.add(address.port);
+    if (++listening !== 2) return;
+    console.log("listening workers:", listening, "distinct ports:", ports.size);
+    for (const w of workers) w.kill();
+    process.exit(0);
+  });
+  for (const w of workers) {
+    w.on("message", msg => {
+      console.log("worker listen error:", msg.code, msg.msg);
+      for (const x of workers) x.kill();
+      process.exit(1);
+    });
+  }
+} else {
+  const server = net.createServer(s => s.end());
+  server.on("error", err => process.send({ code: err.code, msg: err.message }));
+  server.listen(0, "127.0.0.1");
+}
+`,
+  });
+  const { stdout } = bunRun(joinP(dir, "main.ts"), bunEnv);
+  expect(stdout).toContain("policy is SCHED_NONE: true");
+  expect(stdout).toContain("listening workers: 2 distinct ports: 1");
+});
+
 test("disconnect() on a cluster.Worker built around a plain object does not abort", async () => {
   // `kHandle` is a private symbol that only `cluster.fork()` sets, so a
   // `cluster.Worker({ process })` built around a plain object (how Node's own
@@ -631,6 +670,16 @@ if (cluster.isPrimary) {
   const w2 = cluster.fork();
   const ports = new Set();
   let listening = 0;
+  for (const w of [w1, w2]) {
+    w.on("message", msg => {
+      if (!msg || !msg.listenError) return;
+      const e = msg.listenError;
+      console.log("worker listen error:", e.code, e.errno, e.syscall, e.msg);
+      w1.kill();
+      w2.kill();
+      process.exit(1);
+    });
+  }
   cluster.on("listening", (w, address) => {
     ports.add(address.port);
     if (++listening !== 2) return;
@@ -653,11 +702,13 @@ if (cluster.isPrimary) {
     });
   });
 } else {
-  tls
-    .createServer({ key, cert }, socket => {
-      socket.on("data", d => socket.end("echo:" + d));
-    })
-    .listen(0);
+  const server = tls.createServer({ key, cert }, socket => {
+    socket.on("data", d => socket.end("echo:" + d));
+  });
+  server.on("error", e =>
+    process.send({ listenError: { code: e.code, errno: e.errno, syscall: e.syscall, msg: e.message } }),
+  );
+  server.listen(0);
 }
 `,
   });

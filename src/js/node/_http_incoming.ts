@@ -511,82 +511,203 @@ function _addHeaderLines(this: any, headers, n) {
 }
 
 // This function is used to help avoid the lowercasing of a field name if it
-// matches a 'traditional cased' version of a field name. It then returns the
-// lowercased name to both avoid calling toLowerCase() a second time and to
-// indicate whether the field was a 'no duplicates' field. If a field is not a
-// 'no duplicates' field, a `0` byte is prepended as a flag. The one exception
-// to this is the Set-Cookie header which is indicated by a `1` byte flag, since
-// it is an 'array' field and thus is treated differently in _addHeaderLines().
+// matches a 'traditional cased' version of a field name. It returns the
+// lowercased name; how duplicates of that field must be combined is reported
+// out-of-band in `matchedFieldFlag`, which callers read immediately after.
+//
+// Node encodes that flag as a prefix byte on the returned name
+// (https://github.com/nodejs/node/blob/v26.3.0/lib/_http_incoming.js), costing
+// a rope allocation plus a resolve and a slice() per header, and forcing a
+// fresh string for every list-valued field instead of reusing the interned
+// literal. The flag never escapes this file, so carry it in a module slot and
+// return the bare name. Behavior is identical.
+const kFieldList = 0; // duplicates joined with ", "
+const kFieldSetCookie = 1; // duplicates collected into an array
+const kFieldCookie = 2; // duplicates joined with "; "
+const kFieldUnique = 3; // duplicates dropped (or joined, per joinDuplicateHeaders)
+let matchedFieldFlag = kFieldUnique;
 function matchKnownFields(field, lowercased) {
   switch (field.length) {
     case 3:
-      if (field === "Age" || field === "age") return "age";
+      if (field === "Age" || field === "age") {
+        matchedFieldFlag = kFieldUnique;
+        return "age";
+      }
       break;
     case 4:
-      if (field === "Host" || field === "host") return "host";
-      if (field === "From" || field === "from") return "from";
-      if (field === "ETag" || field === "etag") return "etag";
-      if (field === "Date" || field === "date") return "\u0000date";
-      if (field === "Vary" || field === "vary") return "\u0000vary";
+      if (field === "Host" || field === "host") {
+        matchedFieldFlag = kFieldUnique;
+        return "host";
+      }
+      if (field === "From" || field === "from") {
+        matchedFieldFlag = kFieldUnique;
+        return "from";
+      }
+      if (field === "ETag" || field === "etag") {
+        matchedFieldFlag = kFieldUnique;
+        return "etag";
+      }
+      if (field === "Date" || field === "date") {
+        matchedFieldFlag = kFieldList;
+        return "date";
+      }
+      if (field === "Vary" || field === "vary") {
+        matchedFieldFlag = kFieldList;
+        return "vary";
+      }
       break;
     case 6:
-      if (field === "Server" || field === "server") return "server";
-      if (field === "Cookie" || field === "cookie") return "\u0002cookie";
-      if (field === "Origin" || field === "origin") return "\u0000origin";
-      if (field === "Expect" || field === "expect") return "\u0000expect";
-      if (field === "Accept" || field === "accept") return "\u0000accept";
+      if (field === "Server" || field === "server") {
+        matchedFieldFlag = kFieldUnique;
+        return "server";
+      }
+      if (field === "Cookie" || field === "cookie") {
+        matchedFieldFlag = kFieldCookie;
+        return "cookie";
+      }
+      if (field === "Origin" || field === "origin") {
+        matchedFieldFlag = kFieldList;
+        return "origin";
+      }
+      if (field === "Expect" || field === "expect") {
+        matchedFieldFlag = kFieldList;
+        return "expect";
+      }
+      if (field === "Accept" || field === "accept") {
+        matchedFieldFlag = kFieldList;
+        return "accept";
+      }
       break;
     case 7:
-      if (field === "Referer" || field === "referer") return "referer";
-      if (field === "Expires" || field === "expires") return "expires";
-      if (field === "Upgrade" || field === "upgrade") return "\u0000upgrade";
+      if (field === "Referer" || field === "referer") {
+        matchedFieldFlag = kFieldUnique;
+        return "referer";
+      }
+      if (field === "Expires" || field === "expires") {
+        matchedFieldFlag = kFieldUnique;
+        return "expires";
+      }
+      if (field === "Upgrade" || field === "upgrade") {
+        matchedFieldFlag = kFieldList;
+        return "upgrade";
+      }
       break;
     case 8:
-      if (field === "Location" || field === "location") return "location";
-      if (field === "If-Match" || field === "if-match") return "\u0000if-match";
+      if (field === "Location" || field === "location") {
+        matchedFieldFlag = kFieldUnique;
+        return "location";
+      }
+      if (field === "If-Match" || field === "if-match") {
+        matchedFieldFlag = kFieldList;
+        return "if-match";
+      }
       break;
     case 10:
-      if (field === "User-Agent" || field === "user-agent") return "user-agent";
-      if (field === "Set-Cookie" || field === "set-cookie") return "\u0001";
-      if (field === "Connection" || field === "connection") return "\u0000connection";
+      if (field === "User-Agent" || field === "user-agent") {
+        matchedFieldFlag = kFieldUnique;
+        return "user-agent";
+      }
+      if (field === "Set-Cookie" || field === "set-cookie") {
+        matchedFieldFlag = kFieldSetCookie;
+        return "set-cookie";
+      }
+      if (field === "Connection" || field === "connection") {
+        matchedFieldFlag = kFieldList;
+        return "connection";
+      }
       break;
     case 11:
-      if (field === "Retry-After" || field === "retry-after") return "retry-after";
+      if (field === "Retry-After" || field === "retry-after") {
+        matchedFieldFlag = kFieldUnique;
+        return "retry-after";
+      }
       break;
     case 12:
-      if (field === "Content-Type" || field === "content-type") return "content-type";
-      if (field === "Max-Forwards" || field === "max-forwards") return "max-forwards";
+      if (field === "Content-Type" || field === "content-type") {
+        matchedFieldFlag = kFieldUnique;
+        return "content-type";
+      }
+      if (field === "Max-Forwards" || field === "max-forwards") {
+        matchedFieldFlag = kFieldUnique;
+        return "max-forwards";
+      }
       break;
     case 13:
-      if (field === "Authorization" || field === "authorization") return "authorization";
-      if (field === "Last-Modified" || field === "last-modified") return "last-modified";
-      if (field === "Cache-Control" || field === "cache-control") return "\u0000cache-control";
-      if (field === "If-None-Match" || field === "if-none-match") return "\u0000if-none-match";
+      if (field === "Authorization" || field === "authorization") {
+        matchedFieldFlag = kFieldUnique;
+        return "authorization";
+      }
+      if (field === "Last-Modified" || field === "last-modified") {
+        matchedFieldFlag = kFieldUnique;
+        return "last-modified";
+      }
+      if (field === "Cache-Control" || field === "cache-control") {
+        matchedFieldFlag = kFieldList;
+        return "cache-control";
+      }
+      if (field === "If-None-Match" || field === "if-none-match") {
+        matchedFieldFlag = kFieldList;
+        return "if-none-match";
+      }
       break;
     case 14:
-      if (field === "Content-Length" || field === "content-length") return "content-length";
+      if (field === "Content-Length" || field === "content-length") {
+        matchedFieldFlag = kFieldUnique;
+        return "content-length";
+      }
       break;
     case 15:
-      if (field === "Accept-Encoding" || field === "accept-encoding") return "\u0000accept-encoding";
-      if (field === "Accept-Language" || field === "accept-language") return "\u0000accept-language";
-      if (field === "X-Forwarded-For" || field === "x-forwarded-for") return "\u0000x-forwarded-for";
+      if (field === "Accept-Encoding" || field === "accept-encoding") {
+        matchedFieldFlag = kFieldList;
+        return "accept-encoding";
+      }
+      if (field === "Accept-Language" || field === "accept-language") {
+        matchedFieldFlag = kFieldList;
+        return "accept-language";
+      }
+      if (field === "X-Forwarded-For" || field === "x-forwarded-for") {
+        matchedFieldFlag = kFieldList;
+        return "x-forwarded-for";
+      }
       break;
     case 16:
-      if (field === "Content-Encoding" || field === "content-encoding") return "\u0000content-encoding";
-      if (field === "X-Forwarded-Host" || field === "x-forwarded-host") return "\u0000x-forwarded-host";
+      if (field === "Content-Encoding" || field === "content-encoding") {
+        matchedFieldFlag = kFieldList;
+        return "content-encoding";
+      }
+      if (field === "X-Forwarded-Host" || field === "x-forwarded-host") {
+        matchedFieldFlag = kFieldList;
+        return "x-forwarded-host";
+      }
       break;
     case 17:
-      if (field === "If-Modified-Since" || field === "if-modified-since") return "if-modified-since";
-      if (field === "Transfer-Encoding" || field === "transfer-encoding") return "\u0000transfer-encoding";
-      if (field === "X-Forwarded-Proto" || field === "x-forwarded-proto") return "\u0000x-forwarded-proto";
+      if (field === "If-Modified-Since" || field === "if-modified-since") {
+        matchedFieldFlag = kFieldUnique;
+        return "if-modified-since";
+      }
+      if (field === "Transfer-Encoding" || field === "transfer-encoding") {
+        matchedFieldFlag = kFieldList;
+        return "transfer-encoding";
+      }
+      if (field === "X-Forwarded-Proto" || field === "x-forwarded-proto") {
+        matchedFieldFlag = kFieldList;
+        return "x-forwarded-proto";
+      }
       break;
     case 19:
-      if (field === "Proxy-Authorization" || field === "proxy-authorization") return "proxy-authorization";
-      if (field === "If-Unmodified-Since" || field === "if-unmodified-since") return "if-unmodified-since";
+      if (field === "Proxy-Authorization" || field === "proxy-authorization") {
+        matchedFieldFlag = kFieldUnique;
+        return "proxy-authorization";
+      }
+      if (field === "If-Unmodified-Since" || field === "if-unmodified-since") {
+        matchedFieldFlag = kFieldUnique;
+        return "if-unmodified-since";
+      }
       break;
   }
   if (lowercased) {
-    return "\u0000" + field;
+    matchedFieldFlag = kFieldList;
+    return field;
   }
   return matchKnownFields(field.toLowerCase(), true);
 }
@@ -603,16 +724,15 @@ function matchKnownFields(field, lowercased) {
 IncomingMessage.prototype._addHeaderLine = _addHeaderLine;
 function _addHeaderLine(this: any, field, value, dest) {
   field = matchKnownFields(field);
-  const flag = field.charCodeAt(0);
-  if (flag === 0 || flag === 2) {
-    field = field.slice(1);
+  const flag = matchedFieldFlag;
+  if (flag === kFieldList || flag === kFieldCookie) {
     // Make a delimited list
     if (typeof dest[field] === "string") {
-      dest[field] += (flag === 0 ? ", " : "; ") + value;
+      dest[field] += (flag === kFieldList ? ", " : "; ") + value;
     } else {
       dest[field] = value;
     }
-  } else if (flag === 1) {
+  } else if (flag === kFieldSetCookie) {
     // Array header -- only Set-Cookie at the moment
     if (dest["set-cookie"] !== undefined) {
       dest["set-cookie"].push(value);

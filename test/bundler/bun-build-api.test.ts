@@ -1629,6 +1629,30 @@ describe("Bun.build external: false", () => {
     expect(result.success).toBe(true);
   });
 
+  test("plugin onResolve returning { external: true } for a CSS url() is not a module external", async () => {
+    using dir = tempDir("external-false-plugin-css-external", {
+      "entry.css": ".a { background: url(virtual:img); }",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      target: "bun",
+      external: false,
+      plugins: [
+        {
+          name: "css-ext",
+          setup(build) {
+            build.onResolve({ filter: /^virtual:img$/ }, args => ({
+              path: args.path,
+              external: true,
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+    expect(await result.outputs[0].text()).toContain("virtual:img");
+  });
+
   test("plugin onResolve returning { external: true } is rejected under external: false", async () => {
     using dir = tempDir("external-false-plugin-external", {
       "entry.js": 'import x from "some-pkg"; console.log(x);',

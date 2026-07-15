@@ -4711,6 +4711,7 @@ pub mod bv2_impl {
                         && this.transpiler.options.disallow_external
                         && resolve.import_record.kind != ImportKind::EntryPointBuild
                         && resolve.import_record.importer_source_index != Index::RUNTIME.get()
+                        && !resolve.import_record.kind.is_from_css()
                     {
                         let record: &mut ImportRecord =
                             &mut this.graph.ast.items_import_records_mut()

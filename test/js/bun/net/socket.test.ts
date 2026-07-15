@@ -3,7 +3,7 @@ import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, libcPathForDlopen, tempDir, tls } from "harness";
 import net from "node:net";
 import { createSecureContext, connect as tlsConnect } from "node:tls";
 describe.concurrent("socket", () => {
@@ -1792,7 +1792,7 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
       `
         const { dlopen, FFIType, ptr } = require("bun:ffi");
         const isDarwin = process.platform === "darwin";
-        const libc = dlopen(isDarwin ? "libc.dylib" : "libc.so.6", {
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
           getsockopt: {
             args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr],
             returns: FFIType.int,
@@ -1810,6 +1810,8 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
           if (rc !== 0) throw new Error("getsockopt(" + level + "," + opt + ") failed");
           return val[0];
         }
+        // Darwin returns SO_KEEPALIVE as so_options & 0x0008 (= 8), Linux as 0/1.
+        const readBoolOpt = (fd, level, opt) => (readIntOpt(fd, level, opt) ? 1 : 0);
 
         const open = Promise.withResolvers();
         using listener = Bun.listen({
@@ -1833,15 +1835,15 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
         const out = {};
         // (a) ms -> seconds: 4000ms must land as TCP_KEEPIDLE=4.
         out.a_ret = client.setKeepAlive(true, 4000);
-        out.a_keepalive = readIntOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.a_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
         out.a_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
 
         // (b) default shape: setKeepAlive(true) must report success, leave
         // SO_KEEPALIVE on, and not touch the previously-set TCP_KEEPIDLE.
         out.off_ret = client.setKeepAlive(false);
-        out.off_keepalive = readIntOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.off_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
         out.b_ret = client.setKeepAlive(true);
-        out.b_keepalive = readIntOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
         out.b_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
 
         // node:net on the same runtime must still write the right idle.

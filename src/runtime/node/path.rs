@@ -1571,7 +1571,7 @@ pub fn join(
         // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
         // on the cold error branch (it materialises a 48-byte `fmt::Arguments`
         // every iteration otherwise).
-        if !path_ptr.is_string() {
+        if !path_ptr.is_string_literal() {
             #[cold]
             #[inline(never)]
             fn not_a_string(g: &JSGlobalObject, v: JSValue, i: usize) -> crate::jsc::JsError {

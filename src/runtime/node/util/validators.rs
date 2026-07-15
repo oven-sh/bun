@@ -441,7 +441,7 @@ pub(crate) fn validate_string_array(
     let mut i: usize = 0;
     let mut iter = value.array_iterator(global_this)?;
     while let Some(item) = iter.next()? {
-        if !item.is_string() {
+        if !item.is_string_literal() {
             return Err(throw_err_invalid_arg_type(
                 global_this,
                 format_args!("{}[{}]", name, i),

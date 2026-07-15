@@ -128,8 +128,8 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.sweep_next_tick_ns = -1;
 #endif
     loop->data.sweep_timer_count = 0;
-    loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
-    loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
+    loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
     /* Every read on this loop writes into recv_buf; a NULL here makes each one
      * fail with EFAULT for the life of the process. */
     if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
@@ -149,8 +149,8 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     us_internal_free_loop_ssl_data(loop);
 #endif
 
-    free(loop->data.recv_buf);
-    free(loop->data.send_buf);
+    us_free(loop->data.recv_buf);
+    us_free(loop->data.send_buf);
 
 #ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);

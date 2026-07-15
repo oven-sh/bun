@@ -19,7 +19,14 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const {
+  throwOnInvalidTLSArray,
+  validateCiphers,
+  validateSecureContextOptions,
+  processPfxOptions,
+  foldPfxExtraCAs,
+  resolveTLSVersionRange,
+} = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -269,22 +276,39 @@ function Server(options, callback): void {
     validateObject(options, "options");
     options = { ...options };
 
+    // Any identity-bearing option makes this an HTTPS server: key/cert/ca,
+    // a PKCS#12 bundle (pfx) or a pre-built secureContext. Node's https.Server
+    // is always TLS; treating a pfx/secureContext-only config as plain HTTP
+    // would silently serve plaintext.
+    if (options.key || options.cert || options.ca || options.pfx || options.secureContext) {
+      this[isTlsSymbol] = true;
+    }
+
+    if (this[isTlsSymbol]) {
+      // The same secure-context validation/translation node:tls.Server applies
+      // (shared via internal/tls): reject bad ciphers/minVersion/maxVersion/
+      // secureProtocol synchronously, then fold pfx into key/cert/ca.
+      validateSecureContextOptions(options);
+      const { ciphers } = options;
+      if (ciphers != null) {
+        validateCiphers(ciphers);
+      }
+      options = processPfxOptions(options);
+    }
+
     let cert = options.cert;
     if (cert) {
       throwOnInvalidTLSArray("options.cert", cert);
-      this[isTlsSymbol] = true;
     }
 
     let key = options.key;
     if (key) {
       throwOnInvalidTLSArray("options.key", key);
-      this[isTlsSymbol] = true;
     }
 
-    let ca = options.ca;
+    let ca = foldPfxExtraCAs(options.ca, options._pfxExtraCACerts);
     if (ca) {
       throwOnInvalidTLSArray("options.ca", ca);
-      this[isTlsSymbol] = true;
     }
 
     let passphrase = options.passphrase;
@@ -303,6 +327,14 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
+      // The version range ints are always non-zero (they default to
+      // tls.DEFAULT_MIN_VERSION/DEFAULT_MAX_VERSION), so the native listener
+      // is always a TLS listener even when only a secureContext was given.
+      const { minVersion, maxVersion } = resolveTLSVersionRange(
+        options.secureProtocol,
+        options.minVersion,
+        options.maxVersion,
+      );
       this[tlsSymbol] = normalizeServerTls({
         serverName,
         key,
@@ -312,6 +344,9 @@ function Server(options, callback): void {
         secureOptions,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
+        ciphers: options.ciphers,
+        minVersion,
+        maxVersion,
       });
     } else {
       this[tlsSymbol] = null;

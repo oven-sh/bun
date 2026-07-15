@@ -5,7 +5,7 @@
  *
  * A handful of older tests do not run in Node in this file. These tests should be updated to run in Node, or deleted.
  */
-import { bunEnv, bunExe, exampleSite, randomPort, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, exampleSite, isWindows, randomPort, tls as tlsCert } from "harness";
 import { createTest } from "node-harness";
 import { EventEmitter, once } from "node:events";
 import nodefs from "node:fs";
@@ -28,6 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough, Writable } from "node:stream";
+import { createSecureContext, connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -1327,6 +1328,155 @@ describe("node https server", async () => {
     } finally {
       done();
     }
+  });
+
+  // todoIf(windows): the first test here deterministically segfaults the Windows
+  // event-loop backend (uv__handle_close walking a freed handle in loop->handle_queue,
+  // packages/bun-usockets/src/eventing/libuv.c) -- a native defect that predates these tests.
+  describe.todoIf(isWindows)("TLS options", () => {
+    const agent1Pfx = path.join(import.meta.dir, "..", "test", "fixtures", "keys", "agent1.pfx");
+
+    function listenTLS(server): Promise<number> {
+      return new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(0, () => resolve((server.address() as AddressInfo).port));
+      });
+    }
+
+    function tlsHandshake(port: number, options: object = {}): Promise<import("node:tls").TLSSocket> {
+      return new Promise((resolve, reject) => {
+        const socket = tlsConnect({ port, rejectUnauthorized: false, ...options }, () => resolve(socket));
+        socket.once("error", reject);
+      });
+    }
+
+    function plaintextRequest(port: number): Promise<{ type: string }> {
+      return new Promise(resolve => {
+        const req = http.request({ port, path: "/" }, res => {
+          res.resume();
+          resolve({ type: "response", statusCode: res.statusCode } as any);
+        });
+        req.once("error", () => resolve({ type: "error" }));
+        req.end();
+      });
+    }
+
+    it("honors minVersion", async () => {
+      const server = createHttpsServer({ ...httpsOptions, minVersion: "TLSv1.3" }, (req, res) => res.end("ok"));
+      const port = await listenTLS(server);
+      try {
+        const socket = await tlsHandshake(port);
+        expect(socket.getProtocol()).toBe("TLSv1.3");
+        socket.end();
+        await expect(tlsHandshake(port, { maxVersion: "TLSv1.2" })).rejects.toMatchObject({
+          code: "ERR_SSL_TLSV1_ALERT_PROTOCOL_VERSION",
+        });
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
+    it("honors secureProtocol", async () => {
+      const server = createHttpsServer({ ...httpsOptions, secureProtocol: "TLSv1_2_method" }, (req, res) =>
+        res.end("ok"),
+      );
+      const port = await listenTLS(server);
+      try {
+        const socket = await tlsHandshake(port);
+        expect(socket.getProtocol()).toBe("TLSv1.2");
+        socket.end();
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
+    it("honors ciphers and maxVersion", async () => {
+      const server = createHttpsServer(
+        { ...httpsOptions, maxVersion: "TLSv1.2", ciphers: "ECDHE-RSA-AES128-GCM-SHA256" },
+        (req, res) => res.end("ok"),
+      );
+      const port = await listenTLS(server);
+      try {
+        const socket = await tlsHandshake(port);
+        expect(socket.getProtocol()).toBe("TLSv1.2");
+        expect(socket.getCipher().name).toBe("ECDHE-RSA-AES128-GCM-SHA256");
+        socket.end();
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
+    it("validates secure context options synchronously like node:tls", () => {
+      expect(() => createHttpsServer({ ...httpsOptions, ciphers: "BOGUS-CIPHER-123" })).toThrow(
+        expect.objectContaining({ code: "ERR_SSL_NO_CIPHER_MATCH" }),
+      );
+      expect(() => createHttpsServer({ ...httpsOptions, minVersion: "TLSv9" })).toThrow(
+        expect.objectContaining({ code: "ERR_TLS_INVALID_PROTOCOL_VERSION" }),
+      );
+      expect(() => createHttpsServer({ ...httpsOptions, secureProtocol: "bogus_method" })).toThrow(
+        expect.objectContaining({ code: "ERR_TLS_INVALID_PROTOCOL_METHOD" }),
+      );
+    });
+
+    it("plain http.createServer keeps ignoring TLS-only options", async () => {
+      // Node's http.Server never builds a secure context, so even bogus
+      // TLS options must not throw and the server must stay plaintext.
+      const server = http.createServer({ minVersion: "TLSv9", ciphers: "BOGUS-CIPHER-123" } as any, (req, res) =>
+        res.end("plain"),
+      );
+      const port = await listenTLS(server);
+      try {
+        const result: any = await plaintextRequest(port);
+        expect(result).toEqual({ type: "response", statusCode: 200 });
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
+    it("a pfx-only server is a TLS server", async () => {
+      const server = createHttpsServer({ pfx: nodefs.readFileSync(agent1Pfx), passphrase: "sample" }, (req, res) =>
+        res.end("hello-tls"),
+      );
+      const port = await listenTLS(server);
+      try {
+        // The negative contract: a plaintext request is never answered.
+        expect(await plaintextRequest(port)).toEqual({ type: "error" });
+
+        const socket = await tlsHandshake(port);
+        expect(socket.getPeerCertificate().subject.CN).toBe("agent1");
+        socket.end();
+
+        const body = await new Promise((resolve, reject) => {
+          const req = https.request({ port, rejectUnauthorized: false }, res => {
+            const chunks: Buffer[] = [];
+            res.on("data", chunk => chunks.push(chunk));
+            res.on("end", () => resolve(Buffer.concat(chunks).toString()));
+          });
+          req.once("error", reject);
+          req.end();
+        });
+        expect(body).toBe("hello-tls");
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
+
+    it("a secureContext-only server refuses plaintext", async () => {
+      const secureContext = createSecureContext(httpsOptions);
+      const server = createHttpsServer({ secureContext }, (req, res) => res.end("via-ctx"));
+      const port = await listenTLS(server);
+      try {
+        expect(await plaintextRequest(port)).toEqual({ type: "error" });
+      } finally {
+        server.closeAllConnections();
+        server.close();
+      }
+    });
   });
 });
 

@@ -433,6 +433,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.is_ipc = ipc;
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
+    s->paused_poll_stopped = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -759,11 +760,18 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
-    if (us_socket_is_shut_down(s)) {
-        // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+    int events = us_socket_is_shut_down(s)
+        ? LIBUS_SOCKET_READABLE
+        : LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE;
+    #ifdef LIBUS_USE_EPOLL
+    if (s->paused_poll_stopped) {
+        /* The eof-while-paused gate took the fd out of the epoll set; ADD it
+         * back. EPOLLHUP is level-triggered, so the next wait re-reports it
+         * and recv()==0 sets eof once the buffer is drained. */
+        s->paused_poll_stopped = 0;
+        us_poll_start(&s->p, s->group->loop, events);
         return;
     }
-    // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    #endif
+    us_poll_change(&s->p, s->group->loop, events);
 }

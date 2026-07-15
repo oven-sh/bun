@@ -292,6 +292,10 @@ struct us_socket_t {
    * the driver's epilogue via ssl_pending_detach. */
   unsigned char ssl_in_use : 1;
   unsigned char ssl_pending_detach : 1;
+  /* us_poll_stop was issued from the eof-while-is_paused gate so a
+   * level-triggered EPOLLHUP cannot spin the loop; us_socket_resume must
+   * EPOLL_CTL_ADD (us_poll_start) rather than MOD. */
+  unsigned char paused_poll_stopped : 1;
   /* The close code passed to the deferred close (e.g. a reset requested from
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */

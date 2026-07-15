@@ -507,6 +507,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
                         s->flags.adopted = 0;
+                        s->paused_poll_stopped = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -757,6 +758,28 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             if(eof && s) {
                 if (UNLIKELY(us_socket_is_closed(s))) {
                     // Do not call on_end after the socket has been closed
+                    return;
+                }
+                /* Only defer for allow_half_open callers (node:net sockets,
+                 * which resume to drain the kernel buffer). The
+                 * !allow_half_open arm below closes the socket outright, which
+                 * is what uws HTTP expects: its handle.pause() is internal and
+                 * may never resume once the response ended, so deferring eof
+                 * there leaked the connection. */
+                if (s->flags.is_paused && s->flags.allow_half_open && !error) {
+                    #ifdef LIBUS_USE_EPOLL
+                    /* EPOLLHUP is level-triggered and unmaskable, so take the
+                     * fd out of the set entirely; us_socket_resume re-ADDs it.
+                     * EPOLLHUP on TCP implies is_shut_down (both FINs), so the
+                     * write paths' us_poll_change cannot run while stopped. */
+                    if (!s->paused_poll_stopped) {
+                        s->paused_poll_stopped = 1;
+                        us_poll_stop(&s->p, loop);
+                    }
+                    #endif
+                    /* kqueue: us_socket_pause already removed EVFILT_READ and
+                     * EVFILT_WRITE is one-shot, so skipping end here is enough.
+                     * resume re-arms READABLE; recv()==0 sets eof once drained. */
                     return;
                 }
                 if (us_socket_is_shut_down(s)) {

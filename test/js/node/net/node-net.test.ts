@@ -1064,3 +1064,31 @@ it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TI
     target.close();
   }
 });
+
+// net.Socket readableFlowing must start null (Node semantics): bytes arriving
+// before a 'data' listener is attached buffer in the Readable instead of being
+// discarded, and pause() inside 'connection' is honored. Runs in a subprocess
+// because the flowing-state behavior is what the test observes; any in-process
+// 'readable' listener would itself flip flowing and mask the bug.
+it("net.Socket readableFlowing starts null and buffers bytes arriving before a 'data' listener", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "socket-initial-flowing-fixture.js")],
+    env: bunEnv,
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const lines = stdout.trim().split("\n");
+  expect(lines).toEqual([
+    "A flowing null len 17",
+    'A got "hello-first-bytes"',
+    "B flowing false",
+    'B got "paused-bytes"',
+    "C flowing null len 15",
+    'C got "server-greeting"',
+    "D readableEnded false len 13",
+    'D got "final-payload" ended true',
+  ]);
+  expect(exitCode).toBe(0);
+});

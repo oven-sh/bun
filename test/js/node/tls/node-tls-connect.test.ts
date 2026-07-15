@@ -142,7 +142,12 @@ it("should have checkServerIdentity", async () => {
 });
 
 it("should thow ECONNRESET if FIN is received before handshake", async () => {
+  // resume() drains the ClientHello this plain-TCP server receives; with
+  // Node-compatible buffering (readableFlowing starts null) an unread
+  // accepted socket never reaches 'end', so asyncDispose's server.close()
+  // would wait on it forever.
   await using server = net.createServer(c => {
+    c.resume();
     c.end();
   });
   await once(server.listen(0, "127.0.0.1"), "listening");

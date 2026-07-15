@@ -203,6 +203,9 @@ describe.skipIf(skip)("node:tls close_notify / shutdown under faults", () => {
     // have been read yet when the transport reports EOF.
     using p = await connectedTLSPair();
     p.client.on("error", () => {});
+    // Drain the payload: with Node-compatible buffering (readableFlowing
+    // starts null) 'end'/'close' only fire once the readable buffer empties.
+    p.client.resume();
     fault.set({ syscall: "recv", action: "zero", after: 1, repeat: -1 });
     p.serverSock.end("bye");
     await once(p.client, "close");

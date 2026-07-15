@@ -299,6 +299,16 @@ const SocketHandlers: SocketHandler = {
 
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
+    // libuv drops the handle's hold on the loop at UV_EOF, so in Node a
+    // socket with buffered unread bytes does not keep the process alive.
+    // Bun's accepted sockets hold the loop via the listener until closed,
+    // so when 'end' cannot fire (readable buffer non-empty) trigger
+    // allowHalfOpen's auto-end here instead of from 'end'. For client
+    // sockets the poll_ref unref gives the same effect.
+    if (!self[kwriteCallback]) socket.unref();
+    if (self.readableLength > 0 && self.allowHalfOpen === false && !self.writableEnded) {
+      self.end();
+    }
   },
   // A new resumable TLS session arrived (the peer's NewSessionTicket was just
   // processed). Mirrors Node's onnewsessionclient: emit once the handshake has
@@ -526,6 +536,7 @@ function SocketEmitEndNT(self, _err?) {
     }
     self[kended] = true;
     self.push(null);
+    self.read(0);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
@@ -819,10 +830,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     // after secureConnection event we emmit secure and secureConnect
     self.emit("secure", self);
     self.emit("secureConnect", verifyError);
+    // Leave readableFlowing at null so application data arriving before a
+    // 'data' listener is attached buffers in the Readable (Node semantics).
     if (server?.pauseOnConnect) {
       self.pause();
-    } else {
-      self.resume();
     }
   },
   error(socket, error) {
@@ -982,10 +993,11 @@ function onconnection(err, clientHandle) {
   }
 
   self.emit("connection", _socket);
-  // the duplex implementation start paused, so we resume when pauseOnConnect is falsy
-  if (!pauseOnConnect && !isTLS) {
-    _socket.resume();
-  }
+  // Node's onconnection leaves readableFlowing at null (via read(0)) so bytes
+  // arriving before a 'data' listener is attached buffer in the Readable. The
+  // native handle is already reading after accept; resume() here would flip
+  // the stream to flowing mode and discard those bytes, and would also stomp
+  // any pause() the user made inside their 'connection' handler.
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1050,6 +1062,16 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
+    // Mirror libuv: once UV_EOF is delivered the handle stops reading and no
+    // longer holds the loop. Keep the ref only while a write is still
+    // pending so drain can complete.
+    if (!self[kwriteCallback]) socket.unref();
+    // With buffered unread bytes 'end' cannot fire, so Duplex's
+    // allowHalfOpen auto-end never runs; trigger it here so the native
+    // socket closes and stops holding the loop.
+    if (self.readableLength > 0 && self.allowHalfOpen === false && !self.writableEnded) {
+      self.end();
+    }
   },
   // See SocketHandlers.session.
   session(socket, session) {
@@ -1618,13 +1640,10 @@ Socket.prototype.connect = function connect(...args) {
     if (pauseOnConnect) {
       this.pause();
     } else {
-      process.nextTick(() => {
-        // Honor pause()/resume() calls made while connecting — only start
-        // flowing if the user hasn't explicitly paused the stream. Matches
-        // Node's afterConnect, which calls socket.read(0) only when not paused:
-        // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1649
-        if (!this.isPaused()) this.resume();
-      });
+      // afterConnect starts native reads via self.read(0) once connected
+      // (Node's afterConnect does the same); readableFlowing stays null so
+      // bytes arriving before a 'data' listener attaches buffer instead of
+      // being discarded.
       this.connecting = true;
     }
     if (fd) {

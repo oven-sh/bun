@@ -1575,7 +1575,7 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
 
 // https://github.com/oven-sh/bun/issues/34228
 describe("process property descriptors match Node.js", () => {
-  const readonlyConfigurable = [
+  it.each([
     "version",
     "versions",
     "arch",
@@ -1586,40 +1586,33 @@ describe("process property descriptors match Node.js", () => {
     "moduleLoadList",
     "_preload_modules",
     "revision",
-  ];
-  for (const name of readonlyConfigurable) {
-    it(`process.${name} is read-only and configurable`, () => {
-      expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
-        value: process[name],
-        writable: false,
-        enumerable: true,
-        configurable: true,
-      });
+  ])("process.%s is read-only and configurable", name => {
+    expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
+      value: process[name],
+      writable: false,
+      enumerable: true,
+      configurable: true,
     });
-  }
+  });
 
-  for (const name of ["argv0", "features"]) {
-    it(`process.${name} is read-only and non-configurable`, () => {
-      expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
-        value: process[name],
-        writable: false,
-        enumerable: true,
-        configurable: false,
-      });
+  it.each(["argv0", "features"])("process.%s is read-only and non-configurable", name => {
+    expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
+      value: process[name],
+      writable: false,
+      enumerable: true,
+      configurable: false,
     });
-  }
+  });
 
-  for (const name of ["stdin", "stdout", "stderr", "report"]) {
-    it(`process.${name} is a getter-only accessor`, () => {
-      expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
-        get: expect.any(Function),
-        set: undefined,
-        enumerable: true,
-        configurable: true,
-      });
-      expect(process[name]).toBe(process[name]);
+  it.each(["stdin", "stdout", "stderr", "report"])("process.%s is a getter-only accessor", name => {
+    expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
+      get: expect.any(Function),
+      set: undefined,
+      enumerable: true,
+      configurable: true,
     });
-  }
+    expect(process[name]).toBe(process[name]);
+  });
 
   it("assigning to process metadata throws in strict mode", () => {
     expect(() => {
@@ -1665,6 +1658,7 @@ describe("process property descriptors match Node.js", () => {
     expect(Object.isFrozen(process.config)).toBe(true);
     expect(Object.isFrozen(process.config.variables)).toBe(true);
     expect(Object.isFrozen(process.config.target_defaults)).toBe(true);
+    expect(Object.isFrozen(process.config.variables.node_builtin_shareable_builtins)).toBe(true);
   });
 
   it("process.stdout can still be replaced via defineProperty", () => {

@@ -2648,7 +2648,10 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 #endif
 
     // Node deep-freezes the whole process.config tree.
-    shareableBuiltins->freeze(vm);
+    // objectConstructorFreeze also makes the array's length non-writable,
+    // which JSObject::freeze does not.
+    JSC::objectConstructorFreeze(globalObject, shareableBuiltins);
+    RETURN_IF_EXCEPTION(scope, {});
     targetDefaults->freeze(vm);
     variables->freeze(vm);
     config->freeze(vm);
@@ -2795,7 +2798,9 @@ JSValue Process::getReport(JSGlobalObject* globalObject)
     if (JSValue cached = m_report.get())
         return cached;
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = constructProcessReportObject(vm, this);
+    RETURN_IF_EXCEPTION(scope, {});
     m_report.set(vm, this, value);
     return value;
 }

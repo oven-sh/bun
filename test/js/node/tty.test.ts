@@ -1,9 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
-import { WriteStream } from "node:tty";
-import tty from "node:tty";
 import fs from "node:fs";
 import path from "node:path";
+import tty, { WriteStream } from "node:tty";
 
 describe("WriteStream.prototype is distinct from fs.WriteStream.prototype", () => {
   test("tty.WriteStream.prototype is its own object inheriting from fs.WriteStream.prototype", () => {

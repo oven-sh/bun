@@ -200,6 +200,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse = FnOrArrowDataParse {
             is_this_disallowed: true,
             is_return_disallowed: true,
+            // parse_fn.rs reads is_top_level to consume a react-hooks
+            // suppression after a namespace member function; every other
+            // consumer is gated on allow_await == AllowExpr (AllowIdent here).
+            is_top_level: old_fn_or_arrow_data.is_top_level,
             ..Default::default()
         };
 

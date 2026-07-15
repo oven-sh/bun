@@ -277,9 +277,17 @@ impl FileResponseStream {
         self.resp.timeout(self.idle_timeout);
 
         if state == ReadState::Eof {
+            // EOF with bytes still owed means the file shrank under us. The
+            // advertised Content-Length can no longer be honoured, so close
+            // the connection rather than desync the keep-alive stream.
+            let short = self.max_size.is_some_and(|m| m > 0);
             self.state.insert(State::RESPONSE_DONE);
             self.detach_resp();
-            self.resp.end(chunk, self.resp.should_close_connection());
+            if short {
+                self.resp.force_close();
+            } else {
+                self.resp.end(chunk, self.resp.should_close_connection());
+            }
             (self.on_complete)(self.ctx, self.resp);
             return false;
         }
@@ -392,7 +400,10 @@ impl FileResponseStream {
             match errno {
                 sys::E::SUCCESS => {
                     if self.sendfile.remain == 0 || sent == 0 {
-                        self.end_sendfile();
+                        // sent == 0 with remain > 0: the file was truncated
+                        // below our offset. Close so the client observes the
+                        // short body instead of desyncing on keep-alive.
+                        self.end_sendfile(self.sendfile.remain != 0);
                         return false;
                     }
                     return self.arm_sendfile_writable();
@@ -431,15 +442,19 @@ impl FileResponseStream {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    fn end_sendfile(&mut self) {
-        bun_output::scoped_log!(FileResponseStream, "endSendfile");
+    fn end_sendfile(&mut self, short: bool) {
+        bun_output::scoped_log!(FileResponseStream, "endSendfile short={}", short);
         if self.state.contains(State::RESPONSE_DONE) {
             return;
         }
         self.state.insert(State::RESPONSE_DONE);
         self.detach_resp();
-        self.resp
-            .end_send_file(self.sendfile.offset, self.resp.should_close_connection());
+        if short {
+            self.resp.force_close();
+        } else {
+            self.resp
+                .end_send_file(self.sendfile.offset, self.resp.should_close_connection());
+        }
         (self.on_complete)(self.ctx, self.resp);
         self.finish();
     }

@@ -26,6 +26,14 @@ pub struct Context {
 
     pub last_result: LastResult,
     pub error_: c::BrotliDecoderErrorCode2,
+
+    /// Owned copy of the caller's `dictionary` option. The brotli encoder's
+    /// prepared dictionary and the decoder state both borrow these bytes for
+    /// their lifetime, so they must outlive `state`/`prepared_dictionary`.
+    pub dictionary: Vec<u8>,
+    /// Encoder only: the prepared dictionary attached to `state`. Destroyed
+    /// after the encoder state in `deinit_state`.
+    pub prepared_dictionary: Option<NonNull<c::BrotliEncoderPreparedDictionary>>,
 }
 
 impl Default for Context {
@@ -41,6 +49,8 @@ impl Default for Context {
             // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
             last_result: unsafe { bun_core::ffi::zeroed_unchecked() },
             error_: c::BrotliDecoderErrorCode2::NO_ERROR,
+            dictionary: Vec::new(),
+            prepared_dictionary: None,
         }
     }
 }
@@ -179,13 +189,13 @@ mod _impl {
             global_this: &JSGlobalObject,
             callframe: &CallFrame,
         ) -> JsResult<JSValue> {
-            let arguments = callframe.arguments_undef::<3>();
+            let arguments = callframe.arguments_undef::<4>();
             let this_value = callframe.this();
-            if arguments.len != 3 {
+            if arguments.len != 3 && arguments.len != 4 {
                 return Err(global_this
                     .err(
                         ErrorCode::MISSING_ARGS,
-                        format_args!("init(params, writeResult, writeCallback)"),
+                        format_args!("init(params, writeResult, writeCallback[, dictionary])"),
                     )
                     .throw());
             }
@@ -241,6 +251,26 @@ mod _impl {
                 ));
             }
 
+            // Bind the ArrayBuffer view to a local so the borrowed byte_slice()
+            // outlives the call to `stream.init` below.
+            let dictionary_buf;
+            let dictionary = if arguments.ptr[3].is_undefined() {
+                None
+            } else {
+                let dictionary_value = arguments.ptr[3];
+                dictionary_buf = match dictionary_value.as_array_buffer(global_this) {
+                    Some(buf) => buf,
+                    None => {
+                        return Err(global_this.throw_invalid_argument_type_value(
+                            "dictionary",
+                            "Buffer, TypedArray, or DataView",
+                            dictionary_value,
+                        ));
+                    }
+                };
+                Some(dictionary_buf.byte_slice())
+            };
+
             js::write_result_set_cached(this_value, global_this, write_result_value);
 
             js::write_callback_set_cached(
@@ -249,7 +279,7 @@ mod _impl {
                 write_callback.with_async_context_if_needed(global_this),
             );
 
-            let mut err = self.stream.with_mut(|s| s.init());
+            let mut err = self.stream.with_mut(|s| s.init(dictionary));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global_this, this_value, err);
                 return Ok(JSValue::FALSE);
@@ -316,11 +346,15 @@ mod _impl {
     }
 
     impl Context {
-        pub fn init(&mut self) -> Error {
+        pub fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
+            let alloc = bun_brotli::BrotliAllocator::alloc;
+            let free = bun_brotli::BrotliAllocator::free;
+            self.dictionary = match dictionary {
+                Some(d) if !d.is_empty() => d.to_vec(),
+                _ => Vec::new(),
+            };
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    let alloc = bun_brotli::BrotliAllocator::alloc;
-                    let free = bun_brotli::BrotliAllocator::free;
                     // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
                     let state = unsafe {
                         c::BrotliEncoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
@@ -333,11 +367,46 @@ mod _impl {
                         );
                     }
                     self.state = NonNull::new(state.cast::<c_void>());
+                    if !self.dictionary.is_empty() {
+                        // SAFETY: FFI — `self.dictionary` bytes outlive the prepared
+                        // dictionary (freed in `deinit_state` / on Context drop).
+                        let prepared = unsafe {
+                            c::BrotliEncoderPrepareDictionary(
+                                c::BROTLI_SHARED_DICTIONARY_RAW as c::BrotliSharedDictionaryType,
+                                self.dictionary.len(),
+                                self.dictionary.as_ptr(),
+                                c::BROTLI_MAX_QUALITY,
+                                Some(alloc),
+                                Some(free),
+                                ptr::null_mut(),
+                            )
+                        };
+                        let Some(prepared) = NonNull::new(prepared) else {
+                            self.deinit_state();
+                            return Error::init(
+                                c"Failed to prepare brotli dictionary".as_ptr(),
+                                -1,
+                                c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                            );
+                        };
+                        self.prepared_dictionary = Some(prepared);
+                        // SAFETY: FFI — `state` is a freshly created encoder; `prepared`
+                        // outlives it (destroyed after the encoder in `deinit_state`).
+                        let ok = unsafe {
+                            c::BrotliEncoderAttachPreparedDictionary(state, prepared.as_ptr())
+                        };
+                        if ok == 0 {
+                            self.deinit_state();
+                            return Error::init(
+                                c"Failed to attach brotli dictionary".as_ptr(),
+                                -1,
+                                c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                            );
+                        }
+                    }
                     Error::ok()
                 }
                 bun_zlib::NodeMode::BROTLI_DECODE => {
-                    let alloc = bun_brotli::BrotliAllocator::alloc;
-                    let free = bun_brotli::BrotliAllocator::free;
                     // SAFETY: FFI — alloc/free are valid fn ptrs, opaque arg unused.
                     let state = unsafe {
                         c::BrotliDecoderCreateInstance(Some(alloc), Some(free), ptr::null_mut())
@@ -350,6 +419,26 @@ mod _impl {
                         );
                     }
                     self.state = NonNull::new(state.cast::<c_void>());
+                    if !self.dictionary.is_empty() {
+                        // SAFETY: FFI — `state` is a freshly created decoder;
+                        // `self.dictionary` bytes outlive it.
+                        let ok = unsafe {
+                            c::BrotliDecoderAttachDictionary(
+                                state,
+                                c::BROTLI_SHARED_DICTIONARY_RAW as c::BrotliSharedDictionaryType,
+                                self.dictionary.len(),
+                                self.dictionary.as_ptr(),
+                            )
+                        };
+                        if ok == 0 {
+                            self.deinit_state();
+                            return Error::init(
+                                c"Failed to attach brotli dictionary".as_ptr(),
+                                -1,
+                                c"ERR_ZLIB_DICTIONARY_LOAD_FAILED".as_ptr(),
+                            );
+                        }
+                    }
                     Error::ok()
                 }
                 _ => unreachable!(),
@@ -383,25 +472,34 @@ mod _impl {
         }
 
         pub fn reset(&mut self) -> Error {
-            if self.state.is_some() {
-                self.deinit_state();
-            }
-            self.init()
+            // Node's `Brotli{Encoder,Decoder}Context::ResetStream()` calls
+            // `Init()` with the default (empty) dictionary, so the attached
+            // dictionary is dropped on reset. Unlike zlib, this is Node's
+            // actual behaviour; match it.
+            self.deinit_state();
+            self.init(None)
         }
 
         /// Frees the Brotli encoder/decoder state without changing mode.
         /// Use close() for full cleanup that also sets mode to NONE.
         fn deinit_state(&mut self) {
-            match self.mode {
-                bun_zlib::NodeMode::BROTLI_ENCODE => {
-                    c::BrotliEncoder::destroy_instance(self.encoder_mut())
+            if self.state.is_some() {
+                match self.mode {
+                    bun_zlib::NodeMode::BROTLI_ENCODE => {
+                        c::BrotliEncoder::destroy_instance(self.encoder_mut())
+                    }
+                    bun_zlib::NodeMode::BROTLI_DECODE => {
+                        c::BrotliDecoder::destroy_instance(self.decoder_mut())
+                    }
+                    _ => unreachable!(),
                 }
-                bun_zlib::NodeMode::BROTLI_DECODE => {
-                    c::BrotliDecoder::destroy_instance(self.decoder_mut())
-                }
-                _ => unreachable!(),
+                self.state = None;
             }
-            self.state = None;
+            if let Some(prepared) = self.prepared_dictionary.take() {
+                // SAFETY: FFI — allocated by `BrotliEncoderPrepareDictionary`; the
+                // encoder state that borrowed it was destroyed above.
+                unsafe { c::BrotliEncoderDestroyPreparedDictionary(prepared.as_ptr()) };
+            }
         }
 
         pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
@@ -534,9 +632,8 @@ mod _impl {
         pub fn close(&mut self) {
             // Idempotent: a handle that was never (successfully) initialized,
             // or that was already closed, has no encoder/decoder to free.
-            if self.state.is_some() {
-                self.deinit_state();
-            }
+            self.deinit_state();
+            self.dictionary = Vec::new();
             self.mode = bun_zlib::NodeMode::NONE;
         }
 

@@ -758,3 +758,103 @@ describe("dictionary buffer lifetime", () => {
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
   });
 });
+
+describe("brotli dictionary", () => {
+  const dict = Buffer.alloc(2000).fill("the quick brown fox dictdictdict alpha beta gamma ");
+  const input = Buffer.alloc(285).fill("the quick brown fox jumps alpha beta gamma delta epsilon\n");
+
+  // Bytes produced by node's `brotliCompressSync(input, { dictionary: dict })`
+  // for the `dict`/`input` above, so decoding this frame without attaching the
+  // dictionary fails with ERR__ERROR_FORMAT_DICTIONARY.
+  const nodeDictFrame = Buffer.from("1b1c01c0c56dec3bce77185582d4830cb3ce6e8a145317f5e300c63a0f1df52d38", "hex");
+
+  it("brotliCompressSync honours the dictionary option", () => {
+    const noDict = zlib.brotliCompressSync(input);
+    const withDict = zlib.brotliCompressSync(input, { dictionary: dict });
+    expect(withDict.equals(noDict)).toBe(false);
+    expect(withDict.length).toBeLessThan(noDict.length);
+    expect(zlib.brotliDecompressSync(withDict, { dictionary: dict }).equals(input)).toBe(true);
+    expect(() => zlib.brotliDecompressSync(withDict)).toThrow(
+      expect.objectContaining({ code: "ERR__ERROR_FORMAT_DICTIONARY" }),
+    );
+  });
+
+  it("brotliDecompressSync honours the dictionary option (decodes node output)", () => {
+    expect(() => zlib.brotliDecompressSync(nodeDictFrame)).toThrow(
+      expect.objectContaining({ code: "ERR__ERROR_FORMAT_DICTIONARY" }),
+    );
+    const out = zlib.brotliDecompressSync(nodeDictFrame, { dictionary: dict });
+    expect(out.equals(input)).toBe(true);
+  });
+
+  it("brotliCompress / brotliDecompress honour the dictionary option", async () => {
+    const compressed = await util.promisify(zlib.brotliCompress)(input, { dictionary: dict });
+    expect(compressed.equals(zlib.brotliCompressSync(input))).toBe(false);
+    const roundtrip = await util.promisify(zlib.brotliDecompress)(compressed, { dictionary: dict });
+    expect(roundtrip.equals(input)).toBe(true);
+  });
+
+  it("createBrotliCompress / createBrotliDecompress honour the dictionary option", async () => {
+    const enc = zlib.createBrotliCompress({ dictionary: dict });
+    const encChunks = [];
+    {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      enc.on("data", c => encChunks.push(c));
+      enc.on("end", resolve);
+      enc.on("error", reject);
+      enc.end(input);
+      await promise;
+    }
+    const compressed = Buffer.concat(encChunks);
+    expect(compressed.equals(zlib.brotliCompressSync(input))).toBe(false);
+
+    const dec = zlib.createBrotliDecompress({ dictionary: dict });
+    const decChunks = [];
+    {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      dec.on("data", c => decChunks.push(c));
+      dec.on("end", resolve);
+      dec.on("error", reject);
+      dec.end(compressed);
+      await promise;
+    }
+    expect(Buffer.concat(decChunks).equals(input)).toBe(true);
+  });
+
+  it("createBrotliDecompress({ dictionary }) decodes node output", async () => {
+    const dec = zlib.createBrotliDecompress({ dictionary: dict });
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dec.on("data", c => chunks.push(c));
+    dec.on("end", resolve);
+    dec.on("error", reject);
+    dec.end(nodeDictFrame);
+    await promise;
+    expect(Buffer.concat(chunks).equals(input)).toBe(true);
+  });
+
+  it("accepts an ArrayBuffer dictionary", () => {
+    const ab = new ArrayBuffer(dict.length);
+    new Uint8Array(ab).set(dict);
+    const out = zlib.brotliDecompressSync(nodeDictFrame, { dictionary: ab });
+    expect(out.equals(input)).toBe(true);
+  });
+
+  it("ignores an empty dictionary", () => {
+    const noDict = zlib.brotliCompressSync(input);
+    const emptyDict = zlib.brotliCompressSync(input, { dictionary: Buffer.alloc(0) });
+    expect(emptyDict.equals(noDict)).toBe(true);
+    expect(zlib.brotliDecompressSync(emptyDict).equals(input)).toBe(true);
+  });
+
+  it("rejects an invalid dictionary type", () => {
+    for (const bad of ["string", 42, {}]) {
+      expect(() => zlib.createBrotliCompress({ dictionary: bad })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+      expect(() => zlib.createBrotliDecompress({ dictionary: bad })).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+      );
+    }
+  });
+});

@@ -208,7 +208,14 @@ describe("console.table", () => {
 
     test("multi-row column union puts integer-like keys first", () => {
       expect(columnNames(Bun.inspect.table([{ b: 1 }, { a: 2, "7": 3 }]))).toEqual(["7", "b", "a"]);
-      expect(columnNames(Bun.inspect.table([{ b: 1, "1": 2 }, { "0": 3, a: 4 }]))).toEqual(["0", "1", "b", "a"]);
+      expect(
+        columnNames(
+          Bun.inspect.table([
+            { b: 1, "1": 2 },
+            { "0": 3, a: 4 },
+          ]),
+        ),
+      ).toEqual(["0", "1", "b", "a"]);
       expect(columnNames(Bun.inspect.table([{ "10": 1 }, { "2": 2 }, { "1": 3 }]))).toEqual(["1", "2", "10"]);
       // 4294967295 is not an array index; "01" and "-1" are string keys
       expect(columnNames(Bun.inspect.table([{ "4294967295": 1 }, { "4294967294": 2 }]))).toEqual([

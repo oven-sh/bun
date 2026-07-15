@@ -229,8 +229,8 @@ describe("Bun.Transpiler", () => {
       exp("class A { get\n x() { return 1 } }", "class A {\n  get x() {\n    return 1;\n  }\n}");
 
       // Decorators before "declare"/"abstract" with a newline must still demand a class.
-      err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Expected "class" but found "class"');
-      err("function dec(c){return c}\n@dec abstract\nclass Foo {}", 'Expected "class" but found "class"');
+      err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Unexpected newline after "declare"');
+      err("function dec(c){return c}\n@dec abstract\nclass Foo {}", 'Unexpected newline after "abstract"');
     });
 
     it("does not crash when export default abstract is an expression followed by a class", () => {

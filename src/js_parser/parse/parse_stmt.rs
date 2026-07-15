@@ -1793,7 +1793,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
                 }
                 if opts.ts_decorators.is_some() {
-                    p.lexer.expected(T::TClass)?;
+                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    p.log().add_error(
+                        Some(p.source),
+                        r.end(),
+                        b"Unexpected newline after \"abstract\"",
+                    );
+                    return Err(crate::Error::SyntaxError);
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
@@ -1811,7 +1817,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
                 if p.lexer.has_newline_before {
                     if opts.ts_decorators.is_some() {
-                        p.lexer.expected(T::TClass)?;
+                        let r = js_lexer::range_of_identifier(p.source, loc);
+                        p.log().add_error(
+                            Some(p.source),
+                            r.end(),
+                            b"Unexpected newline after \"declare\"",
+                        );
+                        return Err(crate::Error::SyntaxError);
                     }
                     return Ok(None);
                 }

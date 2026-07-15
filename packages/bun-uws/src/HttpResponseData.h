@@ -102,6 +102,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     void* writableUserData = nullptr;
     void* socketData = nullptr;
 
+    /* Intrusive FIFO links for HttpContext's TLS handshake watchdog. A zero
+     * handshakeDeadline means "not queued", which is what lets the socket be
+     * unlinked before any user code that might close it runs. */
+    struct us_socket_t *prevPendingHandshake = nullptr;
+    struct us_socket_t *nextPendingHandshake = nullptr;
+    uint64_t handshakeDeadline = 0;
+
     /* Per socket event handlers */
     OnWritableCallback onWritable = nullptr;
     OnAbortedCallback onAborted = nullptr;

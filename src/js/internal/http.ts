@@ -26,6 +26,8 @@ const {
     useStrictMethodValidation: boolean,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+    handshakeTimeout: number,
+    onHandshakeTimeout: (ssl: boolean, socket: any) => undefined,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;

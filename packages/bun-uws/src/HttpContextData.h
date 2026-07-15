@@ -20,6 +20,7 @@
 
 #include "HttpRouter.h"
 
+#include <libusockets.h>
 #include <vector>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
@@ -48,6 +49,7 @@ private:
     using OnSocketUpgradedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
     using OnClientErrorCallback = MoveOnlyFunction<void(int is_ssl, struct us_socket_t *rawSocket, uWS::HttpParserError errorCode, char *rawPacket, int rawPacketLength)>;
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
+    using OnHandshakeTimeoutCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
 
@@ -68,6 +70,17 @@ private:
     OnSocketDataCallback onSocketData = nullptr;
     OnSocketUpgradedCallback onSocketUpgraded = nullptr;
     OnClientErrorCallback onClientError = nullptr;
+
+    /* TLS handshake watchdog, backing node's tls.Server handshakeTimeout.
+     * 0 disables it. Accepted sockets queue on an intrusive FIFO whose deadlines
+     * are non-decreasing, so one timer armed at the head covers the whole list. */
+    uint64_t handshakeTimeoutMs = 0;
+    uint64_t armedHandshakeDeadline = 0;
+    struct us_timer_t *handshakeTimer = nullptr;
+    struct us_socket_t *pendingHandshakeHead = nullptr;
+    struct us_socket_t *pendingHandshakeTail = nullptr;
+    OnHandshakeTimeoutCallback onHandshakeTimeout = nullptr;
+    void *handshakeTimeoutUserData = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
 

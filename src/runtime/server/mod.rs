@@ -290,6 +290,8 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub on_clienterror: jsc::StrongOptional,
 
+    pub on_handshake_timeout: jsc::StrongOptional,
+
     pub inspector_server_id: jsc::DebuggerId,
 }
 
@@ -302,7 +304,8 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         // The remaining owned fields (config, base_url, h3_alt_svc, dev_server,
-        // user_routes, all_closed_promise, on_clienterror) drop automatically.
+        // user_routes, all_closed_promise, on_clienterror, on_handshake_timeout)
+        // drop automatically.
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
@@ -1914,6 +1917,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             plugins: None,
             user_routes: Vec::new(),
             on_clienterror: jsc::StrongOptional::empty(),
+            on_handshake_timeout: jsc::StrongOptional::empty(),
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
 

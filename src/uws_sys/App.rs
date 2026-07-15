@@ -261,6 +261,24 @@ impl<const SSL: bool> App<SSL> {
         c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
+    /// Drop peers that never finish the TLS handshake within `timeout_ms`.
+    /// `0` disables the watchdog. `handler` reports each expired socket right
+    /// before uWS closes it; it must not destroy this app.
+    pub fn set_handshake_timeout(
+        &mut self,
+        timeout_ms: u64,
+        handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t),
+        user_data: *mut c_void,
+    ) {
+        c::uws_app_set_handshake_timeout(
+            Self::SSL_FLAG,
+            self.as_raw(),
+            timeout_ms,
+            handler,
+            user_data,
+        )
+    }
+
     pub fn listen_with_config(
         &mut self,
         handler: c::uws_listen_handler,
@@ -502,6 +520,15 @@ pub mod c {
             ssl: c_int,
             app: &mut uws_app_s,
             handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
+            user_data: *mut c_void,
+        );
+        // safe: same contract as uws_app_set_on_clienterror — `handler`/`user_data`
+        // are stored opaquely by the C++ shim.
+        pub(crate) safe fn uws_app_set_handshake_timeout(
+            ssl: c_int,
+            app: &mut uws_app_s,
+            timeout_ms: u64,
+            handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t),
             user_data: *mut c_void,
         );
         pub(crate) fn uws_create_app(ssl: i32, options: BunSocketContextOptions) -> *mut uws_app_t;

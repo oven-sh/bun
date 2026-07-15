@@ -510,6 +510,9 @@ public:
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
     V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
+    /* setupMainThreadPort's drain callback; run once by WebWorker__dispatchOnline */                        \
+    /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -737,6 +740,8 @@ public:
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);
+    JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
+    void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }

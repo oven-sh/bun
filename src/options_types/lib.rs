@@ -6,10 +6,13 @@ pub mod code_coverage_options;
 pub mod command_tag;
 pub mod compile_target;
 pub mod context;
+pub mod error;
 pub mod global_cache;
 pub mod jsx;
 pub mod offline_mode;
 pub mod schema;
+
+pub use error::{Error, Result};
 
 pub use jsx as JSX;
 

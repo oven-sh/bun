@@ -57,12 +57,8 @@ pub const CONV: &str = "C";
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
 // .rs file.
 // ──────────────────────────────────────────────────────────────────────────
-#[path = "BunErrorType.rs"]
-pub mod bun_error_type;
-#[path = "BunStackFrameCode.rs"]
-pub mod bun_stack_frame_code;
-#[path = "BunStackFramePosition.rs"]
-pub mod bun_stack_frame_position;
+pub mod error;
+pub use error::{Error as CrateError, Result as CrateResult};
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]
@@ -105,6 +101,12 @@ pub mod text_codec;
 pub mod url_search_params;
 #[path = "WTF.rs"]
 pub mod wtf;
+#[path = "BunErrorType.rs"]
+pub mod bun_error_type;
+#[path = "BunStackFrameCode.rs"]
+pub mod bun_stack_frame_code;
+#[path = "BunStackFramePosition.rs"]
+pub mod bun_stack_frame_position;
 
 /// `bun.schema.api` types that reference `BunStackFramePosition` (this crate)
 /// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
@@ -207,8 +209,6 @@ pub mod js_array;
 pub mod js_big_int;
 #[path = "JSFunction.rs"]
 pub mod js_function;
-#[path = "JSInternalPromise.rs"]
-pub mod js_internal_promise;
 #[path = "JSModuleLoader.rs"]
 pub mod js_module_loader;
 #[path = "JSPromise.rs"]
@@ -261,6 +261,9 @@ pub use self::console_object::formatter::Tag as FormatTag;
 pub use self::console_object::formatter::Tag as FormatAs;
 pub use self::js_array_iterator::JSArrayIterator;
 pub use self::js_promise::JSPromise;
+/// `JSInternalPromise` was removed upstream; the module loader uses `JSPromise`
+/// everywhere now. Alias kept for existing call sites.
+pub use self::js_promise::JSPromise as JSInternalPromise;
 pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
 pub use self::task::Taskable;
@@ -405,7 +408,6 @@ pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
 pub use self::deprecated_strong::DeprecatedStrong;
 pub use self::js_array::JSArray;
-pub use self::js_internal_promise::JSInternalPromise;
 pub use self::js_ref::JsRef;
 pub use self::string_builder::StringBuilder;
 pub use self::uuid::{UUID, UUID5, UUID7};
@@ -433,9 +435,6 @@ pub use self::common_strings::CommonStrings;
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
-pub use self::bun_error_type::BunErrorType;
-pub use self::bun_stack_frame_code::BunStackFrameCode;
-pub use self::bun_stack_frame_position::BunStackFramePosition;
 pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
 pub use self::custom_getter_setter::CustomGetterSetter;
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
@@ -457,6 +456,9 @@ pub use self::source_provider::SourceProvider;
 pub use self::source_type::SourceType;
 pub use self::text_codec::TextCodec;
 pub use self::url_search_params::URLSearchParams;
+pub use self::bun_error_type::BunErrorType;
+pub use self::bun_stack_frame_code::BunStackFrameCode;
+pub use self::bun_stack_frame_position::BunStackFramePosition;
 
 #[path = "GarbageCollectionController.rs"]
 pub mod garbage_collection_controller;
@@ -494,12 +496,6 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
-#[path = "BunException.rs"]
-pub mod bun_exception;
-#[path = "BunStackFrame.rs"]
-pub mod bun_stack_frame;
-#[path = "BunStackTrace.rs"]
-pub mod bun_stack_trace;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DeferredError.rs"]
@@ -520,6 +516,12 @@ pub mod system_error;
 pub mod url;
 #[path = "VM.rs"]
 pub mod vm;
+#[path = "BunException.rs"]
+pub mod bun_exception;
+#[path = "BunStackFrame.rs"]
+pub mod bun_stack_frame;
+#[path = "BunStackTrace.rs"]
+pub mod bun_stack_trace;
 // `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
 // every aliased type lives in api/webcore/test_runner/bake, so mounting it
 // here would create a `bun_jsc → bun_runtime` cycle.
@@ -719,27 +721,27 @@ impl<T> JsResultExt for JsResult<T> {
     }
 }
 
-impl From<bun_core::Error> for JsError {
-    fn from(_: bun_core::Error) -> Self {
+impl From<crate::CrateError> for JsError {
+    fn from(_: crate::CrateError) -> Self {
         // Mapping to `Thrown` here lets `?` propagate while the actual throw
         // is handled by the host-fn wrapper.
         JsError::Thrown
     }
 }
 
-impl From<JsError> for bun_core::Error {
-    /// Widen a `bun.JSError` value back into the `anyerror` newtype. Preserves
-    /// the exact error tag so call sites that round-trip through
-    /// `bun_core::Error` (e.g. the `bun_bundler::dispatch::DevServerVTable`
-    /// boundary) keep `error.OutOfMemory` distinguishable from `error.JSError`.
+impl From<JsError> for crate::CrateError {
+    /// Widen a `bun.JSError` value back into the crate error enum. Preserves
+    /// the exact error tag so call sites that round-trip through it (e.g. the
+    /// `bun_bundler::dispatch::DevServerVTable` boundary) keep
+    /// `error.OutOfMemory` distinguishable from `error.JSError`.
     #[inline]
     fn from(e: JsError) -> Self {
         match e {
-            JsError::OutOfMemory => bun_core::err!("OutOfMemory"),
+            JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
             // `Terminated` (worker shutdown) has no distinct error tag of its
             // own, so collapse into `JSError` like every other thrown JS
             // exception.
-            JsError::Thrown | JsError::Terminated => bun_core::err!("JSError"),
+            JsError::Thrown | JsError::Terminated => crate::CrateError::JSError,
         }
     }
 }
@@ -982,12 +984,12 @@ mod __macro_smoke {
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
-pub use self::bun_stack_frame::BunStackFrame;
-pub use self::bun_stack_trace::BunStackTrace;
 pub use self::cached_bytecode::CachedBytecode;
 pub use self::deferred_error::DeferredError;
 pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
+pub use self::bun_stack_frame::BunStackFrame;
+pub use self::bun_stack_trace::BunStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
@@ -1490,7 +1492,7 @@ pub use self::js_string::JSString;
 pub mod ref_string;
 pub use self::ref_string as RefString;
 
-pub mod ffi_imports;
+pub mod jsc_abi;
 
 #[path = "Debugger.rs"]
 pub mod debugger;

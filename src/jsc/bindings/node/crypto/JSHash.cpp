@@ -212,9 +212,6 @@ JSC_DEFINE_HOST_FUNCTION(jsHashProtoFuncUpdate, (JSC::JSGlobalObject * globalObj
 
         return JSValue::encode(hashWrapper);
     } else if (auto* view = dynamicDowncast<JSArrayBufferView>(inputValue)) {
-        if (view->isDetached()) [[unlikely]] {
-            return Bun::ERR::INVALID_STATE(scope, globalObject, "Cannot hash a detached buffer"_s);
-        }
         if (!hash->update(view->span())) {
             return Bun::ERR::CRYPTO_HASH_UPDATE_FAILED(scope, globalObject);
         }

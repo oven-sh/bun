@@ -1291,11 +1291,15 @@ static void readStreamIntoSinkOnCloseImpl(JSC::VM& vm, JSGlobalObject* globalObj
     if (!op->m_didThrow && !op->m_didClose) {
         auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
         if (stream && stream->m_state != ReadableStreamState::Closed) {
-            readableStreamCancel(globalObject, stream, reason);
+            auto* cancelPromise = readableStreamCancel(globalObject, stream, reason);
             if (scope.exception()) [[unlikely]] {
                 op->m_didClose = true;
                 return;
             }
+            // The sink initiated this cancel (peer abort / sink close); the source's
+            // cancel() rejection has no consumer, so keep it out of unhandledRejection.
+            if (cancelPromise)
+                markPromiseAsHandled(vm, cancelPromise);
         }
     }
     op->m_didClose = true;
@@ -1446,8 +1450,10 @@ static void resumableCancelImpl(JSC::VM& vm, JSGlobalObject* globalObject, JSRes
     JSValue error = op->m_error.get();
     bool hasTruthyError = !error.isEmpty() && error.toBoolean(globalObject);
     if (stream && !hasTruthyError && stream->m_state != ReadableStreamState::Closed) {
-        readableStreamCancel(globalObject, stream, reason);
+        auto* cancelPromise = readableStreamCancel(globalObject, stream, reason);
         RETURN_IF_EXCEPTION(scope, );
+        if (cancelPromise)
+            markPromiseAsHandled(vm, cancelPromise);
     }
     RELEASE_AND_RETURN(scope, resumableReleaseReader(vm, globalObject, op));
 }

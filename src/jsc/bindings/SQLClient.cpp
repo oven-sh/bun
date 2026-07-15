@@ -152,7 +152,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsEmptyString(vm);
     }
     case DataCellTag::Double:
-        return jsNumber(cell.value.number);
+        return jsNumber(purifyNaN(cell.value.number));
         break;
     case DataCellTag::Integer:
         return jsNumber(cell.value.integer);

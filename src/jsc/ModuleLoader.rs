@@ -13,8 +13,8 @@ use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
 use crate::{
-    self as jsc, ErrorableResolvedSource, ErrorableString, JSGlobalObject, JSInternalPromise,
-    JSValue, JsError, JsResult, ResolvedSource,
+    self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, JSGlobalObject,
+    JSInternalPromise, JSValue, JsError, JsResult, ResolvedSource,
 };
 
 // Re-exports.
@@ -333,7 +333,7 @@ pub fn resolve_maybe_needs_trailing_slash(
     let Some(hooks) = loader_hooks() else {
         // No high tier (unit tests) — fail closed with ModuleNotFound so
         // callers surface a real ResolveMessage rather than `undefined`.
-        *res = ErrorableString::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
+        *res = ErrorableString::err(ErrorCode(ErrorCode::JS_ERROR_OBJECT), JSValue::UNDEFINED);
         return Ok(());
     };
     let qs = query_string
@@ -372,7 +372,7 @@ pub fn process_fetch_log(
     referrer: bun_core::String,
     log: &mut bun_ast::Log,
     errorable: &mut ErrorableResolvedSource,
-    err: bun_core::Error,
+    err: crate::CrateError,
 ) {
     crate::virtual_machine::process_fetch_log(global, specifier, referrer, log, errorable, err)
 }
@@ -398,8 +398,10 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret =
-                ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED)
+            *ret = ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                JSValue::UNDEFINED,
+            )
         };
         return core::ptr::null_mut();
     };
@@ -592,8 +594,10 @@ pub(crate) unsafe extern "C" fn Bun__transpileVirtualModule(
     let Some(hooks) = loader_hooks() else {
         // SAFETY: C++ passed a valid out-param.
         unsafe {
-            *ret =
-                ErrorableResolvedSource::err(bun_core::err!("ModuleNotFound"), JSValue::UNDEFINED);
+            *ret = ErrorableResolvedSource::err(
+                ErrorCode(ErrorCode::JS_ERROR_OBJECT),
+                JSValue::UNDEFINED,
+            );
         }
         return true;
     };

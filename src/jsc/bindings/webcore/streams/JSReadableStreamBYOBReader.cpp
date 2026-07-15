@@ -232,18 +232,6 @@ template<> void JSReadableStreamBYOBReaderConstructor::finishCreation(VM& vm, JS
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStreamBYOBReader>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSC::VM& vm, JSReadableStreamBYOBReaderConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSReadableStreamBYOBReader>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 // new ReadableStreamBYOBReader(stream): SetUpReadableStreamBYOBReader(this, stream), which
 // throws a TypeError when the stream is locked or is not a byte stream.
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamBYOBReaderConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

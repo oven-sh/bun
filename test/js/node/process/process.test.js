@@ -1206,6 +1206,30 @@ describe.concurrent(() => {
     expect(aborted(r)).toBe(false);
   });
 
+  // Node latches the abort decision at throw time (should_abort_on_uncaught_toggle
+  // was already 0), and removeAllListeners does not re-run updateExceptionCapture,
+  // so the error falls through to the normal uncaught path (exit 1) instead of
+  // aborting. Verified against node v26.3.0.
+  const monitorRemovesListenerFixture = `const d = require("domain").create();
+       d.on("error", () => console.log("domain-error"));
+       process.on("uncaughtExceptionMonitor", () => d.removeAllListeners("error"));
+       d.run(() => setTimeout(() => { throw new Error("x") }, 0))`;
+
+  it("--abort-on-uncaught-exception uses the throw-time domain snapshot even if the monitor removes the listener", async () => {
+    const r = await spawnAbort(monitorRemovesListenerFixture);
+    expect(aborted(r)).toBe(false);
+    expect(r.exitCode).toBe(1);
+  });
+
+  it.skipIf(!nodeExe())(
+    "--abort-on-uncaught-exception monitor-removes-domain-listener matches node (differential)",
+    async () => {
+      const r = await spawnAbort(monitorRemovesListenerFixture, [], nodeExe());
+      expect(aborted(r)).toBe(false);
+      expect(r.exitCode).toBe(1);
+    },
+  );
+
   it("dispatches to a capture callback installed inside uncaughtExceptionMonitor", async () => {
     // Node reads exceptionHandlerState.captureFn after the monitor emit; the
     // dispatch must not use a pre-monitor snapshot.

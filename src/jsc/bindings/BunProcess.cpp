@@ -1276,6 +1276,10 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     // Snapshot at throw time — feeds every abort decision below. Node
     // decides abort once inside V8 Isolate::Throw and never re-checks.
     const auto captureAtThrow = process->getUncaughtExceptionCaptureCallback();
+    // The other half of node's should_abort_on_uncaught_toggle, snapshotted
+    // for the same reason: a listener that later removes a domain's 'error'
+    // listener must not turn a suppressed exception into a SIGABRT.
+    bool domainClaimsAtThrow = false;
 
     // Under --abort-on-uncaught-exception, node aborts before
     // process._fatalException runs — 'uncaughtExceptionMonitor' and
@@ -1302,7 +1306,8 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
                 (void)ex;
                 claims = jsUndefined();
             }
-            if (!claims.toBoolean(lexicalGlobalObject)
+            domainClaimsAtThrow = claims.toBoolean(lexicalGlobalObject);
+            if (!domainClaimsAtThrow
                 && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())) {
                 Bun__logUnhandledException(JSValue::encode(exception));
                 abortOnUncaughtException();
@@ -1386,11 +1391,13 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     }
 
     // The abort decision consumes only the throw-time snapshot: a monitor
-    // listener that clears the capture callback must not turn a suppressed
-    // exception into a SIGABRT (node has no post-monitor abort path). This
-    // gate covers node:domain loaded before the throw with the predicate
-    // slot missing, and stays as a defensive assert otherwise.
+    // listener that clears the capture callback (or removes a domain's
+    // 'error' listener) must not turn a suppressed exception into a SIGABRT
+    // (node has no post-monitor abort path). This gate covers node:domain
+    // loaded before the throw with the predicate slot missing, and stays as
+    // a defensive assert otherwise.
     if (origin != UncaughtExceptionOrigin::Rejection && shouldAbortOnUncaughtException()
+        && !domainClaimsAtThrow
         && (captureAtThrow.isEmpty() || captureAtThrow.isUndefinedOrNull())) {
         Bun__logUnhandledException(JSValue::encode(exception));
         abortOnUncaughtException();

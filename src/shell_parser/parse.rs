@@ -1712,6 +1712,10 @@ impl<'bump> Parser<'bump> {
         let mut has_brace_open = false;
         let mut has_brace_close = false;
         let mut has_comma = false;
+        // A `{x..y}` sequence expression has no dedicated token — `..` is
+        // just two dots inside an ordinary text chunk — so unlike
+        // `has_comma` this can only be detected by scanning text atoms.
+        let mut has_dotdot = false;
         let mut has_glob_syntax = false;
         {
             while match self.peek() {
@@ -1811,6 +1815,9 @@ impl<'bump> Parser<'bump> {
                     | Token::Text(txtrng) => {
                         let _ = self.advance();
                         let mut txt = self.text(txtrng);
+                        if !has_dotdot && strings::contains(txt, b"..") {
+                            has_dotdot = true;
+                        }
                         if peeked.tag() == TokenTag::Text && !txt.is_empty() && txt[0] == b'~' {
                             txt = &txt[1..];
                             atoms.push(ast::SimpleAtom::Tilde);
@@ -1885,12 +1892,37 @@ impl<'bump> Parser<'bump> {
             }
         }
 
+        // `has_dotdot` alone is a coarse, cheap hint (any ".." anywhere in
+        // the word) that would route plenty of non-sequences into brace
+        // expansion — and a brace group with no real comma-separated
+        // variants loses its literal `{`/`}` when that happens (a
+        // pre-existing quirk of the single-variant path, harmless while
+        // gated behind `has_comma` alone, since a comma-less group already
+        // never reached it). For the common case where the entire group is
+        // one plain text atom (`{1..5}`, `{1..}`, `{aa..cc}`, no `$var` /
+        // nested braces involved), we already have the exact same
+        // validation `braces::parse_brace_sequence` will run later, so use
+        // it here for a precise answer instead of the coarse substring
+        // check. Anything more complex (interpolation, nesting, commas)
+        // still falls back to the coarse hint.
+        let brace_expansion_hint = has_brace_open
+            && has_brace_close
+            && (has_comma
+                || match atoms.as_slice() {
+                    [
+                        ast::SimpleAtom::BraceBegin,
+                        ast::SimpleAtom::Text(txt),
+                        ast::SimpleAtom::BraceEnd,
+                    ] => crate::braces::parse_brace_sequence(txt).is_some(),
+                    _ => has_dotdot,
+                });
+
         Ok(match atoms.len() {
             0 => None,
             1 => Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap())),
             _ => Some(ast::Atom::Compound(ast::CompoundAtom {
                 atoms: atoms.into_bump_slice(),
-                brace_expansion_hint: has_brace_open && has_brace_close && has_comma,
+                brace_expansion_hint,
                 glob_hint: has_glob_syntax,
             })),
         })

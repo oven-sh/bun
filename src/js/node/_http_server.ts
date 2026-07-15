@@ -28,6 +28,7 @@ const {
   tlsSymbol,
   optionsSymbol,
   kDeferredTimeouts,
+  kSNIContexts,
   kDeprecatedReplySymbol,
   headerStateSymbol,
   NodeHTTPHeaderState,
@@ -558,6 +559,19 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
 
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
+    }
+    const sniContexts = this[kSNIContexts];
+    const sniContextsLength = sniContexts ? sniContexts.length : 0;
+    if (sniContextsLength > 0) {
+      // Bun.serve accepts an array of TLS configs where the first entry
+      // is the default context and subsequent entries (each with a
+      // serverName) are matched via SNI. Ensure there is a base context
+      // so the SNI contexts are never promoted to the default.
+      const tlsArray = [tls ?? { requestCert: false, rejectUnauthorized: false }];
+      for (let i = 0; i < sniContextsLength; i++) {
+        tlsArray.push(sniContexts[i]);
+      }
+      tls = tlsArray;
     }
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default

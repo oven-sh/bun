@@ -1418,7 +1418,7 @@ function Server(options, secureConnectionListener): void {
   Server.prototype[kNativeSecureContextCtor] = NativeSecureContext;
 
   Server.prototype.getTicketKeys = function () {
-    throw Error("Not implented in Bun yet");
+    throw Error("Not implemented in Bun yet");
   };
 
   Server.prototype.setTicketKeys = function (keys) {
@@ -1428,7 +1428,7 @@ function Server(options, secureConnectionListener): void {
     if (keys.byteLength !== 48) {
       throw $ERR_INVALID_ARG_VALUE("buffer", keys, "Session ticket keys must be a 48-byte buffer");
     }
-    throw Error("Not implented in Bun yet");
+    throw Error("Not implemented in Bun yet");
   };
 
   this[buntls] = function (port, host, isClient) {

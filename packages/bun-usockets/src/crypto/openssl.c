@@ -1266,6 +1266,16 @@ void us_internal_ssl_ctx_unref(SSL_CTX *p) {
   if (p) SSL_CTX_free(p);
 }
 
+/* Clears the per-domain userdata (uWS HttpRouter*) stored on a SNI SSL_CTX.
+ * App.h::removeServerName() deletes the router while live keep-alive
+ * connections may still hold a ref on this SSL_CTX via SSL_set_SSL_CTX();
+ * without clearing, the next request on such a connection would read the
+ * freed router through us_socket_server_name_userdata(). After clearing,
+ * HttpContext.h falls back to the default router. */
+void us_internal_ssl_ctx_clear_sni_userdata(struct ssl_ctx_st *p) {
+  if (p && us_sni_ex_idx >= 0) SSL_CTX_set_ex_data(p, us_sni_ex_idx, NULL);
+}
+
 /* ── Per-socket SSL attach/detach ────────────────────────────────────────── */
 
 void us_internal_ssl_attach(struct us_socket_t *s, SSL_CTX *ctx,

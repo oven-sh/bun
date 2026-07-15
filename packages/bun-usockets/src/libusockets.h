@@ -466,6 +466,7 @@ struct ssl_ctx_st *us_ssl_ctx_from_options(
  * (uWS App.h) that don't pull in BoringSSL headers. */
 void us_internal_ssl_ctx_up_ref(struct ssl_ctx_st *ssl_ctx);
 void us_internal_ssl_ctx_unref(struct ssl_ctx_st *ssl_ctx);
+void us_internal_ssl_ctx_clear_sni_userdata(struct ssl_ctx_st *ssl_ctx);
 long us_ssl_ctx_live_count(void);
 /* Appends the certificates in the PEM `content` to `ctx`'s trust store;
  * returns 0 when nothing could be added. */

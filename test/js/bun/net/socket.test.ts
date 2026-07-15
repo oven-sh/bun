@@ -1836,12 +1836,13 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
         out.a_keepalive = readIntOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
         out.a_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
 
-        // (b) default shape: setKeepAlive(true) must report success and
-        // leave SO_KEEPALIVE on (not half-apply then report failure).
+        // (b) default shape: setKeepAlive(true) must report success, leave
+        // SO_KEEPALIVE on, and not touch the previously-set TCP_KEEPIDLE.
         out.off_ret = client.setKeepAlive(false);
         out.off_keepalive = readIntOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
         out.b_ret = client.setKeepAlive(true);
         out.b_keepalive = readIntOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
 
         // node:net on the same runtime must still write the right idle.
         const net = require("node:net");
@@ -1873,6 +1874,7 @@ it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 
       off_keepalive: 0,
       b_ret: true,
       b_keepalive: 1,
+      b_keepidle: 4,
       net_keepidle: 4,
     },
     exitCode: 0,

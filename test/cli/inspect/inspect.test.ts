@@ -696,6 +696,4 @@ test("rapid inspector connect/close does not unref the debuggee's event loop", a
     outcome: "alive",
     ticksSeen: `>=${target}`,
   });
-
-  proc.kill();
 });

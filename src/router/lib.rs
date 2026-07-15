@@ -1128,8 +1128,9 @@ impl Route {
                     // `route_file_buf` and avoids needing lifetime transmutes
                     // below.
                     let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.intern_slice(public_path).expect("unreachable");
+                    let public_path: &'static [u8] = dirname_store
+                        .intern_slice(public_path)
+                        .expect("unreachable");
                     let name: &'static [u8] = &public_path[name_offset..][0..name_len];
                     let match_name: &'static [u8] = if has_uppercase {
                         dirname_store
@@ -1144,8 +1145,9 @@ impl Route {
                     (public_path, name, match_name)
                 } else {
                     let dirname_store = FileSystem::instance().dirname_store();
-                    let public_path: &'static [u8] =
-                        dirname_store.intern_slice(public_path).expect("unreachable");
+                    let public_path: &'static [u8] = dirname_store
+                        .intern_slice(public_path)
+                        .expect("unreachable");
                     (
                         public_path,
                         Route::INDEX_ROUTE_NAME,

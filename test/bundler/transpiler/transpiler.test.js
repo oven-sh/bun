@@ -426,6 +426,62 @@ describe("Bun.Transpiler", () => {
       expect(exitCode).toBe(0);
     }, 90_000);
 
+    it("type arguments in expression require a bare '>' closer", () => {
+      // TypeScript's "parseTypeArgumentsInExpression" only accepts a bare ">"
+      // to close the list, so a ">=" (or ">>", ">>>", ">>=", ">>>=") forces
+      // backtracking to the relational/shift interpretation. Previously we
+      // split the ">=" and committed to the type-argument parse, turning e.g.
+      // "f('s', x < 0, x >= 0 ? a : b)" into "f('s', x = b)".
+      const exp = ts.expectPrinted_;
+
+      exp('f("s", x < 0, x >= 0 ? "p:" + x : undefined);', 'f("s", x < 0, x >= 0 ? "p:" + x : undefined);\n');
+      exp("f(x < y, x >= z);", "f(x < y, x >= z);\n");
+      exp("const a = (x < 0, x >= 0 ? y : z);", "const a = (x < 0, x >= 0 ? y : z);\n");
+      exp("f<x>=g<y>;", "f < x >= g;\n");
+      exp("f<x>>g<y>;", "f < x >> g;\n");
+      exp("f<x>>>g<y>;", "f < x >>> g;\n");
+      exp("new C(a < b, a >= b);", "new C(a < b, a >= b);\n");
+
+      // Nested type arguments still work: the inner list runs in a type
+      // context and strips one ">" from ">>" before the outer closer sees it.
+      exp("f<Array<number>>();", "f();\n");
+      exp("f<Array<Array<number>>>();", "f();\n");
+      exp("new f<Array<number>>();", "new f;\n");
+      exp("const g = f<Array<number>>;", "const g = f;\n");
+
+      // A bare ">" followed by "=" on the next token still commits.
+      exp("f<x> = g<y>;", "f = g;\n");
+    });
+
+    it("does not turn '<' ... '>=' into an assignment at runtime", async () => {
+      const source = `
+        const out: unknown[] = [];
+        const f = (...a: unknown[]) => out.push(a);
+        let x: number = 5;
+        f("s", x < 0, x >= 0 ? "p:" + x : undefined);
+        out.push(x);
+        class C { constructor(...a: unknown[]) { out.push(a); } }
+        let a: number = 1, b: number = 2;
+        new C(a < b, a >= b);
+        out.push(a);
+        console.log(JSON.stringify(out));
+      `;
+      using dir = tempDir("ts-ge-type-args", { "entry.ts": source });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "entry.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
+        stdout: JSON.stringify([["s", false, "p:5"], 5, [true, false], 1]),
+        exitCode: 0,
+      });
+    });
+
     it.todo("instantiation expressions", async () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -468,7 +524,7 @@ describe("Bun.Transpiler", () => {
       exp("f.x<<T>() => T>;", "f.x;\n");
       exp("f['x']<<T>() => T>;", 'f["x"];\n');
       exp("f<x>g<y>;", "f < x > g;\n");
-      exp("f<x>=g<y>;", "f = g;\n");
+      exp("f<x>=g<y>;", "f < x >= g;\n");
       exp("f<x>>g<y>;", "f < x >> g;\n");
       exp("f<x>>>g<y>;", "f < x >>> g;\n");
       err("f<x>>=g<y>;", "Invalid assignment target");

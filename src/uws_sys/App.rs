@@ -396,6 +396,18 @@ impl<const SSL: bool> App<SSL> {
         c::uws_missing_server_name(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
+    /// Install a per-handshake certificate selector (node:https `SNICallback`).
+    /// It runs ahead of the static SNI tree on every listen socket this app
+    /// has, and on every one it creates afterwards. `user_data` must outlive
+    /// the app.
+    pub fn server_name_resolver(
+        &mut self,
+        resolver: c::uws_server_name_resolver,
+        user_data: *mut c_void,
+    ) {
+        c::uws_server_name_resolver_set(Self::SSL_FLAG, self.as_raw(), resolver, user_data)
+    }
+
     pub fn filter(&mut self, handler: c::uws_filter_handler, user_data: *mut c_void) {
         c::uws_filter(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
@@ -491,6 +503,15 @@ pub mod c {
         Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
     pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut uws_res, i32, *mut c_void)>;
     pub(crate) type uws_missing_server_handler = Option<extern "C" fn(*const c_char, *mut c_void)>;
+    /// `(user_data, hostname, abort_handshake, socket) -> owned SSL_CTX*`.
+    pub type uws_server_name_resolver = Option<
+        extern "C" fn(
+            *mut c_void,
+            *const c_char,
+            *mut core::ffi::c_int,
+            *mut crate::us_socket_t,
+        ) -> *mut crate::SslCtx,
+    >;
 
     unsafe extern "C" {
         pub(crate) safe fn uws_app_close(ssl: i32, app: &mut uws_app_s);
@@ -655,6 +676,12 @@ pub mod c {
             hostname_pattern: *const c_char,
             options: BunSocketContextOptions,
         ) -> i32;
+        pub(crate) safe fn uws_server_name_resolver_set(
+            ssl: i32,
+            app: &mut uws_app_t,
+            resolver: uws_server_name_resolver,
+            user_data: *mut c_void,
+        );
         pub(crate) safe fn uws_missing_server_name(
             ssl: i32,
             app: &mut uws_app_t,

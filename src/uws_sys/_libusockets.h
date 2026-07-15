@@ -123,6 +123,10 @@ typedef struct {
     uws_websocket_close_handler close;
 } uws_socket_behavior_t;
 
+struct us_listen_socket_t;
+struct us_socket_t;
+struct ssl_ctx_st;
+
 typedef void (*uws_listen_handler)(struct us_listen_socket_t* listen_socket,
     void* user_data);
 typedef void (*uws_listen_domain_handler)(
@@ -134,6 +138,11 @@ typedef void (*uws_method_handler)(uws_res_t* response, uws_req_t* request,
 typedef void (*uws_filter_handler)(uws_res_t* response, int, void* user_data);
 typedef void (*uws_missing_server_handler)(const char* hostname,
     void* user_data);
+/* Per-handshake certificate selector. Returns an owned SSL_CTX* (or NULL to
+ * fall through), may set *abort_handshake to 1 (refuse) or 2 (suspend until
+ * us_socket_sni_resolve). */
+typedef struct ssl_ctx_st* (*uws_server_name_resolver)(void* user_data,
+    const char* hostname, int* abort_handshake, struct us_socket_t* socket);
 typedef void (*uws_get_headers_server_handler)(const char* header_name,
     size_t header_name_size,
     const char* header_value,

@@ -51,6 +51,7 @@ const {
   eofInProgress,
   runSymbol,
   drainMicrotasks,
+  resumeServerSNI,
   setServerIdleTimeout,
   setServerCustomOptions,
   getMaxHTTPHeaderSize,
@@ -247,6 +248,66 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
+// ─── SNICallback dispatch (https.Server) ─────────────────────────────────────
+// The native dispatch (Bun.serve's `onServerName`) runs from inside the
+// ClientHello and expects back: the selected native SecureContext, `undefined`
+// to fall through to the default context, `true` to suspend the handshake until
+// `resumeServerSNI(token, ...)`, or an Error to refuse the connection.
+// Node's SNICallback is `(servername, cb)` and may answer either way, so the
+// resolution has to be recognised as synchronous or asynchronous after the fact.
+
+// Node assigns `sni_context = context.context || context`: both the
+// tls.createSecureContext() wrapper and a raw native context are accepted, and
+// null/undefined falls through to the default context. The native side rejects
+// anything that is not a context, so no validation is needed here.
+function unwrapSNIContext(context) {
+  if (context == null) return undefined;
+  return (typeof context === "object" && context.context) || context;
+}
+
+// Non-Error rejections (cb(true), cb("reason"), throw true) are normalized: the
+// native dispatch reads an Error return as the abort signal, and a literal
+// `true` would collide with the handshake-suspension sentinel.
+function toSNIError(err) {
+  return err instanceof Error ? err : Object.assign(new Error("SNI callback error"), { reason: err });
+}
+
+// The user SNICallback's completion callback, bound to the per-handshake state.
+// A synchronous resolution is carried by dispatchServerSNI's return value; an
+// asynchronous one completes the parked handshake through resumeServerSNI.
+function onSNIResolution(state, err, context) {
+  if (state.settled) return; // an SNICallback must resolve exactly once
+  state.settled = true;
+  if (err) {
+    state.failed = toSNIError(err);
+  } else {
+    state.selected = unwrapSNIContext(context);
+  }
+  if (!state.suspended) return; // synchronous - the return value carries it
+  if (state.failed !== undefined) {
+    resumeServerSNI(state.token, undefined, true);
+  } else {
+    resumeServerSNI(state.token, state.selected, false);
+  }
+}
+
+function dispatchServerSNI(this: any, servername, token) {
+  const cb = this._SNICallback;
+  if (typeof cb !== "function" || !servername) return undefined;
+  const state = { token, selected: undefined, failed: undefined, settled: false, suspended: false };
+  try {
+    cb.$call(this, servername, onSNIResolution.bind(null, state));
+  } catch (err) {
+    state.settled = true;
+    state.failed = toSNIError(err);
+  }
+  if (!state.settled) {
+    state.suspended = true;
+    return true;
+  }
+  return state.failed !== undefined ? state.failed : state.selected;
+}
+
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -302,6 +363,13 @@ function Server(options, callback): void {
       throw $ERR_INVALID_ARG_TYPE("options.secureOptions", "number", secureOptions);
     }
 
+    // https.Server accepts tls.Server's per-handshake certificate selector.
+    const sniCallback = options.SNICallback;
+    if (sniCallback != null) {
+      validateFunction(sniCallback, "options.SNICallback");
+      this._SNICallback = sniCallback;
+    }
+
     if (this[isTlsSymbol]) {
       this[tlsSymbol] = normalizeServerTls({
         serverName,
@@ -329,6 +397,9 @@ $toClass(Server, "Server", EventEmitter);
 Server.prototype[kIncomingMessage] = undefined;
 
 Server.prototype[kServerResponse] = undefined;
+
+// tls.Server's per-handshake certificate selector, honored by https.Server.
+Server.prototype._SNICallback = undefined;
 
 Server.prototype[kConnectionsCheckingInterval] = undefined;
 
@@ -562,6 +633,8 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
     this[serverSymbol] = Bun.serve<any>({
       idleTimeout: 0, // nodejs dont have a idleTimeout by default
       tls,
+      // A plain server never pays the JS round-trip from inside the handshake.
+      onServerName: tls && server._SNICallback ? dispatchServerSNI.bind(server) : undefined,
       port,
       hostname: host,
       unix: socketPath,

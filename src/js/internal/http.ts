@@ -12,6 +12,7 @@ const {
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
+  resumeServerSNI,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
   getHeader: (headers: Headers, name: string) => string | undefined;
   setHeader: (headers: Headers, name: string, value: string) => void;
@@ -30,6 +31,8 @@ const {
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
   setServerIdleTimeout: (server: any, timeout: number) => void;
+  /** Completes a handshake an asynchronous `SNICallback` left suspended. */
+  resumeServerSNI: (token: number, context: any, isError: boolean) => void;
 };
 
 const getRawKeys = $newCppFunction("JSFetchHeaders.cpp", "jsFetchHeaders_getRawKeys", 0);
@@ -579,6 +582,7 @@ export {
   parseProxyConfigFromEnv,
   parseProxyUrl,
   reqSymbol,
+  resumeServerSNI,
   runSymbol,
   serverSymbol,
   setHeader,

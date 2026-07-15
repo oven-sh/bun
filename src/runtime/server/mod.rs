@@ -69,6 +69,9 @@ pub use web_socket_server_context::{Handler as WebSocketServerHandler, WebSocket
 pub mod server_config;
 pub use server_config::ServerConfig;
 
+#[path = "ServerSNI.rs"]
+pub mod server_sni;
+
 #[path = "StaticRoute.rs"]
 pub mod static_route;
 pub use static_route::StaticRoute;
@@ -2539,6 +2542,17 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
             route_list_value = unsafe { &mut *this }.set_routes();
 
+            // node:https SNICallback: pick the certificate per handshake, ahead
+            // of the static SNI tree below. Registered on the app before it
+            // binds, so every listen socket it creates inherits the resolver.
+            if this_ref.config.on_server_name.is_some() {
+                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                bun_opaque::opaque_deref_mut(app).server_name_resolver(
+                    Some(trampoline::on_server_name::<SSL, DEBUG>),
+                    this.cast::<c_void>(),
+                );
+            }
+
             // add serverName to the SSL context using the default ssl options
             // extract raw (ptr, len) so no `&self.config` borrow
             // outlives the `set_routes()` call below. set_routes() does not
@@ -2897,6 +2911,9 @@ mod route_list_cached {
 // the bodies downcast `user_data` and forward into the typed method.
 mod trampoline {
     use super::*;
+    use bun_jsc::JsClass as _;
+    use bun_jsc::ZigStringJsc as _;
+    use bun_jsc::zig_string::ZigString;
     use bun_uws_sys::{ListenSocket as UwsListenSocket, Request as UwsRequest, uws_res};
 
     pub(super) extern "C" fn on_listen<const SSL: bool, const DEBUG: bool>(
@@ -2920,6 +2937,92 @@ mod trampoline {
         user_data: *mut c_void,
     ) {
         on_listen::<SSL, DEBUG>(socket, user_data);
+    }
+
+    /// `us_select_cert_cb` → uws `onServerNameDispatch` → here, once per
+    /// ClientHello carrying a servername, ahead of the static SNI tree (Node's
+    /// precedence: a user `SNICallback` replaces the default SNI handling).
+    ///
+    /// The JS handler answers with:
+    ///   - `undefined`/`null`      → fall through to the static tree, then the
+    ///                               default context
+    ///   - a native `SecureContext`→ serve this handshake from it
+    ///   - `true`                  → the callback is asynchronous; suspend the
+    ///                               handshake until `resumeServerSNI(token, …)`
+    ///   - an `Error`              → refuse the connection (no TLS alert, same
+    ///                               as node:tls)
+    /// Anything else is not a usable context, which Node also treats as a
+    /// refusal.
+    pub(super) extern "C" fn on_server_name<const SSL: bool, const DEBUG: bool>(
+        user_data: *mut c_void,
+        hostname: *const c_char,
+        abort_handshake: *mut c_int,
+        socket: *mut uws_sys::us_socket_t,
+    ) -> *mut uws_sys::SslCtx {
+        jsc::mark_binding!();
+        if hostname.is_null() || user_data.is_null() {
+            return core::ptr::null_mut();
+        }
+        // SAFETY: `user_data` is the `*mut NewServer<..>` handed to
+        // `App::server_name_resolver`, which the app (owned by the server)
+        // outlives; `abort_handshake` is a live out-param for this call.
+        let this_ref = bun_ptr::BackRef::from(
+            core::ptr::NonNull::new(user_data.cast::<NewServer<SSL, DEBUG>>())
+                .expect("on_server_name: user_data non-null"),
+        );
+        if this_ref.vm().is_shutting_down() {
+            return core::ptr::null_mut();
+        }
+        let Some(callback) = this_ref.config.on_server_name.as_ref().map(|s| s.get()) else {
+            return core::ptr::null_mut();
+        };
+
+        let global = this_ref.global_this();
+        let this_object = this_ref.js_value.try_get().unwrap_or(JSValue::UNDEFINED);
+        // SAFETY: `hostname` is NUL-terminated for the duration of the call.
+        let name = unsafe { core::ffi::CStr::from_ptr(hostname) };
+        let js_name = ZigString::init(name.to_bytes()).to_js(global);
+        // Minted before the call because the handler has to hand it to the
+        // user's `cb`, which may only be invoked after the handler returns. The
+        // handshake is only registered against it if the handler suspends.
+        let token = server_sni::next_token();
+
+        let result =
+            match callback.call(global, this_object, &[js_name, JSValue::from(token as f64)]) {
+                Ok(v) => v,
+                Err(err) => global.take_exception(err),
+            };
+
+        let set_abort = |code: c_int| {
+            if !abort_handshake.is_null() {
+                // SAFETY: live out-param for the duration of this dispatch.
+                unsafe { *abort_handshake = code };
+            }
+        };
+
+        if result.is_boolean() && result.to_boolean() {
+            if server_sni::suspend(socket, token) {
+                set_abort(2);
+            }
+            // The socket died while the handler ran: there is nothing left to
+            // suspend, so let the handshake run its course into teardown.
+            return core::ptr::null_mut();
+        }
+        if result.to_error().is_some() {
+            set_abort(1);
+            return core::ptr::null_mut();
+        }
+        if result.is_undefined_or_null() {
+            return core::ptr::null_mut();
+        }
+        if let Some(sc) = crate::api::bun_secure_context::SecureContext::from_js(result) {
+            // SAFETY: `from_js` returned a live SecureContext; `borrow()` hands
+            // back an owned SSL_CTX reference, which the C caller consumes via
+            // SSL_set_SSL_CTX + SSL_CTX_free.
+            return unsafe { (*sc).borrow() }.cast();
+        }
+        set_abort(1);
+        core::ptr::null_mut()
     }
 
     pub(super) extern "C" fn on_404<const SSL: bool, const DEBUG: bool>(

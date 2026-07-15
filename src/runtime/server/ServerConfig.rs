@@ -48,6 +48,9 @@ pub struct ServerConfig {
     pub on_error: Option<Strong>,
     pub on_request: Option<Strong>,
     pub on_node_http_request: Option<Strong>,
+    /// Internal hook behind node:https `SNICallback`: picks the certificate for
+    /// a single handshake. See `trampoline::on_server_name` for the contract.
+    pub on_server_name: Option<Strong>,
 
     pub websocket: Option<WebSocketServerContext>,
 
@@ -84,6 +87,7 @@ impl Default for ServerConfig {
             on_error: None,
             on_request: None,
             on_node_http_request: None,
+            on_server_name: None,
             websocket: None,
             reuse_port: false,
             id: Box::default(),
@@ -277,6 +281,7 @@ impl ServerConfig {
             on_error: self.on_error.take(),
             on_request: self.on_request.take(),
             on_node_http_request: self.on_node_http_request.take(),
+            on_server_name: self.on_server_name.take(),
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
@@ -1328,6 +1333,16 @@ impl ServerConfig {
             }
             let on_request = on_request_.with_async_context_if_needed(global);
             args.on_node_http_request = Some(Strong::create(on_request, global));
+        }
+
+        if let Some(on_server_name) = arg.get_truthy(global, "onServerName")? {
+            if !on_server_name.is_callable() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "Expected onServerName to be a function",
+                )));
+            }
+            let on_server_name = on_server_name.with_async_context_if_needed(global);
+            args.on_server_name = Some(Strong::create(on_server_name, global));
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {

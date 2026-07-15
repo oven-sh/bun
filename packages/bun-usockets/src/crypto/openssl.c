@@ -191,11 +191,16 @@ static pthread_once_t us_ex_idx_once = PTHREAD_ONCE_INIT;
 /* Async SNICallback suspension state, hung off the SSL via ex_data.
  * Allocated the first time a dynamic resolver answers "pending"; freed with
  * the SSL. The resolved ctx carries one reference owned by this struct until
- * select_cert_cb consumes it (SSL_set_SSL_CTX takes its own). */
+ * select_cert_cb consumes it (SSL_set_SSL_CTX takes its own).
+ * `owner` is an opaque handle a resolver attaches so it learns, via
+ * `owner_free`, that this handshake's SSL is gone and a late resolution must
+ * not touch the socket. */
 struct us_ssl_sni_pending_t {
   /* 0 = none, 1 = waiting for the JS resolution, 2 = resolved, 3 = error */
   int state;
   struct ssl_ctx_st *resolved_ctx;
+  void *owner;
+  void (*owner_free)(void *owner);
 };
 
 static void us_ssl_sni_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
@@ -204,7 +209,23 @@ static void us_ssl_sni_pending_free(void *parent, void *ptr, CRYPTO_EX_DATA *ad,
   struct us_ssl_sni_pending_t *st = ptr;
   if (!st) return;
   if (st->resolved_ctx) SSL_CTX_free(st->resolved_ctx);
+  if (st->owner_free) st->owner_free(st->owner);
   us_free(st);
+}
+
+/* Get (creating if needed) the suspension state for this SSL. NULL when the
+ * state could not be attached. */
+static struct us_ssl_sni_pending_t *us_ssl_sni_pending_get(SSL *ssl) {
+  if (us_ssl_sni_pending_idx < 0) return NULL;
+  struct us_ssl_sni_pending_t *pending = SSL_get_ex_data(ssl, us_ssl_sni_pending_idx);
+  if (!pending) {
+    pending = us_calloc(1, sizeof(*pending));
+    if (!SSL_set_ex_data(ssl, us_ssl_sni_pending_idx, pending)) {
+      us_free(pending);
+      return NULL;
+    }
+  }
+  return pending;
 }
 
 struct us_ssl_reneg_state_t {
@@ -2218,6 +2239,27 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   ssl_update_handshake(s);
 }
 
+/* Hand an opaque resume handle to this handshake's suspension state. The
+ * handle's `owner_free` runs exactly once, when the SSL is freed - which
+ * always precedes the socket's own free (us_internal_ssl_detach) - so a
+ * resolver that nulls its socket pointer there can never resume a dangling
+ * socket. Called by a dynamic SNI resolver right before it answers "pending". */
+void us_socket_sni_attach_resume(struct us_socket_t *s, void *owner,
+                                 void (*owner_free)(void *owner)) {
+  if (!s || us_socket_is_closed(s) || !s->ssl || !s_ssl(s)) {
+    if (owner_free) owner_free(owner);
+    return;
+  }
+  struct us_ssl_sni_pending_t *pending = us_ssl_sni_pending_get(s_ssl(s));
+  if (!pending) {
+    if (owner_free) owner_free(owner);
+    return;
+  }
+  if (pending->owner_free) pending->owner_free(pending->owner);
+  pending->owner = owner;
+  pending->owner_free = owner_free;
+}
+
 void us_internal_ssl_handshake_abort(struct us_socket_t *s) {
   s->ssl_fatal_error = 1;
   ssl_close(s, 0, NULL);
@@ -2399,14 +2441,11 @@ static enum ssl_select_cert_result_t us_select_cert_cb(const SSL_CLIENT_HELLO *h
     return ssl_select_cert_error;
   }
   if (abort_handshake == 2) {
-    /* The JS resolver answered "pending": suspend until us_socket_sni_resolve. */
-    if (us_ssl_sni_pending_idx >= 0) {
-      if (!pending) {
-        pending = us_calloc(1, sizeof(*pending));
-        SSL_set_ex_data(ssl, us_ssl_sni_pending_idx, pending);
-      }
-      pending->state = 1;
-    }
+    /* The JS resolver answered "pending": suspend until us_socket_sni_resolve.
+     * Re-fetch rather than reuse the `pending` read at entry: the resolver may
+     * have just created the state to attach its resume handle to it. */
+    pending = us_ssl_sni_pending_get(ssl);
+    if (pending) pending->state = 1;
     return ssl_select_cert_retry;
   }
   if (dyn) {

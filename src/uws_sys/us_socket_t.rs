@@ -201,6 +201,18 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
+    /// Hand this handshake an opaque resume handle. `owner_free` is invoked
+    /// exactly once, when the handshake's `SSL` is freed (always before the
+    /// socket itself is), which is how the owner learns a late resolution must
+    /// not touch `self`. Takes ownership of `owner`.
+    pub fn sni_attach_resume(
+        &mut self,
+        owner: *mut core::ffi::c_void,
+        owner_free: extern "C" fn(*mut core::ffi::c_void),
+    ) {
+        c::us_socket_sni_attach_resume(self, owner, owner_free);
+    }
+
     /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
     pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
         if !self.is_tls() {
@@ -507,6 +519,11 @@ mod c {
             s: &mut us_socket_t,
             ctx: *mut SslCtx,
             error: c_int,
+        );
+        pub(super) safe fn us_socket_sni_attach_resume(
+            s: &mut us_socket_t,
+            owner: *mut core::ffi::c_void,
+            owner_free: extern "C" fn(*mut core::ffi::c_void),
         );
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,

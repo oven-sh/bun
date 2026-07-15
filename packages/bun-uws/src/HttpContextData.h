@@ -23,6 +23,12 @@
 #include <vector>
 #include "MoveOnlyFunction.h"
 #include "HttpParser.h"
+
+/* Global scope, not uWS: an elaborated-type-specifier first seen inside the
+ * namespace would declare a distinct uWS::ssl_ctx_st. */
+struct ssl_ctx_st;
+struct us_socket_t;
+
 namespace uWS {
 template<bool> struct HttpResponse;
 struct HttpRequest;
@@ -50,6 +56,13 @@ private:
     using OnSocketClosedCallback = void (*)(void* userData, int is_ssl, struct us_socket_t *rawSocket);
 
     MoveOnlyFunction<void(const char *hostname)> missingServerNameHandler;
+
+    /* Dynamic per-handshake certificate selector (node:https SNICallback).
+     * Runs before the static SNI tree and may abort (*abort_handshake = 1) or
+     * suspend (= 2) the handshake. Returns an owned SSL_CTX* or nullptr. */
+    using ServerNameResolver = struct ssl_ctx_st *(*)(void *userData, const char *hostname, int *abort_handshake, struct us_socket_t *socket);
+    ServerNameResolver serverNameResolver = nullptr;
+    void *serverNameResolverUserData = nullptr;
 
     struct RouterData {
         HttpResponse<SSL> *httpResponse;

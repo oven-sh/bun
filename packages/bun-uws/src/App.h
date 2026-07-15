@@ -189,7 +189,21 @@ public:
         if (!constructorFailed()) {
             httpContext->getSocketContextData()->missingServerNameHandler = std::move(handler);
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
+                us_listen_socket_on_server_name(ls, &onServerNameDispatch);
+            });
+        }
+        return std::move(*this);
+    }
+
+    /* Per-handshake certificate selector (node:https SNICallback). Takes
+     * precedence over the static SNI tree and the missingServerName handler. */
+    TemplatedApp &&serverNameResolver(typename HttpContextData<SSL>::ServerNameResolver resolver, void *userData) {
+        if (!constructorFailed()) {
+            auto *data = httpContext->getSocketContextData();
+            data->serverNameResolver = resolver;
+            data->serverNameResolverUserData = userData;
+            forEachListenSocket([&](us_listen_socket_t *ls) {
+                us_listen_socket_on_server_name(ls, &onServerNameDispatch);
             });
         }
         return std::move(*this);
@@ -308,13 +322,27 @@ public:
     TemplatedApp(TemplatedApp &&other) = delete;
 
 private:
-    static struct ssl_ctx_st *onMissingServerName(struct us_listen_socket_t *ls, const char *hostname, int *abort_handshake, struct us_socket_t *socket) {
+    static struct ssl_ctx_st *onServerNameDispatch(struct us_listen_socket_t *ls, const char *hostname, int *abort_handshake, struct us_socket_t *socket) {
+        auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
+        auto *data = httpContext->getSocketContextData();
+
+        if (data->serverNameResolver) {
+            struct ssl_ctx_st *ctx = data->serverNameResolver(data->serverNameResolverUserData, hostname, abort_handshake, socket);
+            /* A selection, an abort or a suspension all end the dispatch; only
+             * "selected nothing, handshake still live" falls through. */
+            if (ctx || *abort_handshake) {
+                return ctx;
+            }
+        }
+
+        if (!data->missingServerNameHandler) {
+            /* us_select_cert_cb falls back to the static SNI tree on nullptr. */
+            return nullptr;
+        }
+
         /* Bun.serve's missingServerName handler registers a context or lets the
          * default serve the request - it never aborts or suspends the handshake. */
-        (void) abort_handshake;
-        (void) socket;
-        auto *httpContext = (HttpContext<SSL> *) us_socket_group_ext(us_listen_socket_group(ls));
-        httpContext->getSocketContextData()->missingServerNameHandler(hostname);
+        data->missingServerNameHandler(hostname);
         /* The handler is expected to have registered the name via
          * addServerName(); hand the newly-registered context back so the
          * in-flight handshake uses it (the resolver no longer re-checks the
@@ -687,8 +715,9 @@ private:
             for (auto &p : pendingServerNames) {
                 us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.router);
             }
-            if (httpContext->getSocketContextData()->missingServerNameHandler) {
-                us_listen_socket_on_server_name(ls, &onMissingServerName);
+            auto *data = httpContext->getSocketContextData();
+            if (data->missingServerNameHandler || data->serverNameResolver) {
+                us_listen_socket_on_server_name(ls, &onServerNameDispatch);
             }
         }
         return ls;

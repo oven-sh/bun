@@ -685,6 +685,23 @@ extern "C"
           { handler(hostname, user_data); });
     }
   }
+
+  void uws_server_name_resolver_set(int ssl, uws_app_t *app,
+                                    uws_server_name_resolver resolver,
+                                    void *user_data)
+  {
+    if (ssl)
+    {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->serverNameResolver(resolver, user_data);
+    }
+    else
+    {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->serverNameResolver(resolver, user_data);
+    }
+  }
+
   void uws_filter(int ssl, uws_app_t *app, uws_filter_handler handler,
                   void *user_data)
   {

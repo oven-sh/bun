@@ -38,6 +38,7 @@ extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JS
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
+extern "C" void Bun__resumeServerSNI(double token, EncodedJSValue context, bool isError);
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
@@ -1009,6 +1010,24 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObj
     return JSValue::encode(jsUndefined());
 }
 
+/* resumeServerSNI(token, secureContextOrUndefined, isError) — completes a
+ * handshake that an asynchronous node:https SNICallback left suspended.
+ * Internal binding: `token` is the number the native SNI dispatch handed the
+ * callback, so an unknown (stale, already-resolved) one is a no-op. */
+JSC_DEFINE_HOST_FUNCTION(jsHTTPResumeServerSNI, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    ASSERT(callFrame->argumentCount() == 3);
+
+    JSValue tokenValue = callFrame->uncheckedArgument(0);
+    if (!tokenValue.isNumber()) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    Bun__resumeServerSNI(tokenValue.asNumber(), JSValue::encode(callFrame->uncheckedArgument(1)), callFrame->uncheckedArgument(2).isTrue());
+
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -1187,6 +1206,10 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerIdleTimeout"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "setServerIdleTimeout"_s, jsHTTPSetServerIdleTimeout, ImplementationVisibility::Public), 0);
+
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "resumeServerSNI"_s)),
+        JSC::JSFunction::create(vm, globalObject, 3, "resumeServerSNI"_s, jsHTTPResumeServerSNI, ImplementationVisibility::Public), 0);
 
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerCustomOptions"_s)),

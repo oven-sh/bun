@@ -982,7 +982,7 @@ booga"
       test("more than 65535 tokens fails with a catchable error", async () => {
         const word = "{" + Array(32768).fill("a").join(",") + "}";
         const { stderr, exitCode } = await $`echo ${{ raw: word }}`.quiet();
-        expect(stderr.toString()).toContain("unexpected token while expanding braces");
+        expect(stderr.toString()).toBe("bun: unexpected token while expanding braces\n");
         expect(exitCode).toBe(1);
       });
     });

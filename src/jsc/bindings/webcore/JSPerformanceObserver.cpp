@@ -265,19 +265,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor, (JSGlobalObject * lex
     return JSValue::encode(JSPerformanceObserver::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-static inline JSValue jsPerformanceObserverConstructor_supportedEntryTypesGetter(JSGlobalObject& lexicalGlobalObject)
-{
-    auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* context = uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject)->scriptExecutionContext();
-    if (!context) [[unlikely]]
-        return jsUndefined();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLFrozenArray<IDLDOMString>>(lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(&lexicalGlobalObject), throwScope, PerformanceObserver::supportedEntryTypes(*context))));
-}
-
 JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor_supportedEntryTypes, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
-    return IDLAttribute<JSPerformanceObserver>::getStatic<jsPerformanceObserverConstructor_supportedEntryTypesGetter>(*lexicalGlobalObject, thisValue, attributeName);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    auto* context = uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext();
+    if (!context) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    JSValue result = toJS<IDLFrozenArray<IDLDOMString>>(*lexicalGlobalObject, *uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), throwScope, PerformanceObserver::supportedEntryTypes(*context));
+    RETURN_IF_EXCEPTION(throwScope, {});
+    // [SameObject]: memoize the frozen array on the constructor so subsequent
+    // reads return the identical object.
+    if (auto* thisObject = JSValue::decode(thisValue).getObject())
+        thisObject->putDirect(vm, attributeName, result, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly));
+    return JSValue::encode(result);
 }
 
 static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_observeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSPerformanceObserver>::ClassParameter castedThis)

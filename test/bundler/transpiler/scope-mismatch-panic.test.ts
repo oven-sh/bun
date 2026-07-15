@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "path";
 
 describe("scope mismatch panic regression test", () => {
   test("should not panic with scope mismatch when arrow function is followed by array literal", async () => {
@@ -28,7 +29,7 @@ const Layout = () => {
     // With the fix, it should fail with a normal ReferenceError for 'app'
     await using proc = Bun.spawn({
       cmd: [bunExe(), "index.tsx"],
-      env: bunEnv,
+      env: { ...bunEnv, NODE_PATH: join(import.meta.dir, "..", "..", "node_modules") },
       cwd: String(dir),
       stderr: "pipe",
       stdout: "pipe",

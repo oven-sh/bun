@@ -301,7 +301,9 @@ impl TSConfigJSON {
     /// The effective config for files in `source_dir`. For a solution-style
     /// config (loaded "references") that doesn't itself cover the directory,
     /// the first referenced project covering it wins, matching how tsc picks
-    /// the project for a file. Otherwise `self`.
+    /// the project for a file. Otherwise `self`: a directory no project
+    /// covers deliberately falls back to the solution config (tsc treats
+    /// such files as an inferred project; the solution's own options apply).
     pub fn for_source_dir<'a>(&'a self, source_dir: &[u8]) -> &'a TSConfigJSON {
         if self.reference_configs.is_empty() || self.covers_dir(source_dir) {
             return self;

@@ -1883,8 +1883,17 @@ impl<'a> Resolver<'a> {
 
             // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
             if let Ok(Some(dir_info)) = self.dir_info_cached(source_dir) {
-                if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
-                    let tsconfig = tsconfig.for_source_dir(source_dir);
+                if let Some(enclosing) = dir_info.enclosing_tsconfig_json {
+                    let tsconfig = enclosing.for_source_dir(source_dir);
+                    if !core::ptr::eq(tsconfig, enclosing) {
+                        if let Some(debug) = self.debug_logs.as_mut() {
+                            debug.add_note_fmt(format_args!(
+                                "Using referenced tsconfig \"{}\" for directory \"{}\"",
+                                bstr::BStr::new(&tsconfig.abs_path),
+                                bstr::BStr::new(source_dir)
+                            ));
+                        }
+                    }
                     if tsconfig.paths.count() > 0 {
                         let mut res = MatchResult::default();
                         if self
@@ -2643,8 +2652,17 @@ impl<'a> Resolver<'a> {
 
         // First, check path overrides from the nearest enclosing TypeScript "tsconfig.json" file
 
-        if let Some(tsconfig) = dir_info.enclosing_tsconfig_json {
-            let tsconfig = tsconfig.for_source_dir(dir_info.abs_path);
+        if let Some(enclosing) = dir_info.enclosing_tsconfig_json {
+            let tsconfig = enclosing.for_source_dir(dir_info.abs_path);
+            if !core::ptr::eq(tsconfig, enclosing) {
+                if let Some(debug) = self.debug_logs.as_mut() {
+                    debug.add_note_fmt(format_args!(
+                        "Using referenced tsconfig \"{}\" for directory \"{}\"",
+                        bstr::BStr::new(&tsconfig.abs_path),
+                        bstr::BStr::new(dir_info.abs_path)
+                    ));
+                }
+            }
             // Try path substitutions first
             if tsconfig.paths.count() > 0 {
                 if self

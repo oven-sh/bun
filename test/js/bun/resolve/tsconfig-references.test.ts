@@ -50,20 +50,125 @@ test.concurrent("paths come from the referenced project covering the file", asyn
 });
 
 test.concurrent("a reference path may point at a project directory", async () => {
+  // The referenced project's config lives away from the source tree so the
+  // nearest enclosing config of main.ts is the solution root: resolution
+  // succeeds only if <path>/tsconfig.json is derived from the directory.
   using dir = tempDir("tsconfig-refs-dir", {
     "tsconfig.json": JSON.stringify({
       files: [],
-      references: [{ path: "./app" }],
+      references: [{ path: "./configs/app" }],
     }),
-    "app/tsconfig.json": JSON.stringify({
-      include: ["."],
-      compilerOptions: { paths: { "#lib/*": ["./lib/*"] } },
+    "configs/app/tsconfig.json": JSON.stringify({
+      include: ["../../src"],
+      compilerOptions: { paths: { "#lib/*": ["../../src/lib/*"] } },
     }),
-    "app/main.ts": `import { value } from "#lib/value"; console.log(value);`,
-    "app/lib/value.ts": `export const value = 42;`,
+    "src/main.ts": `import { value } from "#lib/value"; console.log(value);`,
+    "src/lib/value.ts": `export const value = 42;`,
   });
 
-  expectRan(await run(String(dir), "app/main.ts"), "42\n");
+  expectRan(await run(String(dir), "src/main.ts"), "42\n");
+});
+
+test.concurrent("a file no referenced project covers gets no project paths", async () => {
+  using dir = tempDir("tsconfig-refs-uncovered", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.web.json" }, { path: "./tsconfig.server.json" }],
+    }),
+    "tsconfig.web.json": JSON.stringify({
+      include: ["src/web"],
+      compilerOptions: { paths: { "@/*": ["./src/web/*"] } },
+    }),
+    "tsconfig.server.json": JSON.stringify({
+      include: ["src/server"],
+      compilerOptions: { paths: { "@/*": ["./src/server/*"] } },
+    }),
+    "src/web/x.ts": `export const x = "web";`,
+    "src/server/x.ts": `export const x = "server";`,
+    "scripts/tool.ts": `import { x } from "@/x"; console.log(x);`,
+    "scripts/rel.ts": `import { y } from "./y"; console.log(y);`,
+    "scripts/y.ts": `export const y = "rel";`,
+  });
+
+  // Neither project's "@/*" alias leaks into the uncovered directory.
+  const tool = await run(String(dir), "scripts/tool.ts");
+  expect(tool.stderr).toContain("Cannot find module '@/x'");
+  expect(tool.exitCode).not.toBe(0);
+
+  // Ordinary resolution from the uncovered directory still works.
+  expectRan(await run(String(dir), "scripts/rel.ts"), "rel\n");
+});
+
+test.concurrent("solution root's own paths apply to files no referenced project covers", async () => {
+  using dir = tempDir("tsconfig-refs-root-fallback", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.app.json" }],
+      compilerOptions: { paths: { "#root/*": ["./lib/*"] } },
+    }),
+    "tsconfig.app.json": JSON.stringify({
+      include: ["src"],
+      compilerOptions: { paths: { "#app/*": ["./src/*"] } },
+    }),
+    "src/index.ts": `import { v } from "#app/v"; console.log(v);`,
+    "src/v.ts": `export const v = "app";`,
+    "scripts/tool.ts": `import { u } from "#root/u"; console.log(u);`,
+    "lib/u.ts": `export const u = "root";`,
+  });
+
+  // Covered file uses the referenced project's paths; uncovered file falls
+  // back to the solution config's own paths.
+  expectRan(await run(String(dir), "src/index.ts"), "app\n");
+  expectRan(await run(String(dir), "scripts/tool.ts"), "root\n");
+});
+
+test.concurrent("same directory covered by two references: first reference wins", async () => {
+  // Coverage is tracked per directory, not per glob, so extension-filtered
+  // includes over the same directory collapse to that directory and the
+  // first reference in order wins (tsc would assign main.ts to the node
+  // project). This pins the documented approximation.
+  using dir = tempDir("tsconfig-refs-order", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./tsconfig.web.json" }, { path: "./tsconfig.node.json" }],
+    }),
+    "tsconfig.web.json": JSON.stringify({
+      include: ["src/**/*.web.ts"],
+      compilerOptions: { paths: { "@/*": ["./src/webimpl/*"] } },
+    }),
+    "tsconfig.node.json": JSON.stringify({
+      include: ["src/**/*.ts"],
+      compilerOptions: { paths: { "@/*": ["./src/nodeimpl/*"] } },
+    }),
+    "src/main.ts": `import { who } from "@/who"; console.log(who);`,
+    "src/webimpl/who.ts": `export const who = "web";`,
+    "src/nodeimpl/who.ts": `export const who = "node";`,
+  });
+
+  expectRan(await run(String(dir), "src/main.ts"), "web\n");
+});
+
+test.concurrent("referenced config with extends and no include covers its own directory", async () => {
+  // The referenced config declares no "files"/"include", so it covers its
+  // own directory subtree; after the extends merge that must stay the
+  // outermost config's directory, not the base's. The non-standard file
+  // name keeps it from being picked up as the nearest enclosing config.
+  using dir = tempDir("tsconfig-refs-default-coverage", {
+    "tsconfig.json": JSON.stringify({
+      files: [],
+      references: [{ path: "./app/tsconfig.app.json" }],
+    }),
+    "app/tsconfig.app.json": JSON.stringify({
+      extends: "../base/tsconfig.base.json",
+    }),
+    "base/tsconfig.base.json": JSON.stringify({
+      compilerOptions: { paths: { "#shared/*": ["./shared/*"] } },
+    }),
+    "app/main.ts": `import { v } from "#shared/v"; console.log(v);`,
+    "base/shared/v.ts": `export const v = "inherited";`,
+  });
+
+  expectRan(await run(String(dir), "app/main.ts"), "inherited\n");
 });
 
 test.concurrent("referenced project using 'files' instead of 'include'", async () => {

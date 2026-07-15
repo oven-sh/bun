@@ -106,6 +106,13 @@ const MathFloor = Math.floor;
 
 let cluster;
 
+// diagnostics_channel channels for the HTTP server. Mirrors Node's
+// lib/_http_server.js. Inactive channels are no-ops until someone subscribes.
+const dc = require("node:diagnostics_channel");
+const onRequestStartChannel = dc.channel("http.server.request.start");
+const onResponseCreatedChannel = dc.channel("http.server.response.created");
+const onResponseFinishChannel = dc.channel("http.server.response.finish");
+
 function emitCloseServer(self: Server) {
   callCloseCallback(self);
   self.emit("close");
@@ -661,7 +668,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!requestShouldKeepAlive(http_req)) {
           http_res[kMustCloseConnection] = true;
         }
-        http_res.once("finish", endSocketOnFinishIfNeeded.bind(undefined, socket, http_res));
+        http_res.once("finish", resOnFinish.bind(undefined, http_req, http_res, socket, server));
 
         if (hasObserver("http")) {
           startPerf(http_res, kServerResponseStatistics, {
@@ -758,6 +765,11 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           http_req._dumpAndCloseReadable();
         }
 
+        // Match Node's parserOnIncoming: publish once, before branching, for
+        // non-upgrade requests (fires on 503/checkContinue/417/normal paths).
+        if (!is_upgrade && onRequestStartChannel.hasSubscribers) {
+          onRequestStartChannel.publish({ request: http_req, response: http_res, socket, server });
+        }
         if (reachedRequestsLimit) {
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
@@ -1519,6 +1531,12 @@ function ServerResponse(req, options): void {
   this.statusCode = 200;
   this.statusMessage = undefined;
   this.chunkedEncoding = false;
+
+  // Publish response.created from the constructor (matches Node) so it also
+  // fires for direct `new ServerResponse(req)` use — light-my-request etc.
+  if (onResponseCreatedChannel.hasSubscribers) {
+    onResponseCreatedChannel.publish({ request: req, response: this });
+  }
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 
@@ -1684,7 +1702,15 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
-function endSocketOnFinishIfNeeded(socket, res) {
+function resOnFinish(req, res, socket, server) {
+  if (onResponseFinishChannel.hasSubscribers) {
+    onResponseFinishChannel.publish({
+      request: req,
+      response: res,
+      socket,
+      server,
+    });
+  }
   if (res[kMustCloseConnection]) {
     socket?.end();
   }

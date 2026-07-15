@@ -765,8 +765,7 @@ mod _async_tasks {
                             | sys::O::TRUNC)
                         != 0
                     {
-                        if let Err(err) =
-                            reject_standalone_write(args.path.slice(), sys::Tag::open)
+                        if let Err(err) = reject_standalone_write(args.path.slice(), sys::Tag::open)
                         {
                             // SAFETY: identity write — `R == ret::Open` for this `F`.
                             unsafe {

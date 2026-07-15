@@ -124,8 +124,8 @@ function WriteStream(fd): void {
 
 Object.defineProperty(WriteStream, "prototype", {
   get() {
-    const Real = fs.WriteStream.prototype;
-    Object.defineProperty(WriteStream, "prototype", { value: Real });
+    const Prototype = Object.create(fs.WriteStream.prototype);
+    Object.defineProperty(WriteStream, "prototype", { value: Prototype });
 
     WriteStream.prototype._refreshSize = function () {
       const oldCols = this.columns;
@@ -188,7 +188,7 @@ Object.defineProperty(WriteStream, "prototype", {
       })();
     };
 
-    return Real;
+    return Prototype;
   },
   enumerable: true,
   configurable: true,

@@ -420,7 +420,29 @@ class Database implements SqliteTypes.Database {
       initializeSQL();
     }
 
-    this.#handle = SQL.open(anonymous ? ":memory:" : filename, flags, this);
+    const dbFilename = anonymous ? ":memory:" : filename;
+    try {
+      this.#handle = SQL.open(dbFilename, flags, this);
+    } catch (openError) {
+      // Mirror `Bun.write`'s `createPath` default: if the open failed only
+      // because the parent directory is missing, create it and retry once.
+      // The happy path (directory exists) pays no extra syscall.
+      const createPath = typeof options === "object" && options ? options.createPath : undefined;
+      const dir =
+        !anonymous &&
+        (flags & constants.SQLITE_OPEN_CREATE) !== 0 &&
+        createPath !== false &&
+        !filename.startsWith("file:")
+          ? require("node:path").dirname(filename)
+          : ".";
+      const fs = require("node:fs");
+      if (dir !== "." && dir !== filename && !fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+        this.#handle = SQL.open(dbFilename, flags, this);
+      } else {
+        throw openError;
+      }
+    }
     this.filename = filename;
   }
 

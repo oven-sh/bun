@@ -18,6 +18,12 @@ async function run(cwd: string, entry: string) {
   return { stdout, stderr, exitCode };
 }
 
+function expectRan(result: { stdout: string; stderr: string; exitCode: number }, stdout: string) {
+  expect(result.stderr).toBe("");
+  expect(result.stdout).toBe(stdout);
+  expect(result.exitCode).toBe(0);
+}
+
 test.concurrent("paths come from the referenced project covering the file", async () => {
   using dir = tempDir("tsconfig-refs-basic", {
     "tsconfig.json": JSON.stringify({
@@ -39,14 +45,8 @@ test.concurrent("paths come from the referenced project covering the file", asyn
   });
 
   // The same "@/*" alias maps to a different directory per project.
-  const server = await run(String(dir), "src/server/index.ts");
-  expect(server.stdout).toBe("server\n");
-  expect(server.stderr).toBe("");
-  expect(server.exitCode).toBe(0);
-
-  const web = await run(String(dir), "src/web/index.ts");
-  expect(web.stdout).toBe("web\n");
-  expect(web.exitCode).toBe(0);
+  expectRan(await run(String(dir), "src/server/index.ts"), "server\n");
+  expectRan(await run(String(dir), "src/web/index.ts"), "web\n");
 });
 
 test.concurrent("a reference path may point at a project directory", async () => {
@@ -63,9 +63,7 @@ test.concurrent("a reference path may point at a project directory", async () =>
     "app/lib/value.ts": `export const value = 42;`,
   });
 
-  const result = await run(String(dir), "app/main.ts");
-  expect(result.stdout).toBe("42\n");
-  expect(result.exitCode).toBe(0);
+  expectRan(await run(String(dir), "app/main.ts"), "42\n");
 });
 
 test.concurrent("referenced project using 'files' instead of 'include'", async () => {
@@ -82,9 +80,7 @@ test.concurrent("referenced project using 'files' instead of 'include'", async (
     "src/greet.ts": `export function greet() { return "hi"; }`,
   });
 
-  const result = await run(String(dir), "src/main.ts");
-  expect(result.stdout).toBe("hi\n");
-  expect(result.exitCode).toBe(0);
+  expectRan(await run(String(dir), "src/main.ts"), "hi\n");
 });
 
 test.concurrent("referenced project combined with extends", async () => {
@@ -104,9 +100,7 @@ test.concurrent("referenced project combined with extends", async () => {
     "src/n.ts": `export const n = 7;`,
   });
 
-  const result = await run(String(dir), "src/index.ts");
-  expect(result.stdout).toBe("7\n");
-  expect(result.exitCode).toBe(0);
+  expectRan(await run(String(dir), "src/index.ts"), "7\n");
 });
 
 test.concurrent("root config covering the file wins over references", async () => {
@@ -125,9 +119,7 @@ test.concurrent("root config covering the file wins over references", async () =
     "src/other/who.ts": `export const who = "other";`,
   });
 
-  const result = await run(String(dir), "src/index.ts");
-  expect(result.stdout).toBe("root\n");
-  expect(result.exitCode).toBe(0);
+  expectRan(await run(String(dir), "src/index.ts"), "root\n");
 });
 
 test.concurrent("transitive references are followed", async () => {
@@ -148,9 +140,7 @@ test.concurrent("transitive references are followed", async () => {
     "src/n.ts": `export const n = 3;`,
   });
 
-  const result = await run(String(dir), "src/index.ts");
-  expect(result.stdout).toBe("3\n");
-  expect(result.exitCode).toBe(0);
+  expectRan(await run(String(dir), "src/index.ts"), "3\n");
 });
 
 test.concurrent("reference cycles do not hang", async () => {
@@ -175,13 +165,9 @@ test.concurrent("reference cycles do not hang", async () => {
     "b/who.ts": `export const who = "b";`,
   });
 
-  const a = await run(String(dir), "a/index.ts");
-  expect(a.stdout).toBe("a\n");
-  expect(a.exitCode).toBe(0);
+  expectRan(await run(String(dir), "a/index.ts"), "a\n");
 
-  const b = await run(String(dir), "b/index.ts");
-  expect(b.stdout).toBe("b\n");
-  expect(b.exitCode).toBe(0);
+  expectRan(await run(String(dir), "b/index.ts"), "b\n");
 });
 
 test.concurrent("a missing referenced config is skipped and stays out of error logs", async () => {
@@ -212,13 +198,11 @@ test.concurrent("a missing referenced config is skipped and stays out of error l
     `,
   });
 
-  const resolveResult = await run(String(dir), "src/index.ts");
-  expect(resolveResult.stdout).toBe("5\n");
-  expect(resolveResult.exitCode).toBe(0);
-
-  const workerResult = await run(String(dir), "worker.ts");
-  expect(workerResult.stdout).toBe('BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)\n');
-  expect(workerResult.exitCode).toBe(0);
+  expectRan(await run(String(dir), "src/index.ts"), "5\n");
+  expectRan(
+    await run(String(dir), "worker.ts"),
+    'BuildMessage: ModuleNotFound resolving "blob:i dont exist!" (entry point)\n',
+  );
 });
 
 test.concurrent("baseUrl from the referenced project is used", async () => {
@@ -235,9 +219,7 @@ test.concurrent("baseUrl from the referenced project is used", async () => {
     "src/util/n.ts": `export const n = 9;`,
   });
 
-  const result = await run(String(dir), "src/index.ts");
-  expect(result.stdout).toBe("9\n");
-  expect(result.exitCode).toBe(0);
+  expectRan(await run(String(dir), "src/index.ts"), "9\n");
 });
 
 test.concurrent("bun build resolves through solution-style references", async () => {

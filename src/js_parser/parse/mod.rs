@@ -1603,11 +1603,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if level.lte(Level::Assign) {
                         // p.markLoweredSyntaxFeature();
 
-                        // In TypeScript, "async as" / "async satisfies" (or any identifier not
-                        // followed by "=>") must treat "async" as an identifier, not the start
-                        // of an async arrow. TypeScript resolves this with a two-token lookahead
-                        // in "isUnParenthesizedAsyncArrowFunctionWorker"; see
-                        // https://github.com/microsoft/TypeScript/pull/8444.
+                        // In TypeScript, "async <ident>" not followed by "=>" treats "async" as
+                        // a plain identifier (e.g. "async as T"), matching tsc's two-token
+                        // lookahead in isUnParenthesizedAsyncArrowFunctionWorker (TypeScript#8444).
                         let is_arrow_fn = !Self::IS_TYPESCRIPT_ENABLED
                             || p.check_for_arrow_after_the_current_token();
 

@@ -190,8 +190,7 @@ class AsyncLocalStorage {
     // the new value survives past run() (verified against Node v22/v26).
     if (sameValue(this.getStore(), store_value)) {
       // run() always re-enables (Node's docs; Node's frame impl has no
-      // disabled flag at all). Must clear before returning so the NEXT
-      // run() doesn't capture wasDisabled=true and skip its restore.
+      // disabled flag at all).
       this.#disabled = false;
       return callback(...args);
     }
@@ -201,7 +200,6 @@ class AsyncLocalStorage {
     var i = 0;
     var contextWasAlreadyInit = !context;
     // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    const wasDisabled = this.#disabled;
     this.#disabled = false;
     if (contextWasAlreadyInit) {
       set((context = [this, store_value]));
@@ -235,8 +233,10 @@ class AsyncLocalStorage {
       return callback(...args);
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
-      // Set AsyncContextFrame to undefined if we are out of context values
-      if (!wasDisabled) {
+      // Set AsyncContextFrame to undefined if we are out of context values.
+      // Restoration is unconditional, mirroring node's `finally { enterWith(prior) }`:
+      // entering a disabled storage must not leave store_value installed after run().
+      {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
         if (context2 === context && contextWasAlreadyInit) {
           $assert(context2.length === 2, "context was mutated without copy");

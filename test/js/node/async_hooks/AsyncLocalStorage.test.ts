@@ -95,8 +95,29 @@ describe("AsyncLocalStorage", () => {
     expect(stderr).not.toContain("AssertionError");
   });
 
+  // run() entered on a disabled storage must still restore on the way out:
+  // node's finally is an unconditional enterWith(prior), so the store must not
+  // survive past run(). Verified against Node v26.3.0.
+  test("run() on a disabled storage does not leak the store past the callback", () => {
+    const a = new AsyncLocalStorage();
+    a.disable();
+    expect(a.run("Y", () => a.getStore())).toBe("Y");
+    expect(a.getStore()).toBeUndefined();
+
+    const b = new AsyncLocalStorage({ defaultValue: "D" });
+    b.disable();
+    expect(b.run("Y", () => b.getStore())).toBe("Y");
+    expect(b.getStore()).toBe("D");
+
+    // ...including when the callback disables it again.
+    const c = new AsyncLocalStorage({ defaultValue: "D" });
+    c.disable();
+    c.run("Y", () => c.disable());
+    expect(c.getStore()).toBe("D");
+  });
+
   // The sameValue short-circuit must still clear #disabled so the NEXT run()
-  // captures wasDisabled=false and restores properly. Verified against Node.
+  // restores properly. Verified against Node.
   test("run(undefined)/exit() on a disabled storage re-enables it", () => {
     const als = new AsyncLocalStorage();
     als.disable();

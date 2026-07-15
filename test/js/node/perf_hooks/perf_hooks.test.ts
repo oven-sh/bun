@@ -91,6 +91,29 @@ test("export surface matches Node v26.3.0", () => {
   ).toEqual(["PerformanceNodeTiming"]);
 });
 
+// The options defaults must not read through a polluted Object.prototype.
+// Node uses kEmptyObject for both; verified against Node v26.3.0.
+test("timerify and createHistogram survive Object.prototype option pollution", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `Object.prototype.histogram = 1;
+       Object.prototype.lowest = 99;
+       Object.prototype.figures = 99;
+       const { performance, createHistogram } = require("perf_hooks");
+       console.log("timerify=" + typeof performance.timerify(function f() {}));
+       console.log("histogram=" + typeof createHistogram().record);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "timerify=function\nhistogram=function\n", exitCode: 0 });
+  expect(stderr).not.toContain("ERR_INVALID_ARG_TYPE");
+});
+
 test("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {
   await using proc = Bun.spawn({
     cmd: [

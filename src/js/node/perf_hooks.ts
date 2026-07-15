@@ -6,6 +6,7 @@ const {
   enqueueNodeEntry,
   hasObserver,
   PerformanceNodeEntry,
+  kEmptyObject,
 } = require("internal/shared");
 const { validateFunction, validateObject } = require("internal/validators");
 
@@ -216,7 +217,9 @@ Object.defineProperty(PerformanceObserverForNodeTypes, "name", {
   configurable: true,
 });
 
-function timerify(fn, options = {}) {
+// kEmptyObject (frozen, null-prototype) so the histogram read below cannot
+// pick up a polluted Object.prototype, matching node's default.
+function timerify(fn, options = kEmptyObject) {
   validateFunction(fn, "fn");
   validateObject(options, "options");
   const { histogram } = options;
@@ -339,18 +342,23 @@ export default {
     const impl = require("internal/perf_hooks/monitorEventLoopDelay");
     return impl(options);
   },
-  createHistogram: function createHistogram(options?: {
-    lowest?: number | bigint;
-    highest?: number | bigint;
-    figures?: number;
-  }): import("node:perf_hooks").RecordableHistogram {
-    const opts = options || {};
+  createHistogram: function createHistogram(
+    options: {
+      lowest?: number | bigint;
+      highest?: number | bigint;
+      figures?: number;
+    } = kEmptyObject,
+  ): import("node:perf_hooks").RecordableHistogram {
+    // kEmptyObject default, and validate rather than `options || {}`: the reads
+    // below must not see a polluted Object.prototype, and node rejects a
+    // non-object argument instead of silently ignoring it.
+    validateObject(options, "options");
 
     let lowest = 1;
     let highest = Number.MAX_SAFE_INTEGER;
     let figures = 3;
 
-    const lowestOpt = opts.lowest;
+    const lowestOpt = options.lowest;
     if (lowestOpt !== undefined) {
       if (typeof lowestOpt === "bigint") {
         lowest = Number(lowestOpt);
@@ -361,7 +369,7 @@ export default {
       }
     }
 
-    const highestOpt = opts.highest;
+    const highestOpt = options.highest;
     if (highestOpt !== undefined) {
       if (typeof highestOpt === "bigint") {
         highest = Number(highestOpt);
@@ -372,7 +380,7 @@ export default {
       }
     }
 
-    const figuresOpt = opts.figures;
+    const figuresOpt = options.figures;
     if (figuresOpt !== undefined) {
       if (typeof figuresOpt !== "number") {
         throw $ERR_INVALID_ARG_TYPE("options.figures", "number", figuresOpt);

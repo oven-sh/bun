@@ -1460,14 +1460,18 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 // this file doesn't grow a dep on a header-generated const set.
 pub(crate) fn get_cert_error_from_no(error_no: i32) -> crate::Error {
     use crate::error::CertError;
-    // A connection reset/closed before the TLS handshake completes is
-    // delivered as a synthesized verify error with a negative `error_no`
-    // (`ssl_trigger_handshake_econnreset` in
-    // packages/bun-usockets/src/crypto/openssl.c: error -46, code
-    // "ECONNRESET"). `X509_V_ERR_*` codes are all non-negative, so a negative
-    // value is never a certificate problem; report the connection error
-    // (Node surfaces this case as ECONNRESET too) instead of
+    // uSockets synthesizes negative `error_no` sentinels for handshake
+    // failures that are not certificate problems (`X509_V_ERR_*` codes are
+    // all non-negative): -71/"EPROTO" for a fatal TLS protocol error
+    // (`ssl_dispatch_parked_reason`) and -46/"ECONNRESET" for a connection
+    // reset/closed before the handshake completed
+    // (`ssl_trigger_handshake_econnreset`), both in
+    // packages/bun-usockets/src/crypto/openssl.c. Report them with Node's
+    // codes for the same cases instead of
     // UNKNOWN_CERTIFICATE_VERIFICATION_ERROR.
+    if error_no == -71 {
+        return crate::Error::Sys(bun_errno::SystemErrno::EPROTO);
+    }
     if error_no < 0 {
         return crate::Error::Sys(bun_errno::SystemErrno::ECONNRESET);
     }

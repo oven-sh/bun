@@ -36,7 +36,15 @@ class SocketFramer {
     socket.$write(data);
   }
 
-  onData(socket: Socket<{ framer: SocketFramer; backend: Writer }>, data: Buffer): void {
+  // `backend` is typed as `Backend | Writer` because callers pass sockets
+  // carrying either shape (the #connectOverSocket/connectToUnixServer paths
+  // use `Backend`, the #websocket path's SocketFramer.send uses `Backend`
+  // too, but the underlying socket.data literal only needs to satisfy
+  // whichever shape the caller declared). onData itself never reads
+  // `socket.data.backend` -- it only frames bytes and calls `this.onMessage`
+  // -- so widening this union costs nothing and lets both call sites
+  // typecheck without an unsound cast.
+  onData(socket: Socket<{ framer: SocketFramer; backend: Backend | Writer }>, data: Buffer): void {
     this.bufferedData = this.bufferedData.length > 0 ? Buffer.concat([this.bufferedData, data]) : data;
 
     let messagesToDeliver: string[] = [];
@@ -96,7 +104,7 @@ type CreateBackendFn = (
   receive: (...messages: string[]) => void,
 ) => unknown;
 
-export default function (
+function startInspector(
   executionContextId: number,
   url: string,
   createBackend: CreateBackendFn,
@@ -546,6 +554,21 @@ function webSocketWriter(ws: ServerWebSocket<unknown>): Writer {
       // now surface the real tri-state result so bufferedWriter can retry a
       // genuine drop (0) and pace -- without re-sending -- a message that
       // merely reported backpressure (-1).
+      //
+      // `result === 0` is ambiguous in the Rust binding itself, not just here:
+      // it means DROPPED, but it is ALSO what a genuinely SUCCESSful send of a
+      // zero-length string returns (send_status_to_js's Success arm returns
+      // `len as f64`, i.e. the byte length actually written -- 0 for an empty
+      // buffer -- see src/runtime/server/ServerWebSocket.rs's send_status_to_js
+      // and send_text). A closed socket also short-circuits to 0 before ever
+      // calling send() (same file, send_text's `is_closed()` guard). Treating
+      // every 0 as "dropped" is safe for CDP traffic specifically because
+      // BunDebugger.cpp's sendMessageToFrontend skips empty messages before
+      // they ever reach this writer (`if (message.length() == 0) return;`,
+      // src/jsc/bindings/BunDebugger.cpp:217-218) -- so an empty-string
+      // "success" can never actually occur here, only genuine drops and
+      // closed-socket sends (which are also correctly queued, harmlessly, for
+      // a connection that is going away).
       const result = ws.sendText(message);
       if (result === 0) return "dropped";
       if (result < 0) return "backpressure";
@@ -569,7 +592,15 @@ function bufferedWriter(writer: Writer): Writer {
 
   return {
     write: message => {
-      if (draining || paced) {
+      // Gate on pendingMessages.length too, not just `paced`: a "dropped"
+      // result (below) queues the message but does not set `paced`. Without
+      // this check, the very next write() would go straight to `writer.write`
+      // below and could land on the wire before the queued message it was
+      // supposed to follow -- a queued message must never be overtaken by a
+      // later direct write. Once anything is queued, every subsequent write
+      // has to queue behind it to preserve order, regardless of which of the
+      // two states (paced or pendingMessages.length > 0) caused the queuing.
+      if (draining || paced || pendingMessages.length > 0) {
         pendingMessages.push(message);
         return "success";
       }
@@ -782,3 +813,14 @@ type Writer = {
   drain?: () => void;
   close: () => void;
 };
+
+// Builtin modules under src/js/internal/** support exactly one export --
+// `export default` -- mixing it with named exports fails the builtin
+// bundler's codegen check (see src/js/README.md, "Builtin Modules"). To let
+// `bun:internal-for-testing` unit-test the real bufferedWriter/webSocketWriter
+// implementations (rather than a reimplementation in the test file that could
+// silently drift from what's actually shipped), they ride along as a
+// `testHooks` property on the default export instead of a second export.
+export default Object.assign(startInspector, {
+  testHooks: { webSocketWriter, bufferedWriter },
+});

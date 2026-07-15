@@ -2,7 +2,7 @@
 const types = require("node:util/types");
 const EventEmitter = require("node:events");
 const fs = require("internal/fs/binding") as $ZigGeneratedClasses.NodeJSFS;
-const { glob } = require("internal/fs/glob");
+const { Glob } = require("internal/fs/glob");
 const {
   validateInteger,
   validateBoolean,
@@ -239,6 +239,12 @@ const private_symbols = {
 const _readFile = fs.readFile.bind(fs);
 const _writeFile = fs.writeFile.bind(fs);
 const _appendFile = fs.appendFile.bind(fs);
+
+// Argument validation must run at the first .next(), not at call time: Node's
+// fs/promises glob is an async generator whose body constructs Glob lazily.
+async function* glob(pattern, options) {
+  yield* new Glob(pattern, options).glob();
+}
 
 const exports = {
   access: asyncWrap(fs.access, "access"),

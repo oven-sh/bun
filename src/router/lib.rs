@@ -1382,7 +1382,7 @@ fn intern_route_path(value: &[u8]) -> &'static [u8] {
             return *interned;
         }
         let interned: &'static [u8] =
-            bun_core::handle_oom(FileSystem::instance().dirname_store().append(value));
+            bun_core::handle_oom(FileSystem::get().dirname_store().append(value));
         set.insert(interned, ());
         interned
     })

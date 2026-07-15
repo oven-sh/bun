@@ -1,4 +1,5 @@
 import { FileSystemRouter } from "bun";
+import { dirnameStoreAppendCount } from "bun:internal-for-testing";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
@@ -408,9 +409,6 @@ it("reload() does not leak route paths into the process-global intern store", ()
   // dedup every reload() re-appended identical strings, leaking one heap
   // buffer per append and eventually panicking with `unreachable: AllocError`
   // when the store's slot capacity was exhausted.
-  const { dirnameStoreAppendCount } = require("bun:internal-for-testing") as {
-    dirnameStoreAppendCount: () => number;
-  };
   const routes = 40;
   const reloads = 50;
   const files: Record<string, string> = { "pages/sub/Nested.tsx": "export default 1;\n" };

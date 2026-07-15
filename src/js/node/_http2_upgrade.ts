@@ -222,8 +222,8 @@ function socketHandshake(
     if (verifyError) {
       tlsSocket.authorized = false;
       tlsSocket.authorizationError = verifyError.code || verifyError.message;
-      ctx.server.emit("tlsClientError", verifyError, tlsSocket);
       if (rejectUnauthorized ?? tlsSocket._rejectUnauthorized) {
+        ctx.server.emit("tlsClientError", verifyError, tlsSocket);
         tlsSocket.emit("secure", tlsSocket);
         tlsSocket.destroy(verifyError);
         return;

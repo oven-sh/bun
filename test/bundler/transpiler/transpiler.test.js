@@ -1277,6 +1277,9 @@ export default class {
       // restriction on the for-of grammar.
       ts.expectParseError("for (async of [7]);", 'For loop initializers cannot start with "async of"');
       ts.expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      ts.expectPrinted_("for (async as any of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async satisfies T of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async! of [7]);", "for ((async) of [7])\n  ;\n");
       ts.expectPrinted_("for (async of => {};;);", "for (async (of) => {};; )\n  ;\n");
       ts.expectPrinted_(
         "async function f() { for await (async of [7]); }",

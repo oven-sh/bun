@@ -1556,6 +1556,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_arrow_after_this_token
     }
 
+    /// One-token lookahead: is the contextual keyword "of" the next token?
+    /// Used to detect the literal "async of" sequence in a for-loop header.
+    pub(crate) fn check_for_of_after_the_current_token(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        let old_log_disabled = self.lexer.is_log_disabled;
+        self.lexer.is_log_disabled = true;
+
+        let is_of_after_this_token =
+            matches!(self.lexer.next(), Ok(())) && self.lexer.is_contextual_keyword(b"of");
+
+        self.lexer.restore(&old_lexer);
+        self.lexer.is_log_disabled = old_log_disabled;
+        is_of_after_this_token
+    }
+
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
     pub fn parse_async_prefix_expr(

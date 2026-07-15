@@ -530,10 +530,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // "for (async of" is disallowed by the [lookahead != async of] restriction
-            // on for-of; "for await (async of" is allowed. Cleared below if the init
-            // parses to anything other than a bare "async" identifier.
+            // on for-of; "for await (async of" is allowed. Cleared below when the init
+            // parses to anything other than a bare identifier (e.g. "async of => {}").
             let mut bad_async_range: Option<bun_ast::Range> = None;
-            if !is_for_await && p.lexer.is_contextual_keyword(b"async") {
+            if !is_for_await
+                && p.lexer.is_contextual_keyword(b"async")
+                && p.check_for_of_after_the_current_token()
+            {
                 bad_async_range = Some(p.lexer.range());
             }
 

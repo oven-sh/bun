@@ -213,12 +213,12 @@ plugin({
 });
 
 // https://github.com/oven-sh/bun/issues/34226
-describe("preload export conditions", () => {
-  test.concurrent.each([
-    ["--require", "require"],
-    ["--import", "import"],
-    ["--preload", "import"],
-  ])("%s resolves dual package exports with the '%s' condition", async (flag, expected) => {
+describe.each([
+  ["--require", "require"],
+  ["--import", "import"],
+  ["--preload", "import"],
+])("preload export conditions: %s", (flag, expected) => {
+  test.concurrent(`resolves dual package exports with the '${expected}' condition`, async () => {
     using dir = tempDir("preload-conditions", {
       "main.js": `console.log("main");`,
       "node_modules/dual-preload/package.json": JSON.stringify({

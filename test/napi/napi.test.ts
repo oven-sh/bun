@@ -703,6 +703,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain("Object.keys after get_property_names: w1,w2");
       expect(output).toContain("napi get_property_names result: w1,w2,pEnum");
     });
+    it("handles accessor properties when filtering by napi_key_writable", async () => {
+      await checkSameOutput("test_get_all_property_names_accessor", []);
+    });
   });
 
   describe("napi_value <=> integer conversion", () => {

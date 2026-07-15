@@ -29,15 +29,20 @@ pub struct Handler {
     pub on_pong: JSValue,
 
     pub app: Option<*mut c_void>,
+    /// Type-erased backref to the owning `NewServer`, set alongside `app`
+    /// in `set_routes` (so it is in place before any socket can upgrade and
+    /// refreshed whenever a reload installs a new context).
+    /// `ServerWebSocket::init` reads it to write the server JS wrapper into the
+    /// per-socket `m_server` traced slot (keeping the wrapper, and the `m_ws*`
+    /// handler slots it carries, reachable while any socket is connected), and
+    /// `ServerWebSocket` open/close events route the live-socket accounting
+    /// through it.
+    pub server: Option<super::AnyServer>,
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    /// Mutated through `&Handler` (the field is owned by
-    /// `ServerConfig.websocket` and only ever touched on the JS thread), so
-    /// it's a `Cell`.
-    pub active_connections: core::cell::Cell<usize>,
 
     /// used by publish()
     pub flags: HandlerFlags,
@@ -66,19 +71,6 @@ impl Handler {
     #[inline]
     pub fn vm(&self) -> &VirtualMachine {
         self.vm.get()
-    }
-
-    #[inline]
-    pub fn active_connections_saturating_add(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_add(n));
-    }
-
-    /// See `active_connections_saturating_add`.
-    #[inline]
-    pub fn active_connections_saturating_sub(&self, n: usize) {
-        self.active_connections
-            .set(self.active_connections.get().saturating_sub(n));
     }
 
     pub fn run_error_callback(
@@ -117,9 +109,9 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
+            server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            active_connections: core::cell::Cell::new(0),
             flags: HandlerFlags::empty(),
         };
 
@@ -143,9 +135,10 @@ impl Handler {
                         key
                     )));
                 }
-                let cb = value.with_async_context_if_needed(global_object);
-                *field = cb;
-                cb.ensure_still_alive();
+                // Raw value — async-context wrapping is deferred to
+                // `NewServer::write_ws_handler_slots` so the wrapped fn is
+                // rooted by the wrapper's WriteBarrier slot immediately.
+                *field = value;
                 if i > 0 {
                     // anything other than "error" is considered valid.
                     valid = true;
@@ -160,30 +153,6 @@ impl Handler {
         Err(global_object.throw_invalid_arguments(format_args!(
             "WebSocketServerContext expects a message handler"
         )))
-    }
-
-    pub fn protect(&self) {
-        self.on_open.protect();
-        self.on_message.protect();
-        self.on_close.protect();
-        self.on_drain.protect();
-        self.on_error.protect();
-        self.on_ping.protect();
-        self.on_pong.protect();
-    }
-
-    pub fn unprotect(&self) {
-        if self.vm.is_shutting_down() {
-            return;
-        }
-
-        self.on_open.unprotect();
-        self.on_message.unprotect();
-        self.on_close.unprotect();
-        self.on_drain.unprotect();
-        self.on_error.unprotect();
-        self.on_ping.unprotect();
-        self.on_pong.unprotect();
     }
 }
 
@@ -200,14 +169,6 @@ impl WebSocketServerContext {
             close_on_backpressure_limit: self.close_on_backpressure_limit,
             ..Default::default()
         }
-    }
-
-    pub fn protect(&self) {
-        self.handler.protect();
-    }
-
-    pub fn unprotect(&self) {
-        self.handler.unprotect();
     }
 }
 
@@ -428,6 +389,5 @@ pub(crate) fn on_create(
         }
     }
 
-    server.protect();
     Ok(server)
 }

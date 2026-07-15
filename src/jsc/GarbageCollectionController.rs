@@ -33,6 +33,12 @@ pub struct GarbageCollectionController {
     pub gc_timer: EventLoopTimer,
     pub gc_repeating_timer: EventLoopTimer,
     pub gc_last_heap_size: usize,
+    /// Finished-collection count when we last returned pages; tells us a collection has actually
+    /// run since, rather than inferring it from the heap size.
+    pub gc_last_cycle_count: u64,
+    /// Park count when we last looked. If it moves, the event loop is parking and the park path
+    /// is already sweeping this thread's theap, so we stay out of its way.
+    pub gc_last_park_count: u64,
     pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_state: GCTimerState,
@@ -55,6 +61,8 @@ impl Default for GarbageCollectionController {
             gc_timer: EventLoopTimer::init_paused(TimerTag::GcOneShot),
             gc_repeating_timer: EventLoopTimer::init_paused(TimerTag::GcRepeating),
             gc_last_heap_size: 0,
+            gc_last_cycle_count: 0,
+            gc_last_park_count: 0,
             gc_last_heap_size_on_repeating_timer: 0,
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
             gc_timer_state: GCTimerState::Pending,
@@ -237,16 +245,41 @@ impl GarbageCollectionController {
         }
     }
 
+    /// Return this thread's now-empty mimalloc pages to the arena, once per finished collection,
+    /// for a loop that never parks.
+    ///
+    /// `mi_theap_collect` is the only demonstrated cure for the sustained-load ratchet: sampling
+    /// heapStats() once a second fixes it, and its one relevant action is `mi_collect(false)`
+    /// (BunJSCModule.h), which is exactly this call. Its `collectNow` is guarded by
+    /// `heap.size() == 0` and never fires on a live process, so no GC is involved in the cure.
+    ///
+    /// Two gates, both load-bearing. A loop that parks already gets its theap swept at the park,
+    /// so doing it here as well is pure cost -- an earlier revision that ignored this measured
+    /// -4.5% rps on fastify (66.1k -> 63.1k, n=6). And the cycle count is the only honest "a
+    /// collection finished" signal: `perform_gc` merely *requests* one via `collect_async`. It
+    /// also bounds this to once per collection, which is why no heap-size check is needed.
+    pub fn maybe_return_pages(&mut self, vm: &VM) {
+        if self.disabled {
+            return;
+        }
+
+        let parks = vm.park_count();
+        let loop_is_parking = parks != self.gc_last_park_count;
+        self.gc_last_park_count = parks;
+
+        let cycles = vm.gc_cycle_count();
+        let collected = cycles != self.gc_last_cycle_count;
+        self.gc_last_cycle_count = cycles;
+
+        if collected && !loop_is_parking {
+            Self::return_pages_to_arena();
+        }
+    }
+
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
         let prev = self.gc_last_heap_size;
 
-        // Only when the heap SHRANK: a collection actually reclaimed, so blocks were freed and
-        // pages may now be empty. `!=` fired on essentially every request -- `process_gc_timer`
-        // is also called from `Server::on_request_complete` and a busy server's heap is always
-        // moving -- which measured -4.5% rps on fastify for nothing, since no collection had run.
-        if this_heap_size < prev {
-            Self::return_pages_to_arena();
-        }
+        self.maybe_return_pages(vm);
 
         match self.gc_timer_state {
             GCTimerState::RunOnNextTick => {

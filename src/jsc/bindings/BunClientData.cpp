@@ -59,7 +59,9 @@ JSVMClientData::JSVMClientData(VM& vm, RefPtr<JSC::SourceProvider> sourceProvide
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
+    , m_vm(vm)
 {
+    vm.heap.addObserver(&m_gcCycleObserver);
 }
 
 #undef CLIENT_ISO_SUBSPACE_INIT
@@ -95,6 +97,8 @@ void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
 
 JSVMClientData::~JSVMClientData()
 {
+    m_vm.heap.removeObserver(&m_gcCycleObserver);
+
     m_clients.forEach([](auto& client) {
         client.willDestroyVM();
     });
@@ -126,3 +130,15 @@ void JSVMClientData::create(VM* vm, void* bunVM)
 }
 
 } // namespace WebCore
+
+extern "C" uint64_t JSC__VM__gcCycleCount(JSC::VM* vm)
+{
+    auto* clientData = WebCore::clientData(*vm);
+    return clientData ? clientData->gcCycleObserver().count() : 0;
+}
+
+extern "C" uint64_t JSC__VM__parkCount(JSC::VM* vm)
+{
+    auto* clientData = WebCore::clientData(*vm);
+    return clientData ? clientData->parkCounter().count() : 0;
+}

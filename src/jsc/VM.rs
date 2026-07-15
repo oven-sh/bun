@@ -46,6 +46,8 @@ unsafe extern "C" {
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
     safe fn JSC__VM__externalMemorySize(vm: &VM) -> usize;
     safe fn JSC__VM__blockBytesAllocated(vm: &VM) -> usize;
+    safe fn JSC__VM__gcCycleCount(vm: &VM) -> u64;
+    safe fn JSC__VM__parkCount(vm: &VM) -> u64;
     safe fn JSC__VM__performOpportunisticallyScheduledTasks(vm: &VM, until: f64);
 }
 
@@ -210,6 +212,18 @@ impl VM {
     /// This is faster than checking the heap size
     pub fn block_bytes_allocated(&self) -> usize {
         JSC__VM__blockBytesAllocated(self)
+    }
+
+    /// Finished collections for THIS VM, counted by its `GCCycleObserver`. Per-VM: workers each
+    /// have their own heap and theap, so a shared count would be another VM's evidence.
+    pub fn gc_cycle_count(&self) -> u64 {
+        JSC__VM__gcCycleCount(self)
+    }
+
+    /// Ticks on which this VM's event loop actually parked. The park sweeps this thread's theap,
+    /// so a moving count means something else is already reclaiming and we should not duplicate it.
+    pub fn park_count(&self) -> u64 {
+        JSC__VM__parkCount(self)
     }
 
     pub fn perform_opportunistically_scheduled_tasks(&self, until: f64) {

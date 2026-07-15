@@ -81,6 +81,38 @@ private:
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
+// Counts finished collections for ONE VM, so the GC controller can tell whether a collection
+// actually ran since it last looked. Per-VM rather than process-wide: every worker has its own
+// heap and its own theap, and a shared counter would let one worker's collection convince
+// another to walk its page queues.
+//
+// Counts only; does no work. `Heap::didFinishCollection` runs under whichever GCConductor holds
+// the conn -- `collectInCollectorThread` conducts async collections -- and a theap may only be
+// walked by its owner, so the JS thread reads this and acts there. Atomic for the same reason.
+class GCCycleObserver final : public JSC::HeapObserver {
+public:
+    void willGarbageCollect() final { }
+    void didGarbageCollect(JSC::CollectionScope) final
+    {
+        m_count.fetch_add(1, std::memory_order_relaxed);
+    }
+    uint64_t count() const { return m_count.load(std::memory_order_relaxed); }
+
+private:
+    std::atomic<uint64_t> m_count { 0 };
+};
+
+// Counts ticks where the event loop actually parked, so the GC controller can tell whether the
+// park path is already sweeping this thread's theap and stay out of its way. JS thread only.
+class ParkCounter {
+public:
+    void didPark() { ++m_count; }
+    uint64_t count() const { return m_count; }
+
+private:
+    uint64_t m_count { 0 };
+};
+
 class JSVMClientData : public JSC::VM::ClientData {
     WTF_MAKE_NONCOPYABLE(JSVMClientData);
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(JSVMClientData, JSVMClientData);
@@ -93,6 +125,8 @@ public:
     static void create(JSC::VM*, void*);
 
     JSHeapData& heapData() { return *m_heapData; }
+    GCCycleObserver& gcCycleObserver() { return m_gcCycleObserver; }
+    ParkCounter& parkCounter() { return m_parkCounter; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
     JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }
 
@@ -139,6 +173,13 @@ public:
 
 private:
     bool isWebCoreJSClientData() const final { return true; }
+
+    // `~VM` deletes clientData in its body, before member destructors run, so `heap` (a VM
+    // member) is still alive in our destructor -- the observer must be removed there or the
+    // heap keeps a dangling pointer to it.
+    JSC::VM& m_vm;
+    GCCycleObserver m_gcCycleObserver;
+    ParkCounter m_parkCounter;
 
     // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
     // singleton alone (it is shared by every VM). On the default `!useGlobalGC`

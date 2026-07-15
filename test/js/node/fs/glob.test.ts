@@ -81,9 +81,7 @@ describe("fs.glob", () => {
     });
 
     it("throws ERR_INVALID_ARG_TYPE synchronously if options is null", () => {
-      expect(() => fs.glob("*.txt", null, () => {})).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
+      expect(() => fs.glob("*.txt", null, () => {})).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     });
   });
 
@@ -155,14 +153,9 @@ describe("fs.globSync", () => {
   });
 
   describe("invalid arguments", () => {
-    it.each([[null], [42], ["str"], [true]] as any[][])(
-      "throws ERR_INVALID_ARG_TYPE if options is %p",
-      options => {
-        expect(() => fs.globSync("*.txt", options)).toThrow(
-          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-        );
-      },
-    );
+    it.each([[null], [42], ["str"], [true]] as any[][])("throws ERR_INVALID_ARG_TYPE if options is %p", options => {
+      expect(() => fs.globSync("*.txt", options)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    });
 
     it("accepts undefined options", () => {
       const oldProcessCwd = process.cwd;

@@ -318,6 +318,24 @@ impl Expansion {
             return;
         }
         let count = count as usize;
+
+        // Inputs like `},{` lex to zero expansions (the lexer rolls back to
+        // Text); `braces::expand` would write `out[0]` into an empty slice.
+        // Keep the word as literal text, like Bun.braces() does.
+        if count == 0 {
+            if !me.out.buf.is_empty() {
+                me.out.bounds.push(me.out.buf.len() as u32);
+            }
+            me.out.buf.extend_from_slice(&me.current_out);
+            if me.node.get().has_glob_expansion() {
+                me.state = ExpansionState::Glob;
+            } else {
+                me.current_out.clear();
+                me.state = ExpansionState::Done;
+            }
+            return;
+        }
+
         let mut expanded: Vec<Vec<u8>> = (0..count).map(|_| Vec::new()).collect();
 
         let arena = bun_alloc::Arena::new();
@@ -327,13 +345,17 @@ impl Expansion {
             &mut expanded[..],
             lexer_output.contains_nested,
         ) {
-            if matches!(e, braces::ParserError::TooManyBraces) {
-                let msg = "too many braces in brace expansion".to_string();
-                me.state = ExpansionState::Err(Box::new(ShellErr::Custom(msg.into_bytes().into())));
-                return;
-            }
-            // An unexpected token from brace expansion is a parser bug.
-            panic!("unexpected error from Braces.expand: {e:?}");
+            // Every expand error is reachable from user input (e.g. >u16::MAX
+            // tokens hits UnexpectedToken) — surface a catchable shell error
+            // like Bun.braces() instead of panicking.
+            let msg = match e {
+                braces::ParserError::TooManyBraces => "too many braces in brace expansion",
+                braces::ParserError::UnexpectedToken => "unexpected token while expanding braces",
+                braces::ParserError::OutOfMemory => "out of memory while expanding braces",
+            };
+            me.state =
+                ExpansionState::Err(Box::new(ShellErr::Custom(msg.as_bytes().to_vec().into())));
+            return;
         }
         drop(arena);
 

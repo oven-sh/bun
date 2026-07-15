@@ -336,20 +336,9 @@ impl Watcher {
             me.mutex.unlock();
 
             // Release platform resources. The wake path exits via `Ok` on
-            // Linux/macOS, so skipping stop() there would trade the former
-            // thread leak for an fd leak.
-            //
-            // Not on Windows: `next()` re-arms `ReadDirectoryChangesW` on
-            // `self.watcher.overlapped` before every GQCS wait, so by the time
-            // `watch_loop` returns there is a pending RDCW holding a kernel
-            // pointer into `*this`. `CloseHandle(dir_handle)` cancels it
-            // asynchronously, and the free below can land before the kernel's
-            // cancellation write. With `wake()` a no-op this path is only
-            // reachable via a real filesystem event coinciding with shutdown;
-            // leaking the two handles until process exit is the safer tradeoff
-            // until the CancelIoEx + drain sequence described in
-            // `WindowsWatcher::wake()` is implemented.
-            #[cfg(not(windows))]
+            // Linux/macOS, so skipping stop() here would trade the former
+            // thread leak for an fd leak. On Windows `stop()` guards itself
+            // via `armed` (see `WindowsWatcher::stop`).
             me.platform.stop();
 
             // deinit and close descriptors if needed

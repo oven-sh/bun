@@ -23,6 +23,13 @@ pub struct WindowsWatcher {
     pub watcher: DirWatcher,
     pub buf: PathBuffer,
     pub base_idx: usize,
+    /// Latched true once `next()` has successfully armed a
+    /// `ReadDirectoryChangesW` on `self.watcher.overlapped`. While set,
+    /// `stop()` is unsafe from `thread_main` (kernel may still write
+    /// cancellation status into the OVERLAPPED after `CloseHandle`).
+    /// Only written by the watcher thread; read by `stop()` either on that
+    /// same thread or from `shutdown()` when no thread exists.
+    pub armed: bool,
 }
 
 impl Default for WindowsWatcher {
@@ -37,6 +44,7 @@ impl Default for WindowsWatcher {
             },
             buf: PathBuffer::uninit(),
             base_idx: 0,
+            armed: false,
         }
     }
 }
@@ -304,6 +312,7 @@ impl WindowsWatcher {
             bun_core::scoped_log!(watcher, "prepare() returned error");
             return Err(err);
         }
+        self.armed = true;
 
         let mut nbytes: w::DWORD = 0;
         let mut key: w::ULONG_PTR = 0;
@@ -380,6 +389,15 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
+        if self.armed {
+            // A `ReadDirectoryChangesW` is (or may still be) pending on
+            // `self.watcher.overlapped`. `CloseHandle(dir_handle)` cancels it
+            // asynchronously, and `thread_main` frees `*self` immediately
+            // after this returns, so the kernel's cancellation write can land
+            // in freed memory. Leak the two handles until process exit; the
+            // proper fix is the CancelIoEx + drain sequence noted on `wake()`.
+            return;
+        }
         // SAFETY: handles were opened in init() and are valid until stop() is called once.
         unsafe {
             w::CloseHandle(self.watcher.dir_handle);

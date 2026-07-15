@@ -846,12 +846,33 @@ pub(crate) fn edit(
                     }
                 }
 
+                // A URL entry is keyed by its URL; once resolved, its name may
+                // already have an entry (installed from a different URL). Merge
+                // into this slot instead of emitting a duplicate key.
+                let resolved_name = request.get_resolved_name(&manager.lockfile);
+                if request.package_id != INVALID_PACKAGE_ID
+                    && !resolved_name.is_empty()
+                    && resolved_name != request.get_name()
+                {
+                    if let Some(existing) = new_dependencies.iter().position(|p| {
+                        p.key.as_ref().is_some_and(|key| {
+                            key.data
+                                .e_string()
+                                .is_some_and(|s| s.eql_bytes(resolved_name))
+                        })
+                    }) {
+                        if existing != k {
+                            new_dependencies.remove(existing);
+                            if existing < k {
+                                k -= 1;
+                            }
+                        }
+                    }
+                }
+
                 new_dependencies[k].key = Some(Expr::allocate(
                     arena,
-                    E::EString::init(arena_dup(
-                        arena,
-                        request.get_resolved_name(&manager.lockfile),
-                    )),
+                    E::EString::init(arena_dup(arena, resolved_name)),
                     bun_ast::Loc::EMPTY,
                 ));
 

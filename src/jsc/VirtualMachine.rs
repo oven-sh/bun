@@ -4382,7 +4382,12 @@ impl VirtualMachine {
         // should agree with `import.meta.resolve()` (pure path join) instead
         // of falling through to the resolver's cwd fallback, which can return
         // an unrelated same-named file from the runtime working directory.
-        if is_user_require_resolve && jsc_vm.standalone_module_graph.is_some() {
+        // An explicit `{ paths: [...] }` option overrides this and goes
+        // through the resolver so the user's directories are searched.
+        if is_user_require_resolve
+            && jsc_vm.standalone_module_graph.is_some()
+            && jsc_vm.transpiler.resolver.custom_dir_paths.is_none()
+        {
             let source_slice = normalize_source(source_utf8.slice());
             let spec = specifier_utf8.slice();
             if bun_options_types::standalone_path::is_bun_standalone_file_path(source_slice)

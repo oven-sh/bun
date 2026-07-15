@@ -168,10 +168,9 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 
-    // `validate_string` above guarantees `content.is_string_literal()`, so
-    // `as_string()` returns a non-null live JSString*. `JSString` is an
-    // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
-    let str = bun_jsc::JSString::opaque_ref(content.as_string()).to_slice(global);
+    // `validate_string` accepts StringObject, so coerce to a primitive JSString
+    // before slicing.
+    let str = content.to_js_string(global)?.to_slice(global);
 
     let mut map = envloader::Map::init();
     let mut p = envloader::Loader::init(&mut map);

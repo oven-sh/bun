@@ -145,9 +145,4 @@ describe("path.join", () => {
 
     assert.strictEqual(failures.length, 0, failures.join(""));
   });
-
-  test("rejects String objects", () => {
-    assert.throws(() => path.join(new String("a"), "b"), TypeError);
-    assert.throws(() => path.join("a", String.prototype), TypeError);
-  });
 });

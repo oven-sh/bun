@@ -1568,10 +1568,10 @@ pub fn join(
     let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
 
     for (i, &path_ptr) in args.iter().enumerate() {
-        // Inline the `is_string_literal` fast path; only build `format_args!("paths[{i}]")`
+        // Inline the `is_string` fast path; only build `format_args!("paths[{i}]")`
         // on the cold error branch (it materialises a 48-byte `fmt::Arguments`
         // every iteration otherwise).
-        if !path_ptr.is_string_literal() {
+        if !path_ptr.is_string() {
             #[cold]
             #[inline(never)]
             fn not_a_string(g: &JSGlobalObject, v: JSValue, i: usize) -> crate::jsc::JsError {

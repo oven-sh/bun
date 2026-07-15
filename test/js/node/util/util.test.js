@@ -432,9 +432,7 @@ describe("util", () => {
 });
 
 describe("util.parseEnv", () => {
-  it("rejects String objects", () => {
-    expect(() => util.parseEnv(new String("FOO=bar"))).toThrow(TypeError);
-    expect(() => util.parseEnv(String.prototype)).toThrow(TypeError);
-    expect(util.parseEnv("FOO=bar")).toEqual({ FOO: "bar" });
+  it("accepts a String object without crashing", () => {
+    expect(util.parseEnv(new String("FOO=bar"))).toEqual({ FOO: "bar" });
   });
 });

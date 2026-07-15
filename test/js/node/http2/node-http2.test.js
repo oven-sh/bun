@@ -3186,3 +3186,280 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+describe.concurrent("http2 client: stream error identity when the peer closes with a nonzero code", () => {
+  // Raw h2c server: after the SETTINGS handshake it answers the first HEADERS with the requested
+  // frame (GOAWAY or RST_STREAM) carrying ENHANCE_YOUR_CALM. Node surfaces the error (uncaught
+  // without a stream 'error' listener) with a code identifying what closed: session vs stream.
+  function fixture({ mode, withListener }) {
+    const reply =
+      mode === "goaway"
+        ? `
+          const goaway = Buffer.alloc(8);
+          goaway.writeUInt32BE(1, 0);
+          goaway.writeUInt32BE(0xb, 4);
+          socket.write(frame(0x7, 0, 0, goaway));`
+        : `
+          const rst = Buffer.alloc(4);
+          rst.writeUInt32BE(0xb, 0);
+          socket.write(frame(0x3, 0, 1, rst));
+          setImmediate(() => socket.end());`;
+    return `
+      const http2 = require("node:http2");
+      const net = require("node:net");
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header.writeUInt8(type, 3);
+        header.writeUInt8(flags, 4);
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+      const server = net.createServer(socket => {
+        socket.write(frame(0x4, 0, 0));
+        let buf = Buffer.alloc(0), sawPreface = false, done = false;
+        socket.on("data", chunk => {
+          if (done) return;
+          buf = Buffer.concat([buf, chunk]);
+          if (!sawPreface) {
+            if (buf.length < 24) return;
+            buf = buf.subarray(24);
+            sawPreface = true;
+          }
+          let off = 0;
+          while (buf.length - off >= 9) {
+            const len = buf.readUIntBE(off, 3), type = buf.readUInt8(off + 3);
+            if (buf.length - off < 9 + len) break;
+            if (type === 0x4 && (buf.readUInt8(off + 4) & 0x1) === 0) socket.write(frame(0x4, 0x1, 0));
+            if (type === 0x1) {
+              done = true;${reply}
+              return;
+            }
+            off += 9 + len;
+          }
+          buf = buf.subarray(off);
+        });
+      });
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code + ": " + e.message);
+        process.exit(42);
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const session = http2.connect("http://127.0.0.1:" + server.address().port);
+        session.on("error", e => console.log("session error: " + e.code));
+        session.on("close", () => { console.log("session close"); server.close(); });
+        const req = session.request({ ":path": "/" });
+        ${withListener ? `req.on("error", e => console.log("req error: " + e.code + " rstCode=" + req.rstCode));` : ``}
+        req.on("close", () => console.log("req close rstCode=" + req.rstCode));
+      });
+    `;
+  }
+
+  async function run(opts) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(opts)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("GOAWAY without a stream 'error' listener raises uncaught ERR_HTTP2_SESSION_ERROR", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "goaway", withListener: false });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("UNCAUGHT ERR_HTTP2_SESSION_ERROR: Session closed with error code 11"),
+      stderr: "",
+    });
+    expect(stdout).not.toContain("ERR_HTTP2_STREAM_ERROR");
+    expect(exitCode).toBe(42);
+  });
+
+  it("GOAWAY with a stream 'error' listener delivers ERR_HTTP2_SESSION_ERROR and stamps rstCode", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "goaway", withListener: true });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("req error: ERR_HTTP2_SESSION_ERROR rstCode=11"),
+      stderr: "",
+    });
+    expect(stdout).toContain("req close rstCode=11");
+    expect(exitCode).toBe(0);
+  });
+
+  it("RST_STREAM without a stream 'error' listener raises uncaught ERR_HTTP2_STREAM_ERROR", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "rst", withListener: false });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining(
+        "UNCAUGHT ERR_HTTP2_STREAM_ERROR: Stream closed with error code NGHTTP2_ENHANCE_YOUR_CALM",
+      ),
+      stderr: "",
+    });
+    expect(exitCode).toBe(42);
+  });
+
+  it("RST_STREAM with a stream 'error' listener delivers ERR_HTTP2_STREAM_ERROR and stamps rstCode", async () => {
+    const { stdout, stderr, exitCode } = await run({ mode: "rst", withListener: true });
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("req error: ERR_HTTP2_STREAM_ERROR rstCode=11"),
+      stderr: "",
+    });
+    expect(stdout).toContain("req close rstCode=11");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("http2 server: pushed stream error surfacing", () => {
+  // A pushed stream is handed to user code through the pushStream() callback (it has no 'stream'
+  // event), so a peer reset must reach its 'error' listener like node: ERR_HTTP2_STREAM_ERROR with
+  // the RST_STREAM code stamped as rstCode (verified against node v26.3.0).
+  it("a pushed stream refused by the peer emits ERR_HTTP2_STREAM_ERROR with the peer's code", async () => {
+    const fixture = `
+      const http2 = require("node:http2");
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code);
+        process.exit(42);
+      });
+      const server = http2.createServer();
+      server.on("stream", (stream, headers) => {
+        stream.respond({ ":status": 200 });
+        stream.pushStream({ ":path": "/push" }, (err, pushStream) => {
+          if (err) {
+            console.log("pushErr " + err.code);
+            process.exit(43);
+          }
+          pushStream.on("error", e => console.log("push error: " + e.code + " " + e.message));
+          pushStream.on("close", () => {
+            console.log("push close rstCode=" + pushStream.rstCode);
+            process.exit(0);
+          });
+          pushStream.respond({ ":status": 200 });
+          pushStream.write("pushed");
+        });
+        stream.end("main");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("stream", pushed => {
+          pushed.on("error", () => {});
+          pushed.close(http2.constants.NGHTTP2_REFUSED_STREAM);
+        });
+        const req = client.request({ ":path": "/" });
+        req.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining(
+        "push error: ERR_HTTP2_STREAM_ERROR Stream closed with error code NGHTTP2_REFUSED_STREAM",
+      ),
+      stderr: "",
+    });
+    expect(stdout).toContain("push close rstCode=7");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("http2 server: finished response with an unread request", () => {
+  // node (Http2Stream[kMaybeDestroy]): a server stream whose response finished while user code
+  // never read the request closes gracefully (rstCode 0) instead of waiting for the client's
+  // half; a later session.destroy(code) then has nothing to error (grpc-js forceShutdown shape).
+  it("closes the stream and survives a later session.destroy(code)", async () => {
+    const fixture = `
+      const http2 = require("node:http2");
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code);
+        process.exit(42);
+      });
+      const server = http2.createServer();
+      let ssession;
+      server.on("session", s => (ssession = s));
+      server.on("stream", stream => {
+        stream.on("close", () => {
+          console.log("server stream close rstCode=" + stream.rstCode);
+          // The uncaught (if any) is delivered before the session's own 'close' completes.
+          ssession.on("close", () => {
+            setImmediate(() => {
+              console.log("DONE");
+              process.exit(0);
+            });
+          });
+          ssession.destroy(http2.constants.NGHTTP2_CANCEL);
+        });
+        stream.respond({ ":status": 200, "grpc-status": "12" }, { endStream: true });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        // The GOAWAY from the server-session teardown reaches this same process's client session;
+        // it is not what this test observes (the server stream lifecycle is).
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/Sum", ":method": "POST" }); // client half stays open
+        req.on("error", () => {});
+        req.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("server stream close rstCode=0"),
+      stderr: "",
+    });
+    expect(stdout).toContain("DONE");
+    expect(stdout).not.toContain("UNCAUGHT");
+    expect(exitCode).toBe(0);
+  });
+
+  // Same rule via the trailers path: node re-runs [kMaybeDestroy] from finishSendTrailers, so a
+  // response that ends with trailers (grpc-js status) also closes an unread stream.
+  it("closes the stream after trailers when the request was never read", async () => {
+    const fixture = `
+      const http2 = require("node:http2");
+      process.on("uncaughtException", e => {
+        console.log("UNCAUGHT " + e.code);
+        process.exit(42);
+      });
+      const server = http2.createServer();
+      server.on("stream", stream => {
+        stream.on("close", () => {
+          console.log("server stream close rstCode=" + stream.rstCode);
+          process.exit(0);
+        });
+        stream.on("wantTrailers", () => {
+          stream.sendTrailers({ "grpc-status": "12", "grpc-message": "unimplemented" });
+        });
+        stream.respond({ ":status": 200, "content-type": "application/grpc" }, { waitForTrailers: true });
+        stream.end();
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/Sum", ":method": "POST" }); // client half stays open
+        req.on("error", () => {});
+        req.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: expect.stringContaining("server stream close rstCode=0"),
+      stderr: "",
+    });
+    expect(stdout).not.toContain("UNCAUGHT");
+    expect(exitCode).toBe(0);
+  });
+});

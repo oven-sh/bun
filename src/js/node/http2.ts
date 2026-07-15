@@ -370,6 +370,8 @@ let priorityDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
+// node's Http2Stream[kState].didRead: set by the first _read() attempt, not by data arrival.
+const kDidRead = Symbol("didRead");
 const kReceivedGoaway = Symbol("receivedGoaway");
 // The error code carried by a received GOAWAY; like Node's state.goawayCode it
 // takes precedence over the destroy code when streams are torn down.
@@ -2208,6 +2210,9 @@ class Http2Stream extends Duplex {
       this.#sentTrailers = undefined;
       throw error;
     }
+    // node re-runs [kMaybeDestroy] once the trailers are out (finishSendTrailers): a server
+    // stream whose response is now complete and whose request was never read closes gracefully.
+    if (this instanceof ServerHttp2Stream) maybeCloseUnreadRespondedStream(this);
   }
 
   setTimeout(timeout, callback) {
@@ -2373,7 +2378,7 @@ class Http2Stream extends Duplex {
     // RST code 8 not emitted as an error as its used by clients to signify
     // abort and is already covered by aborted event, also allows more
     // seamless compatibility with http1
-    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
+    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL && !this[kNeverAnnounced])
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     this[bunHTTP2Session] = null;
@@ -2466,6 +2471,7 @@ class Http2Stream extends Duplex {
 
   _read(_size) {
     // we always use the internal stream queue now
+    if (!this[kDidRead]) this[kDidRead] = true;
   }
 
   end(chunk, encoding, callback) {
@@ -2708,6 +2714,7 @@ class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
+    this.once("finish", onServerStreamFinishMaybeClose);
   }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
   // respond() was called; without this the DATA frames would go out with no preceding HEADERS.
@@ -3174,27 +3181,57 @@ function rejectNoPayloadContentLengthNT(req) {
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
 }
+function closeUnreadRespondedStreamNT(stream) {
+  if (stream.destroyed || stream.closed) return;
+  stream.close();
+}
+// node's Http2Stream[kMaybeDestroy]: once a server stream's response has finished, if user code
+// never read the request (didRead false, flowing null) and no trailers are pending, node closes
+// the stream gracefully instead of leaving it open until the request side ends. Trailers defer
+// the close until they are sent (node re-runs the check from finishSendTrailers).
+function maybeCloseUnreadRespondedStream(stream) {
+  if (
+    stream.headersSent &&
+    stream.writableFinished &&
+    !stream.destroyed &&
+    !stream.closed &&
+    ((stream[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0 || stream.sentTrailers !== undefined) &&
+    !stream[kDidRead] &&
+    stream.readableFlowing === null
+  ) {
+    // node defers with setImmediate so pushStreams issued around the response finish still make
+    // it out before the stream officially closes (core.js kMaybeDestroy).
+    setImmediate(closeUnreadRespondedStreamNT, stream);
+  }
+}
+function onServerStreamFinishMaybeClose(this: ServerHttp2Stream) {
+  maybeCloseUnreadRespondedStream(this);
+}
+function emitStreamErrorFromCodeNT(stream, rstCode) {
+  stream.emit("error", streamErrorFromCode(rstCode));
+}
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
-    if (typeof error === "number" && self != null && self[kSessionDestroyError] != null) {
-      // The stream is being torn down because its session was destroyed with an error: surface
-      // that session error on the stream (node semantics) instead of a generic stream error. The
-      // numeric code still becomes the stream's rstCode (node uses the session's destroy code).
+    // node only tears down live streams (closeSession skips streams already gone from its set). A
+    // stream already closed (close() ran; destroy is a setImmediate behind) has also committed to
+    // its rstCode, so a late session error has nothing to add and would race the pending destroy.
+    if (stream.destroyed || stream.closed) {
+      if (destroy_self) self.destroy();
+      return;
+    }
+    // node destroys a stream torn down by a session error with that same session error, and a
+    // stream closed by a raw code with no error at all - _destroy synthesizes the
+    // ERR_HTTP2_STREAM_ERROR from rstCode (never for NGHTTP2_NO_ERROR / NGHTTP2_CANCEL).
+    let error_instance: Error | undefined;
+    if (typeof error === "number") {
       if (error !== 0 && !stream.rstCode) stream.rstCode = error;
-      error = self[kSessionDestroyError];
+      error_instance = self != null ? self[kSessionDestroyError] : undefined;
+    } else {
+      error_instance = error;
     }
-    let error_instance: Error | number | undefined = undefined;
-    if (stream.listenerCount("error") > 0) {
-      if (typeof error === "number") {
-        stream.rstCode = error;
-        if (error != 0) {
-          error_instance = streamErrorFromCode(error);
-        }
-      } else {
-        error_instance = error;
-      }
-    }
+    // A stream user code never received cannot have an 'error' listener; node never surfaces it.
+    if (stream[kNeverAnnounced]) error_instance = undefined;
     if (stream.readable) {
       stream.resume(); // we have a error we consume and close
       pushToStream(stream, null);
@@ -3483,6 +3520,10 @@ class ServerHttp2Session extends Http2Session {
       self.#connections++;
       if (stream_id % 2 === 1) self.#peerInitiatedStreams++;
       const stream = new ServerHttp2Stream(stream_id, self, null);
+      // Until an incoming request's HEADERS are accepted and the 'stream' event fires, user code
+      // has no reference to this object; node never surfaces a JS stream for a request it rejects
+      // at the header layer. Even ids are server-initiated pushes (handed out via pushStream).
+      if (stream_id % 2 === 1) stream[kNeverAnnounced] = true;
       // Returned to the native caller, which stores it as the stream context — no
       // setStreamContext host call needed.
       return stream;
@@ -3589,6 +3630,7 @@ class ServerHttp2Session extends Http2Session {
         // user handler — in particular, losing WantTrailer/FinalCalled breaks
         // any later `sendTrailers()` with ERR_HTTP2_TRAILERS_NOT_READY.
         stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+        stream[kNeverAnnounced] = false;
         if (onServerStreamCreatedChannel.hasSubscribers) {
           onServerStreamCreatedChannel.publish({ stream, headers });
         }
@@ -4169,6 +4211,9 @@ class ClientHttp2Session extends Http2Session {
         // A pushed (even-id) stream announced by the server: its context object must be a stream,
         // not a session. Returned to the native caller, which stores it as the stream context.
         const stream = new ClientHttp2Stream(stream_id, self, null);
+        // Placeholder until streamPush announces the real pushed stream on the 'stream' event;
+        // user code can never observe this object, so nothing may surface errors on it.
+        stream[kNeverAnnounced] = true;
         return stream;
       }
     },
@@ -4517,11 +4562,10 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
-      // A transport teardown on a session nobody observes (an idle pooled
-      // connection dropped by the peer): shut down quietly - the destroy
-      // still errors any remaining streams. Anything else (handshake
-      // failure, ECONNREFUSED, ...) keeps Node's EventEmitter contract and
-      // surfaces when unobserved.
+      // A transport teardown on a session nobody observes (an idle pooled connection dropped by
+      // the peer): the session shuts down quietly, but remaining streams still surface the real
+      // socket error like node's. Anything else keeps Node's EventEmitter contract.
+      this[kSessionDestroyError] = error;
       this.destroy();
       return;
     }
@@ -4839,6 +4883,10 @@ class ClientHttp2Session extends Http2Session {
       // Streams torn down by this destroy surface the same session error (node semantics).
       this[kSessionDestroyError] = error;
     }
+    // node only cancels *pending* streams (never connected / not submitted) with
+    // ERR_HTTP2_STREAM_CANCEL; streams already open on a connected session are destroyed with
+    // the session error, or silently when the session is destroyed without one.
+    const streamsArePending = !this.#connected;
     this.#closed = true;
     this.#connected = false;
     {
@@ -4867,13 +4915,10 @@ class ClientHttp2Session extends Http2Session {
     }
     const parser = this.#parser;
     if (parser) {
-      // node cancels streams still open when their session is destroyed: each gets
-      // ERR_HTTP2_STREAM_CANCEL (or the session error when one was provided), with the CANCEL
-      // rst code.
-      if (this[kSessionDestroyError] == null && error == null) {
-        // ERR_HTTP2_STREAM_CANCEL is not in the native error-code registry (the registry is
-        // positional and shared across Rust/C++/the JS bundle, so additions need a coordinated
-        // regeneration); construct the node-shaped error directly.
+      // A session that never connected only has pending streams: node cancels each of them with
+      // ERR_HTTP2_STREAM_CANCEL. (The error is built inline: it is not in the native error-code
+      // registry, which is positional and shared across Rust/C++/the JS bundle.)
+      if (this[kSessionDestroyError] == null && error == null && streamsArePending) {
         const cancelError = new Error("The pending stream has been canceled");
         cancelError.name = "Error";
         cancelError.code = "ERR_HTTP2_STREAM_CANCEL";
@@ -5198,10 +5243,24 @@ class ClientHttp2Session extends Http2Session {
         onClientStreamCreatedChannel.publish({ stream: req, headers });
       }
       const wireHeaders = rawHeadersList !== null ? rawHeadersList : headers;
+      // Native rejects an oversized/invalid header block synchronously via run_callback, which can
+      // drain the deferring nextTick before this call returns (event-loop enter count 0); the
+      // caller has no reference to req yet, so keep it never-announced for the native call.
+      req[kNeverAnnounced] = true;
       if (typeof options === "undefined") {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames);
       } else {
         this.#parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      }
+      req[kNeverAnnounced] = false;
+      if (req.destroyed) {
+        // Synchronous rejection: surface the error once the caller has had a chance to attach
+        // listeners. Not listener-gated: absent one it becomes an uncaught exception, like node.
+        const rstCode = req.rstCode;
+        if (rstCode && rstCode !== NGHTTP2_CANCEL) {
+          process.nextTick(emitStreamErrorFromCodeNT, req, rstCode);
+        }
+        return req;
       }
       if (onClientStreamStartChannel.hasSubscribers) {
         onClientStreamStartChannel.publish({ stream: req, headers });

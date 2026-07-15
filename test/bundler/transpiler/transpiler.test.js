@@ -1381,6 +1381,61 @@ export default class {
       ts.expectPrinted_(input4, output4);
     });
 
+    it("enum in a nested scope uses let", () => {
+      // tsc and esbuild both emit "let" for enums that aren't at the top level
+      // so the binding doesn't leak out of the enclosing block/function scope.
+      ts.expectPrinted_(
+        `{ enum x { y } }`,
+        `{
+  let x;
+  ((x) => {
+    x[x["y"] = 0] = "y";
+  })(x ||= {});
+}`,
+      );
+      ts.expectPrinted_(
+        `function f() { enum x { y } }`,
+        `function f() {
+  let x;
+  ((x) => {
+    x[x["y"] = 0] = "y";
+  })(x ||= {});
+}`,
+      );
+      // Top-level enum still emits "var" so sibling declarations can merge.
+      ts.expectPrinted_(
+        `enum x { y }`,
+        `var x;
+((x) => {
+  x[x["y"] = 0] = "y";
+})(x ||= {})`,
+      );
+    });
+
+    it("enum in a block scope does not leak into the enclosing scope at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{ enum a { b = 1 } }
+          try {
+            console.log(a);
+          } catch (e) {
+            console.log(e instanceof ReferenceError ? "ReferenceError" : e.constructor.name);
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe("ReferenceError\n");
+      expect(exitCode).toBe(0);
+    });
+
     const input5 = `namespace ns {
   export class ns {}
 }`;

@@ -34,6 +34,7 @@ import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { prestartMap as dockerPrestartMap } from "../test/docker/prestart-map.mjs";
+import { downloadArtifactZip } from "./download-artifact.mjs";
 import pLimit from "./p-limit.mjs";
 import {
   getAbi,
@@ -2260,44 +2261,7 @@ async function getExecPathFromBuildKite(target, buildId) {
   }
 
   const releasePath = join(cwd, "release");
-  mkdirSync(releasePath, { recursive: true });
-
-  let zipPath;
-  downloadLoop: for (let i = 0; i < 10; i++) {
-    const args = ["artifact", "download", "**", releasePath, "--step", target];
-    if (buildId) {
-      args.push("--build", buildId);
-    }
-
-    const { error } = await spawnSafe({
-      command: "buildkite-agent",
-      args,
-      timeout: 120000,
-    });
-    if (error === "timeout") {
-      throw new Error(
-        `buildkite-agent artifact download timed out after 120s for step '${target}'. ` +
-          `Refusing to continue with a partial download (would silently fall back to the wrong binary).`,
-      );
-    }
-
-    zipPath = readdirSync(releasePath, { recursive: true, encoding: "utf-8" })
-      .filter(filename => /^bun.*\.zip$/i.test(filename))
-      .map(filename => join(releasePath, filename))
-      .sort((a, b) => b.includes("profile") - a.includes("profile"))
-      .at(0);
-
-    if (zipPath) {
-      break downloadLoop;
-    }
-
-    console.warn(`Waiting for ${target}.zip to be available...`);
-    await new Promise(resolve => setTimeout(resolve, i * 1000));
-  }
-
-  if (!zipPath) {
-    throw new Error(`Could not find ${target}.zip from Buildkite: ${releasePath}`);
-  }
+  const zipPath = await downloadArtifactZip({ target, buildId, releasePath, spawn: spawnSafe });
 
   await unzip(zipPath, releasePath);
 
@@ -2586,7 +2550,7 @@ function isExecutable(execPath) {
 }
 
 /**
- * @param {"pass" | "fail" | "cancel"} [outcome]
+ * @param {"pass" | "fail" | "cancel" | "infra"} [outcome]
  */
 function getExitCode(outcome) {
   if (outcome === "pass") {
@@ -2602,6 +2566,12 @@ function getExitCode(outcome) {
   }
   if (outcome === "cancel") {
     return 3;
+  }
+  // Infra failure (e.g. the build artifact could not be downloaded). Distinct
+  // from a test failure so Buildkite can auto-retry it (see getRetry in
+  // .buildkite/ci.mjs) without also retrying genuine test failures (exit 2).
+  if (outcome === "infra") {
+    return 4;
   }
   return 1;
 }
@@ -2988,4 +2958,10 @@ export async function main() {
   process.exit(getExitCode(ok ? "pass" : "fail"));
 }
 
-await main();
+await main().catch(error => {
+  console.error(error);
+  // The runner could not obtain the build artifact after retrying. Exit with an
+  // infra status Buildkite auto-retries so the job reschedules (ideally onto an
+  // agent with working artifact connectivity) instead of needing a manual retry.
+  process.exit(error?.code === "ARTIFACT_DOWNLOAD_FAILED" ? getExitCode("infra") : 1);
+});

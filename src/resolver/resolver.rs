@@ -3466,7 +3466,10 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *rfs }
             };
         }
-        // resolver mutex held; `EntriesMap` methods are safe wrappers over the singleton.
+        // Hold `entries_mutex` across the in-place `DirEntry` rewrite below and
+        // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
+        // route loaders iterate the `DirEntry.data` map under this lock.
+        let _entries_unlock = rfs!().entries_mutex.lock_guard();
         let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
         // NOTE: always assigned by either the cached-hit arm or the

@@ -304,6 +304,92 @@ test.concurrent("stdin should not allow process to exit when not paused", async 
   expect(await proc.stderr.text()).toMatchInlineSnapshot(`""`);
 });
 
+test.concurrent("a throw from a 'data' listener is an uncaughtException, and stdin keeps reading", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+      process.on("uncaughtException", (e, origin) => seen.push("uncaughtException:" + e.message + ":" + origin));
+      process.stdin.on("error", e => seen.push("stream-error:" + e.message));
+      let n = 0;
+      process.stdin.on("data", d => {
+        seen.push("data:" + d.toString());
+        if (++n === 1) { console.log("GOT1"); throw new Error("handler-throw"); }
+      });
+      process.stdin.on("end", () => {
+        console.log(JSON.stringify({ seen, destroyed: process.stdin.destroyed }));
+      });`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("one");
+  await proc.stdin.flush();
+  const reader = proc.stdout.getReader();
+  const decoder = new TextDecoder();
+  let stdout = "";
+  for (let r; !(r = await reader.read()).done; ) {
+    stdout += decoder.decode(r.value, { stream: true });
+    if (stdout.includes("GOT1")) break;
+  }
+  proc.stdin.write("two");
+  await proc.stdin.end();
+  for (let r; !(r = await reader.read()).done; ) stdout += decoder.decode(r.value, { stream: true });
+
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode, ...(exitCode === 0 ? {} : { stderr }) }).toEqual({
+    stdout:
+      "GOT1\n" +
+      JSON.stringify({
+        seen: ["data:one", "uncaughtException:handler-throw:uncaughtException", "data:two"],
+        destroyed: false,
+      }) +
+      "\n",
+    exitCode: 0,
+  });
+});
+
+test.concurrent("a throw from a 'readable' listener is an uncaughtException, including the EOF emission", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const seen = [];
+      process.on("uncaughtException", e => seen.push("uncaughtException:" + e.message));
+      process.stdin.on("error", e => seen.push("stream-error:" + e.message));
+      let n = 0;
+      process.stdin.on("readable", () => {
+        n++;
+        let chunk;
+        while ((chunk = process.stdin.read()) !== null) seen.push("readable:" + chunk.toString());
+        throw new Error("readable-throw-" + n);
+      });
+      process.stdin.on("end", () => seen.push("end"));
+      process.on("exit", () => console.log(JSON.stringify(seen)));`,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  proc.stdin.write("hello");
+  await proc.stdin.end();
+
+  expect(await stdioResult(proc)).toEqual({
+    stdout:
+      JSON.stringify([
+        "readable:hello",
+        "uncaughtException:readable-throw-1",
+        "end",
+        "uncaughtException:readable-throw-2",
+      ]) + "\n",
+    exitCode: 0,
+  });
+});
+
 test.concurrent("pause() and resume() churn while data is in flight never destroys stdin", async () => {
   await using proc = Bun.spawn({
     cmd: [

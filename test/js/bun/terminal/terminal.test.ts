@@ -1240,16 +1240,24 @@ describe.concurrent("Bun.spawn with terminal option", () => {
         "-e",
         `
           let out = "";
-          let exitFired = false;
+          let exitCount = 0;
           const child = Bun.spawn([process.execPath, "-e", "console.log('hi from pty')"], {
             env: process.env,
             terminal: {
               data: (_t, d) => { out += Buffer.from(d).toString(); },
-              exit: () => { exitFired = true; },
+              exit: () => { exitCount++; },
             },
           });
           await child.exited;
-          process.stdout.write(JSON.stringify({ gotOutput: out.includes("hi from pty"), exitFired }));
+          const exitedSync = exitCount === 1;
+          // Give the reader's still-armed one-shot poll a chance to fire a
+          // second EIO; the exit callback must stay at one.
+          await Bun.sleep(50);
+          process.stdout.write(JSON.stringify({
+            gotOutput: out.includes("hi from pty"),
+            exitedSync,
+            exitCount,
+          }));
         `,
       ],
       env: bunEnv,
@@ -1260,7 +1268,7 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     // On main this times out: the reader/writer polls kept loop.active > 0 and
     // nothing triggered the GC that would finalize the Terminal.
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ gotOutput: true, exitFired: true }),
+      stdout: JSON.stringify({ gotOutput: true, exitedSync: true, exitCount: 1 }),
       stderr: expect.any(String),
       exitCode: 0,
     });

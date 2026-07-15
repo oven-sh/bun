@@ -1743,7 +1743,11 @@ impl Terminal {
         // the re-entrant JS call (UnsafeCell suppresses the alias assumption).
         // EOF from master - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
-        if !self.flags.get().contains(Flags::FINALIZED) {
+        if !self
+            .flags
+            .get()
+            .intersects(Flags::FINALIZED | Flags::READER_DONE)
+        {
             self.update_flags(|f| f.remove(Flags::CONNECTED));
             self.this_value.with_mut(|v| v.downgrade());
             // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
@@ -1762,7 +1766,11 @@ impl Terminal {
         // prior `black_box` launder.
         // Error - downgrade to weak ref to allow GC
         // Skip JS interactions if already finalized
-        if !self.flags.get().contains(Flags::FINALIZED) {
+        if !self
+            .flags
+            .get()
+            .intersects(Flags::FINALIZED | Flags::READER_DONE)
+        {
             self.update_flags(|f| f.remove(Flags::CONNECTED));
             self.this_value.with_mut(|v| v.downgrade());
             // exit_code 1 = I/O error on PTY stream (not subprocess exit code)

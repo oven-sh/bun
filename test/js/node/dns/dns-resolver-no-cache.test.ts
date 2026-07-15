@@ -16,12 +16,12 @@ test("dns.Resolver does not cache responses in-process (matches Node)", async ()
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr.trim()).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
+  expect({ ...JSON.parse(stdout), stderr, exitCode }).toEqual({
     wire1: 2,
     wire2: 2,
     before: ["192.0.2.10"],
     after: ["192.0.2.20"],
+    stderr: "",
+    exitCode: 0,
   });
-  expect(exitCode).toBe(0);
 });

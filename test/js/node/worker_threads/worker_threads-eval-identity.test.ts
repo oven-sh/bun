@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { Worker } from "node:worker_threads";
 
 test("eval worker __filename/__dirname match node's '[worker eval]' / '.'", async () => {

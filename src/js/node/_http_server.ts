@@ -5,6 +5,7 @@ const {
   _checkInvalidHeaderChar: checkInvalidHeaderChar,
   chunkExpression,
   continueExpression,
+  isLenient,
   validateHeaderName,
   validateHeaderValue,
 } = require("node:_http_common");
@@ -908,6 +909,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
       this[serverSymbol],
       this.requireHostHeader,
       true,
+      this.insecureHTTPParser === undefined ? isLenient() : this.insecureHTTPParser,
       typeof this.maxHeaderSize !== "undefined" ? this.maxHeaderSize : getMaxHTTPHeaderSize(),
       onServerClientError.bind(this),
     );

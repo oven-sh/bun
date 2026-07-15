@@ -684,7 +684,7 @@ namespace uWS
         }
 
         /* End is only used for the proxy parser. The HTTP parser recognizes "\ra" as invalid "\r\n" scan and breaks. */
-        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, uint64_t maxHeaderSize) {
+        static HttpParserResult getHeaders(char *postPaddedBuffer, char *end, struct HttpRequest::Header *headers, void *reserved, bool &isAncientHTTP, bool &isConnectRequest, bool useStrictMethodValidation, bool insecureHTTPParser, uint64_t maxHeaderSize) {
             char *preliminaryKey, *preliminaryValue, *start = postPaddedBuffer;
             #ifdef UWS_WITH_PROXY
                 /* ProxyParser is passed as reserved parameter */
@@ -785,6 +785,7 @@ namespace uWS
                 postPaddedBuffer++;
 
                 preliminaryValue = postPaddedBuffer;
+                bool hasObsFold = false;
                 /* The goal of this call is to find next "\r\n", or any invalid field value chars, fast */
                 while (true) {
                     postPaddedBuffer = tryConsumeFieldValue(postPaddedBuffer);
@@ -798,6 +799,15 @@ namespace uWS
                         /* Error - invalid chars in field value */
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN);
                     }
+                    /* RFC 7230 obs-fold: CRLF followed by SP/HTAB continues the preceding
+                     * header field value. Only honored when the lenient parser is enabled,
+                     * matching Node.js's insecureHTTPParser option (llhttp LENIENT_HEADERS). */
+                    if (insecureHTTPParser && postPaddedBuffer + 2 < end && postPaddedBuffer[1] == '\n' &&
+                        (postPaddedBuffer[2] == ' ' || postPaddedBuffer[2] == '\t')) [[unlikely]] {
+                        hasObsFold = true;
+                        postPaddedBuffer += 2;
+                        continue;
+                    }
                     break;
                 }
                 if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
@@ -810,7 +820,25 @@ namespace uWS
                     * This way we can have this one single check to see if we found \r\n WITHIN our allowed search space. */
                 if (postPaddedBuffer[1] == '\n') {
                     /* Store this header, it is valid */
-                    headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
+                    if (hasObsFold) [[unlikely]] {
+                        /* The byte after this CRLF decides whether the fold continues; if
+                         * it has not arrived yet, compacting now would not be idempotent. */
+                        if (postPaddedBuffer + 2 >= end) {
+                            return HttpParserResult::shortRead();
+                        }
+                        /* Compact the value in place, dropping the CRLF pairs skipped above,
+                         * then SP-fill the vacated tail so a shortRead re-parse over these
+                         * bytes is idempotent (trimmed as trailing whitespace). */
+                        char *w = preliminaryValue;
+                        for (char *r = preliminaryValue; r < postPaddedBuffer; r++) {
+                            if (*r == '\r') { r++; continue; }
+                            *w++ = *r;
+                        }
+                        headers->value = std::string_view(preliminaryValue, (size_t) (w - preliminaryValue));
+                        while (w < postPaddedBuffer) *w++ = ' ';
+                    } else {
+                        headers->value = std::string_view(preliminaryValue, (size_t) (postPaddedBuffer - preliminaryValue));
+                    }
                     postPaddedBuffer += 2;
                     /* Trim trailing whitespace (SP, HTAB) per RFC 9110 Section 5.5 */
                     while (headers->value.length() && isHTTPHeaderValueWhitespace(headers->value.back())) {
@@ -857,7 +885,7 @@ namespace uWS
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool insecureHTTPParser, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -868,7 +896,7 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
-            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
+            auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, insecureHTTPParser, maxHeaderSize);
             if(result.isError()) {
                 return result;
             }
@@ -931,7 +959,14 @@ namespace uWS
             /* Check Transfer-Encoding header validity and conflicts */
             HttpRequest::TransferEncoding transferEncoding = req->getTransferEncoding();
 
-            transferEncoding.invalid = transferEncoding.invalid || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked));
+            if (insecureHTTPParser) [[unlikely]] {
+                /* Lenient parsing (Node.js insecureHTTPParser): tolerate Content-Length alongside
+                 * Transfer-Encoding and out-of-order chunked; chunked still wins the framing.
+                 * TE without chunked is still rejected since request body framing is undefined. */
+                transferEncoding.invalid = transferEncoding.has && !transferEncoding.chunked;
+            } else {
+                transferEncoding.invalid = transferEncoding.invalid || (transferEncoding.has && (contentLengthStringLen || !transferEncoding.chunked));
+            }
 
             if (transferEncoding.invalid) [[unlikely]] {
                 /* Invalid Transfer-Encoding (multiple headers or chunked not last - request smuggling attempt) */
@@ -1039,7 +1074,7 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool insecureHTTPParser, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
@@ -1093,7 +1128,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, insecureHTTPParser, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -1156,7 +1191,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, insecureHTTPParser, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

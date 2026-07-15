@@ -24,6 +24,7 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
   ) => void;

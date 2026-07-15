@@ -3681,31 +3681,35 @@ pub(super) fn server_set_app_flags_(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
+    insecure_http_parser: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
         return Err(global.throw(format_args!(
-            "Failed to set requireHostHeader: The 'this' value is not a Server."
+            "Failed to set server flags: The 'this' value is not a Server."
         )));
     }
 
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
-    } else {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
+    macro_rules! handle {
+        ($ty:ty) => {
+            if let Some(this) = server.as_::<$ty>() {
+                // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
+                unsafe { &mut *this }.set_flags(
+                    require_host_header,
+                    use_strict_method_validation,
+                    insecure_http_parser,
+                );
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
     }
-    Ok(JSValue::UNDEFINED)
+    handle!(HTTPServer);
+    handle!(HTTPSServer);
+    handle!(DebugHTTPServer);
+    handle!(DebugHTTPSServer);
+
+    Err(global.throw(format_args!(
+        "Failed to set server flags: The 'this' value is not a Server."
+    )))
 }
 
 pub(super) fn server_set_max_http_header_size_(
@@ -3755,6 +3759,7 @@ extern "C" fn server_set_app_flags_shim(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
+    insecure_http_parser: bool,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
@@ -3763,6 +3768,7 @@ extern "C" fn server_set_app_flags_shim(
             server,
             require_host_header,
             use_strict_method_validation,
+            insecure_http_parser,
         ),
     )
 }

@@ -2652,7 +2652,18 @@ declare module "bun" {
     root?: string; // project root
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
-    external?: string[];
+    /**
+     * Specifies which import paths are left unresolved in the output as
+     * external references to be resolved at runtime.
+     *
+     * - `string[]` (default `[]`): each entry is matched against the import
+     *   specifier; `*` is supported as a wildcard.
+     * - `false`: no module may be left external. Any import of a Node.js or
+     *   Bun builtin (e.g. `node:fs`, `fs`, `bun:sqlite`) that cannot be
+     *   bundled fails the build. Cannot be combined with
+     *   `packages: "external"`.
+     */
+    external?: string[] | false;
     /**
      * Control whether dynamic `import()`, `require()`, or `require.resolve()` specifiers (non-literal
      * arguments like `` `./locales/${lang}.json` ``) are allowed to pass through

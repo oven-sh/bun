@@ -3,6 +3,80 @@ import path, { dirname, join, resolve } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
+  for (const target of ["bun", "node"] as const) {
+    itBundled(`plugin/OnResolveSeesNodeBuiltins#${target}`, () => {
+      const resolved: string[] = [];
+      return {
+        target,
+        files: {
+          "index.ts": /* ts */ `
+            import fs from "node:fs";
+            import path from "path";
+            const net = require("net");
+            console.log(fs, path, net);
+          `,
+        },
+        plugins(builder) {
+          builder.onResolve({ filter: /^(node:fs|path|net)$/ }, args => {
+            resolved.push(args.path);
+            return undefined;
+          });
+        },
+        onAfterBundle(api) {
+          expect(resolved.sort()).toEqual(["net", "node:fs", "path"]);
+          // Falling through to default resolution keeps them external.
+          api.expectFile("out.js").toContain('require("net")');
+        },
+      };
+    });
+
+    itBundled(`plugin/OnResolveRedirectsNodeBuiltin#${target}`, () => {
+      return {
+        target,
+        files: {
+          "index.ts": /* ts */ `
+            import { readFileSync } from "node:fs";
+            console.log(readFileSync());
+          `,
+          "shim.ts": /* ts */ `
+            export const readFileSync = () => "shimmed!";
+          `,
+        },
+        plugins(builder) {
+          builder.onResolve({ filter: /^node:fs$/ }, args => {
+            return { path: join(dirname(args.importer), "shim.ts") };
+          });
+        },
+        run: { stdout: "shimmed!" },
+      };
+    });
+  }
+
+  itBundled("plugin/OnResolveBuiltinsUnmatchedFilter#bun", () => {
+    const resolved: string[] = [];
+    return {
+      target: "bun",
+      files: {
+        "index.ts": /* ts */ `
+          import fs from "node:fs";
+          import { foo } from "./local.ts";
+          console.log(fs, foo);
+        `,
+        "local.ts": `export const foo = 1;`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^\.\// }, args => {
+          resolved.push(args.path);
+          return undefined;
+        });
+      },
+      onAfterBundle(api) {
+        expect(resolved).toEqual(["./local.ts"]);
+        api.expectFile("out.js").toContain('from "fs"');
+      },
+    };
+  });
+
   const loadFixture = {
     "index.ts": /* ts */ `
       import { foo } from "./foo.magic";

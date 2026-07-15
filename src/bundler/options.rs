@@ -111,6 +111,15 @@ pub fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
+/// True for any specifier that names a Node.js or Bun builtin module (bare
+/// or prefixed). Used by the `external: false` build option.
+pub fn is_builtin_specifier(str: &[u8]) -> bool {
+    str == b"bun"
+        || str.starts_with(b"bun:")
+        || str.starts_with(b"node:")
+        || is_node_builtin(str)
+}
+
 const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
     (b"/bun:", b""),
     // (b"/src:", b""),
@@ -1257,6 +1266,7 @@ pub struct BundleOptions<'a> {
 
     pub trim_unused_imports: Option<bool>,
     pub mark_builtins_as_external: bool,
+    pub disallow_external: bool,
     pub server_components: bool,
     pub hot_module_reloading: bool,
     pub react_fast_refresh: bool,
@@ -1475,6 +1485,7 @@ impl<'a> BundleOptions<'a> {
             allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
             mark_builtins_as_external: self.mark_builtins_as_external,
+            disallow_external: self.disallow_external,
             server_components: self.server_components,
             hot_module_reloading: self.hot_module_reloading,
             react_fast_refresh: self.react_fast_refresh,
@@ -1770,6 +1781,7 @@ impl<'a> BundleOptions<'a> {
             allow_runtime: true,
             trim_unused_imports: None,
             mark_builtins_as_external: false,
+            disallow_external: false,
             server_components: false,
             hot_module_reloading: false,
             react_fast_refresh: false,

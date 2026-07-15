@@ -2208,6 +2208,39 @@ pub mod bv2_impl {
                 }
             }
 
+            if self.transpiler.options.disallow_external
+                && options::is_builtin_specifier(&import_record.specifier)
+            {
+                // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
+                let log: &mut bun_ast::Log = unsafe {
+                    bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+                        &import_record.source_file,
+                        target.bake_graph(),
+                    ))
+                };
+                let source: Option<&bun_ast::Source> = Some(
+                    &self.graph.input_files.items_source()
+                        [import_record.importer_source_index as usize],
+                );
+                bun_ast::Log::add_resolve_error_with_text_dupe(
+                    log,
+                    source,
+                    import_record.range,
+                    format_args!(
+                        "Cannot {} builtin module \"{}\" because 'external' is set to false",
+                        bstr::BStr::new(import_record.kind.error_label()),
+                        bstr::BStr::new(&import_record.specifier),
+                    ),
+                    &import_record.specifier,
+                    import_record.kind,
+                );
+                let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                    [import_record.importer_source_index as usize]
+                    .as_mut_slice()[import_record.import_record_index as usize];
+                record.path.is_disabled = true;
+                return;
+            }
+
             let mut had_busted_dir_cache = false;
             let resolve_result: _resolver::Result = loop {
                 // SAFETY: see `transpiler` note above.
@@ -5895,6 +5928,43 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                if self.enqueue_on_resolve_plugin_if_needed(
+                    source.index.0,
+                    import_record,
+                    source.path.text,
+                    i as u32,
+                    ctx.target,
+                ) {
+                    continue;
+                }
+
+                if self.transpiler.options.disallow_external
+                    && options::is_builtin_specifier(import_record.path.text)
+                {
+                    // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
+                    let log: &mut bun_ast::Log = unsafe {
+                        bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+                            source.path.text,
+                            ctx.target.bake_graph(),
+                        ))
+                    };
+                    bun_ast::Log::add_resolve_error_with_text_dupe(
+                        log,
+                        Some(source),
+                        import_record.range,
+                        format_args!(
+                            "Cannot {} builtin module \"{}\" because 'external' is set to false",
+                            bstr::BStr::new(import_record.kind.error_label()),
+                            bstr::BStr::new(&import_record.path.text),
+                        ),
+                        import_record.path.text,
+                        import_record.kind,
+                    );
+                    last_error = Some(Error::ModuleNotFound);
+                    import_record.path.is_disabled = true;
+                    continue;
+                }
+
                 if ctx.target.is_bun() {
                     if let Some(replacement) = bun_resolve_builtins::HardcodedModule::Alias::get(
                         import_record.path.text,
@@ -5947,16 +6017,6 @@ pub mod bv2_impl {
                     import_record
                         .flags
                         .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-                }
-
-                if self.enqueue_on_resolve_plugin_if_needed(
-                    source.index.0,
-                    import_record,
-                    source.path.text,
-                    i as u32,
-                    ctx.target,
-                ) {
-                    continue;
                 }
 
                 // borrowck — `transpiler_for_target` returns `&mut Transpiler`

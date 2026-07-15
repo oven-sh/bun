@@ -139,6 +139,7 @@ pub mod js_bundler {
         pub tree_shaking: Option<bool>,
         pub names: Names,
         pub external: StringSet,
+        pub disallow_external: bool,
         pub allow_unresolved: Option<StringSet>,
         pub source_map: options::SourceMapOption,
         pub public_path: OwnedString,
@@ -205,6 +206,7 @@ pub mod js_bundler {
                 tree_shaking: None,
                 names: Names::default(),
                 external: StringSet::default(),
+                disallow_external: false,
                 allow_unresolved: None,
                 source_map: options::SourceMapOption::None,
                 public_path: OwnedString::default(),
@@ -926,12 +928,24 @@ pub mod js_bundler {
                 drop(path);
             }
 
-            if let Some(externals) = config.get_own_array(global_this, "external")? {
-                let mut iter = externals.array_iterator(global_this)?;
-                while let Some(entry_point) = iter.next()? {
-                    let slice = entry_point.to_slice_or_null(global_this)?;
-                    this.external.insert(slice.slice())?;
-                    drop(slice);
+            if let Some(externals) =
+                config.get_own(global_this, &BunString::static_str("external"))?
+            {
+                if externals.is_boolean() {
+                    this.disallow_external = !externals.as_boolean();
+                } else if !externals.is_undefined_or_null() {
+                    if externals.is_cell() && externals.js_type().is_array() {
+                        let mut iter = externals.array_iterator(global_this)?;
+                        while let Some(entry_point) = iter.next()? {
+                            let slice = entry_point.to_slice_or_null(global_this)?;
+                            this.external.insert(slice.slice())?;
+                            drop(slice);
+                        }
+                    } else {
+                        return Err(global_this.throw_invalid_arguments(format_args!(
+                            "external must be an array of strings or false"
+                        )));
+                    }
                 }
             }
 
@@ -1255,6 +1269,12 @@ pub mod js_bundler {
                         compile.outfile.append_slice_exact(outfile)?;
                     }
                 }
+            }
+
+            if this.disallow_external && this.packages == options::PackagesOption::External {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "external: false cannot be combined with packages: \"external\""
+                )));
             }
 
             // ESM bytecode requires compile because module_info (import/export metadata)

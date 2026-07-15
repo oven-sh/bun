@@ -413,11 +413,41 @@ describe.concurrent("module tracing channels", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
     const events = JSON.parse(stdout).filter((e: any) => e.name.startsWith("tracing:module.require:"));
     expect(events).toEqual([
-      { name: "tracing:module.require:start", id: "./a.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: false },
-      { name: "tracing:module.require:end", id: "./a.cjs", parentFilename: "entry.mjs", hasResult: true, hasError: false },
-      { name: "tracing:module.require:start", id: "./missing.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: false },
-      { name: "tracing:module.require:error", id: "./missing.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: true },
-      { name: "tracing:module.require:end", id: "./missing.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: true },
+      {
+        name: "tracing:module.require:start",
+        id: "./a.cjs",
+        parentFilename: "entry.mjs",
+        hasResult: false,
+        hasError: false,
+      },
+      {
+        name: "tracing:module.require:end",
+        id: "./a.cjs",
+        parentFilename: "entry.mjs",
+        hasResult: true,
+        hasError: false,
+      },
+      {
+        name: "tracing:module.require:start",
+        id: "./missing.cjs",
+        parentFilename: "entry.mjs",
+        hasResult: false,
+        hasError: false,
+      },
+      {
+        name: "tracing:module.require:error",
+        id: "./missing.cjs",
+        parentFilename: "entry.mjs",
+        hasResult: false,
+        hasError: true,
+      },
+      {
+        name: "tracing:module.require:end",
+        id: "./missing.cjs",
+        parentFilename: "entry.mjs",
+        hasResult: false,
+        hasError: true,
+      },
     ]);
   });
 
@@ -439,13 +469,55 @@ describe.concurrent("module tracing channels", () => {
     expect(events).toEqual([
       { name: "tracing:module.import:start", url: "b.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
       { name: "tracing:module.import:end", url: "b.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
-      { name: "tracing:module.import:asyncStart", url: "b.mjs", parentURL: "entry.mjs", hasResult: true, hasError: false },
-      { name: "tracing:module.import:asyncEnd", url: "b.mjs", parentURL: "entry.mjs", hasResult: true, hasError: false },
-      { name: "tracing:module.import:start", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
-      { name: "tracing:module.import:end", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
-      { name: "tracing:module.import:error", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: true },
-      { name: "tracing:module.import:asyncStart", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: true },
-      { name: "tracing:module.import:asyncEnd", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: true },
+      {
+        name: "tracing:module.import:asyncStart",
+        url: "b.mjs",
+        parentURL: "entry.mjs",
+        hasResult: true,
+        hasError: false,
+      },
+      {
+        name: "tracing:module.import:asyncEnd",
+        url: "b.mjs",
+        parentURL: "entry.mjs",
+        hasResult: true,
+        hasError: false,
+      },
+      {
+        name: "tracing:module.import:start",
+        url: "missing.mjs",
+        parentURL: "entry.mjs",
+        hasResult: false,
+        hasError: false,
+      },
+      {
+        name: "tracing:module.import:end",
+        url: "missing.mjs",
+        parentURL: "entry.mjs",
+        hasResult: false,
+        hasError: false,
+      },
+      {
+        name: "tracing:module.import:error",
+        url: "missing.mjs",
+        parentURL: "entry.mjs",
+        hasResult: false,
+        hasError: true,
+      },
+      {
+        name: "tracing:module.import:asyncStart",
+        url: "missing.mjs",
+        parentURL: "entry.mjs",
+        hasResult: false,
+        hasError: true,
+      },
+      {
+        name: "tracing:module.import:asyncEnd",
+        url: "missing.mjs",
+        parentURL: "entry.mjs",
+        hasResult: false,
+        hasError: true,
+      },
     ]);
   });
 

@@ -418,9 +418,12 @@ declare module "bun" {
     credentials?: import("undici-types").RequestCredentials | undefined;
 
     /**
+     * Track file descriptors opened via `fs.open()` / `fs.openSync()` and
+     * close any that are still open when the Worker exits.
+     *
      * @default true
      */
-    // trackUnmanagedFds?: boolean;
+    trackUnmanagedFds?: boolean;
     // resourceLimits?: import("worker_threads").ResourceLimits;
 
     /**

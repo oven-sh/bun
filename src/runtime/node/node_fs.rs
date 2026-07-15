@@ -1175,6 +1175,10 @@ mod _async_tasks {
     impl FsReturn for FD {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
+            // Only `ret::Open` is `FD`, so this is the single JS-thread point
+            // where an fs.open/openSync fd reaches user code (sync, threadpool
+            // async, and Windows libuv async all converge here).
+            global.bun_vm().as_mut().add_unmanaged_fd(*self);
             Ok(crate::node::types::FdJsc::to_js(*self, global))
         }
     }
@@ -3602,6 +3606,10 @@ pub mod args {
         pub fn to_thread_safe(&self) {}
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Close> {
             let fd = FD::from_js_required(ctx, arguments)?;
+            // trackUnmanagedFds: user is releasing this fd, so drop it from the
+            // worker-exit sweep set regardless of whether the close itself
+            // later succeeds (matches Node, which untracks before uv_fs_close).
+            ctx.bun_vm().as_mut().remove_unmanaged_fd(fd);
             Ok(Close { fd })
         }
     }

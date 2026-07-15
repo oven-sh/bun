@@ -250,10 +250,12 @@ describe("Bun.Transpiler", () => {
       // "export abstract \n class" and "export declare \n class" fall through silently like esbuild.
       exp("export abstract\nclass Foo {}\nnew Foo", "abstract;\n\nclass Foo {\n}\nnew Foo;\n");
       exp("export declare\nclass Foo {}\nnew Foo", "declare;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("export declare\nlet x = 1\nuse(x)", "declare;\nlet x = 1;\nuse(x);\n");
       // Inside an ambient body the flag is propagated for body semantics, but the whole
       // block is erased regardless, so newline-split keywords in the body are harmless.
       exp("declare namespace N { abstract\nclass Foo {} }", "");
       exp("declare namespace N { declare\nlet x: number }", "");
+      exp('declare module "m" { abstract\n class Foo {} }', "");
       exp("declare global { abstract\nclass Foo {} }\nexport {}", "export {};\n");
 
       // Decorators before "declare"/"abstract" with a newline must still demand a class.

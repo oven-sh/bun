@@ -346,6 +346,29 @@ describe.concurrent("fetch-tls", () => {
     });
   }
 
+  // A fatal TLS protocol error (the peer answers the ClientHello with
+  // non-TLS bytes) is the other non-certificate handshake failure: uSockets
+  // reports it as the -71/"EPROTO" sentinel (ssl_dispatch_parked_reason),
+  // and it must surface as EPROTO like Node, not as a certificate error.
+  it("fetch reports EPROTO when the server speaks plain HTTP during the TLS handshake", async () => {
+    using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch: () => new Response("ok"),
+    });
+
+    let err: any;
+    try {
+      await fetch(`https://127.0.0.1:${server.port}/`, { keepalive: false });
+      expect.unreachable();
+    } catch (e) {
+      err = e;
+    }
+
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("EPROTO");
+  });
+
   it("fetch with checkServerIdentity failing should throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       try {

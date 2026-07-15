@@ -1042,6 +1042,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   _httpMessage;
   _secureEstablished = false;
   #pendingCallback = null;
+  #nativeBackpressure = false;
   constructor(server: Server, handle, encrypted) {
     super();
     this.server = server;
@@ -1081,19 +1082,25 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
         handle.ondrain = this.#onDrain.bind(this);
       } else {
         handle.ondata = undefined;
-        handle.ondrain = undefined;
+        // ondrain is left as-is: a prior socket.write() may have armed it
+        // (see _write) and still wants the native drain notification.
       }
     }
   }
   #onDrain() {
     const handle = this[kHandle];
     this[kBytesWritten] = handle ? (handle.response?.getBytesWritten?.() ?? handle.bytesWritten ?? 0) : 0;
+    this.#nativeBackpressure = false;
     const callback = this.#pendingCallback;
+    // Only a _write that actually deferred (callback set) has something
+    // waiting; skip the explicit emit when the Writable already set
+    // needDrain (afterWrite() emits 'drain' itself for >= HWM chunks).
+    const writableWillDrain = this._writableState?.needDrain;
     if (callback) {
       this.#pendingCallback = null;
       (callback as Function)();
+      if (!this.#nativeBackpressure && !writableWillDrain) this.emit("drain");
     }
-    this.emit("drain");
   }
   #onData(chunk, last) {
     if (chunk) {
@@ -1123,6 +1130,15 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   #onClose() {
     this[kHandle] = null;
     this.server?.[kTrackedConnections]?.delete(this);
+    // Settle a deferred _write callback so the Writable does not stall
+    // with kWriting set (and user write callbacks fire) when the socket
+    // closes before the native drain it was waiting for.
+    const pending = this.#pendingCallback;
+    if (pending) {
+      this.#pendingCallback = null;
+      this.#nativeBackpressure = false;
+      (pending as Function)(new ConnResetException("aborted"));
+    }
 
     // Node.js's `socketOnClose` → `abortIncoming()` only destroys requests
     // that are still in `state.incoming` — i.e. requests whose response has
@@ -1344,9 +1360,12 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     try {
       if (handle) {
         const flushed = handle.write(_chunk, _encoding);
-        if (!flushed && handle.ondrain) {
-          // Streaming mode (CONNECT tunnels): wait for the native drain
-          // callback before completing the write.
+        if (flushed === false) {
+          // AsyncSocket::write buffered the remainder alongside the response
+          // body; hold the Writable callback until the native drain so further
+          // socket.write() calls queue in the Duplex, not the native buffer.
+          this.#nativeBackpressure = true;
+          handle.ondrain ??= this.#onDrain.bind(this);
           this.#pendingCallback = _callback;
           return false;
         }
@@ -1356,6 +1375,14 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     }
     if (err) _callback(err);
     else _callback();
+  }
+
+  write(chunk, encoding?, callback?) {
+    // res.write bypasses this Duplex, so fold in the native socket's
+    // backpressure so the return value matches Node.js's net.Socket
+    // (where res.write and socket.write share one buffer).
+    const ret = super.write(chunk, encoding, callback);
+    return ret && !this.#nativeBackpressure;
   }
 
   pause() {

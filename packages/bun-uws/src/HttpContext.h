@@ -509,7 +509,10 @@ private:
         auto *httpContextData = getSocketContextDataS(s);
 
 
-        if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketDrain) {
+        /* Not just CONNECT: res.socket.write() shares this AsyncSocket buffer
+         * with the response body, so the node:http socket wrapper's pending
+         * _write callback completes once the buffer is empty. */
+        if (httpResponseData->socketData && httpContextData->onSocketDrain) {
             httpContextData->onSocketDrain(httpResponseData->socketData, SSL, (struct us_socket_t *) s);
         }
         /* Ask the developer to write data and return success (true) or failure (false), OR skip sending anything and return success (true). */

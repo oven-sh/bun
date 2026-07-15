@@ -1378,6 +1378,49 @@ extern "C"
     }
   }
 
+  // Raw write via the AsyncSocket buffer (ordered with, and drained by, the
+  // HTTP writable handler) instead of straight to the fd like us_socket_write.
+  // Returns true when backpressure is present after the call.
+  bool uws_async_socket_write(int ssl, us_socket_t *s, const char *data, size_t length)
+  {
+    // Uncork so prior response bytes in the cork buffer flush ahead of
+    // (and are not lost to a later shutdown racing) the raw bytes, then
+    // loop INT_MAX-sized chunks: AsyncSocket::write accepts each in full.
+    auto body = [&](auto *asyncSocket) {
+      auto [uncorked, bp0] = asyncSocket->uncork();
+      (void) uncorked;
+      bool backpressure = bp0;
+      do {
+        int len = (int) std::min(length, (size_t) INT_MAX);
+        auto [written, bp] = asyncSocket->write(data, len);
+        (void) written;
+        backpressure |= bp;
+        data += (size_t) len;
+        length -= (size_t) len;
+      } while (length > 0);
+      return backpressure || asyncSocket->getBufferedAmount() > 0;
+    };
+    return ssl ? body(reinterpret_cast<uWS::AsyncSocket<true> *>(s))
+               : body(reinterpret_cast<uWS::AsyncSocket<false> *>(s));
+  }
+
+  // Half-close once the AsyncSocket buffer is empty. Returns true when
+  // bytes remain buffered (shutdown deferred to the drain path); false
+  // when the FIN was sent.
+  bool uws_async_socket_end(int ssl, us_socket_t *s)
+  {
+    auto body = [](auto *asyncSocket) {
+      asyncSocket->uncork();
+      if (asyncSocket->getBufferedAmount() > 0) {
+        return true;
+      }
+      asyncSocket->shutdown();
+      return false;
+    };
+    return ssl ? body(reinterpret_cast<uWS::AsyncSocket<true> *>(s))
+               : body(reinterpret_cast<uWS::AsyncSocket<false> *>(s));
+  }
+
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length) nonnull_fn_decl;
 
   bool uws_res_write(int ssl, uws_res_r res, const char *data, size_t *length)

@@ -218,15 +218,15 @@ impl GarbageCollectionController {
     /// Hand this thread's empty mimalloc pages back to the arena, which schedules their purge
     /// and wakes the scavenger to do the madvise off this thread.
     ///
-    /// JSC's own hook cannot stand in for this. `Heap::didFinishCollection` fires
-    /// `scavengeThisThread`, but it runs under whichever `GCConductor` holds the conn --
-    /// `collectInCollectorThread` conducts async collections -- and `mi_theap_get_default()`
-    /// returns the CALLING thread's theap, so on that path it collects the collector's
-    /// near-empty one. It is also gated on `CollectionScope::Full`, and sustained load runs
-    /// eden for minutes. Here we are on the JS thread by construction.
+    /// This is the operation that demonstrably fixes the sustained-load ratchet: sampling
+    /// `bun:jsc` heapStats() once a second cures it, and the reason is not the GC people assumed
+    /// -- heapStats' `collectNow` is guarded by `heap.size() == 0` and never fires on a live
+    /// process. It is `mi_collect(false)` (BunJSCModule.h), which is exactly
+    /// `mi_theap_collect(default theap)`. So do it deliberately instead of as a side effect of
+    /// asking for statistics.
     ///
     /// Cheap enough to do per collection: `mi_theap_collect` walks the page queues and frees
-    /// empty pages, with no free-list hole scan, and the madvise is the scavenger's job.
+    /// empty pages, with no free-list hole scan -- that is `purge_holes`, a different function.
     #[inline]
     fn return_pages_to_arena() {
         if bun_core::USE_MIMALLOC {
@@ -240,11 +240,11 @@ impl GarbageCollectionController {
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
         let prev = self.gc_last_heap_size;
 
-        // The heap moved, so a collection freed JS objects and their mimalloc blocks with them.
-        // Eden does that far more often than full, and until the pages go back to the arena the
-        // scavenger cannot see them -- no arena-side purge knob reaches memory still parked in a
-        // theap's page queues.
-        if this_heap_size != prev {
+        // Only when the heap SHRANK: a collection actually reclaimed, so blocks were freed and
+        // pages may now be empty. `!=` fired on essentially every request -- `process_gc_timer`
+        // is also called from `Server::on_request_complete` and a busy server's heap is always
+        // moving -- which measured -4.5% rps on fastify for nothing, since no collection had run.
+        if this_heap_size < prev {
             Self::return_pages_to_arena();
         }
 

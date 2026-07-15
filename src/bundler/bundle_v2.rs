@@ -1718,22 +1718,18 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         fn fail_disallowed_external(
             &mut self,
-            importer_source_index: u32,
+            source: &bun_ast::Source,
             bake_graph: bake::Graph,
             range: bun_ast::Range,
             kind: ImportKind,
             specifier: &[u8],
         ) {
-            let source: &bun_ast::Source =
-                &self.graph.input_files.items_source()[importer_source_index as usize];
-            // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph.input_files`.
+            // SAFETY: log lives in DevServer/transpiler, disjoint from the caller-owned `source`.
             let log: &mut bun_ast::Log = unsafe {
                 bun_ptr::detach_lifetime_mut(
                     self.log_for_resolution_failures(source.path.text, bake_graph),
                 )
             };
-            let source: &bun_ast::Source =
-                &self.graph.input_files.items_source()[importer_source_index as usize];
             bun_ast::Log::add_resolve_error_with_text_dupe(
                 log,
                 Some(source),
@@ -1746,6 +1742,24 @@ pub mod bv2_impl {
                 specifier,
                 kind,
             );
+        }
+
+        fn fail_disallowed_external_from_graph(
+            &mut self,
+            importer_source_index: u32,
+            bake_graph: bake::Graph,
+            range: bun_ast::Range,
+            kind: ImportKind,
+            specifier: &[u8],
+        ) {
+            // SAFETY: `input_files` is not mutated across the `fail_disallowed_external`
+            // call; detach so `&mut self` reborrow below type-checks.
+            let source: &bun_ast::Source = unsafe {
+                &*std::ptr::from_ref(
+                    &self.graph.input_files.items_source()[importer_source_index as usize],
+                )
+            };
+            self.fail_disallowed_external(source, bake_graph, range, kind, specifier);
         }
 
         /// By calling this function, it implies that the returned log *will* be
@@ -2296,7 +2310,7 @@ pub mod bv2_impl {
                 if mark_bun_builtin_external(record, rewrite_jest_for_tests) {
                     if disallow_external {
                         record.path.is_disabled = true;
-                        self.fail_disallowed_external(
+                        self.fail_disallowed_external_from_graph(
                             import_record.importer_source_index,
                             target.bake_graph(),
                             import_record.range,
@@ -2469,12 +2483,12 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
-                if self.transpiler.options.disallow_external {
+                if self.transpiler.options.disallow_external && !import_record.kind.is_from_css() {
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                         [import_record.importer_source_index as usize]
                         .as_mut_slice()[import_record.import_record_index as usize];
                     record.path.is_disabled = true;
-                    self.fail_disallowed_external(
+                    self.fail_disallowed_external_from_graph(
                         import_record.importer_source_index,
                         target.bake_graph(),
                         import_record.range,
@@ -4702,7 +4716,7 @@ pub mod bv2_impl {
                                 .as_mut_slice()
                                 [resolve.import_record.import_record_index as usize];
                         record.path.is_disabled = true;
-                        this.fail_disallowed_external(
+                        this.fail_disallowed_external_from_graph(
                             resolve.import_record.importer_source_index,
                             resolve.import_record.original_target.bake_graph(),
                             resolve.import_record.range,
@@ -6029,6 +6043,32 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                // By default, we treat .sqlite files as external.
+                if import_record.loader == Some(Loader::Sqlite) {
+                    if disallow_external {
+                        self.fail_disallowed_external(
+                            source,
+                            ctx.target.bake_graph(),
+                            import_record.range,
+                            import_record.kind,
+                            import_record.original_path,
+                        );
+                        last_error = Some(Error::ModuleNotFound);
+                        import_record.path.is_disabled = true;
+                        continue;
+                    }
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                    continue;
+                }
+
+                if import_record.loader == Some(Loader::SqliteEmbedded) {
+                    import_record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+                }
+
                 if self.enqueue_on_resolve_plugin_if_needed(
                     source.index.0,
                     import_record,
@@ -6047,7 +6087,7 @@ pub mod bv2_impl {
                 {
                     if disallow_external {
                         self.fail_disallowed_external(
-                            source.index.0,
+                            source,
                             ctx.target.bake_graph(),
                             import_record.range,
                             import_record.kind,
@@ -6057,20 +6097,6 @@ pub mod bv2_impl {
                         import_record.path.is_disabled = true;
                     }
                     continue;
-                }
-
-                // By default, we treat .sqlite files as external.
-                if import_record.loader == Some(Loader::Sqlite) {
-                    import_record
-                        .flags
-                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-                    continue;
-                }
-
-                if import_record.loader == Some(Loader::SqliteEmbedded) {
-                    import_record
-                        .flags
-                        .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
                 }
 
                 // borrowck — `transpiler_for_target` returns `&mut Transpiler`
@@ -6389,9 +6415,9 @@ pub mod bv2_impl {
                 };
 
                 if resolve_result.flags.is_external() {
-                    if disallow_external {
+                    if disallow_external && !import_record.kind.is_from_css() {
                         self.fail_disallowed_external(
-                            source.index.0,
+                            source,
                             ctx.target.bake_graph(),
                             import_record.range,
                             import_record.kind,

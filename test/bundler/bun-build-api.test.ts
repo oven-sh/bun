@@ -1496,7 +1496,7 @@ describe("Bun.build external: false", () => {
   ];
 
   test.each(cases)("target $target rejects $specifier", async ({ target, specifier, code, files }) => {
-    using dir = tempDir("external-false", { "entry.js": code, ...files });
+    using dir = tempDir("external-false", { "entry.js": `// line 1\n${code}`, ...files });
     const result = await buildNoThrow({
       entrypoints: [join(String(dir), "entry.js")],
       target,
@@ -1505,6 +1505,7 @@ describe("Bun.build external: false", () => {
     const logs = result.logs.map(m => ({
       message: String((m as any).message ?? m),
       file: (m as any).position?.file ?? "",
+      line: (m as any).position?.line,
     }));
     expect({ success: result.success, logs }).toEqual({
       success: false,
@@ -1512,9 +1513,44 @@ describe("Bun.build external: false", () => {
         {
           message: expect.stringContaining(`"${specifier}" because 'external' is set to false`),
           file: expect.stringContaining("entry.js"),
+          line: 2,
         },
       ],
     });
+  });
+
+  test("rejects a runtime-external sqlite import", async () => {
+    using dir = tempDir("external-false-sqlite", {
+      "entry.js": 'import db from "./data.db" with { type: "sqlite" }; console.log(db);',
+      "data.db": "",
+    });
+    const result = await buildNoThrow({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "bun",
+      external: false,
+    });
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(m => String((m as any).message ?? m));
+    expect(messages.join("\n")).toContain("\"./data.db\" because 'external' is set to false");
+  });
+
+  test("CSS url() references are not module externals", async () => {
+    using dir = tempDir("external-false-css", {
+      "entry.css":
+        ".a { fill: url(#f); }\n" +
+        ".b { background: url(data:image/png;base64,AA==); }\n" +
+        ".c { background: url(https://cdn.example/x.png); }\n",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.css")],
+      target: "bun",
+      external: false,
+    });
+    expect(result.success).toBe(true);
+    const out = await result.outputs[0].text();
+    expect(out).toContain("#f");
+    expect(out).toContain("data:image/png;base64,AA==");
+    expect(out).toContain("https://cdn.example/x.png");
   });
 
   test("target browser bundles polyfillable builtins", async () => {

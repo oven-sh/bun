@@ -3,10 +3,7 @@ import { isLinux, tempDirWithFiles } from "harness";
 import { chmodSync, closeSync, fstatSync, lstatSync, openSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// OHOS (HarmonyOS) is detected as Linux but its filesystem doesn't support birthtime (statx returns 0).
-const isOHOS = process.platform === "linux" && process.arch === "aarch64" && process.release.sourceUrl?.includes("ohos");
-
-describe.skipIf(!isLinux || isOHOS)("birthtime", () => {
+describe.skipIf(!isLinux)("birthtime", () => {
   it("should return non-zero birthtime on Linux", () => {
     const dir = tempDirWithFiles("birthtime-test", {
       "test.txt": "initial content",

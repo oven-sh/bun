@@ -172,18 +172,8 @@ pub mod lib {
             // SAFETY: self came from archive_read_new().
             unsafe { archive_read_close(self.as_mut_ptr()) }
         }
-        /// Frees the handle via `archive_read_free`, which destroys the
-        /// archive (and its error string) even when it reports an error:
-        /// the handle is gone on every return path, so the returned
-        /// [`Result`] carries no retrievable detail.
-        ///
-        /// # Safety
-        /// `self` must be a live handle from [`Archive::read_new`] that no
-        /// other owner frees (in particular not a [`ReadArchive`], whose
-        /// `Drop` frees it again), and it must not be used in any way after
-        /// this call.
-        pub unsafe fn read_free(&self) -> Result {
-            // SAFETY: caller guarantees this is the handle's final use.
+        pub fn read_free(&self) -> Result {
+            // SAFETY: self came from archive_read_new(); not used after this.
             unsafe { archive_read_free(self.as_mut_ptr()) }
         }
         pub fn read_support_format_tar(&self) -> Result {
@@ -380,18 +370,8 @@ pub mod lib {
             // SAFETY: FFI call with no preconditions.
             unsafe { archive_write_new() }
         }
-        /// Frees the handle via `archive_write_free`, which destroys the
-        /// archive (and its error string) even when it reports an error:
-        /// the handle is gone on every return path, so the returned
-        /// [`Result`] carries no retrievable detail.
-        ///
-        /// # Safety
-        /// `self` must be a live handle from [`Archive::write_new`] that no
-        /// other owner frees (in particular not a [`WriteArchive`], whose
-        /// `Drop` frees it again), and it must not be used in any way after
-        /// this call.
-        pub unsafe fn write_free(&self) -> Result {
-            // SAFETY: caller guarantees this is the handle's final use.
+        pub fn write_free(&self) -> Result {
+            // SAFETY: self came from archive_write_new(); not used after this.
             unsafe { archive_write_free(self.as_mut_ptr()) }
         }
         pub fn write_close(&self) -> Result {
@@ -489,16 +469,8 @@ pub mod lib {
             // SAFETY: `archive` is a live handle (opaque_ffi! `&self → *mut Self`).
             unsafe { archive_entry_new2(archive.as_mut_ptr()) }
         }
-        /// Frees the entry via `archive_entry_free`.
-        ///
-        /// # Safety
-        /// `self` must be an entry from [`Entry::new`] / [`Entry::new2`]
-        /// that no other owner frees (in particular not an [`OwnedEntry`],
-        /// whose `Drop` frees it again, and not an archive-owned entry from
-        /// `read_next_header`, which libarchive frees itself), and it must
-        /// not be used in any way after this call.
-        pub unsafe fn free(&self) {
-            // SAFETY: caller guarantees this is the entry's final use.
+        pub fn free(&self) {
+            // SAFETY: self came from Entry::new(); not used after this.
             unsafe { archive_entry_free(self.as_mut_ptr()) }
         }
         pub fn clear(&self) -> *mut Entry {
@@ -782,13 +754,12 @@ pub mod lib {
                 }
                 _ => {}
             }
-            // `archive_read_free` destroys the handle and its error string
-            // even when it reports an error, so a failure here has nothing
-            // to report and no handle left to hand to the caller; real
-            // errors surface through `read_close` above.
-            // SAFETY: `close` consumes `self` and nothing else frees
-            // `self.archive`, so this is the handle's final use.
-            let _ = unsafe { a.read_free() };
+            match a.read_free() {
+                Result::Failed | Result::Fatal | Result::Warn => {
+                    return IteratorResult::init_err(self.archive, b"failed to free archive read");
+                }
+                _ => {}
+            }
             IteratorResult::init_res(())
         }
     }
@@ -1092,8 +1063,7 @@ pub mod lib {
                 }
                 _ => {}
             }
-            // `read_free` is `unsafe` on OHOS (matches upstream's internal pattern).
-            match unsafe { a.read_free() } {
+            match a.read_free() {
                 Result::Failed | Result::Fatal | Result::Warn => {
                     return Err(IteratorError {
                         archive: self.archive,
@@ -1255,7 +1225,7 @@ impl BufferReadStream {
         let pos = isize::try_from(this.pos).expect("int cast");
 
         let proposed = pos + isize::try_from(offset).expect("int cast");
-        let new_pos = proposed.max(0).min(buflen.saturating_sub(1).max(0));
+        let new_pos = proposed.max(0).min(buflen - 1);
         this.pos = usize::try_from(new_pos).expect("int cast");
         (new_pos - pos) as lib::la_int64_t
     }
@@ -1286,17 +1256,17 @@ impl BufferReadStream {
         };
         match whence {
             Seek::Current => {
-                let new_pos = (pos + offset).min(buflen.saturating_sub(1).max(0)).max(0);
+                let new_pos = (pos + offset).min(buflen - 1).max(0);
                 this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
             Seek::End => {
-                let new_pos = buflen.saturating_sub(offset).max(0).min(buflen).max(0);
+                let new_pos = (buflen - offset).min(buflen).max(0);
                 this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
             Seek::Set => {
-                let new_pos = offset.min(buflen.saturating_sub(1).max(0)).max(0);
+                let new_pos = offset.min(buflen - 1).max(0);
                 this.pos = usize::try_from(new_pos).expect("int cast");
                 new_pos as lib::la_int64_t
             }
@@ -1338,9 +1308,7 @@ impl BufferReadStream {
 impl Drop for BufferReadStream {
     fn drop(&mut self) {
         let _ = self.archive().read_close();
-        // SAFETY: `self.archive` came from `Archive::read_new()` in `init`,
-        // is owned solely by this stream, and this is its final use.
-        let _ = unsafe { self.archive().read_free() };
+        let _ = self.archive().read_free();
     }
 }
 
@@ -1685,10 +1653,7 @@ impl Archiver {
                                     break 'brk __pathname;
                                 }
 
-                                let index = match __pathname.iter().position(|&b| b == SEP) {
-                                    Some(i) => i,
-                                    None => continue 'loop_,
-                                };
+                                let index = __pathname.iter().position(|&b| b == SEP).unwrap();
                                 break 'brk &__pathname[..index];
                             };
                             let mut temp_buf = [0u8; 1024];
@@ -2160,7 +2125,8 @@ impl Archiver {
                                     if A::HAS_APPEND_MUTABLE {
                                         let result = ctx_
                                             .all_files
-                                            .get_or_put_adapted(&h, &archiver::U64Context)?;
+                                            .get_or_put_adapted(&h, &archiver::U64Context)
+                                            .expect("unreachable");
                                         if !result.found_existing {
                                             *result.value_ptr = appender
                                                 .append_mutable(path_slice)?

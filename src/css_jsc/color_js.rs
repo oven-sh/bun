@@ -300,8 +300,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                 'brk2: {
                     if a_value.is_number() {
+                        // CSS spec says to clamp values to their valid range so we'll respect that here
                         break 'brk2 Some(
-                            u8::try_from(((a_value.as_number() * 255.0) as i64).rem_euclid(256))
+                            u8::try_from(((a_value.as_number() * 255.0) as i64).clamp(0, 255))
                                 .unwrap(),
                         );
                     }

@@ -16,7 +16,7 @@ import {
   rmSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isCI, isDebug, isOhos } from "harness";
+import { bunEnv, bunExe, isCI, isDebug } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 import { SourceMapConsumer } from "source-map";
@@ -1902,35 +1902,7 @@ export function itBundled(
     }
   }
 
-  // OHOS: known-broken bundler tests that enter infinite loops (5000ms timeout)
-  const OHOS_SKIP_PATTERNS = [
-    "splitting/SharedES6IntoES6",
-    "splitting/MissingLazyExport",
-    "splitting/DynamicImportOutsideSourceTreeESBuildIssue264",
-    "splitting/SideEffectsWithoutDependencies",
-    "splitting/AssignToLocal",
-    "splitting/CrossChunkAssignmentDependencies",
-    "splitting/CrossChunkAssignmentDependenciesRecursive",
-    "dce/MultipleDeclarationTreeShaking",
-    "dce/MultipleDeclarationTreeShakingMinifySyntax",
-    "default/ConditionalRequire",
-    "default/ConditionalImport",
-    "default/AvoidTDZNoBundle",
-    "default/DefineImportMeta",
-    "default/DefineImportMetaES5",
-    "default/DefineInfiniteLoopESBuildIssue2407",
-    "importstar/ImportNamespaceUndefinedPropertyEmptyFile",
-    "importstar/ImportNamespaceUndefinedPropertySideEffectFreeFile",
-    "naming/WithPathTraversal",
-    "ts/EnumTreeShaking",
-    "ts/SiblingEnum",
-    "npm/LodashES",
-  ];
-  const isOhosKnownDeadlock = isOhos && OHOS_SKIP_PATTERNS.includes(id);
-
   if (opts.todo && !FILTER) {
-    it.todo(id, () => expectBundled(id, opts as any));
-  } else if (isOhosKnownDeadlock && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
   } else {
     // backend=api uses process.chdir and a module-global configRef, so it

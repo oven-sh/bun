@@ -897,9 +897,7 @@ impl Value {
                 locked.readable = webcore::readable_stream::Strong::init(
                     ReadableStream {
                         ptr: webcore::readable_stream::Source::Bytes(context_ptr),
-                        // SAFETY: `reader` is the fresh heap allocation from
-                        // `NewSource::new_mut` above; no wrapper exists yet.
-                        value: unsafe { reader.to_readable_stream(global_this) }?,
+                        value: reader.to_readable_stream(global_this)?,
                     },
                     global_this,
                 );
@@ -1169,9 +1167,7 @@ impl Value {
                         if !blob.content_type_was_set.get() && blob.store.get().is_some() {
                             set_blob_content_type(blob, bun_http_types::MimeType::TEXT);
                         }
-                        // SAFETY: `blob` is the fresh `Blob::new` heap
-                        // allocation from above; no wrapper exists yet.
-                        promise.resolve(global, unsafe { blob.to_js(global) })?;
+                        promise.resolve(global, blob.to_js(global))?;
                     }
                 }
                 promise_.unprotect();
@@ -1564,9 +1560,7 @@ impl Value {
         locked.readable = webcore::readable_stream::Strong::init(
             ReadableStream {
                 ptr: webcore::readable_stream::Source::Bytes(context_ptr),
-                // SAFETY: `reader` is the fresh heap allocation from
-                // `NewSource::new_mut` above; no wrapper exists yet.
-                value: unsafe { reader.to_readable_stream(global_this) }?,
+                value: reader.to_readable_stream(global_this)?,
             },
             global_this,
         );
@@ -2202,9 +2196,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
         Ok(JSPromise::resolved_promise_value(
             global_object,
-            // SAFETY: `blob` is the fresh `Blob::new` heap allocation from
-            // above; no wrapper exists yet.
-            unsafe { blob.to_js(global_object) },
+            blob.to_js(global_object),
         ))
     }
 

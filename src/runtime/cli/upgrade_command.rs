@@ -106,12 +106,10 @@ impl Version {
     };
     pub const TRIPLET: &'static str =
         const_format::concatcp!(Version::PLATFORM_LABEL, "-", Version::ARCH_LABEL);
-    const SUFFIX_ABI: &'static str = if Environment::IS_OHOS {
-        "-ohos"
+    const SUFFIX_ABI: &'static str = if Environment::IS_MUSL {
+        "-musl"
     } else if Environment::IS_ANDROID {
         "-android"
-    } else if Environment::IS_MUSL {
-        "-musl"
     } else {
         ""
     };

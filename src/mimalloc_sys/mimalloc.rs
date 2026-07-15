@@ -53,6 +53,10 @@ unsafe extern "C" {
     pub fn mi_register_error(fun: core::option::Option<mi_error_fun>, arg: *mut c_void);
     /// No preconditions.
     pub safe fn mi_collect(force: bool);
+    /// Call when a thread goes idle: collects this thread's pending frees, discards the
+    /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
+    /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
+    pub safe fn mi_on_thread_idle();
     /// No preconditions.
     pub safe fn mi_version() -> c_int;
     /// No preconditions.

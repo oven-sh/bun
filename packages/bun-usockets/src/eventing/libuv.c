@@ -211,9 +211,20 @@ void us_loop_free(struct us_loop_t *loop) {
   free(loop);
 }
 
+extern void Bun__JSC_onBeforeWait(void *jsc_vm, uint64_t now_ns);
+
 void us_loop_run(struct us_loop_t *loop) {
   us_loop_integrate(loop);
   uv_update_time(loop->uv_loop);
+
+  /* UV_RUN_ONCE may block in the poll phase (pending callbacks dispatch
+   * first), making this the JS thread's park hook, the counterpart of
+   * us_loop_run_bun_tick's. jsc_vm is only set on the JS thread's loop. */
+  if (loop->data.jsc_vm) {
+    /* uv_update_time() above just refreshed libuv's cached monotonic clock, so
+     * uv_now() reads that cache rather than taking the clock again. */
+    Bun__JSC_onBeforeWait(loop->data.jsc_vm, (uint64_t) uv_now(loop->uv_loop) * 1000000ULL);
+  }
 
   uv_run(loop->uv_loop, UV_RUN_ONCE);
 }

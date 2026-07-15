@@ -1,7 +1,6 @@
 import { serve } from "bun";
 import { describe, expect, test } from "bun:test";
 import { tmpdirSync } from "../../../harness";
-import { rmSync } from "fs";
 
 const defaultHostname = "localhost";
 
@@ -31,37 +30,34 @@ describe("Bun.serve basic options", () => {
 });
 
 describe("unix socket", () => {
-  const tmp = tmpdirSync();
   const permutations = [
     {
-      unix: tmp + "/bun-serve-args-" + Math.random().toString(32).slice(2, 15) + ".sock",
+      unix: Math.random().toString(32).slice(2, 15) + ".sock",
       hostname: "",
     },
     {
-      unix: tmp + "/bun-serve-args-" + Math.random().toString(32).slice(2, 15) + ".sock",
+      unix: Math.random().toString(32).slice(2, 15) + ".sock",
       hostname: undefined,
     },
     {
-      unix: tmp + "/bun-serve-args-" + Math.random().toString(32).slice(2, 15) + ".sock",
+      unix: Math.random().toString(32).slice(2, 15) + ".sock",
       hostname: null,
     },
     {
-      unix: Buffer.from(tmp + "/bun-serve-args-" + Math.random().toString(32).slice(2, 15) + ".sock"),
+      unix: Buffer.from(Math.random().toString(32).slice(2, 15) + ".sock"),
       hostname: null,
     },
     {
-      unix: Buffer.from(tmp + "/bun-serve-args-" + Math.random().toString(32).slice(2, 15) + ".sock"),
+      unix: Buffer.from(Math.random().toString(32).slice(2, 15) + ".sock"),
       hostname: Buffer.from(""),
     },
   ] as const;
 
   for (const { unix, hostname } of permutations) {
     test(`unix: ${unix} and hostname: ${hostname}`, () => {
-      const sock = unix + "";
-      try { rmSync(sock); } catch {}
       using server = serve({
         // @ts-expect-error - Testing invalid combination
-        unix: sock,
+        unix,
         // @ts-expect-error - Testing invalid combination
         hostname,
         port: 0,
@@ -70,13 +66,7 @@ describe("unix socket", () => {
         },
       });
       // @ts-expect-error - Testing invalid property
-      const addr = server.address + "";
-      // On OHOS, relative unix socket paths are prefixed with TMPDIR.
-      if (process.platform === "ohos") {
-        expect(addr).toEndWith(sock);
-      } else {
-        expect(addr).toBe(sock);
-      }
+      expect(server.address + "").toBe(unix + "");
       expect(server.port).toBeUndefined();
       expect(server.hostname).toBeUndefined();
       server.stop();

@@ -85,7 +85,8 @@ NapiClass* NapiClass::create(VM& vm, napi_env env, WTF::String name,
     napi_callback constructor,
     void* data,
     size_t property_count,
-    const napi_property_descriptor* properties)
+    const napi_property_descriptor* properties,
+    napi_status* propertyStatus)
 {
     NativeExecutable* executable = vm.getHostFunction(
         // for normal call
@@ -95,11 +96,14 @@ NapiClass* NapiClass::create(VM& vm, napi_env env, WTF::String name,
         NapiClass_ConstructorFunction<true>, 0, name);
     Structure* structure = env->globalObject()->NapiClassStructure();
     NapiClass* napiClass = new (NotNull, allocateCell<NapiClass>(vm)) NapiClass(vm, executable, env, structure, data);
-    napiClass->finishCreation(vm, name, constructor, data, property_count, properties);
+    napi_status status = napiClass->finishCreation(vm, name, constructor, data, property_count, properties);
+    if (propertyStatus) {
+        *propertyStatus = status;
+    }
     return napiClass;
 }
 
-void NapiClass::finishCreation(VM& vm, const String& name, napi_callback constructor,
+napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback constructor,
     void* data,
     size_t property_count,
     const napi_property_descriptor* properties)
@@ -115,22 +119,27 @@ void NapiClass::finishCreation(VM& vm, const String& name, napi_callback constru
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto env = m_env;
+    napi_status result = napi_ok;
 
     for (size_t i = 0; i < property_count; i++) {
         const napi_property_descriptor& property = properties[i];
 
-        if (property.attributes & napi_static) {
-            Napi::defineProperty(env, this, property, true, throwScope);
-        } else {
-            Napi::defineProperty(env, prototype, property, false, throwScope);
-        }
+        JSC::JSObject* target = (property.attributes & napi_static) ? static_cast<JSC::JSObject*>(this) : prototype;
+        napi_status status = Napi::defineProperty(env, target, property, throwScope);
 
-        if (throwScope.exception())
+        if (throwScope.exception()) {
+            result = napi_pending_exception;
             break;
+        }
+        if (status != napi_ok) {
+            result = status;
+            break;
+        }
     }
 
     this->putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | 0);
     prototype->putDirect(vm, vm.propertyNames->constructor, this, JSC::PropertyAttribute::DontEnum | 0);
+    return result;
 }
 
 const ClassInfo NapiClass::s_info = { "Function"_s, &NapiClass::Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NapiClass) };

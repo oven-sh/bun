@@ -6,7 +6,7 @@
 //! `bun_threading::{Condvar, Mutex, WorkPool}`, `bun_output` macros.
 
 #[path = "napi_body.rs"]
-mod napi_body;
+pub(crate) mod napi_body;
 pub use napi_body::{
     NapiFinalizerTask, ThreadSafeFunction, fix_dead_code_elimination, napi_async_work,
 };

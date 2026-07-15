@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isOhos, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -594,9 +594,7 @@ describe("bundler", () => {
   for (const additionalOptions of additionalOptionsIters) {
     const { bytecode = false, format, minify = false } = additionalOptions;
     const NODE_ENV = minify ? "'production'" : undefined;
-    // OHOS: registry returns corrupted npm data, skip ReactSSR install tests
-    const testFn = isOhos ? itBundled.skip : itBundled;
-    testFn("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
+    itBundled("compile/ReactSSR" + (bytecode ? "+bytecode" : "") + "+" + format + (minify ? "+minify" : ""), {
       install: ["react@19.2.0-canary-b94603b9-20250513", "react-dom@19.2.0-canary-b94603b9-20250513"],
       format,
       minifySyntax: minify,

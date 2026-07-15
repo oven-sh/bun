@@ -209,6 +209,96 @@ static napi_value perform_get(const Napi::CallbackInfo &info) {
   }
 }
 
+static napi_value define_properties_getter(napi_env env,
+                                           napi_callback_info info) {
+  napi_value result;
+  napi_create_int32(env, 123, &result);
+  return result;
+}
+
+static napi_value define_properties_setter(napi_env env,
+                                           napi_callback_info info) {
+  return nullptr;
+}
+
+static napi_value define_properties_method(napi_env env,
+                                           napi_callback_info info) {
+  napi_value result;
+  napi_create_int32(env, 456, &result);
+  return result;
+}
+
+// define_properties(target, kind, name, isClass)
+// kind: "value" | "getter" | "setter" | "accessor" | "method"
+// name: if undefined, utf8name "k" is used; otherwise the napi_value itself is
+//       passed as the descriptor's name (any type).
+// isClass: if true, passes the descriptor to napi_define_class instead of
+//          napi_define_properties (target is ignored).
+// Returns { status, pending } where status is the napi_status returned and
+// pending is whether an exception was left pending.
+static napi_value define_properties(const Napi::CallbackInfo &info) {
+  napi_env env = info.Env();
+  napi_value target = info[0];
+  std::string kind = info[1].As<Napi::String>().Utf8Value();
+  Napi::Value name_arg = info[2];
+
+  napi_value js_value = nullptr;
+  NODE_API_CALL(env, napi_create_int32(env, 42, &js_value));
+
+  napi_property_descriptor desc = {};
+  desc.attributes = napi_default;
+  if (name_arg.IsUndefined()) {
+    desc.utf8name = "k";
+  } else if (name_arg.IsNull()) {
+    desc.utf8name = "\x80"; // lone continuation byte: invalid UTF-8
+  } else {
+    desc.name = name_arg;
+  }
+  if (kind == "value") {
+    desc.value = js_value;
+  } else if (kind == "getter") {
+    desc.getter = define_properties_getter;
+  } else if (kind == "setter") {
+    desc.setter = define_properties_setter;
+  } else if (kind == "accessor") {
+    desc.getter = define_properties_getter;
+    desc.setter = define_properties_setter;
+  } else if (kind == "method") {
+    desc.method = define_properties_method;
+  } else {
+    napi_throw_error(env, nullptr, "unknown kind");
+    return nullptr;
+  }
+
+  napi_status status;
+  bool is_class = false;
+  napi_get_value_bool(env, info[3], &is_class);
+  if (is_class) {
+    napi_value cls = nullptr;
+    status = napi_define_class(env, "C", NAPI_AUTO_LENGTH,
+                               define_properties_method, nullptr, 1, &desc,
+                               &cls);
+  } else {
+    status = napi_define_properties(env, target, 1, &desc);
+  }
+
+  bool pending = false;
+  napi_is_exception_pending(env, &pending);
+  if (pending) {
+    napi_value exc;
+    napi_get_and_clear_last_exception(env, &exc);
+  }
+
+  napi_value result, js_status, js_pending;
+  NODE_API_CALL(env, napi_create_object(env, &result));
+  NODE_API_CALL(env, napi_create_int32(env, (int32_t)status, &js_status));
+  NODE_API_CALL(env, napi_get_boolean(env, pending, &js_pending));
+  NODE_API_CALL(env, napi_set_named_property(env, result, "status", js_status));
+  NODE_API_CALL(env,
+                napi_set_named_property(env, result, "pending", js_pending));
+  return result;
+}
+
 // perform_set(object, key, value)
 static napi_value perform_set(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
@@ -523,6 +613,7 @@ void register_js_test_helpers(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, call_and_get_exception);
   REGISTER_FUNCTION(env, exports, perform_get);
   REGISTER_FUNCTION(env, exports, perform_set);
+  REGISTER_FUNCTION(env, exports, define_properties);
   REGISTER_FUNCTION(env, exports, perform_instanceof);
   REGISTER_FUNCTION(env, exports, throw_error);
   REGISTER_FUNCTION(env, exports, create_and_throw_error);

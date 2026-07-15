@@ -49,7 +49,53 @@ describe("AsyncLocalStorage", () => {
     expect(s4.getStore()).toBe("d4");
   });
 
-  // The Object.is short-circuit must still clear #disabled so the NEXT run()
+  // NaN is a legal store value in Node; === cannot compare it.
+  // Verified against Node v26.3.0.
+  test("NaN is usable as a store value and as defaultValue", () => {
+    const s = new AsyncLocalStorage();
+    expect(s.run(NaN, () => s.getStore())).toBeNaN();
+
+    const withDefault = new AsyncLocalStorage({ defaultValue: NaN });
+    expect(withDefault.run("x", () => 42)).toBe(42);
+    expect(withDefault.getStore()).toBeNaN();
+
+    const other = new AsyncLocalStorage();
+    const s2 = new AsyncLocalStorage();
+    try {
+      other.enterWith("keep");
+      s2.enterWith(NaN);
+      expect(s2.getStore()).toBeNaN();
+      expect(other.getStore()).toBe("keep");
+    } finally {
+      // enterWith() is not scoped: splice both back out so later tests still
+      // start from an empty context.
+      s2.disable();
+      other.disable();
+    }
+  });
+
+  // Node compares stores with the primordial ObjectIs, which userland cannot
+  // reach. Subprocess: patches a global. Verified against Node v26.3.0.
+  test("run() is unaffected by a userland Object.is patch", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `Object.is = () => true;
+         const { AsyncLocalStorage } = require("async_hooks");
+         const s = new AsyncLocalStorage();
+         console.log(s.run("v", () => s.getStore()));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "v", exitCode: 0 });
+    expect(stderr).not.toContain("AssertionError");
+  });
+
+  // The sameValue short-circuit must still clear #disabled so the NEXT run()
   // captures wasDisabled=false and restores properly. Verified against Node.
   test("run(undefined)/exit() on a disabled storage re-enables it", () => {
     const als = new AsyncLocalStorage();

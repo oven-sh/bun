@@ -25,6 +25,13 @@
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
+// SameValue in pure operators. Node compares stores with the primordial
+// ObjectIs; capturing Object.is here would still inherit a patch applied
+// before this module was lazily loaded.
+function sameValue(a, b) {
+  if (a === b) return a !== 0 || 1 / a === 1 / b;
+  return a !== a && b !== b;
+}
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
@@ -167,7 +174,7 @@ class AsyncLocalStorage {
       }
     }
     set(context.concat(this, store));
-    $assert(this.getStore() === store);
+    $assert(sameValue(this.getStore(), store));
   }
 
   exit(cb, ...args) {
@@ -181,7 +188,7 @@ class AsyncLocalStorage {
     // Node short-circuits when the value is unchanged: no enterWith, no
     // finally-restore. Observable when the callback calls enterWith() —
     // the new value survives past run() (verified against Node v22/v26).
-    if (Object.is(this.getStore(), store_value)) {
+    if (sameValue(this.getStore(), store_value)) {
       // run() always re-enables (Node's docs; Node's frame impl has no
       // disabled flag at all). Must clear before returning so the NEXT
       // run() doesn't capture wasDisabled=true and skip its restore.
@@ -223,7 +230,7 @@ class AsyncLocalStorage {
       set(context);
     }
     $assert(i > -1, "i was not set");
-    $assert(this.getStore() === store_value, "run: store_value was not set");
+    $assert(sameValue(this.getStore(), store_value), "run: store_value was not set");
     try {
       return callback(...args);
     } finally {
@@ -274,7 +281,7 @@ class AsyncLocalStorage {
         }
         const expectedStore = hasPrevious ? previous_value : this.#defaultValue;
         $assert(
-          this.getStore() === expectedStore,
+          sameValue(this.getStore(), expectedStore),
           "run: previous_value",
           Bun.inspect(expectedStore),
           "was not restored, i see",

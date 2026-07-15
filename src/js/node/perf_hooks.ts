@@ -333,8 +333,8 @@ export default {
   PerformanceMeasure,
   PerformanceObserver: PerformanceObserverForNodeTypes,
   PerformanceObserverEntryList,
-  PerformanceNodeEntry,
   PerformanceNodeTiming,
+  eventLoopUtilization,
   monitorEventLoopDelay: function monitorEventLoopDelay(options?: { resolution?: number }) {
     const impl = require("internal/perf_hooks/monitorEventLoopDelay");
     return impl(options);

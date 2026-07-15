@@ -37,8 +37,7 @@ test("timerify entry shape", async () => {
 
   expect(entry).toBeInstanceOf(PerformanceEntry);
   expect(entry.constructor.name).toBe("PerformanceNodeEntry");
-  expect(typeof perf.PerformanceNodeEntry).toBe("function");
-  expect(entry).toBeInstanceOf(perf.PerformanceNodeEntry);
+  expect(Object.getPrototypeOf(entry.constructor)).toBe(PerformanceEntry);
   expect(entry.name).toBe("work");
   expect(entry.entryType).toBe("function");
   expect(typeof entry.startTime).toBe("number");
@@ -59,6 +58,33 @@ test("timerify entry shape", async () => {
 test("timerify is exposed on both performance and as a top-level export (Node v25.2+)", () => {
   expect(perf.performance.timerify).toBeFunction();
   expect(perf.timerify).toBeFunction();
+});
+
+// Captured from the real node v26.3.0 binary:
+// `node -p "Object.keys(require('perf_hooks')).sort()"`.
+test("export surface matches Node v26.3.0", () => {
+  const nodeExports = [
+    "Performance",
+    "PerformanceEntry",
+    "PerformanceMark",
+    "PerformanceMeasure",
+    "PerformanceObserver",
+    "PerformanceObserverEntryList",
+    "PerformanceResourceTiming",
+    "constants",
+    "createHistogram",
+    "eventLoopUtilization",
+    "monitorEventLoopDelay",
+    "performance",
+    "timerify",
+  ];
+  for (const name of nodeExports) {
+    expect(perf).toHaveProperty(name);
+  }
+  // Node names the PerformanceNodeEntry class but does not export it.
+  expect(perf.PerformanceNodeEntry).toBeUndefined();
+  // Known bun-only extra, pre-existing on main: PerformanceNodeTiming.
+  expect(Object.keys(perf).filter(k => !nodeExports.includes(k)).sort()).toEqual(["PerformanceNodeTiming"]);
 });
 
 test("timerify and AsyncResource.bind survive Object.prototype.get pollution", async () => {

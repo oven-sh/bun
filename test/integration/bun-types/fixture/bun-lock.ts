@@ -1,4 +1,14 @@
-import type { BunLockFile, BunLockFilePackageArray, BunLockFilePackageInfo } from "bun";
+import type {
+  BunLockFile,
+  BunLockFileGitPackage,
+  BunLockFileNpmPackage,
+  BunLockFilePackageArray,
+  BunLockFilePackageInfo,
+  BunLockFilePathPackage,
+  BunLockFileRootPackage,
+  BunLockFileTarballPackage,
+  BunLockFileWorkspacePackageArray,
+} from "bun";
 
 const info: BunLockFilePackageInfo = {
   dependencies: { foo: "^1.0.0" },
@@ -21,6 +31,16 @@ const git: BunLockFilePackageArray = ["dep@git+https://github.com/u/r.git", info
 const gitWithIntegrity: BunLockFilePackageArray = ["dep@github:u/r", info, "abcdef1", "sha512-abc"];
 const root: BunLockFilePackageArray = ["app@root:", { bin: "./cli.js" }];
 const rootEmpty: BunLockFilePackageArray = ["app@root:", {}];
+
+// Each resolution-specific type accepts its own shape (the specifier prefix and
+// the integrity format act as the discriminant).
+const npmT: BunLockFileNpmPackage = ["lodash@4.17.21", "", info, "sha512-abc"];
+const workspaceT: BunLockFileWorkspacePackageArray = ["@app/ui@workspace:packages/ui"];
+const folderT: BunLockFilePathPackage = ["dep@file:./dep", info];
+const symlinkT: BunLockFilePathPackage = ["dep@link:./dep", info];
+const tarballT: BunLockFileTarballPackage = ["dep@./dep-1.0.0.tgz", info, "sha512-abc"];
+const gitT: BunLockFileGitPackage = ["dep@github:u/r", info, "abcdef1", "sha512-abc"];
+const rootT: BunLockFileRootPackage = ["app@root:", { bin: "./cli.js" }];
 
 // A complete lockfile object typechecks.
 const lockfile: BunLockFile = {
@@ -49,3 +69,15 @@ const badEmpty: BunLockFilePackageArray = [];
 const badVersion: BunLockFile = { lockfileVersion: 3, workspaces: {}, packages: {} };
 // @ts-expect-error `packages` is required
 const badMissingPackages: BunLockFile = { lockfileVersion: 2, workspaces: {} };
+
+// Cross-resolution entries are rejected: each mismatch below differs from the
+// target only in its resolution discriminant.
+
+// @ts-expect-error a root package (`@root:`) is not a path package (`@link:`/`@file:`)
+const rootAsPath: BunLockFilePathPackage = ["app@root:", {}];
+// @ts-expect-error a path package (`@link:`) is not a root package (`@root:`)
+const pathAsRoot: BunLockFileRootPackage = ["dep@link:./dep", {}];
+// @ts-expect-error a git package's `resolved` is not a tarball's integrity hash
+const gitAsTarball: BunLockFileTarballPackage = ["dep@git+https://github.com/u/r.git", {}, "abcdef1"];
+// @ts-expect-error a tarball specifier is not a git specifier (`@git+`/`@github:`)
+const tarballAsGit: BunLockFileGitPackage = ["dep@./dep-1.0.0.tgz", {}, "sha512-abc"];

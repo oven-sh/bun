@@ -976,6 +976,11 @@ impl WebWorker {
         unsafe {
             let b = &mut (*vm).transpiler;
             b.resolver.env_loader = NonNull::new(b.env);
+            // Match the main thread (run_command.rs): never inline
+            // `process.env.X` dot-reads as literals — they'd be baked into
+            // the shared on-disk runtime transpiler cache.
+            b.options.env.behavior =
+                bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
             if let Some(graph) = parent.standalone_module_graph {
                 (hooks.apply_standalone_runtime_flags)(b, graph);

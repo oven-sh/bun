@@ -170,7 +170,10 @@ impl<'s> Local<'s> {
         scope: &mut Scope<'s>,
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<Local<'s>>> {
-        Ok(self.raw.get(scope.global, property)?.map(|v| scope.local(v)))
+        Ok(self
+            .raw
+            .get(scope.global, property)?
+            .map(|v| scope.local(v)))
     }
 
     /// Call this value as a function.
@@ -228,7 +231,10 @@ impl Deref for ArrayBufferBytes<'_, '_> {
 fn positive_control<'s>(scope: &mut Scope<'s>, ab: Local<'s>, cb: Local<'s>) -> JsResult<u8> {
     let first = {
         let bytes = ab.array_buffer_bytes(scope);
-        bytes.as_deref().and_then(|b| b.first().copied()).unwrap_or(0)
+        bytes
+            .as_deref()
+            .and_then(|b| b.first().copied())
+            .unwrap_or(0)
     };
     let undef = scope.undefined();
     cb.call(scope, undef, &[])?;

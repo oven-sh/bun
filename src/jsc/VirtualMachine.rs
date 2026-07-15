@@ -4400,11 +4400,13 @@ impl VirtualMachine {
                     let source_dir =
                         bun_resolver::fs::PathName::init(source_slice).dir_with_trailing_slash();
                     let mut buf = bun_paths::path_buffer_pool::get();
-                    let joined = bun_paths::resolve_path::join_abs_string_buf::<
+                    if let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
                         bun_paths::resolve_path::platform::Loose,
-                    >(source_dir, &mut buf[..], &[spec]);
-                    *res = ErrorableString::ok(bun_core::String::clone_utf8(joined));
-                    return Ok(());
+                    >(source_dir, &mut buf[..], &[spec])
+                    {
+                        *res = ErrorableString::ok(bun_core::String::clone_utf8(joined));
+                        return Ok(());
+                    }
                 }
             }
 

@@ -546,58 +546,59 @@ describe("bundler", () => {
   // It should agree with import.meta.resolve() and return a $bunfs path.
   test("compile/RequireResolveBundledModule", async () => {
     using dir = tempDir("compile-require-resolve", {
-      "entry.ts": `
+      "src/entry.ts": `
         require("./dep");
         const rr = require.resolve("./dep");
         const imr = import.meta.resolve("./dep");
-        console.log(JSON.stringify({ rr, imr }));
+        // Long runtime specifier must stay a catchable error, not panic.
+        let longErr;
+        try { require.resolve("./" + Buffer.alloc(5000, "x").toString()); }
+        catch (e) { longErr = e.code ?? e.name; }
+        console.log(JSON.stringify({ rr, imr, longErr }));
       `,
-      "dep.ts": `module.exports = { value: 42 };`,
+      "src/dep.ts": `module.exports = { value: 42 };`,
     });
-    const buildDir = String(dir);
-    const outfile = join(buildDir, "..", isWindows ? "compile-require-resolve-out.exe" : "compile-require-resolve-out");
-    try {
-      {
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", outfile],
-          env: bunEnv,
-          cwd: buildDir,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stderr).not.toContain("error:");
-        expect(exitCode).toBe(0);
-      }
-
-      // Remove the build source tree so the test proves the result is not a
-      // filesystem hit on the build directory. Run the exe from an unrelated
-      // cwd for the same reason.
-      rmSync(buildDir, { recursive: true, force: true });
-
+    const buildDir = join(String(dir), "src");
+    const outfile = join(String(dir), isWindows ? "out.exe" : "out");
+    {
       await using proc = Bun.spawn({
-        cmd: [outfile],
+        cmd: [bunExe(), "build", "--compile", "./entry.ts", "--outfile", outfile],
         env: bunEnv,
-        cwd: join(outfile, ".."),
+        cwd: buildDir,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).not.toContain("error:");
-
-      const { rr, imr } = JSON.parse(stdout);
-      // Must not leak the build machine's source path into the binary.
-      expect(rr).not.toContain("compile-require-resolve");
-      // Must be a standalone-graph virtual path, same root as import.meta.resolve.
-      const normalize = (p: string) => p.replaceAll("\\", "/");
-      const expected = !isWindows ? "/$bunfs/root/dep" : "B:/~BUN/root/dep";
-      expect(normalize(rr)).toBe(expected);
-      expect(normalize(new URL(imr).pathname.replace(/^\/([A-Za-z]:)/, "$1"))).toBe(expected);
-
       expect(exitCode).toBe(0);
-    } finally {
-      rmSync(outfile, { force: true });
     }
+
+    // Remove the build source tree so the test proves the result is not a
+    // filesystem hit on the build directory. Run the exe from an unrelated
+    // cwd for the same reason.
+    rmSync(buildDir, { recursive: true, force: true });
+
+    await using proc = Bun.spawn({
+      cmd: [outfile],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+
+    const { rr, imr, longErr } = JSON.parse(stdout);
+    // Must not leak the build machine's source path into the binary.
+    expect(rr).not.toContain("compile-require-resolve");
+    // Must be a standalone-graph virtual path, same root as import.meta.resolve.
+    const normalize = (p: string) => p.replaceAll("\\", "/");
+    const expected = !isWindows ? "/$bunfs/root/dep" : "B:/~BUN/root/dep";
+    expect(normalize(rr)).toBe(expected);
+    expect(normalize(Bun.fileURLToPath(imr))).toBe(expected);
+    expect(longErr).toBe("MODULE_NOT_FOUND");
+
+    expect(exitCode).toBe(0);
   });
   itBundled("compile/VariousBunAPIs", {
     todo: isWindows, // TODO

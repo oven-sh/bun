@@ -315,7 +315,10 @@ describe("bundler", () => {
       expect(out).toMatch(/\b_c\(\d+\)/);
       expect(out).toContain("BUNDLED_OTHER_SENTINEL");
       expect(out).not.toMatch(/require\(["']\.\/other["']\)/);
-      expect(out).not.toMatch(/require\.resolve\(["']\.\/other["']\)/);
+      // require.resolve() of a bundled module keeps the original specifier; it
+      // must not be rewritten to the build machine's absolute source path.
+      expect(out).toMatch(/require\.resolve\(["']\.\/other["']\)/);
+      expect(out).not.toMatch(/require\.resolve\(["'][A-Za-z]:|require\.resolve\(["']\//);
     },
   });
 

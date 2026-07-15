@@ -444,7 +444,10 @@ impl FileRoute {
         // procfs/sysfs regular files report st_size == 0 but yield content on
         // read(); for an unsliced Bun.file() route, read to EOF (chunked, no
         // Content-Length) instead of trusting stat and serving an empty body.
+        // HEAD keeps the stat-derived framing: it never reads, so procfs is
+        // indistinguishable from a genuinely empty file.
         let stream_to_eof = is_regular
+            && method != Method::HEAD
             && size == 0
             && this.blob.offset.get() == 0
             && this.blob.size.get() == crate::webcore::blob::MAX_SIZE;

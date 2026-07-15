@@ -2633,22 +2633,14 @@ where
                 // Response from `response_weakref`, so no borrow of the Response
                 // (here, `blob`) may still be live across it. Nothing is written
                 // to the socket in between, so the wire output is unchanged.
-                let was_unsliced_file = shim::blob_needs_to_read_file(blob)
-                    && blob.offset.get() == 0
-                    && blob.size.get() == crate::webcore::blob::MAX_SIZE;
                 blob.resolve_size();
                 let blob_size = blob.size.get();
                 this.render_metadata();
 
-                // GET on a zero-stat unsliced file streams to EOF without a
-                // derived Content-Length (see `do_sendfile`); omit it on HEAD
-                // too rather than advertising 0 (RFC 9110 §9.3.2).
-                if !(was_unsliced_file && blob_size == 0) {
-                    if blob_size == crate::webcore::blob::MAX_SIZE {
-                        resp.write_header_int(b"content-length", 0);
-                    } else {
-                        resp.write_header_int(b"content-length", blob_size as u64);
-                    }
+                if blob_size == crate::webcore::blob::MAX_SIZE {
+                    resp.write_header_int(b"content-length", 0);
+                } else {
+                    resp.write_header_int(b"content-length", blob_size as u64);
                 }
                 this.end_without_body(this.should_close_connection());
             }

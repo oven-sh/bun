@@ -2054,16 +2054,6 @@ it.skipIf(!isLinux)("serves the full content of a Bun.file() whose stat size is 
     }).toEqual({ status: 200, hasName: true, nonEmpty: true, okCL: true });
   }
 
-  // HEAD on the fetch-handler path: GET streams without a stat-derived
-  // length, so HEAD must not advertise Content-Length: 0 either.
-  {
-    const res = await fetch(new URL("/file", server.url), { method: "HEAD" });
-    expect({ status: res.status, cl: res.headers.get("content-length") }).toEqual({
-      status: 200,
-      cl: null,
-    });
-  }
-
   // a real 0-byte file still serves as empty (one read() hits EOF)
   {
     const res = await fetch(new URL("/empty", server.url));

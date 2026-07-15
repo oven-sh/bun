@@ -91,7 +91,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 // walked by its owner, so the JS thread reads this and acts there. Atomic for the same reason.
 class GCCycleObserver final : public JSC::HeapObserver {
 public:
-    void willGarbageCollect() final { }
+    void willGarbageCollect() final {}
     void didGarbageCollect(JSC::CollectionScope) final
     {
         m_count.fetch_add(1, std::memory_order_relaxed);

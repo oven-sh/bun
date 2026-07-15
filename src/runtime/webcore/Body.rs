@@ -2494,9 +2494,13 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Invalid => {
                     return Err(crate::Error::InvalidStream);
                 }
-                // toBlobIfPossible should've caught this
+                // to_blob_if_possible converts these unless the stream was
+                // already disturbed (or a lazy File source was consumed) —
+                // surface that as the catchable "body already used" error.
                 webcore::readable_stream::Source::Blob(_)
-                | webcore::readable_stream::Source::File(_) => unreachable!(),
+                | webcore::readable_stream::Source::File(_) => {
+                    return Err(crate::Error::StreamAlreadyUsed);
+                }
                 webcore::readable_stream::Source::JavaScript
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now

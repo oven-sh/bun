@@ -4131,7 +4131,23 @@ impl<'a> Resolver<'a> {
                     }
                 };
             if let Some(parent_config) = parent_config_maybe {
-                parent_configs.append(parent_config)?;
+                if parent_configs.append(parent_config).is_err() {
+                    // Oversized (or cyclic) extends chain: stop walking and
+                    // merge what was collected instead of leaking the parsed
+                    // config and failing the whole resolution.
+                    // SAFETY: `parent_config` came from heap::into_raw above
+                    // and was not stored anywhere.
+                    TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config) });
+                    let _ = self.log_mut().add_debug_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "tsconfig.json extends chain too long at {}",
+                            bun_core::fmt::quote(abs_path)
+                        ),
+                    );
+                    break;
+                }
                 current = bun_ptr::BackRef::from(
                     core::ptr::NonNull::new(parent_config).expect("heap alloc"),
                 );
@@ -4222,12 +4238,14 @@ impl<'a> Resolver<'a> {
             return;
         }
 
+        // Bounds *attempted* loads, not successes, so a config full of broken
+        // references can't trigger unbounded filesystem reads.
         const MAX_REFERENCES: usize = 64;
         let mut visited: Vec<Box<[u8]>> = vec![Box::from(&root_ref.abs_path[..])];
         let mut queue: Vec<Box<[u8]>> = root_ref.references.to_vec();
         let mut configs: Vec<&'static TSConfigJSON> = Vec::new();
         let mut cursor = 0;
-        while cursor < queue.len() && configs.len() < MAX_REFERENCES {
+        while cursor < queue.len() && visited.len() <= MAX_REFERENCES {
             let reference = core::mem::take(&mut queue[cursor]);
             cursor += 1;
             // A "references[].path" not naming a .json file points at a
@@ -4266,7 +4284,9 @@ impl<'a> Resolver<'a> {
             // freed while a resolver reader is live.
             let merged_ref: &'static TSConfigJSON = unsafe { &*merged };
             configs.push(merged_ref);
-            queue.extend(merged_ref.references.iter().cloned());
+            if visited.len() <= MAX_REFERENCES {
+                queue.extend(merged_ref.references.iter().cloned());
+            }
         }
 
         // SAFETY: `root` is still uniquely owned here (see above).

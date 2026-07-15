@@ -645,6 +645,96 @@ describe("Bun.Transpiler", () => {
       err("enum [] { a }", 'Expected identifier but found "["');
     });
 
+    it("rejects yield/await/this/super in enum initializers", () => {
+      const err = ts.expectParseError;
+      const exp = ts.expectPrinted_;
+
+      // The enum body is lowered into an arrow IIFE, so an enclosing function's
+      // generator/async context must not leak into initializer expressions.
+      err("function *f() { enum x { y = yield 1 } }", 'Cannot use "yield" outside a generator function');
+      err("async function f() { enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("async function f() { const enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("let g = async () => { enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
+      err("enum x { y = await 1 }", '"await" can only be used inside an "async" function');
+      err("enum x { y = this }", 'Cannot use "this" here');
+      err("enum x { y = () => this }", 'Cannot use "this" here');
+      err("class C { m() { enum x { y = this } } }", 'Cannot use "this" here');
+      err("class C extends B { m() { enum x { y = super.foo } } }", 'Unexpected "super"');
+      err("class C extends B { constructor() { super(); enum x { y = super() } } }", 'Unexpected "super"');
+      err("class C { static { enum x { y = super.foo } } }", 'Unexpected "super"');
+      err("declare enum x { y = await 1 }", '"await" can only be used inside an "async" function');
+      err("declare enum x { y = this }", 'Cannot use "this" here');
+
+      // A nested function establishes its own context, so these remain valid.
+      exp(
+        "function *f() { enum x { y = (function*() { yield 1 })() } }",
+        'function* f() {\n  var x;\n  ((x) => {\n    x[x["y"] = function* () {\n      yield 1;\n    }()] = "y";\n  })(x ||= {});\n}',
+      );
+      exp(
+        "async function f() { enum x { y = (async () => await 1)() } }",
+        'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
+      );
+      exp(
+        "enum x { y = (function() { return this })() }",
+        'var x;\n((x) => {\n  x[x["y"] = function() {\n    return this;\n  }()] = "y";\n})(x ||= {})',
+      );
+      // The enclosing context is restored after the body: sibling statements
+      // keep their yield/await/super permissions.
+      exp(
+        "function *f() { enum x { y = 1 } yield 1; }",
+        'function* f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  yield 1;\n}',
+      );
+      exp(
+        "async function f() { enum x { y = 1 } await 1; }",
+        'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  await 1;\n}',
+      );
+      exp(
+        "class C extends B { m() { enum x { y = 1 } super.foo(); } }",
+        'class C extends B {\n  m() {\n    var x;\n    ((x) => {\n      x[x["y"] = 1] = "y";\n    })(x ||= {});\n    super.foo();\n  }\n}',
+      );
+    });
+
+    it("rejects await/this/return in namespace bodies", () => {
+      const err = ts.expectParseError;
+      const exp = ts.expectPrinted_;
+
+      err("namespace x { export const y = await 1; }", '"await" can only be used inside an "async" function');
+      err("namespace x { await 1; }", '"await" can only be used inside an "async" function');
+      err("namespace x { return 1; }", "A return statement cannot be used here");
+      err("namespace x { return; }", "A return statement cannot be used here");
+      err("namespace x { const y: string = this; }", 'Cannot use "this" here');
+      err("namespace x { export const y = () => this; }", 'Cannot use "this" here');
+      err("namespace x.y { return 1; }", "A return statement cannot be used here");
+      err("module x { return 1; }", "A return statement cannot be used here");
+      err("declare namespace x { export const y = this; }", 'Cannot use "this" here');
+      err("namespace x { for await (const y of []); }", 'Cannot use "await" outside an async function');
+
+      // The namespace body lowers into a non-async arrow, where "await" is a
+      // valid binding identifier; the module-level reserved-word rule must
+      // not leak into it.
+      exp("namespace x { let await = 1; }", "var x;\n((x) => {\n  let await = 1;\n})(x ||= {})");
+      exp(
+        "namespace x { export function f() { return 1; } }",
+        "var x;\n((x) => {\n  function f() {\n    return 1;\n  }\n  x.f = f;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export const y = async () => await 1; }",
+        "var x;\n((x) => {\n  x.y = async () => await 1;\n})(x ||= {})",
+      );
+      // Class methods and fields introduce their own "this" binding.
+      exp(
+        "namespace x { export class C { m() { return this } } }",
+        "var x;\n((x) => {\n\n  class C {\n    m() {\n      return this;\n    }\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export class C { f = this } }",
+        "var x;\n((x) => {\n\n  class C {\n    f = this;\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      // The enclosing context is restored after the body: top-level await is
+      // still accepted immediately after a namespace.
+      exp("namespace x { export const y = 1; } await 1;", "var x;\n((x) => {\n  x.y = 1;\n})(x ||= {});\nawait 1");
+    });
+
     it("doesn't crash with functions assigned to enum values", () => {
       const exp = ts.expectPrinted_;
 
@@ -1443,6 +1533,85 @@ export default class {
 
     it("exported enum", () => {
       ts.expectPrinted_(input4, output4);
+    });
+
+    it("enum in a nested scope uses let", () => {
+      // tsc and esbuild both emit "let" for enums that aren't at the top level
+      // so the binding doesn't leak out of the enclosing block/function scope.
+      ts.expectPrinted_(
+        `{ enum x { y } }`,
+        `{
+  let x;
+  ((x) => {
+    x[x["y"] = 0] = "y";
+  })(x ||= {});
+}`,
+      );
+      ts.expectPrinted_(
+        `function f() { enum x { y } }`,
+        `function f() {
+  let x;
+  ((x) => {
+    x[x["y"] = 0] = "y";
+  })(x ||= {});
+}`,
+      );
+      // Top-level enum still emits "var" so sibling declarations can merge.
+      ts.expectPrinted_(
+        `enum x { y }`,
+        `var x;
+((x) => {
+  x[x["y"] = 0] = "y";
+})(x ||= {})`,
+      );
+    });
+
+    it("enum in a block scope does not leak into the enclosing scope at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{ enum a { b = 1 } }
+          try {
+            console.log(a);
+          } catch (e) {
+            console.log(e instanceof ReferenceError ? "ReferenceError" : e.constructor.name);
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: "ReferenceError\n", exitCode: 0 });
+      void stderr;
+    });
+
+    // https://github.com/evanw/esbuild/commit/108484982c8f1d74bd87ce172ae02a6ffe8ddce3
+    it("same-named enums in separate block scopes do not merge at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{
+            enum a { b = 1 }
+          }
+          {
+            enum a { c = 2 }
+            console.log(JSON.stringify({ c: a.c, two: a[2], b: a.b, one: a[1] }));
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: '{"c":2,"two":"c"}\n', exitCode: 0 });
+      void stderr;
     });
 
     const input5 = `namespace ns {

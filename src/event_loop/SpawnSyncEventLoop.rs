@@ -404,18 +404,8 @@ impl SpawnSyncEventLoop {
         let duration_storage: Option<Timespec>;
         let duration: Option<&Timespec> = match timeout {
             Some(ts) => {
-                let mut dur = ts.duration(&Timespec::now(TimespecMockMode::AllowMockedTime));
-                // OHOS: observed a wrapped-underflow where the target time had
-                // already passed by a small amount, wrapping_sub produced
-                // sec = i64::MAX / nsec = 999_999_999, which turned into an
-                // effectively-infinite epoll_wait timeout — symptom:
-                // spawnSync signal timeout ≤ ~15 ms hangs on OHOS.
-                // Only clamp on OHOS; other platforms' legitimate multi-day
-                // spawnSync timeouts should not be silently zeroed.
-                if cfg!(target_env = "ohos") && (dur.sec < 0 || dur.sec > 86_400) {
-                    dur = bun_core::Timespec::EPOCH;
-                }
-                duration_storage = Some(dur);
+                duration_storage =
+                    Some(ts.duration(&Timespec::now(TimespecMockMode::AllowMockedTime)));
                 duration_storage.as_ref()
             }
             None => None,
@@ -462,7 +452,7 @@ impl SpawnSyncEventLoop {
         }
         // SAFETY: `uws_loop` is non-null and exclusively owned by `self` (created in `init`,
         // freed in `Drop`); `&mut self` guarantees no other safe borrow of the loop is live.
-        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration) };
+        unsafe { (*loop_.as_ptr()).tick_with_timeout(duration, uws::NOW_NS_UNKNOWN) };
 
         if let Some(ts) = timeout {
             #[cfg(windows)]

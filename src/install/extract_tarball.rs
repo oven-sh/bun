@@ -304,12 +304,7 @@ impl ExtractTarball {
                             .try_into()
                             .expect("infallible: size matches"),
                     );
-                    if last_4_bytes > 16
-                        && last_4_bytes < 64 * 1024 * 1024
-                        // gzip footer 声明的解压后大小不能超过原始 tgz 大小的 50 倍。
-                        // 正常 gzip 压缩率通常在 2-10 倍，50 倍留足余量。
-                        // 防止损坏/截断的 tarball 中垃圾值导致预分配异常大小。
-                        && (last_4_bytes as usize) < tgz_bytes.len() * 50 {
+                    if last_4_bytes > 16 && last_4_bytes < 64 * 1024 * 1024 {
                         // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
                         esimated_output_size = last_4_bytes as usize;
                         if zlib_pool.list.capacity() == 0 {

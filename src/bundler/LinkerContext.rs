@@ -2377,16 +2377,10 @@ impl<'a> LinkerContext<'a> {
                                 u32::try_from(source_index).expect("int cast"),
                                 bun_ast::RefTag::Symbol,
                             );
-                            let mut link_count = 0u32;
                             while symbol.has_link() {
                                 r#ref = symbol.link.get();
                                 symbol = &all_symbols[r#ref.source_index() as usize]
                                     [r#ref.inner_index() as usize];
-                                link_count += 1;
-                                // Guard against cyclic symbol links (e.g. duplicate var decl)
-                                if link_count > 1024 {
-                                    break;
-                                }
                             }
                             break 'follow r#ref;
                         };
@@ -2631,10 +2625,6 @@ impl<'a> LinkerContext<'a> {
         entry_points_count: usize,
         distance: u32,
     ) {
-        // Guard against infinite recursion from circular import chains
-        if distance > 4096 {
-            return;
-        }
         if !self.graph.files_live.is_set(source_index as usize) {
             return;
         }
@@ -3512,17 +3502,7 @@ impl<'a> LinkerContext<'a> {
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
         let mut result: MatchImport = MatchImport::default();
 
-        let mut iter_count = 0u32;
         'loop_: loop {
-            iter_count += 1;
-            // Guard against infinite loop in cyclic re-export chains
-            if iter_count > 2048 {
-                result = MatchImport {
-                    kind: MatchImportKind::Cycle,
-                    ..Default::default()
-                };
-                break;
-            }
             // Make sure we avoid infinite loops trying to resolve cycles:
             //
             //   // foo.js

@@ -826,7 +826,7 @@ impl IoRequestLoop {
         let name = bun_core::ZStr::from_static(b"IO Watcher\0");
         bun_core::Output::Source::configure_named_thread(name);
 
-        #[cfg(any(target_os = "linux", target_os = "android", target_env = "ohos"))]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             self.tick_epoll();
         }
@@ -838,8 +838,7 @@ impl IoRequestLoop {
             target_os = "linux",
             target_os = "android",
             target_os = "macos",
-            target_os = "freebsd",
-            target_env = "ohos"
+            target_os = "freebsd"
         )))]
         {
             panic!("TODO on this platform");

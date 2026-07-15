@@ -59,22 +59,6 @@ fn runner_arena() -> &'static bun_alloc::Arena {
     crate::cli::cli_arena()
 }
 
-/// OHOS: set \$PWD so bash verifies CWD via stat() instead of getcwd(),
-/// which can fail on hmdfs/tmpfs. If cwd is "/" or empty (the getcwd
-/// fallback), use \$HOME instead.
-#[cfg(target_env = "ohos")]
-pub(crate) fn ohos_set_pwd(
-    env: &mut DotEnv::Loader<'_>,
-    cwd: &[u8],
-) {
-    let pwd = if cwd == b"/" || cwd.is_empty() {
-        bun_core::env_var::HOME::get().unwrap_or(cwd)
-    } else {
-        cwd
-    };
-    let _ = env.map.put(b"PWD", pwd);
-}
-
 // Passthrough-arg shell escaping. The escape tables + helpers are the lower-tier
 // `bun_shell_parser` crate's canonical copy — import them so future fixes to
 // the shell escaper cannot silently diverge.
@@ -636,25 +620,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
         let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir };
-        // On OHOS, a permission-denied top-level dir (e.g. a FUSE mount where
-        // getcwd/openat is blocked by SELinux) is not fatal — the resolver
-        // already silences EPERM/EACCES internally (see resolver.rs queue_walk),
-        // and this recovers with a $HOME/"/" fallback DirInfo instead.
-        // Everywhere else, a failure to read the top-level directory is a real,
-        // fatal error and must be reported as such.
-        let root_dir_info: Option<bun_resolver::DirInfoRef> =
+        let root_dir_info: bun_resolver::DirInfoRef =
             match this_transpiler.resolver.read_dir_info(top_level_dir) {
-                #[cfg(target_env = "ohos")]
-                Err(err)
-                    if err == bun_resolver::Error::Sys(bun_errno::SystemErrno::EPERM)
-                        || err == bun_resolver::Error::Sys(bun_errno::SystemErrno::EACCES) =>
-                {
-                    None
-                }
                 Err(err) => {
                     if !log_errors {
                         return Err(crate::Error::CouldntReadCurrentDirectory);
                     }
+                    // SAFETY: `ctx.log` set in `create_context_data` (single-
+                    // threaded CLI startup), process-lifetime.
                     let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
                         Output::error_writer(),
                     ));
@@ -668,10 +641,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     Output::flush();
                     return Err(err.into());
                 }
-                #[cfg(target_env = "ohos")]
-                Ok(None) => None,
-                #[cfg(not(target_env = "ohos"))]
                 Ok(None) => {
+                    // SAFETY: see `Err` arm above.
                     let _ = unsafe { ctx.log() }.print(std::ptr::from_mut::<bun_core::io::Writer>(
                         Output::error_writer(),
                     ));
@@ -679,28 +650,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     Output::flush();
                     return Err(crate::Error::CouldntReadCurrentDirectory);
                 }
-                Ok(Some(info)) => Some(info),
+                Ok(Some(info)) => info,
             };
-
-        // OHOS-only fallback root DirInfo for the None cases above. Uses
-        // $HOME which is always readable; "/" may be blocked by SELinux.
-        #[cfg(target_env = "ohos")]
-        let root_dir_info: bun_resolver::DirInfoRef = match root_dir_info {
-            Some(info) => info,
-            None => {
-                let home = std::env::var("HOME").unwrap_or_default();
-                this_transpiler
-                    .resolver
-                    .read_dir_info_ignore_error(if home.is_empty() { b"/" } else { home.as_bytes() })
-                    .or_else(|| this_transpiler.resolver.read_dir_info_ignore_error(b"/"))
-                    .ok_or(crate::Error::InstallFailed)?
-            }
-        };
-        // Off OHOS, every arm above either diverges (return Err(...)) or
-        // produces Some(info), so this is always populated.
-        #[cfg(not(target_env = "ohos"))]
-        let root_dir_info: bun_resolver::DirInfoRef =
-            root_dir_info.expect("Ok(None)/EPERM/EACCES arms are OHOS-only; other arms diverge");
 
         this_transpiler.resolver.store_fd = false;
 

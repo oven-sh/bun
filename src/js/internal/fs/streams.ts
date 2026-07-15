@@ -639,10 +639,10 @@ const kWriteMonkeyPatchDefense = Symbol("!");
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
 
-  // After end() the Writable contract requires write() to fail with
-  // ERR_STREAM_WRITE_AFTER_END and not reach the sink.
+  // After end()/destroy() the Writable contract requires write() to fail with
+  // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
   const state = this._writableState;
-  if (state !== undefined && state.ending) {
+  if (state !== undefined && (state.ending || state.destroyed)) {
     return writablePrototypeWrite.$call(this, data, encoding, cb);
   }
 

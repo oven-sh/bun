@@ -1597,14 +1597,37 @@ pub mod fs {
 
         /// Index lookup with generation-check
         /// re-read (open + readdir + cache replace) when the cached listing is stale.
+        ///
+        /// Takes `entries_mutex` for the whole lookup: the generation-stale branch
+        /// drops the existing `DirEntry` (and the bucket allocation behind its
+        /// `data` map) in place, and the route loaders iterate that map under the
+        /// same lock. Call [`entries_at_locked`](Self::entries_at_locked) instead
+        /// from inside a critical section that already holds `entries_mutex`.
         pub fn entries_at(
             &mut self,
             index: bun_alloc::IndexType,
             generation: Generation,
         ) -> Option<&mut EntriesOption> {
+            // `MutexGuard` stores the mutex by raw pointer (see `EntriesGuard`),
+            // so holding it does not keep `&mut self` borrowed.
+            let _g = self.entries_mutex.lock_guard();
+            self.entries_at_locked(index, generation)
+        }
+
+        /// [`entries_at`](Self::entries_at) for call sites that already hold
+        /// `entries_mutex` (the mutex is non-recursive).
+        pub fn entries_at_locked(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+        ) -> Option<&mut EntriesOption> {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "entries_at_locked: caller must hold entries_mutex",
+            );
             // erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
-            // `entries_mutex` held by caller; sole `&mut` to this slot.
+            // `entries_mutex` held (by `entries_at` or the caller); sole `&mut` to this slot.
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {

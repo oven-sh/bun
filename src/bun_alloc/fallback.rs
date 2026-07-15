@@ -39,11 +39,8 @@ impl CAllocator {
         }
     }
 
-    /// # Safety
-    /// `buf` must describe a live allocation obtained from [`Self::raw_alloc`]
-    /// with `alignment`.
     #[inline]
-    pub unsafe fn raw_resize(
+    pub fn raw_resize(
         &self,
         buf: &mut [u8],
         _alignment: Alignment,
@@ -57,13 +54,13 @@ impl CAllocator {
         }
         #[cfg(target_os = "macos")]
         {
-            // SAFETY: caller contract — `buf` came from libc malloc on this platform.
+            // SAFETY: `buf` was allocated by libc malloc on this platform.
             let usable = unsafe { libc::malloc_size(buf.as_ptr().cast()) };
             return new_len <= usable;
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            // SAFETY: caller contract — `buf` came from libc malloc on this platform.
+            // SAFETY: `buf` was allocated by libc malloc on this platform.
             let usable = unsafe { libc::malloc_usable_size(buf.as_mut_ptr().cast()) };
             return new_len <= usable;
         }
@@ -75,7 +72,7 @@ impl CAllocator {
                 fn _msize(p: *mut c_void) -> usize;
                 fn _aligned_msize(p: *mut c_void, align: usize, offset: usize) -> usize;
             }
-            // SAFETY: caller contract — `buf` came from `raw_alloc` on this platform.
+            // SAFETY: `buf` was allocated by `raw_alloc` above on this platform.
             let usable = unsafe {
                 if _alignment.to_byte_units() > crate::MAX_ALIGN_T {
                     _aligned_msize(buf.as_mut_ptr().cast(), _alignment.to_byte_units(), 0)
@@ -96,25 +93,20 @@ impl CAllocator {
         }
     }
 
-    /// # Safety
-    /// `buf` must describe a live allocation obtained from [`Self::raw_alloc`]
-    /// with `alignment`. The allocation is freed exactly once; its memory must
-    /// not be accessed after this call.
     #[inline]
-    pub unsafe fn raw_free(&self, buf: &mut [u8], alignment: Alignment, _ret_addr: usize) {
+    pub fn raw_free(&self, buf: &mut [u8], alignment: Alignment, _ret_addr: usize) {
         // On Windows MSVC, over-aligned allocations come from `_aligned_malloc`
         // and MUST be released with `_aligned_free`; passing them to `free()`
         // is heap corruption. POSIX `aligned_alloc` is freed with plain `free`.
         #[cfg(windows)]
         if alignment.to_byte_units() > crate::MAX_ALIGN_T {
-            // SAFETY: caller contract — `buf` came from `_aligned_malloc` in `raw_alloc`.
+            // SAFETY: `buf` was allocated by `_aligned_malloc` in `raw_alloc`.
             unsafe { libc::aligned_free(buf.as_mut_ptr().cast()) };
             return;
         }
         #[cfg(not(windows))]
         let _ = alignment;
-        // SAFETY: caller contract — `buf` came from libc malloc/aligned_alloc
-        // in `raw_alloc`.
+        // SAFETY: `buf` was allocated by libc malloc/aligned_alloc in `raw_alloc`.
         unsafe { libc::free(buf.as_mut_ptr().cast()) }
     }
 }

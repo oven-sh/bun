@@ -3466,7 +3466,10 @@ impl<'a> Resolver<'a> {
                 unsafe { &mut *rfs }
             };
         }
-        // resolver mutex held; `EntriesMap` methods are safe wrappers over the singleton.
+        // Hold `entries_mutex` across the in-place `DirEntry` rewrite below and
+        // the `dir_info_uncached` call, mirroring `dir_info_cached_miss`: the
+        // route loaders iterate the `DirEntry.data` map under this lock.
+        let _entries_unlock = rfs!().entries_mutex.lock_guard();
         let mut cached_dir_entry_result = rfs!().entries.get_or_put(dir_path)?;
 
         // NOTE: always assigned by either the cached-hit arm or the
@@ -4387,7 +4390,7 @@ impl<'a> Resolver<'a> {
         let mut _safe_path: Option<&'static [u8]> = None;
 
         // Start at the top.
-        'queue_walk: while queue_slice_len > 0 {
+        while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
@@ -4475,19 +4478,6 @@ impl<'a> Resolver<'a> {
                             //   ...
                             self.dir_cache_mut().mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
-
-                            // OHOS: ancestor directories like / or /storage/ may return
-                            // EACCES/EPERM due to sandbox restrictions. Skip the unreadable
-                            // ancestor and continue processing child directories.
-                            // Only on OHOS: on other platforms EACCES/EPERM on a directory
-                            // in the resolve path is a real error that should be reported.
-                            if cfg!(target_env = "ohos")
-                                && (err == crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                                    || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM))
-                            {
-                                continue 'queue_walk;
-                            }
-
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
@@ -5734,9 +5724,7 @@ impl<'a> Resolver<'a> {
         if let Fs::file_system::real_fs::EntriesOption::Err(err) = dir_entry.get() {
             match err.original_err {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
-                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR)
-                | crate::Error::Sys(bun_errno::SystemErrno::EACCES)
-                | crate::Error::Sys(bun_errno::SystemErrno::EPERM) => {}
+                | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
                     let _ = self.log_mut().add_error_fmt(
                         None,
@@ -6216,7 +6204,10 @@ impl<'a> Resolver<'a> {
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
             if !self.opts.preserve_symlinks {
-                if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
+                // The only caller that reaches this with `parent` set
+                // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
+                // mutex is non-recursive, so go through the `_locked` accessor.
+                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()

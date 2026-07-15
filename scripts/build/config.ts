@@ -17,7 +17,7 @@ import { resolveMacosSdkPath } from "./macos-sdk.ts";
 import { clangTargetArch } from "./tools.ts";
 import { cyan, dim, green } from "./tty.ts";
 
-export type OS = "linux" | "darwin" | "windows" | "freebsd" | "ohos";
+export type OS = "linux" | "darwin" | "windows" | "freebsd";
 export type Arch = "x64" | "aarch64";
 export type Abi = "gnu" | "musl" | "android";
 export type BuildType = "Debug" | "Release" | "RelWithDebInfo" | "MinSizeRel";
@@ -82,7 +82,6 @@ export interface Config {
   darwin: boolean;
   windows: boolean;
   freebsd: boolean;
-  ohos: boolean;
   /** linux || darwin || freebsd */
   unix: boolean;
   /** darwin || freebsd — kqueue-based event loop */
@@ -184,9 +183,6 @@ export interface Config {
 
   // ─── Toolchain (resolved absolute paths) ───
   cc: string;
-  /** Host-native C compiler for build-time codegen (no --target/--sysroot).
-   *  Same as cc for native builds; bare clang/cc for cross-compiles like OHOS. */
-  hostCc: string;
   cxx: string;
   /**
    * Compiler for build-time host tools (dep_host_cc codegen helpers).
@@ -309,16 +305,6 @@ export interface Config {
   /** FreeBSD release version targeted (e.g. "14.3"). undefined when os != "freebsd". */
   freebsdVersion: string | undefined;
 
-  // ─── OHOS cross-compilation (ohos only, undefined elsewhere) ───
-  /** Sysroot path for OHOS NDK. */
-  ohosSysroot: string | undefined;
-  /** OHOS SDK root path. */
-  ohosSdkRoot: string | undefined;
-  /** Cross-compiled libc++/libunwind path. */
-  ohosCrossLibs: string | undefined;
-  /** Cross-compiled ICU path. */
-  ohosIcuDir: string | undefined;
-
   // ─── Versioning ───
   /** Bun's own version (from package.json). */
   version: string;
@@ -373,16 +359,6 @@ export interface PartialConfig {
   freebsdSysroot?: string;
   /** FreeBSD release version (default: FREEBSD_VERSION_DEFAULT). Only used when os=freebsd. */
   freebsdVersion?: string;
-  /** OHOS sysroot path. Only used when os=ohos. */
-  ohosSysroot?: string;
-  /** OHOS SDK root. Auto-detected if not provided. */
-  ohosSdkRoot?: string;
-  /** OHOS cross-compiled LLVM runtime libs (libc++/libc++abi/libunwind). Auto-detected if not provided. */
-  ohosCrossLibs?: string;
-  /** OHOS cross-compiled ICU directory. Auto-detected if not provided. */
-  ohosIcuDir?: string;
-  /** Override cross-compilation target triple (e.g. "aarch64-linux-ohos"). */
-  crossTarget?: string;
   /**
    * macOS SDK path (a MacOSX*.sdk directory). Only used when cross-compiling
    * for darwin from a non-darwin host; native darwin builds use xcrun.
@@ -503,7 +479,7 @@ export interface Toolchain {
 export function detectHost(): Host {
   const plat = hostPlatform();
   const os: OS =
-    plat === "linux" || plat === "openharmony"
+    plat === "linux"
       ? "linux"
       : plat === "darwin"
         ? "darwin"
@@ -714,14 +690,13 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // skip this (the host clang-cl's default arch is just the host's).
   const compilerArch = os === "windows" && host.os === "windows" ? clangTargetArch(toolchain.cc) : undefined;
   const arch = partial.arch ?? compilerArch ?? host.arch;
-  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : os === "ohos" ? "musl" : undefined;
+  const abi: Abi | undefined = os === "linux" ? (partial.abi ?? detectLinuxAbi()) : undefined;
 
   const linux = os === "linux";
   const darwin = os === "darwin";
   const windows = os === "windows";
   const freebsd = os === "freebsd";
-  const ohos = os === "ohos";
-  const unix = linux || darwin || freebsd || ohos;
+  const unix = linux || darwin || freebsd;
   const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
@@ -1008,29 +983,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     }
   }
 
-  // ─── OHOS ───
-  let ohosSysroot: string | undefined;
-  let ohosSdkRoot: string | undefined;
-  let ohosCrossLibs: string | undefined;
-  let ohosIcuDir: string | undefined;
-  if (ohos) {
-    ohosSdkRoot = partial.ohosSdkRoot ? resolve(cwd, partial.ohosSdkRoot) : findOhosSdkRoot();
-    if (!ohosSdkRoot) {
-      throw new BuildError("OHOS build requires --ohos-sdk-root=<path> or setup-ohos-sdk in home", {
-        hint: "Install OHOS SDK from https://gitee.com/openharmony and point --ohos-sdk-root to the SDK root.",
-      });
-    }
-    ohosSysroot = partial.ohosSysroot ? resolve(cwd, partial.ohosSysroot) : resolve(ohosSdkRoot, "ohos/native/sysroot");
-    if (!existsSync(ohosSysroot)) {
-      throw new BuildError(`OHOS sysroot not found at ${ohosSysroot}`);
-    }
-    ohosCrossLibs = partial.ohosCrossLibs ? resolve(cwd, partial.ohosCrossLibs) : resolve(cwd, "build", "ohos-cross-libs");
-    ohosIcuDir = partial.ohosIcuDir ? resolve(cwd, partial.ohosIcuDir) : resolve(cwd, "build", "ohos-icu", "target");
-    // Populate generic cross-compile fields so downstream plumbing sees OHOS settings
-    sysroot = ohosSysroot;
-    crossTarget = partial.crossTarget ?? "aarch64-linux-ohos";
-  }
-
   // ─── Cross-compilation (Windows) ───
   // Same pattern as Android/FreeBSD, with the MSVC spin: the host LLVM's
   // clang-cl/lld-link/llvm-lib/llvm-rc are used (tools.ts picks them by
@@ -1157,7 +1109,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     darwin,
     windows,
     freebsd,
-    ohos,
     unix,
     kqueue,
     x64,
@@ -1199,7 +1150,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     cacheDir,
     vendorDir,
     cc: toolchain.cc,
-    hostCc: ohos ? findHostCc() : toolchain.cc,
     cxx: toolchain.cxx,
     hostCc: toolchain.hostCc ?? toolchain.cc,
     hostCxx: toolchain.hostCxx ?? toolchain.cxx,
@@ -1244,10 +1194,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     androidApiLevel,
     androidNdkRuntimeDir,
     freebsdVersion,
-    ohosSysroot,
-    ohosSdkRoot,
-    ohosCrossLibs,
-    ohosIcuDir,
     version,
     revision,
     nodejsVersion,
@@ -1477,34 +1423,6 @@ export function bunExeName(cfg: Config): string {
   return "bun-profile";
 }
 
-function findHostCc(): string {
-  // OHOS cross-compilation requires the system GCC (not LLVM clang) because
-  // GCC supplies crtbegin.o/crtend.o and compatible crt startup files/link
-  // behavior that the OHOS toolchain expects. This may fail on systems where
-  // /usr/bin/gcc is symlinked to clang (e.g., some container images).
-  for (const name of ["/usr/bin/gcc", "/usr/bin/cc", "/bin/gcc", "/bin/cc"]) {
-    if (existsSync(name)) return name;
-  }
-  return "cc"; // fallback
-}
-
-function findOhosSdkRoot(): string | undefined {
-  // Environment variable takes priority (standard for cross-compilation toolchains).
-  const envRoot = process.env.OHOS_SDK_ROOT;
-  if (envRoot && existsSync(resolve(envRoot, "ohos/native/sysroot"))) {
-    return envRoot;
-  }
-  const candidates = [
-    resolve(homedir(), "setup-ohos-sdk"),
-    resolve(homedir(), "ohos-sdk"),
-    "/opt/ohos-sdk",
-  ];
-  for (const dir of candidates) {
-    if (existsSync(resolve(dir, "ohos/native/sysroot"))) return dir;
-  }
-  return undefined;
-}
-
 /**
  * Whether this config produces a stripped `bun` alongside `bun-profile`.
  *
@@ -1551,10 +1469,15 @@ export function formatConfig(cfg: Config, exe: string): string {
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
-  // Version pin overrides — show a short hash so you catch "forgot to
-  // revert my WebKit test branch" before the build goes weird.
-  if (cfg.webkitVersion !== versionDefaults.webkitVersion)
-    features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
+  // Version pin overrides — show an identifying value so you catch "forgot
+  // to revert my WebKit test branch" before the build goes weird. Strip the
+  // autobuild- prefix so preview tags show their sha instead of the prefix.
+  if (cfg.webkitVersion !== versionDefaults.webkitVersion) {
+    const v = cfg.webkitVersion.startsWith("autobuild-")
+      ? cfg.webkitVersion.slice("autobuild-".length)
+      : cfg.webkitVersion;
+    features.push(`webkit-version:${/^[0-9a-f]{40}$/.test(v) ? v.slice(0, 10) : v}`);
+  }
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

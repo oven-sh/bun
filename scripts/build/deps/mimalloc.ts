@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "afb41757285694f832e7a2f164d35f5717457f96";
+const MIMALLOC_COMMIT = "13eecae8f35a73c16bdcded9291d9b56b7fc0fca";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -68,7 +68,7 @@ export const mimalloc: Dependency = {
     // toolchain's <sys/prctl.h> defines PR_SET_VMA, which made strace
     // output diverge between toolchains. Disable it outright; the VMA
     // label is debugging sugar we don't rely on.
-    if (cfg.linux || cfg.ohos) defines.MI_NO_SET_VMA_NAME = 1;
+    if (cfg.linux) defines.MI_NO_SET_VMA_NAME = 1;
 
     if (cfg.abi === "musl") defines.MI_LIBC_MUSL = 1;
     if (override) defines.MI_MALLOC_OVERRIDE = true;

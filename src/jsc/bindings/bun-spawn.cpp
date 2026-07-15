@@ -4,7 +4,6 @@
 
 #include <fcntl.h>
 #include <cstring>
-#include <pthread.h>
 #include <signal.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -115,12 +114,11 @@ typedef struct bun_spawn_request_t {
 // as _exit() may try to acquire locks held by threads that don't exist in the child.
 static inline void rawExit(int status)
 {
-#if defined(__NR_exit_group)
-    // Best-effort: try exit_group first (faster for multi-threaded processes).
-    // If the syscall fails (e.g. blocked by seccomp), fall through to _exit().
-    (void)syscall(__NR_exit_group, status);
-#endif
+#if OS(LINUX)
+    syscall(__NR_exit_group, status);
+#else
     _exit(status);
+#endif
 }
 
 extern "C" ssize_t posix_spawn_bun(
@@ -133,9 +131,9 @@ extern "C" ssize_t posix_spawn_bun(
     sigset_t blockall, oldmask;
     int res = 0, cs = 0;
 
-#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
-    // On macOS/FreeBSD/OHOS, we use fork() which requires a self-pipe trick to
-    // detect exec failures. Create a pipe for child-to-parent error communication.
+#if OS(DARWIN) || OS(FREEBSD)
+    // On macOS, we use fork() which requires a self-pipe trick to detect exec failures.
+    // Create a pipe for child-to-parent error communication.
     // The write end has O_CLOEXEC so it's automatically closed on successful exec.
     // If exec fails, child writes errno to the pipe.
     int errpipe[2];
@@ -148,36 +146,31 @@ extern "C" ssize_t posix_spawn_bun(
 
     sigfillset(&blockall);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
-#if !OS(ANDROID) && !defined(__OHOS__)
+#if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
 #endif
 
-    // On Linux, use vfork() for performance, with a fallback to fork()
-    // if vfork fails (e.g. blocked by seccomp on platforms like OHOS).
-    // On other Unix platforms (macOS, FreeBSD), use fork() directly.
-#if OS(LINUX) && !defined(__OHOS__)
+#if OS(LINUX)
+    // On Linux, use vfork() for performance. The parent is suspended until
+    // the child calls exec or _exit, so we can detect exec failure via the
+    // child's exit status without needing the self-pipe trick.
+    // While POSIX restricts vfork children to only calling _exit() or exec*(),
+    // Linux's vfork() is more permissive and allows the setup we need
+    // (setsid, ioctl, dup2, etc.) before exec.
     volatile int child_errno = 0;
-    bool use_fork_fallback = false;
-    int saved_dumpable = -1;
-#endif
-
-    pid_t child;
-#if OS(LINUX) && !defined(__OHOS__)
     // The vfork child shares this mm, and set*id in the child resets the
     // mm-wide "dumpable" flag to /proc/sys/fs/suid_dumpable (commit_creds).
     // Save it so the parent can restore it once vfork returns, like Go's
     // forkAndExecInChild1 and systemd's safe_fork_full do.
-    saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
-    child = vfork();
-    if (child == -1) {
-        use_fork_fallback = true;
-        child = fork();
-    }
+    int saved_dumpable = (request->set_uid || request->set_gid) ? prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) : -1;
+    pid_t child = vfork();
 #else
-    child = fork();
+    // On macOS, we must use fork() because vfork() is more strictly enforced.
+    // This code path should only be used for PTY spawns on macOS.
+    pid_t child = fork();
 #endif
 
-#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
+#if OS(DARWIN) || OS(FREEBSD)
     const auto childFailed = [&]() -> ssize_t {
         int err = errno;
         // Write errno to pipe so parent can read it
@@ -348,10 +341,7 @@ extern "C" ssize_t posix_spawn_bun(
         if (!envp)
             envp = environ;
 
-        // Close all fds > current_max_fd, preferring cloexec if available.
-        // On OHOS, fcntl(F_SETFD) is ignored in vfork children, so fd CLOEXEC
-        // must be prevented by excluding stdio fds (0,1,2) from the range.
-        if (current_max_fd < 2) current_max_fd = 2;
+        // Close all fds > current_max_fd, preferring cloexec if available
         closeRangeOrLoop(current_max_fd + 1, INT_MAX, true);
 
         if (execve(path, argv, envp) == -1) {
@@ -364,15 +354,15 @@ extern "C" ssize_t posix_spawn_bun(
     };
 
     if (child == 0) {
-#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
+#if OS(DARWIN) || OS(FREEBSD)
         // Close read end in child
         close(errpipe[0]);
 #endif
         return startChild();
     }
 
-#if OS(DARWIN) || OS(FREEBSD) || defined(__OHOS__)
-    // macOS/FreeBSD/OHOS fork() path: use self-pipe trick to detect exec failure
+#if OS(DARWIN) || OS(FREEBSD)
+    // macOS fork() path: use self-pipe trick to detect exec failure
     // Parent: close write end
     close(errpipe[1]);
 
@@ -415,17 +405,10 @@ extern "C" ssize_t posix_spawn_bun(
     }
 #else
     // Linux vfork() path: parent resumes after child calls exec or _exit
-    // We can detect exec failure via the volatile child_errno variable.
-    // When vfork() was not available and fork() was used instead, the
-    // error comes through fork_errpipe.
+    // We can detect exec failure via the volatile child_errno variable
     if (child != -1) {
-        if (use_fork_fallback) {
-            // Fork fallback: no shared memory, so exec failure detection
-            // is best-effort. Assume exec succeeded.
-            res = 0;
-            if (pid) *pid = child;
-        } else if (child_errno != 0) {
-            // Child failed to exec — it set child_errno and called _exit()
+        if (child_errno != 0) {
+            // Child failed to exec - it set child_errno and called _exit()
             // Reap the zombie child process
             wait4(child, NULL, 0, NULL);
             res = child_errno;
@@ -437,7 +420,7 @@ extern "C" ssize_t posix_spawn_bun(
             }
         }
     } else {
-        // fork/vfork() failed
+        // vfork() failed
         res = errno;
     }
 
@@ -449,7 +432,7 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigprocmask(SIG_SETMASK, &oldmask, 0);
-#if !OS(ANDROID) && !defined(__OHOS__)
+#if !OS(ANDROID)
     pthread_setcancelstate(cs, 0);
 #else
     (void)cs;

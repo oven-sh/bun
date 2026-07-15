@@ -3,7 +3,16 @@ import { connect, fileURLToPath, SocketHandler, spawn } from "bun";
 import { createSocketPair } from "bun:internal-for-testing";
 import { describe, expect, it, jest } from "bun:test";
 import { closeSync } from "fs";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, getMaxFD, isWindows, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  expectMaxObjectTypeCount,
+  getMaxFD,
+  isWindows,
+  libcPathForDlopen,
+  tempDir,
+  tls,
+} from "harness";
 import net from "node:net";
 import { createSecureContext, connect as tlsConnect } from "node:tls";
 describe.concurrent("socket", () => {
@@ -1774,6 +1783,108 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
       "ok=no-throw",
       "get=no-throw",
     ],
+    exitCode: 0,
+  });
+  void stderr;
+});
+
+// initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
+// leave the kernel-default idle. Verified via getsockopt(2) on the live fd.
+it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { dlopen, FFIType, ptr } = require("bun:ffi");
+        const isDarwin = process.platform === "darwin";
+        const libc = dlopen(${JSON.stringify(libcPathForDlopen())}, {
+          getsockopt: {
+            args: [FFIType.int, FFIType.int, FFIType.int, FFIType.ptr, FFIType.ptr],
+            returns: FFIType.int,
+          },
+        });
+        const SOL_SOCKET = isDarwin ? 0xffff : 1;
+        const SO_KEEPALIVE = isDarwin ? 0x0008 : 9;
+        const IPPROTO_TCP = 6;
+        // Linux TCP_KEEPIDLE = 4; Darwin names it TCP_KEEPALIVE = 0x10.
+        const TCP_KEEPIDLE = isDarwin ? 0x10 : 4;
+        function readIntOpt(fd, level, opt) {
+          const val = new Int32Array(1);
+          const len = new Uint32Array([4]);
+          const rc = libc.symbols.getsockopt(fd, level, opt, ptr(val), ptr(len));
+          if (rc !== 0) throw new Error("getsockopt(" + level + "," + opt + ") failed");
+          return val[0];
+        }
+        // Darwin returns SO_KEEPALIVE as so_options & 0x0008 (= 8), Linux as 0/1.
+        const readBoolOpt = (fd, level, opt) => (readIntOpt(fd, level, opt) ? 1 : 0);
+
+        const open = Promise.withResolvers();
+        using listener = Bun.listen({
+          hostname: "127.0.0.1",
+          port: 0,
+          socket: { data() {}, open() {}, close() {}, error() {} },
+        });
+        await using client = await Bun.connect({
+          hostname: "127.0.0.1",
+          port: listener.port,
+          socket: {
+            data() {}, close() {},
+            open: () => open.resolve(),
+            error: (_s, e) => open.reject(e),
+            connectError: (_s, e) => open.reject(e),
+          },
+        });
+        await open.promise;
+        const fd = client.fd;
+
+        const out = {};
+        // (a) ms -> seconds: 4000ms must land as TCP_KEEPIDLE=4.
+        out.a_ret = client.setKeepAlive(true, 4000);
+        out.a_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.a_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
+
+        // (b) default shape: setKeepAlive(true) must report success, leave
+        // SO_KEEPALIVE on, and not touch the previously-set TCP_KEEPIDLE.
+        out.off_ret = client.setKeepAlive(false);
+        out.off_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_ret = client.setKeepAlive(true);
+        out.b_keepalive = readBoolOpt(fd, SOL_SOCKET, SO_KEEPALIVE);
+        out.b_keepidle = readIntOpt(fd, IPPROTO_TCP, TCP_KEEPIDLE);
+
+        // node:net on the same runtime must still write the right idle.
+        const net = require("node:net");
+        const srv = net.createServer(() => {});
+        await new Promise(r => srv.listen(0, "127.0.0.1", r));
+        const nc = net.connect(srv.address().port, "127.0.0.1");
+        await new Promise((res, rej) => { nc.on("connect", res); nc.on("error", rej); });
+        nc.setKeepAlive(true, 4000);
+        out.net_keepidle = readIntOpt(nc._handle.fd, IPPROTO_TCP, TCP_KEEPIDLE);
+        nc.destroy();
+        srv.close();
+
+        console.log(JSON.stringify(out));
+        client.end();
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+    out: {
+      a_ret: true,
+      a_keepalive: 1,
+      a_keepidle: 4,
+      off_ret: true,
+      off_keepalive: 0,
+      b_ret: true,
+      b_keepalive: 1,
+      b_keepidle: 4,
+      net_keepidle: 4,
+    },
     exitCode: 0,
   });
   void stderr;

@@ -1250,9 +1250,9 @@ describe.concurrent("Bun.spawn with terminal option", () => {
           });
           await child.exited;
           const exitedSync = exitCount === 1;
-          // Give the reader's still-armed one-shot poll a chance to fire a
-          // second EIO; the exit callback must stay at one.
-          await Bun.sleep(50);
+          // One macrotask barrier so the reader's still-armed one-shot poll
+          // fires its second EIO; the exit callback must stay at one.
+          await Bun.sleep(0);
           process.stdout.write(JSON.stringify({
             gotOutput: out.includes("hi from pty"),
             exitedSync,

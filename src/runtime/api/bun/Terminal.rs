@@ -1737,50 +1737,34 @@ impl Terminal {
     // IOReader callbacks
     pub(crate) fn on_reader_done(&self) {
         bun_output::scoped_log!(Terminal, "onReaderDone");
-        // R-2: `&self` (no `noalias`) + `Cell<Flags>` makes the prior
-        // `black_box`-launder unnecessary — the post-`call_exit_callback`
-        // `flags` load is a fresh `Cell::get()` that LLVM cannot fold across
-        // the re-entrant JS call (UnsafeCell suppresses the alias assumption).
-        // EOF from master - downgrade to weak ref to allow GC
-        // Skip JS interactions if already finalized (happens when close() is called during finalize)
-        if !self
-            .flags
-            .get()
-            .intersects(Flags::FINALIZED | Flags::READER_DONE)
-        {
-            self.update_flags(|f| f.remove(Flags::CONNECTED));
-            self.this_value.with_mut(|v| v.downgrade());
-            // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
-            self.call_exit_callback(0, None);
-        }
-        // Release reader's ref (only once)
-        if !self.flags.get().contains(Flags::READER_DONE) {
-            self.update_flags(|f| f.insert(Flags::READER_DONE));
-            self.deref_();
-        }
+        // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
+        self.on_reader_finished(0);
     }
 
     pub(crate) fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
-        // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
-        // prior `black_box` launder.
-        // Error - downgrade to weak ref to allow GC
-        // Skip JS interactions if already finalized
-        if !self
-            .flags
-            .get()
-            .intersects(Flags::FINALIZED | Flags::READER_DONE)
-        {
-            self.update_flags(|f| f.remove(Flags::CONNECTED));
+        // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
+        self.on_reader_finished(1);
+    }
+
+    /// Shared tail of `on_reader_done`/`on_reader_error`: claim `READER_DONE`
+    /// before the exit callback so re-entry (`terminal.close()` from the
+    /// callback) sees the flag and no-ops, then release the reader's +1.
+    fn on_reader_finished(&self, exit_code: i32) {
+        if self.flags.get().contains(Flags::READER_DONE) {
+            return;
+        }
+        self.update_flags(|f| {
+            f.insert(Flags::READER_DONE);
+            f.remove(Flags::CONNECTED);
+        });
+        // EOF from master - downgrade to weak ref to allow GC
+        // Skip JS interactions if already finalized (happens when close() is called during finalize)
+        if !self.flags.get().contains(Flags::FINALIZED) {
             self.this_value.with_mut(|v| v.downgrade());
-            // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
-            self.call_exit_callback(1, None);
+            self.call_exit_callback(exit_code, None);
         }
-        // Release reader's ref (only once)
-        if !self.flags.get().contains(Flags::READER_DONE) {
-            self.update_flags(|f| f.insert(Flags::READER_DONE));
-            self.deref_();
-        }
+        self.deref_();
     }
 
     /// Invoke the exit callback with PTY lifecycle status.

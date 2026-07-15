@@ -1263,8 +1263,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                         | bun_sys::FileKind::Whiteout
                         | bun_sys::FileKind::Door
                         | bun_sys::FileKind::EventPort => {
-                            if !self.walker.only_files
-                                && self.walker.eval_file(&active, entry_name)
+                            if !self.walker.only_files && self.walker.eval_file(&active, entry_name)
                             {
                                 match self.walker.prepare_matched_path(entry_name, dir_dir_path)? {
                                     Some(prepared) => return Ok(Ok(Some(prepared))),

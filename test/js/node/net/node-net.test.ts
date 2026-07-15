@@ -1177,4 +1177,36 @@ describe("diagnostics_channel", () => {
     `);
     expect(exitCode).toBe(0);
   });
+
+  it("publishes asyncStart before option validation throws, but not on ERR_SERVER_ALREADY_LISTEN", async () => {
+    const fixture = `
+      const dc = require("node:diagnostics_channel");
+      const net = require("node:net");
+      let starts = 0;
+      dc.subscribe("tracing:net.server.listen:asyncStart", ({ options }) => {
+        starts++;
+        console.log("asyncStart", JSON.stringify(options));
+      });
+      try { net.createServer().listen({ port: -1 }); } catch (e) { console.log("threw", e.code, "starts=" + starts); }
+      const s = net.createServer();
+      s.listen(0, "127.0.0.1", () => {
+        try { s.listen(0); } catch (e) { console.log("threw", e.code, "starts=" + starts); }
+        s.close();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "asyncStart {"port":-1}
+      threw ERR_SOCKET_BAD_PORT starts=1
+      asyncStart {"port":0,"host":"127.0.0.1"}
+      threw ERR_SERVER_ALREADY_LISTEN starts=2"
+    `);
+    expect(exitCode).toBe(0);
+  });
 });

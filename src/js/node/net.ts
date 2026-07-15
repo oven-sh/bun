@@ -3254,6 +3254,15 @@ Server.prototype.getConnections = function getConnections(callback) {
 
 Server.prototype.listen = function listen(port, hostname, onListen) {
   const argsLength = arguments.length;
+
+  if (this._handle) {
+    throw $ERR_SERVER_ALREADY_LISTEN();
+  }
+
+  if (netServerListen.asyncStart.hasSubscribers) {
+    netServerListen.asyncStart.publish({ server: this, options: normalizeArgs(arguments)[0] });
+  }
+
   if (typeof port === "string") {
     const numPort = Number(port);
     if (!Number.isNaN(numPort)) port = numPort;
@@ -3400,14 +3409,6 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
 
   if (typeof port === "number" && (port < 0 || port >= 65536)) {
     throw $ERR_SOCKET_BAD_PORT(`options.port should be >= 0 and < 65536. Received type number: (${port})`);
-  }
-
-  if (this._handle) {
-    throw $ERR_SERVER_ALREADY_LISTEN();
-  }
-
-  if (netServerListen.asyncStart.hasSubscribers) {
-    netServerListen.asyncStart.publish({ server: this, options: normalizeArgs(arguments)[0] });
   }
 
   if (onListen != null) {

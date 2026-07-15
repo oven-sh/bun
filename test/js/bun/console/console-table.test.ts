@@ -13,9 +13,7 @@ function renderTable(...args: any[]): string {
     // console.log(x): bare strings print raw, everything else is inspected.
     return (typeof data === "string" ? data : Bun.inspect(data)) + "\n";
   }
-  return properties === undefined
-    ? Bun.inspect.table(data, { depth: 0 })
-    : Bun.inspect.table(data, properties, { depth: 0 });
+  return properties === undefined ? Bun.inspect.table(data) : Bun.inspect.table(data, properties);
 }
 
 // Strip cell contents, keeping only the header row's column names, so column
@@ -275,7 +273,7 @@ console.table([{ b: 1 }, { a: 2, "7": 3 }]);`,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const tables = stdout.split(/\n(?=┌)/);
-      expect(tables).toHaveLength(5);
+      expect({ stderr, tableCount: tables.length }).toEqual({ stderr: "", tableCount: 5 });
 
       // (d) depth clamp: nested object under `x` must be truncated, not expanded
       expect(tables[0]).toContain("[Object");
@@ -286,7 +284,6 @@ console.table([{ b: 1 }, { a: 2, "7": 3 }]);`,
       expect(columnNames(tables[3])).toEqual(["Values"]);
       expect(columnNames(tables[4])).toEqual(["7", "b", "a"]);
 
-      expect(stderr).toBe("");
       expect(exitCode).toBe(0);
     });
   });

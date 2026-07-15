@@ -8,6 +8,36 @@
 
 namespace WebCore {
 
+// node:worker_threads resourceLimits. JavaScriptCore has no generational split
+// and no per-VM hard heap cap; maxOldGenerationSizeMb + maxYoungGenerationSizeMb
+// are summed into a single heap limit checked after each garbage collection.
+// codeRangeSizeMb and stackSizeMb are echoed back for API compat, not enforced.
+struct WorkerResourceLimits {
+    double maxYoungGenerationSizeMb { -1 };
+    double maxOldGenerationSizeMb { -1 };
+    double codeRangeSizeMb { -1 };
+    double stackSizeMb { 4 };
+
+    // 0 when no heap limit is configured.
+    size_t heapLimitBytes() const
+    {
+        double mb = 0;
+        if (std::isfinite(maxOldGenerationSizeMb) && maxOldGenerationSizeMb > 0)
+            mb += maxOldGenerationSizeMb;
+        if (std::isfinite(maxYoungGenerationSizeMb) && maxYoungGenerationSizeMb > 0)
+            mb += maxYoungGenerationSizeMb;
+        if (mb <= 0)
+            return 0;
+        // The Mb values come straight from JS. Compare in double and clamp
+        // before casting: a double-to-size_t conversion of an out-of-range
+        // value is UB.
+        double bytes = mb * 1024.0 * 1024.0;
+        if (bytes >= static_cast<double>(std::numeric_limits<size_t>::max()))
+            return std::numeric_limits<size_t>::max();
+        return static_cast<size_t>(bytes);
+    }
+};
+
 struct WorkerOptions {
     enum class Kind : uint8_t {
         // Created by the global Worker constructor
@@ -38,6 +68,8 @@ struct WorkerOptions {
     Vector<String> argv;
     // If nullopt, inherit execArgv from the parent thread
     std::optional<Vector<String>> execArgv;
+    // Defaults (no heap limit) when no resourceLimits object was passed.
+    WorkerResourceLimits resourceLimits;
 };
 
 } // namespace WebCore

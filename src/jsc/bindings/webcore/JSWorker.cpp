@@ -320,6 +320,31 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
+        JSValue resourceLimitsValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "resourceLimits"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        // Node's parseResourceLimits silently ignores anything that is not
+        // `typeof === 'object'` (null, primitives, callables). JSC's
+        // isObject() is true for callables, hence the extra check.
+        if (resourceLimitsValue && resourceLimitsValue.isObject() && !resourceLimitsValue.isCallable()) {
+            auto* limitsObject = asObject(resourceLimitsValue);
+            WorkerResourceLimits limits;
+            // Only `typeof === 'number'` values are accepted, like Node.
+            // This is the ONLY parse of the user's option: enforcement and
+            // both resourceLimits getters read back from its result.
+            auto readLimit = [&](ASCIILiteral key, double& out) -> bool {
+                JSValue v = limitsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, key));
+                if (throwScope.exception()) return false;
+                if (v && v.isNumber())
+                    out = v.asNumber();
+                return true;
+            };
+            if (!readLimit("maxYoungGenerationSizeMb"_s, limits.maxYoungGenerationSizeMb)) return {};
+            if (!readLimit("maxOldGenerationSizeMb"_s, limits.maxOldGenerationSizeMb)) return {};
+            if (!readLimit("codeRangeSizeMb"_s, limits.codeRangeSizeMb)) return {};
+            if (!readLimit("stackSizeMb"_s, limits.stackSizeMb)) return {};
+            options.resourceLimits = limits;
+        }
+
         JSValue execArgvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "execArgv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
         if (execArgvValue && execArgvValue.pureToBoolean() != TriState::False) {
@@ -430,6 +455,22 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
     return JSValue::encode(jsNumber(worker.clientIdentifier() - 1));
 }
 
+JSC_DEFINE_CUSTOM_GETTER(jsWorker_resourceLimitsGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+{
+    auto* castedThis = dynamicDowncast<JSWorker>(JSValue::decode(thisValue));
+    if (!castedThis) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+
+    auto& worker = castedThis->wrapped();
+    // {} once the worker has stopped, like Node. The close task stores
+    // State::Closing before it dispatches the ERR_WORKER_OUT_OF_MEMORY
+    // error event, so this already holds inside an OOM 'error' handler.
+    if (worker.wasTerminated())
+        return JSValue::encode(constructEmptyObject(lexicalGlobalObject));
+    // A fresh object per read, from the single parse in the constructor.
+    return JSValue::encode(createResourceLimitsObject(lexicalGlobalObject, worker.options().resourceLimits));
+}
+
 /* Hash table for prototype */
 
 static const HashTableValue JSWorkerPrototypeTableValues[] = {
@@ -439,6 +480,7 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "onmessageerror"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_onmessageerror, setJSWorker_onmessageerror } },
     { "postMessage"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_postMessage, 1 } },
     { "ref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_ref, 0 } },
+    { "resourceLimits"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_resourceLimitsGetter, nullptr } },
     { "terminate"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_terminate, 0 } },
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },

@@ -390,6 +390,101 @@ describe("ES Decorators", () => {
       expect(stdout).toBe("hello bar\ndone\n");
       expect(exitCode).toBe(0);
     });
+
+    async function runDecoratorTS(code: string) {
+      using dir = tempDir("es-dec-ts", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "test.ts": code,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr: filterStderr(rawStderr), exitCode };
+    }
+
+    test("non-null assertion in decorator member expression", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        const ns = {
+          dec(cls: any, ctx: any) {
+            console.log(ctx.kind, ctx.name);
+            return cls;
+          },
+        };
+        @ns!.dec
+        class Foo {}
+        @ns!.dec!
+        class Bar {}
+        console.log("done");
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class Foo\nclass Bar\ndone\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("private name in decorator member expression", async () => {
+      const { stdout, stderr, exitCode } = await runDecoratorTS(`
+        class Outer {
+          static #dec(cls: any, ctx: any) {
+            console.log(ctx.kind, ctx.name);
+            return cls;
+          }
+          static Inner = @Outer.#dec class Inner {};
+        }
+        new Outer.Inner();
+        console.log("done");
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("class Inner\ndone\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("export before decorator", async () => {
+      using dir = tempDir("es-dec-export", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+        "dep.ts": `
+          function dec(cls: any, ctx: any) {
+            console.log(ctx.kind, ctx.name);
+            return cls;
+          }
+          export @dec class Foo {}
+        `,
+        "test.ts": `
+          import { Foo } from "./dep";
+          console.log(typeof Foo);
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test.ts"],
+        env: bunEnv,
+        cwd: String(dir),
+        stderr: "pipe",
+      });
+      const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(filterStderr(rawStderr)).toBe("");
+      expect(stdout).toBe("class Foo\nfunction\n");
+      expect(exitCode).toBe(0);
+    });
+
+    test("non-null assertion in decorator is rejected in JavaScript", async () => {
+      const { stderr, exitCode } = await runDecorator(`
+        const ns = { dec(cls, ctx) { return cls; } };
+        @ns!.dec class Foo {}
+      `);
+      expect(stderr).toContain("!");
+      expect(exitCode).not.toBe(0);
+    });
+
+    test("property access after call in decorator is rejected", async () => {
+      const { stderr, exitCode } = await runDecoratorTS(`
+        @x().y class Foo {}
+      `);
+      expect(stderr).toContain("wrap the expression in parentheses");
+      expect(exitCode).not.toBe(0);
+    });
   });
 
   describe("metadata", () => {

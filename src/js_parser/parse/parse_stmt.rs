@@ -824,7 +824,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         match p.lexer.token {
-            T::TClass | T::TConst | T::TFunction | T::TVar => {
+            T::TClass | T::TConst | T::TFunction | T::TVar | T::TAt => {
                 opts.is_export = true;
                 p.parse_stmt(opts)
             }

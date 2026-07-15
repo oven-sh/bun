@@ -9,6 +9,7 @@ const SafeFinalizationRegistry = FinalizationRegistry;
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const SymbolHasInstance = Symbol.hasInstance;
@@ -65,7 +66,7 @@ function markActive(channel) {
   channel._subscribers = [];
   channel._stores = new SafeMap();
   // Notify the native dynamic-import hook that it now needs to publish.
-  if (typeof channel.name === "string" && channel.name.startsWith("tracing:module.")) {
+  if (typeof channel.name === "string" && StringPrototypeStartsWith.$call(channel.name, "tracing:module.")) {
     (enableModuleTracing ??= $newCppFunction("NodeDiagnosticsChannel.cpp", "jsEnableModuleTracingSubscribers", 0))();
   }
 }

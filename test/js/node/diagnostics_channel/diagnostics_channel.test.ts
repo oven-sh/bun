@@ -410,7 +410,7 @@ describe.concurrent("module tracing channels", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
     const events = JSON.parse(stdout).filter((e: any) => e.name.startsWith("tracing:module.require:"));
     expect(events).toEqual([
       {
@@ -449,6 +449,7 @@ describe.concurrent("module tracing channels", () => {
         hasError: true,
       },
     ]);
+    expect(exitCode).toBe(0);
   });
 
   test("tracing:module.import publishes on every dynamic import()", async () => {
@@ -464,7 +465,7 @@ describe.concurrent("module tracing channels", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
     const events = JSON.parse(stdout).filter((e: any) => e.name.startsWith("tracing:module.import:"));
     expect(events).toEqual([
       { name: "tracing:module.import:start", url: "b.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
@@ -519,6 +520,7 @@ describe.concurrent("module tracing channels", () => {
         hasError: true,
       },
     ]);
+    expect(exitCode).toBe(0);
   });
 
   test("tracing:module.require result matches require() return value", async () => {
@@ -539,8 +541,9 @@ describe.concurrent("module tracing channels", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({ same: true, result: { marker: "hello" } });
+    expect(exitCode).toBe(0);
   });
 
   test("require() still works when nothing is subscribed", async () => {
@@ -555,7 +558,9 @@ describe.concurrent("module tracing channels", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "42", stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
+    expect(stdout).toBe("42");
+    expect(exitCode).toBe(0);
   });
 });
 

@@ -146,6 +146,20 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
     false
 }
 
+/// Exported as `Bun__VM__specifierIsWorkerEvalEntry`. True when this VM is a
+/// worker_threads `eval: true` worker and `specifier` is its entry blob URL.
+// HOST_EXPORT(Bun__VM__specifierIsWorkerEvalEntry, c)
+pub fn specifier_is_worker_eval_entry(this: &mut VirtualMachine, specifier: JSValue) -> bool {
+    if !this.worker_ref().is_some_and(|w| w.eval_mode()) {
+        return false;
+    }
+    let global = this.global();
+    let specifier_str = bun_core::OwnedString::new(
+        bun_jsc::bun_string_jsc::from_js(specifier, global).expect("unexpected exception"),
+    );
+    specifier_str.eql_utf8(this.main())
+}
+
 /// `export fn Bun__closeChildIPC(global)` — defers the actual socket close to
 /// the next tick on the event loop.
 // HOST_EXPORT(Bun__closeChildIPC, c)

@@ -109,6 +109,7 @@ static bool canPerformFastEnumeration(Structure* s)
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
+extern "C" bool Bun__VM__specifierIsWorkerEvalEntry(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultCJS(void*, EncodedJSValue);
 
 static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* moduleObject, JSString* dirname, JSValue filename)
@@ -1484,6 +1485,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
+        JSString* specifierKey = requireMapKey;
         size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
         JSString* dirname;
         JSString* filename = requireMapKey;
@@ -1492,6 +1494,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             dirname = jsEmptyString(vm);
+        }
+        if (Bun__VM__specifierIsWorkerEvalEntry(globalObject->bunVM(), JSValue::encode(specifierKey))) [[unlikely]] {
+            filename = JSC::jsString(vm, WTF::String("[worker eval]"_s));
+            dirname = JSC::jsString(vm, WTF::String("."_s));
         }
         auto requireMap = globalObject->requireMap();
         if (requireMap->size() == 0) {
@@ -1521,7 +1527,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
             JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
 
-        requireMap->set(globalObject, filename, moduleObject);
+        requireMap->set(globalObject, specifierKey, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
@@ -1601,6 +1607,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
     }
 
     if (!moduleObject) {
+        JSString* specifierKey = requireMapKey;
         size_t index = sourceURL.reverseFind(PLATFORM_SEP, sourceURL.length());
         JSString* dirname;
         JSString* filename = requireMapKey;
@@ -1609,6 +1616,10 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             dirname = jsEmptyString(vm);
+        }
+        if (Bun__VM__specifierIsWorkerEvalEntry(globalObject->bunVM(), JSValue::encode(specifierKey))) [[unlikely]] {
+            filename = JSC::jsString(vm, WTF::String("[worker eval]"_s));
+            dirname = JSC::jsString(vm, WTF::String("."_s));
         }
         auto requireMap = globalObject->requireMap();
         if (requireMap->size() == 0) {
@@ -1624,7 +1635,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             WebCore::clientData(vm)->builtinNames().exportsPublicName(),
             JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()), 0);
 
-        requireMap->set(globalObject, filename, moduleObject);
+        requireMap->set(globalObject, specifierKey, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

@@ -228,9 +228,20 @@ describe("Bun.Transpiler", () => {
       // "get"/"set" without the generator star still bind to the next key across a newline.
       exp("class A { get\n x() { return 1 } }", "class A {\n  get x() {\n    return 1;\n  }\n}");
 
+      // "declare <keyword>" with a newline cannot fall through to SExpr because that would
+      // leave the remainder as live runtime code. Match esbuild and reject instead.
+      err("declare interface\nFoo\n{ sideEffect() }", 'Unexpected "interface"');
+      err("declare abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("export declare interface\nFoo {}", 'Unexpected "interface"');
+      err("export declare abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("declare declare\nlet x = 1", 'Unexpected "declare"');
+      // "export abstract \n class" falls through silently like esbuild (export is discarded).
+      exp("export abstract\nclass Foo {}\nnew Foo", "abstract;\n\nclass Foo {\n}\nnew Foo;\n");
+
       // Decorators before "declare"/"abstract" with a newline must still demand a class.
-      err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Unexpected newline after "declare"');
-      err("function dec(c){return c}\n@dec abstract\nclass Foo {}", 'Unexpected newline after "abstract"');
+      err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Unexpected "declare"');
+      err("function dec(c){return c}\n@dec abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("function dec(c){return c}\n@dec export default abstract\nclass Foo {}", 'Unexpected "abstract"');
     });
 
     it("does not crash when export default abstract is an expression followed by a class", () => {

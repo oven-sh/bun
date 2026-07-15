@@ -1140,7 +1140,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // "@decorator export default abstract = 1"
+                // "@decorator export default abstract \n class Foo {}"
                 if opts.ts_decorators.is_some() {
+                    if is_identifier
+                        && name == b"abstract"
+                        && p.lexer.has_newline_before
+                        && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
+                    {
+                        let r = js_lexer::range_of_identifier(p.source, expr.loc);
+                        p.log()
+                            .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
+                        return Err(crate::Error::SyntaxError);
+                    }
                     p.lexer.expected(T::TClass)?;
                 }
 
@@ -1779,7 +1790,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // "interface \n Foo {}"
                 // "export interface \n Foo {}"
-                if opts.is_export {
+                // "declare interface \n Foo {}"
+                if opts.is_export || opts.is_typescript_declare {
                     let r = js_lexer::range_of_identifier(p.source, loc);
                     p.log()
                         .add_range_error(Some(p.source), r, b"Unexpected \"interface\"");
@@ -1792,13 +1804,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
                 }
-                if opts.ts_decorators.is_some() {
+                if opts.ts_decorators.is_some() || opts.is_typescript_declare {
                     let r = js_lexer::range_of_identifier(p.source, loc);
-                    p.log().add_error(
-                        Some(p.source),
-                        r.end(),
-                        b"Unexpected newline after \"abstract\"",
-                    );
+                    p.log()
+                        .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
                     return Err(crate::Error::SyntaxError);
                 }
             }
@@ -1816,13 +1825,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
                 if p.lexer.has_newline_before {
-                    if opts.ts_decorators.is_some() {
+                    if opts.ts_decorators.is_some() || opts.is_typescript_declare {
                         let r = js_lexer::range_of_identifier(p.source, loc);
-                        p.log().add_error(
-                            Some(p.source),
-                            r.end(),
-                            b"Unexpected newline after \"declare\"",
-                        );
+                        p.log()
+                            .add_range_error(Some(p.source), r, b"Unexpected \"declare\"");
                         return Err(crate::Error::SyntaxError);
                     }
                     return Ok(None);

@@ -11,10 +11,12 @@ import { Duplex } from "stream";
 import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
-// bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
-// there; the 10k-request maxSessionMemory stress test takes ~90s under
-// debug+ASAN vs ~2s release, so scale for either.
+// bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false there.
 const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
+// The maxSessionMemory stress test costs ~2s for 10k requests in release but ~90s under
+// debug+ASAN, close enough to its timeout that a loaded machine trips it. Shrink the workload
+// rather than the deadline; 1k sequential requests still exercises the memory accounting.
+const MAX_SESSION_MEMORY_REQUESTS = isDebug || isASAN ? 1_000 : 10_000;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -1874,7 +1876,7 @@ it(
         const client = http2.connect(`http://localhost:${port}`);
 
         function next(i) {
-          if (i === 10000) {
+          if (i === MAX_SESSION_MEMORY_REQUESTS) {
             client.close();
             server.close();
             resolve();
@@ -3183,6 +3185,141 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     expect(raw.toLowerCase()).not.toContain("keep-alive");
     expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("body");
   } finally {
+    server.close();
+  }
+});
+
+// Collects the server stream's lifecycle events for one request, plus `stream.aborted` as read
+// from the 'close' handler. 'end' is filtered out: bun and node disagree on whether it lands
+// before or after 'finish', which is unrelated to what these tests assert.
+async function serverStreamLifecycle(onStream, requestHeaders = { ":path": "/" }) {
+  const events = [];
+  let aborted = null;
+  const { promise: streamClosed, resolve: streamDidClose } = Promise.withResolvers();
+
+  const server = http2.createServer();
+  server.on("stream", stream => {
+    stream.on("aborted", () => events.push("aborted"));
+    stream.on("finish", () => events.push("finish"));
+    stream.on("close", () => {
+      aborted = stream.aborted;
+      events.push("close");
+      streamDidClose();
+    });
+    onStream(stream);
+  });
+
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+  try {
+    const req = client.request(requestHeaders);
+    const responseHeaders = await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", resolve);
+      req.end();
+    });
+    const body = [];
+    req.on("data", chunk => body.push(chunk));
+    await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("end", resolve);
+    });
+    await streamClosed;
+    return { events, aborted, status: responseHeaders[":status"], body: Buffer.concat(body).toString() };
+  } finally {
+    client.close();
+    server.close();
+  }
+}
+
+it("http2 respondWithFile statCheck returning false does not emit a spurious 'aborted'", async () => {
+  // The documented statCheck veto: reply 304 from a cache validator and cancel the file send.
+  // Node treats that as a completed response, so no 'aborted' fires and stream.aborted stays false.
+  const result = await serverStreamLifecycle(stream => {
+    stream.respondWithFile(
+      import.meta.path,
+      { "content-type": "text/plain" },
+      {
+        statCheck() {
+          stream.respond({ ":status": 304 });
+          stream.end();
+          return false;
+        },
+      },
+    );
+  });
+
+  expect(result).toEqual({ events: ["finish", "close"], aborted: false, status: 304, body: "" });
+});
+
+it("http2 server respond() with END_STREAM after the request body does not emit a spurious 'aborted'", async () => {
+  // Any respond() whose HEADERS frame carries END_STREAM (204/205/304, HEAD, endStream: true)
+  // fully closes a stream whose peer already half-closed. That is a completed response, so the
+  // writable side must be ended before the frame is submitted or the teardown looks like an abort.
+  const cases = [
+    { name: "304", status: 304, respond: stream => stream.respond({ ":status": 304 }) },
+    { name: "204", status: 204, respond: stream => stream.respond({ ":status": 204 }) },
+    { name: "205", status: 205, respond: stream => stream.respond({ ":status": 205 }) },
+    { name: "endStream", status: 200, respond: stream => stream.respond({ ":status": 200 }, { endStream: true }) },
+    { name: "head", status: 200, respond: stream => stream.respond({ ":status": 200 }), method: "HEAD" },
+  ];
+
+  const results = [];
+  for (const { name, respond, method } of cases) {
+    // Respond once the request body is fully received, which is when the stream is already
+    // half-closed by the peer and submitting END_STREAM closes it outright.
+    const { events, aborted, status, body } = await serverStreamLifecycle(
+      stream => stream.on("end", () => respond(stream)),
+      method ? { ":path": "/", ":method": method } : { ":path": "/" },
+    );
+    results.push({ name, events, aborted, status, body });
+  }
+
+  expect(results).toEqual(
+    cases.map(({ name, status }) => ({ name, events: ["finish", "close"], aborted: false, status, body: "" })),
+  );
+});
+
+it("http2 a respond() that throws on invalid headers leaves the writable side open", async () => {
+  // 304 forces END_STREAM, and the invalid response pseudo-header makes respond() throw. Nothing
+  // was submitted, so the handler can still recover with a fresh respond() + end().
+  const server = http2.createServer();
+  let thrownCode = null;
+  server.on("stream", stream => {
+    try {
+      stream.respond({ ":status": 304, ":path": "/" });
+    } catch (err) {
+      thrownCode = err.code;
+      stream.respond({ ":status": 500 });
+      stream.end("err");
+    }
+  });
+
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  client.on("error", () => {});
+  try {
+    const req = client.request({ ":path": "/" });
+    const headers = await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("response", resolve);
+      req.end();
+    });
+    const body = [];
+    req.on("data", chunk => body.push(chunk));
+    await new Promise((resolve, reject) => {
+      req.on("error", reject);
+      req.on("end", resolve);
+    });
+
+    expect({
+      thrownCode,
+      status: headers[":status"],
+      body: Buffer.concat(body).toString(),
+    }).toEqual({ thrownCode: "ERR_HTTP2_INVALID_PSEUDOHEADER", status: 500, body: "err" });
+  } finally {
+    client.close();
     server.close();
   }
 });

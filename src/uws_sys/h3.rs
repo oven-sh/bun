@@ -198,6 +198,9 @@ impl Response {
     pub fn timeout(&mut self, seconds: u8) {
         c::uws_h3_res_timeout(self, seconds)
     }
+    pub fn request_timeout(&mut self, seconds: u8) {
+        c::uws_h3_res_timeout(self, seconds)
+    }
     pub fn reset_timeout(&mut self) {
         c::uws_h3_res_reset_timeout(self)
     }

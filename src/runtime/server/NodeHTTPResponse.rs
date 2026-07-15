@@ -1876,6 +1876,9 @@ impl NodeHTTPResponse {
             return;
         }
 
+        // node:http runs Bun.serve with `idleTimeout: 0` and has no keep-alive
+        // reaper yet, so keep writing the connection baseline; request_timeout
+        // here would leave the post-response socket with a disabled timer.
         raw.timeout(seconds);
     }
 

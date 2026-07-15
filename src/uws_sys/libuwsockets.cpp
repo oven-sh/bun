@@ -1331,6 +1331,15 @@ extern "C"
       uwsRes->setTimeout(seconds);
     }
   }
+  void uws_res_request_timeout(int ssl, uws_res_r res, uint8_t seconds) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->setRequestTimeout(seconds);
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->setRequestTimeout(seconds);
+    }
+  }
 
   void uws_res_end_without_body(int ssl, uws_res_r res, bool close_connection)
   {

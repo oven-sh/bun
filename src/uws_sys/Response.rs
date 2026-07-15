@@ -241,6 +241,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_timeout(Self::ssl_flag(), self.as_raw(), seconds)
     }
 
+    /// Per-request override for `server.timeout(req, N)`: arms the socket timer
+    /// without mutating the connection's keep-alive window. uWS `markDone`
+    /// restores the keep-alive timeout when the response completes.
+    pub fn request_timeout(&mut self, seconds: u8) {
+        c::uws_res_request_timeout(Self::ssl_flag(), self.as_raw(), seconds)
+    }
+
     pub fn reset_timeout(&mut self) {
         c::uws_res_reset_timeout(Self::ssl_flag(), self.as_raw())
     }
@@ -760,6 +767,10 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.timeout(seconds))
     }
 
+    pub fn request_timeout(self, seconds: u8) {
+        any_dispatch!(self, |r| r.request_timeout(seconds))
+    }
+
     pub fn on_data<U: 'static, H>(self, _handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, &[u8], bool) + Copy + 'static,
@@ -1095,6 +1106,7 @@ pub mod c {
             close_connection: bool,
         );
         pub(crate) safe fn uws_res_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
+        pub(crate) safe fn uws_res_request_timeout(ssl: i32, res: &mut uws_res, timeout: u8);
         pub(crate) safe fn uws_res_reset_timeout(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_get_buffered_amount(ssl: i32, res: &mut uws_res) -> u64;
         pub(crate) fn uws_res_write(

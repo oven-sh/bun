@@ -56,8 +56,14 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         /* We are done with this request */
         this->state &= ~HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
+        /* A per-request setRequestTimeout() override ends with the request:
+         * restore the connection's keep-alive window and re-arm the timer so
+         * every post-response resetTimeout() uses the configured baseline. */
+        this->idleTimeout = this->keepAliveTimeout;
+
         HttpResponseData<SSL> *httpResponseData = uwsRes->getHttpResponseData();
         httpResponseData->isIdle = true;
+        uwsRes->resetTimeout();
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
@@ -116,6 +122,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     /* Current state (content-length sent, status sent, write called, etc */
     uint8_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
+    /* Connection-level keep-alive idle timeout. setTimeout() writes both this
+     * and idleTimeout; setRequestTimeout() writes only idleTimeout so
+     * markDone() can restore this value when the response completes. */
+    uint8_t keepAliveTimeout = 10;
     bool fromAncientRequest = false;
     bool isConnectRequest = false;
     /* When set, the response carries no body framing at all: no Content-Length,

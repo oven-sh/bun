@@ -4202,7 +4202,7 @@ where
     pub fn set_timeout(&mut self, seconds: c_uint) -> bool {
         if let Some(resp) = self.resp {
             // SAFETY: FFI handle
-            resp.timeout(seconds.min(255) as u8);
+            resp.request_timeout(seconds.min(255) as u8);
             if seconds > 0 {
                 // we only set the timeout callback if we wanna the timeout event to be triggered
                 // the connection will be closed so the abort handler will be called after the timeout

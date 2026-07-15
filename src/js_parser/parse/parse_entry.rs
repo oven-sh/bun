@@ -866,9 +866,21 @@ impl<'a> Parser<'a> {
             p.has_nonempty_export_stmt = p.top_level_await_keyword.len > 0;
             for stmt in stmts.iter() {
                 match &stmt.data {
-                    js_ast::StmtData::SExportDefault(_)
-                    | js_ast::StmtData::SExportStar(_)
-                    | js_ast::StmtData::SExportFrom(_) => p.has_nonempty_export_stmt = true,
+                    js_ast::StmtData::SExportStar(_) | js_ast::StmtData::SExportFrom(_) => {
+                        p.has_nonempty_export_stmt = true
+                    }
+                    // `export default Foo` is dropped during visit when `Foo` names a
+                    // local type (interface/type alias), so only non-identifier values
+                    // are known to survive here.
+                    js_ast::StmtData::SExportDefault(s)
+                        if !matches!(
+                            &s.value,
+                            js_ast::StmtOrExpr::Expr(e)
+                                if matches!(e.data, js_ast::ExprData::EIdentifier(_))
+                        ) =>
+                    {
+                        p.has_nonempty_export_stmt = true
+                    }
                     js_ast::StmtData::SLocal(s) if s.is_export => p.has_nonempty_export_stmt = true,
                     js_ast::StmtData::SClass(s) if s.is_export => p.has_nonempty_export_stmt = true,
                     js_ast::StmtData::SFunction(s)

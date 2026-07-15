@@ -2926,6 +2926,12 @@ console.log(resolve.length)
     expectPrinted_("export { type A }; export { type B };", "export {}");
     expectPrinted_("export { type A }; export { unbound };", "export {}");
     expectPrinted_("await 0; export { type A };", "await 0");
+    // "export default <TypeName>" is itself dropped during visit, so it must not
+    // cause the only remaining "export {}" marker to be dropped as well.
+    expectPrinted_("interface Foo {} export default Foo; export {};", "export {}");
+    expectPrinted_("interface Foo {} export default Foo; export { type Bar };", "export {}");
+    expectPrinted_("export { type A }; interface Foo {} export default Foo;", "export {}");
+    expectPrinted_("const Foo = 1; export default Foo; export { type A };", "const Foo = 1;\nexport default Foo");
 
     // "import { type as }" is a type-only import of the identifier "as" and
     // must be dropped entirely; previously it leaked a bare "import 'mod'".

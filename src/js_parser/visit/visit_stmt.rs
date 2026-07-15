@@ -472,6 +472,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                     }
+                    // This default export survives type-stripping; later empty
+                    // `export {}` clauses can be dropped as redundant.
+                    p.has_nonempty_export_stmt = true;
                 }
 
                 if !data.default_name.ref_.is_symbol() {

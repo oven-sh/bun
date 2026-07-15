@@ -256,7 +256,36 @@ function tlsHandshakeError(verifyError) {
   return new ConnResetException("socket hang up");
 }
 
-const SocketHandlers: SocketHandler = {
+function rethrowUncaught(err) {
+  throw err;
+}
+
+// Reroute exceptions escaping a handler to uncaughtException like in Node,
+// instead of the socket's 'error' event (Bun.listen/Bun.connect's documented
+// behavior), then tear the socket down: it was interrupted mid-dispatch.
+function protectHandler(fn) {
+  return function (socket, a, b) {
+    try {
+      return fn.$call(this, socket, a, b);
+    } catch (err) {
+      process.nextTick(rethrowUncaught, err);
+      // Optional call: serverName receives the owning tls.Server as its
+      // first argument rather than a native socket handle.
+      socket?.terminate?.();
+    }
+  };
+}
+
+function protectHandlers<T extends object>(handlers: T): T {
+  const protectedHandlers = {} as T;
+  for (const key in handlers) {
+    const value = handlers[key];
+    protectedHandlers[key] = typeof value === "function" ? protectHandler(value) : value;
+  }
+  return protectedHandlers;
+}
+
+const SocketHandlers: SocketHandler = protectHandlers({
   close(socket, err) {
     const self = socket.data;
     if (!self || self[kclosed]) return;
@@ -458,7 +487,7 @@ const SocketHandlers: SocketHandler = {
     self.emit("timeout", self);
   },
   binaryType: "buffer",
-} as const;
+} as const);
 
 function SocketEmitEndNT(self, _err?) {
   // A read error delivered with the close (e.g. a received RST surfacing as
@@ -597,7 +626,7 @@ function onSNIResolution(state, err, context) {
   }
 }
 
-const ServerHandlers: SocketHandler<NetSocket> = {
+const ServerHandlers: SocketHandler<NetSocket> = protectHandlers({
   data(socket, buffer) {
     const { data: self } = socket;
     if (!self) return;
@@ -796,8 +825,10 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server?.emit("tlsClientError", verifyError, self);
         if (self._rejectUnauthorized) {
+          // Only a rejected connection reports tlsClientError; an
+          // unauthorized-but-admitted one proceeds silently like in Node.
+          server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)
@@ -863,7 +894,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     SocketHandlers.drain(socket);
   },
   binaryType: "buffer",
-} as const;
+} as const);
 
 // Node.js-compatible onconnection: assigned to server._handle.onconnection in
 // kRealListen and invoked from ServerHandlers.open with `this` bound to the
@@ -989,7 +1020,7 @@ function onconnection(err, clientHandle) {
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
-const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = {
+const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_handle"]>["data"]> = protectHandlers({
   open(socket) {
     $debug("Bun.Socket open");
     let { self, req } = socket.data;
@@ -1221,7 +1252,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     }
     req!.oncomplete(error.errno, self._handle, req, true, true);
   },
-};
+});
 
 // The same table minus the per-connection callback members: a listener whose
 // config has neither handler never registers the native SNI/ALPN dispatches,
@@ -1460,16 +1491,14 @@ function Socket(options?) {
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
-      data(socket, buffer) {
+      data: protectHandler(function data(socket, buffer) {
         const { self } = socket.data;
         if (!self) return;
         self._unrefTimer();
-        try {
-          onread.callback(buffer.length, buffer);
-        } catch (e) {
-          self.emit("error", e);
-        }
-      },
+        // A throwing callback reaches uncaughtException via protectHandler,
+        // matching Node (onStreamRead does not catch it).
+        onread.callback(buffer.length, buffer);
+      }),
     };
   }
   if (signal) {

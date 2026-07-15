@@ -337,6 +337,10 @@ it("explicit rejectUnauthorized: false still admits an unverified client certifi
     },
     socket => onHandledSocket(socket),
   );
+  // An unauthorized-but-admitted connection is not a client error; Node only
+  // reports tlsClientError when the connection is torn down.
+  const tlsClientErrors: Error[] = [];
+  server.on("tlsClientError", err => tlsClientErrors.push(err));
   await once(server.listen(0, "127.0.0.1"), "listening");
   const port = (server.address() as AddressInfo).port;
 
@@ -355,6 +359,7 @@ it("explicit rejectUnauthorized: false still admits an unverified client certifi
     const [serverSocket] = await Promise.all([handledSocket, once(client, "secureConnect")]);
     expect(serverSocket.authorized).toBe(false);
     expect(serverSocket.authorizationError).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(tlsClientErrors).toEqual([]);
   } finally {
     client.end();
     server.close();

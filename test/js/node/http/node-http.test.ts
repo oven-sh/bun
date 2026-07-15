@@ -3749,3 +3749,33 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
+
+// https://github.com/oven-sh/bun/issues/34064
+it("destroying a chunked response mid-stream writes no header bytes into the body", async () => {
+  const chunkFrame = "f\r\nPart of my res.\r\n";
+  const { promise, resolve, reject } = Promise.withResolvers<Buffer>();
+  let serverRes: InstanceType<typeof http.ServerResponse> | undefined;
+  await using server = http.createServer((req, res) => {
+    res.write("Part of my res.");
+    serverRes = res;
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const client = connect((server.address() as AddressInfo).port, "127.0.0.1");
+  const chunks: Buffer[] = [];
+  client.on("connect", () => client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"));
+  client.on("data", chunk => {
+    chunks.push(chunk);
+    // Destroy mid-stream only once the chunk frame is provably on the wire;
+    // anything the abort appends after it arrives before 'close'.
+    if (Buffer.concat(chunks).includes(chunkFrame)) serverRes!.destroy();
+  });
+  client.on("error", reject);
+  client.on("close", () => resolve(Buffer.concat(chunks)));
+  const raw = (await promise).toString();
+  const headerEnd = raw.indexOf("\r\n\r\n");
+  expect(headerEnd).toBeGreaterThan(0);
+  // The body must be exactly the one chunk frame that was written, nothing
+  // appended by the abort.
+  expect(raw.slice(headerEnd + 4)).toBe(chunkFrame);
+});

@@ -35,25 +35,7 @@ const packageDefinition = protoLoader.loadSync(join(import.meta.dir, "fixtures/t
 
 type Server = { address: string; kill: () => Promise<void> };
 
-const cargoBin = Bun.which("cargo");
-// `Bun.which` can find a rustup shim that has no usable default toolchain.
-// Probe with the env and outside-the-repo cwd `cargo run` will see below so
-// this suite skips instead of timing out for 150s on such agents.
-const cargoEnv = {
-  PATH: process.env.PATH,
-  CARGO_HOME: process.env.CARGO_HOME,
-  RUSTUP_HOME: process.env.RUSTUP_HOME,
-  RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN,
-};
-const cargoWorks =
-  !!cargoBin &&
-  Bun.spawnSync({
-    cmd: [cargoBin, "--version"],
-    env: cargoEnv,
-    cwd: tmpdir(),
-    stdout: "ignore",
-    stderr: "ignore",
-  }).exitCode === 0;
+const cargoBin = Bun.which("cargo") as string;
 
 // Stable per-machine cache so persistent CI agents don't re-download protoc and
 // re-compile the entire tonic/tokio dependency tree (~50s) on every run.
@@ -85,11 +67,14 @@ async function startServer(): Promise<Server> {
   const protocExec = join(protocPath, binPath);
   await chmod(protocExec, 0o755);
 
-  const server = Bun.spawn([cargoBin!, "run", "--quiet", path.join(tmpDir, "server")], {
+  const server = Bun.spawn([cargoBin, "run", "--quiet", path.join(tmpDir, "server")], {
     cwd: tmpDir,
     env: {
-      ...cargoEnv,
       PROTOC: protocExec,
+      PATH: process.env.PATH,
+      CARGO_HOME: process.env.CARGO_HOME,
+      RUSTUP_HOME: process.env.RUSTUP_HOME,
+      RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN,
       // Keep cargo's target dir outside the throwaway tmpDir so registry deps
       // (tonic, tokio, prost, ...) compile once per machine instead of once per run.
       CARGO_TARGET_DIR: join(cacheDir, "target"),
@@ -136,7 +121,7 @@ async function startServer(): Promise<Server> {
   }
 }
 
-describe.skipIf(!cargoWorks || !releases[release])("test tonic server", () => {
+describe.skipIf(!cargoBin || !releases[release])("test tonic server", () => {
   let server: Server;
 
   beforeAll(async () => {

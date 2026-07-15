@@ -644,11 +644,14 @@ impl Terminal {
     /// True when a session-leader child's exit made the BSD/macOS kernel
     /// revoke every fd on the pts (xnu `proc_exit` -> `VNOP_REVOKE` on
     /// `s_ttyvp`), so the held slave fd is no longer a tty. Never true on
-    /// Linux, whose `disassociate_ctty` skips the hangup for PTY drivers.
+    /// Linux, whose `disassociate_ctty` skips the hangup for PTY drivers,
+    /// nor for an inline terminal, where that same EOF is the terminal exit.
     #[cfg(unix)]
     fn slave_was_revoked(&self) -> bool {
+        let flags = self.flags.get();
         let slave = self.slave_fd.get();
-        !self.flags.get().contains(Flags::CLOSED)
+        !flags.contains(Flags::CLOSED)
+            && !flags.contains(Flags::INLINE_SPAWNED)
             && slave != Fd::INVALID
             && get_termios(slave).is_none()
     }

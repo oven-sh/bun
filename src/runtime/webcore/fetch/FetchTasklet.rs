@@ -1346,7 +1346,7 @@ impl FetchTasklet {
                 BunString::static_("Unable to connect. Is the computer able to access the url?")
             }
             http::Error::TLSHandshakeFailed => BunString::static_(
-                "TLS handshake failed: the server (or a proxy along the path) did not respond with a valid TLS ServerHello",
+                "TLS handshake failed: the server (or a proxy along the path) responded with data that is not valid TLS",
             ),
             http::Error::RedirectURLInvalid => {
                 BunString::static_("Redirect URL in Location header is invalid.")

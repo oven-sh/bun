@@ -1,11 +1,12 @@
 import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, it, mock, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isWindows, rmScope, tempDir, tempDirWithFiles, tls as tlsCert } from "harness";
 import { mkfifo } from "mkfifo";
 import { once } from "node:events";
 import { truncateSync, unlinkSync } from "node:fs";
 import * as net from "node:net";
 import { join } from "node:path";
+import * as tls from "node:tls";
 
 const LARGE_SIZE = 1024 * 1024 * 8;
 const files = {
@@ -1145,12 +1146,12 @@ console.log("OK");
 // deploy), the server must close the connection rather than treating early
 // EOF as normal completion. Leaving the keep-alive socket open desyncs
 // HTTP/1.1 framing (RFC 9112 §6.2): the next response lands inside the first
-// response's declared Content-Length window. sendfile() is linux-only.
-describe.skipIf(!isLinux)("Bun.serve file body truncated mid-send (sendfile)", () => {
+// response's declared Content-Length window.
+describe("Bun.serve file body truncated mid-send", () => {
   const FILE_SIZE = 32 * 1024 * 1024; // well above localhost socket-buffer capacity
   const MARKER = "SECOND-RESPONSE-MARKER";
 
-  async function probe(route: boolean) {
+  async function probe(route: boolean, ssl: boolean) {
     using dir = tempDir("serve-file-truncate", { "big.bin": Buffer.alloc(FILE_SIZE, 0x41) });
     const file = join(String(dir), "big.bin");
 
@@ -1158,6 +1159,7 @@ describe.skipIf(!isLinux)("Bun.serve file body truncated mid-send (sendfile)", (
       port: 0,
       hostname: "127.0.0.1",
       idleTimeout: 0,
+      ...(ssl ? { tls: tlsCert } : {}),
       ...(route
         ? {
             routes: { "/big": Bun.file(file), "/marker": new Response(MARKER) },
@@ -1173,8 +1175,10 @@ describe.skipIf(!isLinux)("Bun.serve file body truncated mid-send (sendfile)", (
           }),
     });
 
-    const sock = net.connect(server.port, "127.0.0.1");
-    await once(sock, "connect");
+    const sock = ssl
+      ? tls.connect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false })
+      : net.connect(server.port, "127.0.0.1");
+    await once(sock, ssl ? "secureConnect" : "connect");
     sock.write("GET /big HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n\r\n");
 
     let head = "";
@@ -1216,9 +1220,9 @@ describe.skipIf(!isLinux)("Bun.serve file body truncated mid-send (sendfile)", (
     await canTruncate.promise;
     truncateSync(file, 1024);
 
-    // Drain until the server considers the request finished: the sendfile
-    // loop has observed sent==0 (early EOF) and either force-closed the
-    // socket (correct) or marked the response done (desync).
+    // Drain until the server considers the request finished: the file stream
+    // has observed early EOF and either force-closed the socket (correct) or
+    // marked the response done (desync).
     while (server.pendingRequests > 0 && !closed) await Bun.sleep(1);
 
     if (!closed) {
@@ -1230,12 +1234,17 @@ describe.skipIf(!isLinux)("Bun.serve file body truncated mid-send (sendfile)", (
     return { contentLength, bodyBytes, closed, desynced };
   }
 
-  for (const [name, route] of [
-    ["static route", true],
-    ["fetch handler", false],
-  ] as const) {
-    test.concurrent(name, async () => {
-      const r = await probe(route);
+  for (const v of [
+    // Plain TCP on Linux takes the sendfile backend; on macOS/Windows it
+    // takes the buffered-reader backend (can_sendfile returns false there).
+    { name: "static route", route: true, ssl: false, skip: !isLinux },
+    { name: "fetch handler", route: false, ssl: false, skip: !isLinux },
+    // SSL always takes the buffered-reader backend (no sendfile over TLS).
+    { name: "static route (ssl)", route: true, ssl: true, skip: false },
+    { name: "fetch handler (ssl)", route: false, ssl: true, skip: false },
+  ]) {
+    test.concurrent.skipIf(v.skip)(v.name, async () => {
+      const r = await probe(v.route, v.ssl);
       expect(r.contentLength).toBe(FILE_SIZE);
       // The second request's response must never appear inside the first body
       // window. The server closes so the client observes the short body.

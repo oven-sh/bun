@@ -277,17 +277,13 @@ impl FileResponseStream {
         self.resp.timeout(self.idle_timeout);
 
         if state == ReadState::Eof {
-            // EOF with bytes still owed means the file shrank under us. The
-            // advertised Content-Length can no longer be honoured, so close
-            // the connection rather than desync the keep-alive stream.
-            let short = self.max_size.is_some_and(|m| m > 0);
+            if self.max_size.is_some_and(|m| m > 0) {
+                // File shrank; let on_reader_done → finish() force-close.
+                return false;
+            }
             self.state.insert(State::RESPONSE_DONE);
             self.detach_resp();
-            if short {
-                self.resp.force_close();
-            } else {
-                self.resp.end(chunk, self.resp.should_close_connection());
-            }
+            self.resp.end(chunk, self.resp.should_close_connection());
             (self.on_complete)(self.ctx, self.resp);
             return false;
         }
@@ -511,8 +507,14 @@ impl FileResponseStream {
         if !self.state.contains(State::RESPONSE_DONE) {
             self.state.insert(State::RESPONSE_DONE);
             self.detach_resp();
-            self.resp
-                .end_without_body(self.resp.should_close_connection());
+            if self.max_size.is_some_and(|m| m > 0) {
+                // Reader hit EOF with bytes still owed (file shrank); close
+                // rather than end short of the advertised Content-Length.
+                self.resp.force_close();
+            } else {
+                self.resp
+                    .end_without_body(self.resp.should_close_connection());
+            }
             (self.on_complete)(self.ctx, self.resp);
         }
 

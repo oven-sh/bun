@@ -1,16 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import {
-  bunEnv,
-  bunExe,
-  isASAN,
-  isMacOS,
-  isWindows,
-  normalizeBunSnapshot,
-  tempDir,
-  tmpdirSync,
-} from "harness";
+import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {

@@ -271,7 +271,9 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
         &specifierBunString,
         specifier,
         &empty,
-        &empty,
+        // No `type` import attribute on this path. Passing a non-null empty
+        // string would be rejected as an unsupported attribute value.
+        nullptr,
         &res,
         mod,
         specifierWtfString,

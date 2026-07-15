@@ -1388,6 +1388,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.next()?;
                 p.lexer.expect(T::TColon)?;
 
+                // `expect` advances past the value, so grab its range now for
+                // error reporting.
+                let value_range = p.lexer.range();
                 p.lexer.expect(T::TStringLiteral)?;
                 let estr = p.lexer.to_utf8_e_string()?;
                 let string_literal_text = estr.slice8();
@@ -1403,7 +1406,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     path.loader = Some(bun_ast::Loader::SqliteEmbedded);
                                 }
                             } else {
-                                // unknown loader; consider erroring
+                                p.lexer.add_range_error(
+                                    value_range,
+                                    format_args!(
+                                        "Import attribute \"type\" with value {} is not supported",
+                                        bun_core::fmt::quote(type_attr)
+                                    ),
+                                )?;
                             }
                         }
                         SupportedAttribute::Embed => {
@@ -1418,9 +1427,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if string_literal_text == b"ssr" {
                                 path.import_tag = bun_ast::ImportRecordTag::BakeResolveToSsrGraph;
                             } else {
-                                let r = p.lexer.range();
                                 p.lexer.add_range_error(
-                                    r,
+                                    value_range,
                                     format_args!("'bunBakeGraph' can only be set to 'ssr'"),
                                 )?;
                             }

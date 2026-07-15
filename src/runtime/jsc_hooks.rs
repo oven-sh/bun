@@ -4138,8 +4138,31 @@ unsafe fn transpile_file(
 
     // `type_attribute` may be null (no `with { type }`).
     // SAFETY: per fn contract — null or a live `bun.String*`.
-    let type_attribute_str: Option<&[u8]> =
-        unsafe { type_attribute.as_ref() }.and_then(|s| s.as_utf8());
+    let type_attribute = unsafe { type_attribute.as_ref() };
+    let type_attribute_str: Option<&[u8]> = type_attribute.and_then(|s| s.as_utf8());
+
+    // An unknown `type` must fail the load instead of silently falling back to
+    // the extension-derived loader (import-attributes proposal; Node throws
+    // ERR_IMPORT_ATTRIBUTE_UNSUPPORTED).
+    if let Some(attr) = type_attribute {
+        let attr_utf8 = attr.to_utf8();
+        if Loader::from_string(attr_utf8.slice()).is_none() {
+            let js = global_ref
+                .err(
+                    bun_jsc::ErrCode::ERR_IMPORT_ATTRIBUTE_UNSUPPORTED,
+                    format_args!(
+                        "Import attribute \"type\" with value {} is not supported",
+                        bun_core::fmt::quote(attr_utf8.slice())
+                    ),
+                )
+                .to_js();
+            // SAFETY: per fn contract — `ret` is a valid out-param.
+            unsafe {
+                *ret = ErrorableResolvedSource::err(bun_core::err!("JSErrorObject"), js);
+            }
+            return ptr::null_mut();
+        }
+    }
 
     let mut virtual_source_to_use: Option<bun_ast::Source> = None;
     let mut blob_to_deinit: Option<crate::webcore::Blob> = None;

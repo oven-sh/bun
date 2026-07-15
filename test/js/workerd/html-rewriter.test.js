@@ -107,6 +107,22 @@ describe("HTMLRewriter", () => {
     expect(() => new HTMLRewriter().transform(Symbol("ok"))).toThrow();
   });
 
+  it("HTMLRewriter throws instead of crashing on a disturbed-then-unlocked body", async () => {
+    // in-memory (Blob-source) body
+    const resp = new Response(Buffer.alloc(1200, "x").toString());
+    const reader = resp.body.getReader();
+    await reader.read();
+    reader.releaseLock();
+    expect(() => new HTMLRewriter().transform(resp)).toThrow("Stream already used");
+
+    // file-backed (File-source) body
+    const fileResp = new Response(Bun.file(import.meta.path));
+    const fileReader = fileResp.body.getReader();
+    await fileReader.read();
+    fileReader.releaseLock();
+    expect(() => new HTMLRewriter().transform(fileResp)).toThrow("Stream already used");
+  });
+
   describe("transform rejects when the upstream body fails", () => {
     // Sends response headers plus a partial HTML body, then resets the
     // connection once the test calls `release()`. The transformed body must

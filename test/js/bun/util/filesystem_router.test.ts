@@ -1,4 +1,5 @@
 import { FileSystemRouter } from "bun";
+import { dirnameStoreAppendCount } from "bun:internal-for-testing";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
@@ -403,9 +404,6 @@ it("reload() works", () => {
 });
 
 it("reload() does not re-intern directory paths into DirnameStore on every bust+reread", () => {
-  const { dirnameStoreAppendCount } = require("bun:internal-for-testing") as {
-    dirnameStoreAppendCount: () => number;
-  };
   const files: Record<string, string> = { "pages/sub/nested.tsx": "export default 1;\n" };
   for (let i = 0; i < 20; i++) files[`pages/p${i}.tsx`] = "export default 1;\n";
   using dir = tempDir("fsr-reload-dirname-intern", files);

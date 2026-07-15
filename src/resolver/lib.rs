@@ -1368,11 +1368,10 @@ pub mod fs {
                 // its `dir` field is DirnameStore-interned (&'static).
                 unsafe { (*existing).dir }
             } else if !had_handle {
-                DirnameStore::instance().append_slice(dir_maybe_trail_slash)?
+                DirnameStore::instance().intern_slice(dir_maybe_trail_slash)?
             } else {
-                // Intern into DirnameStore so the cache entry never dangles —
-                // `append_slice` is a bump-pointer copy, cost is bounded.
-                DirnameStore::instance().append_slice(dir)?
+                // Intern into DirnameStore so the cache entry never dangles.
+                DirnameStore::instance().intern_slice(dir)?
             };
 
             // Cache miss: read the directory entries

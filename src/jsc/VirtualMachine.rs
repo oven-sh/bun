@@ -4395,7 +4395,10 @@ impl VirtualMachine {
                 let source_slice = normalize_source(source_utf8.slice());
                 let spec = specifier_utf8.slice();
                 if bun_options_types::standalone_path::is_bun_standalone_file_path(source_slice)
-                    && (spec.starts_with(b"./") || spec.starts_with(b"../"))
+                    && (spec.starts_with(b"./")
+                        || spec.starts_with(b"../")
+                        || (cfg!(windows)
+                            && (spec.starts_with(b".\\") || spec.starts_with(b"..\\"))))
                 {
                     let source_dir =
                         bun_resolver::fs::PathName::init(source_slice).dir_with_trailing_slash();

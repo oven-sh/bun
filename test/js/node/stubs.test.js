@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 const weirdInternalSpecifiers = [
   "_http_agent",
@@ -112,6 +113,95 @@ describe("v8.getHeapStatistics", () => {
       expect(stats[key]).toBePositive();
     });
   }
+});
+
+describe("node:repl stub", () => {
+  const repl = require("node:repl");
+
+  // The module export used to masquerade as a REPLServer instance with
+  // `context: globalThis`, so libraries that feature-detect a REPL by probing
+  // `repl.context` and writing to it would silently pollute the real global.
+  test("does not expose REPLServer instance fields on the module", () => {
+    expect({
+      context: repl.context,
+      contextInRepl: "context" in repl,
+      terminal: repl.terminal,
+      useGlobal: repl.useGlobal,
+      lines: repl.lines,
+      history: repl.history,
+      input: repl.input,
+      output: repl.output,
+    }).toEqual({
+      context: undefined,
+      contextInRepl: false,
+      terminal: undefined,
+      useGlobal: undefined,
+      lines: undefined,
+      history: undefined,
+      input: undefined,
+      output: undefined,
+    });
+  });
+
+  test("writing through repl.context cannot pollute globalThis", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const repl = require("node:repl");
+        let threw = false;
+        try {
+          repl.context.__pollutedByReplStub = 42;
+        } catch {
+          threw = true;
+        }
+        console.log(JSON.stringify({
+          threw,
+          contextIsGlobalThis: repl.context === globalThis,
+          polluted: globalThis.__pollutedByReplStub,
+        }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      threw: true,
+      contextIsGlobalThis: false,
+      polluted: undefined,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("exposes Node's module-level exports", () => {
+    expect(typeof repl.start).toBe("function");
+    expect(typeof repl.REPLServer).toBe("function");
+    expect(typeof repl.Recoverable).toBe("function");
+    expect(typeof repl.writer).toBe("function");
+    expect(typeof repl.REPL_MODE_SLOPPY).toBe("symbol");
+    expect(typeof repl.REPL_MODE_STRICT).toBe("symbol");
+    expect(Array.isArray(repl._builtinLibs)).toBe(true);
+    expect(Array.isArray(repl.builtinModules)).toBe(true);
+  });
+
+  test("start() throws ERR_NOT_IMPLEMENTED", () => {
+    expect(() => repl.start()).toThrow(expect.objectContaining({ code: "ERR_NOT_IMPLEMENTED" }));
+  });
+
+  test("REPLServer() throws ERR_NOT_IMPLEMENTED", () => {
+    expect(() => new repl.REPLServer()).toThrow(expect.objectContaining({ code: "ERR_NOT_IMPLEMENTED" }));
+  });
+
+  test("Recoverable wraps an error", () => {
+    const cause = new SyntaxError("boom");
+    const r = new repl.Recoverable(cause);
+    expect(r).toBeInstanceOf(SyntaxError);
+    expect(r.err).toBe(cause);
+  });
 });
 
 describe("v8.startupSnapshot", () => {

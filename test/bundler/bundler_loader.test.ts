@@ -1,8 +1,8 @@
 import { fileURLToPath, Loader } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", async () => {
@@ -482,8 +482,7 @@ describe("bundler", async () => {
     test.concurrent("bundle: public-path with double quote and backslash", async () => {
       using dir = tempDir("file-loader-escape-public-path", {
         "entry.ts":
-          `import p from "./asset.txt" with { type: "file" };\n` +
-          `console.log(JSON.stringify({ path: p }));\n`,
+          `import p from "./asset.txt" with { type: "file" };\n` + `console.log(JSON.stringify({ path: p }));\n`,
         "asset.txt": assetContent,
       });
 

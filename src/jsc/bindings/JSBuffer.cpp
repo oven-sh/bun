@@ -1891,6 +1891,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_inspectBody(JSC::JSGlobalOb
     }
     if (data.size() > max) {
         auto remaining = data.size() - max;
+        if (!any) result.append(' ');
+        any = true;
         result.append(makeString(" ... "_s, remaining, " more byte"_s));
         if (remaining > 1) result.append('s');
     }

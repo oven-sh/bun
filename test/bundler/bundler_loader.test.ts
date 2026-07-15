@@ -523,6 +523,32 @@ describe("bundler", async () => {
     });
   });
 
+  // Count pass and write pass must agree on the substituted bytes; on Windows
+  // the write pass posix-normalizes `\` -> `/` before escaping, so the count
+  // pass must too. A subdir in --asset-naming is enough to put a separator in
+  // dest_path; the output must be parseable and contain no trailing NUL bytes.
+  itBundled("bun/loader-file-asset-naming-subdir", {
+    target: "bun",
+    outdir: "/out",
+    assetNaming: "assets/[name]-[hash].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import p from "./data.txt" with { type: "file" };
+        console.log(JSON.stringify({ path: p }));
+      `,
+      "/data.txt": "asset-bytes",
+    },
+    run: {
+      validate({ stdout }) {
+        expect(JSON.parse(stdout).path).toMatch(/^\.\/assets\/data-[a-z0-9]+\.txt$/);
+      },
+    },
+    onAfterBundle(api) {
+      const out = api.readFile("out/entry.js");
+      expect(out).not.toContain("\0");
+    },
+  });
+
   // Lazy-export modules (JSON, TOML, CSS modules, ...) used to crash the
   // printer when bundled with the dev server's module format.
   // https://github.com/oven-sh/bun/issues/31943

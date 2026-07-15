@@ -841,6 +841,15 @@ impl IntermediateOutput {
                                 QueryKind::None => unreachable!(),
                             };
 
+                            // Same `\` → `/` normalization as the write pass so the
+                            // escape-byte count below matches what will be emitted.
+                            let file_path: &[u8] = {
+                                let n = file_path.len();
+                                let dst = &mut file_path_buf[..n];
+                                dst.copy_from_slice(file_path);
+                                bun_paths::resolve_path::platform_to_posix_in_place::<u8>(dst);
+                                dst
+                            };
                             let cheap_normalizer = cheap_prefix_normalizer(
                                 import_prefix,
                                 if use_outdir_relative_path {

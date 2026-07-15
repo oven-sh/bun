@@ -1817,7 +1817,7 @@ impl SourceMapCapture {
     /// no AST to print (e.g. `parse_result.empty`) but the caller still
     /// asked for a source map. Matches the JSON shape
     /// `print_source_map_contents` produces for a zero-mapping chunk.
-    pub fn write_empty(&mut self, source: &bun_ast::Source) -> Result<(), bun_core::Error> {
+    pub fn write_empty(&mut self, source: &bun_ast::Source) -> Result<(), bun_sourcemap::Error> {
         let empty_chunk = bun_sourcemap::Chunk::init_empty();
         // An empty chunk's buffer is zero-length in either format, so
         // `print_source_map_contents` works regardless of `is_internal_format`.
@@ -1830,7 +1830,7 @@ impl JSPrinter::OnSourceMapChunk for SourceMapCapture {
         &mut self,
         chunk: bun_sourcemap::Chunk,
         source: &bun_ast::Source,
-    ) -> Result<(), bun_core::Error> {
+    ) -> JSPrinter::Result<()> {
         if self.is_internal_format {
             // `target: "bun"` routes through the printer's
             // `is_bun_platform=true` path which stores mappings as Bun's
@@ -1841,6 +1841,7 @@ impl JSPrinter::OnSourceMapChunk for SourceMapCapture {
         } else {
             chunk.print_source_map_contents::<false>(source, &mut self.json, true)
         }
+        .map_err(|_| JSPrinter::Error::WriteFailed)
     }
 }
 

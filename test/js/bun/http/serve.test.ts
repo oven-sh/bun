@@ -2541,51 +2541,163 @@ it.concurrent("should not send extra bytes when using sendfile", async () => {
   expect(content_length).toBe(payload.byteLength);
 });
 
-describe.concurrent("Expect: 100-continue (case-insensitive match)", () => {
+describe.concurrent("Expect header handling (RFC 9110 §10.1.1)", () => {
   // https://github.com/oven-sh/bun/issues/30248
-  // RFC 7231 §5.1.1 / RFC 7230 §3.2.6: expectation-name is a case-insensitive token.
-  it.each(["100-continue", "100-Continue", "100-CONTINUE", "100-cOnTiNuE"])(
-    "responds with 100 Continue for Expect: %s",
+  // RFC 9110 §10.1.1: the Expect field value is case-insensitive and is a
+  // comma-separated list of tokens with optional parameters.
+  async function rawPost(port: number, expectValue: string, done: (s: string) => boolean) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let received = "";
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(
+        "POST /test HTTP/1.1\r\n" +
+          `Host: 127.0.0.1:${port}\r\n` +
+          "Content-Length: 5\r\n" +
+          `Expect: ${expectValue}\r\n` +
+          "\r\n" +
+          "hello",
+      );
+    });
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      if (done(received)) socket.end();
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(received));
+    return promise;
+  }
+
+  it.each([
+    "100-continue",
+    "100-Continue",
+    "100-CONTINUE",
+    "100-cOnTiNuE",
+    "100-continue; p=1",
+    "100-continue, 100-continue",
+    " 100-continue ",
+    "muffins, 100-continue",
+  ])("responds with 100 Continue for Expect: %s", async expectValue => {
+    // Pin to 127.0.0.1 so the raw TCP client always reaches the right
+    // socket family; on darwin CI `localhost` can resolve to ::1 only.
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        return new Response("echo:" + (await req.text()));
+      },
+    });
+
+    const output = await rawPost(server.port, expectValue, s => s.includes("echo:hello"));
+    expect(output).toStartWith("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\n");
+    expect(output).toContain("echo:hello");
+  });
+
+  // The interim 100 is only written BEFORE the handler runs; when the handler
+  // is not waiting on the body there is nothing observable to gate on except
+  // the interim itself. Send the body in the same write so the final response
+  // arrives regardless, then assert the 100 was prepended.
+  it.each(["100-continues", "x100-continue", "muffins"])(
+    "responds with 417 Expectation Failed for Expect: %s",
     async expectValue => {
+      let handlerCalled = false;
       using server = Bun.serve({
-        // Pin to 127.0.0.1 so the raw TCP client always reaches the right
-        // socket family — on darwin CI, `localhost` can resolve to `::1`
-        // only while a server defaulting to dual-stack may not accept it.
         hostname: "127.0.0.1",
         port: 0,
         async fetch(req) {
-          return new Response(await req.text());
+          handlerCalled = true;
+          return new Response("echo:" + (await req.text()));
         },
       });
 
-      const { promise, resolve, reject } = Promise.withResolvers<string>();
-      let received = "";
-      const socket = net.connect(server.port, "127.0.0.1", () => {
-        socket.write(
-          "POST /test HTTP/1.1\r\n" +
-            `Host: 127.0.0.1:${server.port}\r\n` +
-            "Content-Length: 5\r\n" +
-            `Expect: ${expectValue}\r\n` +
-            "\r\n" +
-            "hello",
-        );
-      });
-      socket.on("data", chunk => {
-        received += chunk.toString("utf8");
-        // Final response arrives after the 100 Continue; wait for it before closing.
-        if (received.includes("\r\n\r\nhello")) {
-          socket.end();
-        }
-      });
-      socket.on("error", reject);
-      socket.on("close", () => resolve(received));
-
-      const output = await promise;
-      expect(output).toContain("HTTP/1.1 100 Continue\r\n");
-      // The final 200 with the echoed body must still be there.
-      expect(output).toContain("hello");
+      const output = await rawPost(server.port, expectValue, s => /\b417\b|echo:/.test(s));
+      expect(output).toStartWith("HTTP/1.1 417 Expectation Failed\r\n");
+      expect(output).not.toContain("100 Continue");
+      expect(output).not.toContain("echo:");
+      expect(handlerCalled).toBe(false);
     },
   );
+
+  // RFC 9110 §15.2: a server MUST NOT send a 1xx to an HTTP/1.0 client; Node
+  // routes the whole Expect dispatch to the plain handler for HTTP/1.0.
+  it.each([
+    ["100-continue", "interim 100"],
+    ["muffins", "417"],
+  ])("HTTP/1.0 with Expect: %s dispatches the handler without the %s", async expectValue => {
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        return new Response("echo:" + (await req.text()));
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let received = "";
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write(
+        "POST /test HTTP/1.0\r\n" +
+          `Host: 127.0.0.1:${server.port}\r\n` +
+          "Content-Length: 5\r\n" +
+          `Expect: ${expectValue}\r\n` +
+          "\r\n" +
+          "hello",
+      );
+    });
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(received));
+
+    const output = await promise;
+    expect(output).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(output).not.toContain("100 Continue");
+    expect(output).not.toContain("417");
+    expect(output).toContain("echo:hello");
+  });
+
+  it("drains the request body after a 417 and serves the next keep-alive request", async () => {
+    let handlerCalls: string[] = [];
+    using server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      async fetch(req) {
+        handlerCalls.push(new URL(req.url).pathname);
+        return new Response("second:" + (await req.text()));
+      },
+    });
+
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    let received = "";
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      // First request carries an unknown Expect and a 5-byte body; the server
+      // must answer 417, discard those 5 bytes, and dispatch the GET that
+      // follows them on the same connection.
+      socket.write(
+        "POST /first HTTP/1.1\r\n" +
+          `Host: 127.0.0.1:${server.port}\r\n` +
+          "Content-Length: 5\r\n" +
+          "Expect: muffins\r\n" +
+          "\r\n" +
+          "hello" +
+          "GET /second HTTP/1.1\r\n" +
+          `Host: 127.0.0.1:${server.port}\r\n` +
+          "Connection: close\r\n" +
+          "\r\n",
+      );
+    });
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+    });
+    socket.on("error", reject);
+    socket.on("close", () => resolve(received));
+
+    const output = await promise;
+    expect(output).toStartWith("HTTP/1.1 417 Expectation Failed\r\n");
+    expect(output).toContain("HTTP/1.1 200 OK\r\n");
+    expect(output).toContain("second:");
+    expect(handlerCalls).toEqual(["/second"]);
+  });
 });
 
 it.concurrent("we should always send date", async () => {

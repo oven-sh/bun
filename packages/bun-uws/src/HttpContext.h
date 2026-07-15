@@ -659,13 +659,19 @@ public:
             user.httpRequest->setParameters(r->getParameters());
             user.httpRequest->setParameterOffsets(&parameterOffsets);
 
-            if (!httpContextData->flags.usingCustomExpectHandler) {
-                /* Middleware? Automatically respond to expectations.
-                 * RFC 7231 §5.1.1 / RFC 7230 §3.2.6: expectation-name is a
-                 * case-insensitive token. */
+            if (!httpContextData->flags.usingCustomExpectHandler && !user.httpRequest->isAncient()) {
+                /* RFC 9110 §10.1.1: expectation-name is case-insensitive and
+                 * may carry params or appear in a list. Unknown expectations
+                 * are answered 417 without dispatching, matching Node.js. */
                 std::string_view expect = user.httpRequest->getHeader("expect");
-                if (utils::asciiIEquals(expect, "100-continue")) {
-                    user.httpResponse->writeContinue();
+                if (expect.length()) {
+                    if (utils::hasExpect100Continue(expect)) {
+                        user.httpResponse->writeContinue();
+                    } else {
+                        user.httpResponse->writeStatus("417 Expectation Failed");
+                        user.httpResponse->end();
+                        return true;
+                    }
                 }
             }
 

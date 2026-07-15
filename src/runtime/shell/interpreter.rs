@@ -470,7 +470,7 @@ impl Interpreter {
             // reborrow inside `len()` does not stack on top of the Unique tag.
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         };
-        *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
+        *out_parser = Some(Parser::new(arena, &lex_result, jsobjs_raw)?);
         Ok(out_parser.as_mut().unwrap().parse()?)
     }
 

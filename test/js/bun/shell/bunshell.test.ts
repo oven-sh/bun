@@ -991,9 +991,22 @@ booga"
       doTest("{a,{1..3}}", "a 1 2 3"); // composes with comma lists when nested
       doTest("{pre{1..3}post}", "pre1post pre2post pre3post");
 
+      // Step that doesn't evenly divide the distance: stop at the last
+      // value that doesn't overshoot `end`, same as bash — not an infinite
+      // loop trying to land on `end` exactly.
+      doTest("{0..5..2}", "0 2 4");
+      doTest("{5..0..2}", "5 3 1");
+      doTest("{a..d..2}", "a c");
+
       // Not a valid sequence expression -> left as literal text, same as bash.
       doTest("{1..}", "{1..}");
       doTest("{aa..cc}", "{aa..cc}");
+
+      // A backslash-escaped byte anywhere in the group disqualifies
+      // sequence recognition, even one unrelated to the `..` itself.
+      doTest("{1\\..3}", "{1..3}");
+      doTest("{1..\\3}", "{1..3}");
+      doTest("{\\1..3}", "{1..3}");
     });
 
     test("command", async () => {

@@ -358,10 +358,13 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect({ tscStdout, tscStderr, tscExited }).toMatchObject({ tscExited: 0 });
 
       // The blank template has no `build` script; the react templates do.
+      // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
+      // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
+      // pass --bun.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
       if (pkg.scripts?.build) {
         await using build = Bun.spawn({
-          cmd: [bunExe(), "run", "build"],
+          cmd: [bunExe(), "--bun", "run", "build"],
           cwd: temp,
           stdio: ["ignore", "pipe", "pipe"],
           env: bunEnv,

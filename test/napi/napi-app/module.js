@@ -182,6 +182,57 @@ nativeTests.test_get_property = () => {
   }
 };
 
+nativeTests.test_get_all_property_names_accessor = () => {
+  // napi_key_filter values
+  const napi_key_writable = 1;
+  const napi_key_configurable = 1 << 2;
+  // napi_key_collection_mode values
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  // napi_key_conversion values
+  const napi_key_keep_numbers = 0;
+
+  const filterStrings = keys => keys.filter(k => typeof k === "string").sort();
+
+  // own_only: object with an own accessor property alongside data properties
+  const ownAccessor = { data: 1 };
+  Object.defineProperty(ownAccessor, "acc_rw", {
+    get() {
+      return 1;
+    },
+    set(v) {},
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "acc_ro", {
+    get() {
+      return 1;
+    },
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "data_ro", { value: 2, writable: false, configurable: true });
+  for (const filter of [napi_key_writable, napi_key_configurable, napi_key_writable | napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      ownAccessor,
+      napi_key_own_only,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`own_only filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+
+  // include_prototypes: a plain object reaches Object.prototype.__proto__ (an accessor)
+  const plain = { a: 1 };
+  for (const filter of [napi_key_writable, napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      plain,
+      napi_key_include_prototypes,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`include_prototypes filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},

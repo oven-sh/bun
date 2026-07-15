@@ -703,6 +703,9 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain("Object.keys after get_property_names: w1,w2");
       expect(output).toContain("napi get_property_names result: w1,w2,pEnum");
     });
+    it("handles accessor properties when filtering by napi_key_writable", async () => {
+      await checkSameOutput("test_get_all_property_names_accessor", []);
+    });
   });
 
   describe("napi_value <=> integer conversion", () => {
@@ -752,6 +755,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("returns zero-filled memory", async () => {
       const output = await checkSameOutput("test_create_arraybuffer_zeroed", []);
       expect(output).toBe("PASS: napi_create_arraybuffer memory is zero-filled");
+    });
+  });
+
+  describe("node_api experimental", () => {
+    it("node_api_set_prototype sets [[Prototype]]", async () => {
+      const output = await checkSameOutput("test_node_api_set_prototype", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "set_prototype: proto_matches=true inherited=123",
+        "set_prototype: null_proto_type=1",
+      ]);
+    });
+    it("node_api_create_object_with_properties creates an object with the given prototype and properties", async () => {
+      const output = await checkSameOutput("test_node_api_create_object_with_properties", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_object_with_properties: proto_type=1 a=1 b=2 sym=3 idx0=4",
+        "create_object_with_properties: bad_name_status=4",
+        "create_object_with_properties: custom_proto_matches=true",
+      ]);
+    });
+    it("node_api_create_sharedarraybuffer / is_sharedarraybuffer / create_external_sharedarraybuffer", async () => {
+      const output = await checkSameOutput("test_node_api_sharedarraybuffer", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_sharedarraybuffer: data_nonnull=true is_sab=true is_ab=false",
+        "create_sharedarraybuffer: info_data_matches=true info_len=16",
+        "is_sharedarraybuffer: plain_ab=false number=false",
+        "create_external_sharedarraybuffer: is_sab=true data_matches=true len=8 first=176 finalized_early=false",
+      ]);
     });
   });
 

@@ -836,17 +836,26 @@ it("reload() while Bun.build() resolves the same directory", async () => {
         style: "nextjs",
         fileExtensions: [".tsx"],
       });
-      const builds = Array.from({ length: 4 }, () =>
-        Bun.build({ entrypoints, target: "bun", throw: false }),
-      );
+      // The first build completes with generation 0 and the bundle thread then
+      // bumps its generation, so every later build's resolver re-reads the
+      // directory listing in place. reload() iterates the same listing on the
+      // main thread, and that in-place re-read is what the reload loop races.
+      await Bun.build({ entrypoints, target: "bun", throw: false });
       let matches = 0;
-      for (let i = 0; i < 50; i++) {
-        router.reload();
-        const m = router.match("/p7");
-        if (m && m.filePath.endsWith("p7.tsx")) matches++;
+      let buildsOk = true;
+      for (let round = 0; round < 40; round++) {
+        const builds = Array.from({ length: 4 }, () =>
+          Bun.build({ entrypoints, target: "bun", throw: false }),
+        );
+        for (let i = 0; i < 50; i++) {
+          router.reload();
+          const m = router.match("/p7");
+          if (m && m.filePath.endsWith("p7.tsx")) matches++;
+        }
+        const results = await Promise.all(builds);
+        buildsOk &&= results.every(r => r.success);
       }
-      const results = await Promise.all(builds);
-      console.log("matches", matches, "builds-ok", results.every(r => r.success));
+      console.log("matches", matches, "builds-ok", buildsOk);
     `,
   };
   for (let i = 1; i <= 40; i++) {
@@ -863,8 +872,12 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("matches 50 builds-ok true");
-  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
 it("loads routes from a directory already cached by Bun.build()", async () => {
@@ -897,6 +910,10 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("/a /b /sub/c /b");
-  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
 });

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { Worker } from "node:worker_threads";
 
 test("env: function is rejected with ERR_INVALID_ARG_TYPE, not accepted as an env object", () => {

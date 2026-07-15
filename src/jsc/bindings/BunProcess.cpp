@@ -4882,22 +4882,18 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
-    // Node defines these as plain data properties only when the flag was
-    // passed; onWarning reads them off the JS object at emit time so runtime
-    // `process.traceDeprecation = true` also takes effect.
+    // Node's addReadOnlyProcessAlias: read-only so `process.noDeprecation = false`
+    // is ignored, but a per-Process property — a Worker must not flip the main
+    // thread. Unflagged it stays an ordinary undefined slot user code can set.
+    constexpr unsigned readOnlyAlias = JSC::PropertyAttribute::ReadOnly | 0;
     if (Bun__Node__ProcessTraceWarnings)
-        putDirect(vm, Identifier::fromString(vm, "traceProcessWarnings"_s), jsBoolean(true), 0);
+        putDirect(vm, Identifier::fromString(vm, "traceProcessWarnings"_s), jsBoolean(true), readOnlyAlias);
     if (Bun__Node__ProcessTraceDeprecation)
-        putDirect(vm, Identifier::fromString(vm, "traceDeprecation"_s), jsBoolean(true), 0);
-    // Per-Process (per-Worker) data properties, not accessors on a
-    // process-wide static: a Worker setting `process.throwDeprecation = true`
-    // must not flip the main thread. Like Node's addReadOnlyProcessAlias, only
-    // define when the CLI flag was passed; otherwise it's an ordinary
-    // undefined slot user code can set.
+        putDirect(vm, Identifier::fromString(vm, "traceDeprecation"_s), jsBoolean(true), readOnlyAlias);
     if (Bun__Node__ProcessThrowDeprecation)
-        putDirect(vm, Identifier::fromString(vm, "throwDeprecation"_s), jsBoolean(true), 0);
+        putDirect(vm, Identifier::fromString(vm, "throwDeprecation"_s), jsBoolean(true), readOnlyAlias);
     if (Bun__Node__ProcessNoDeprecation)
-        putDirect(vm, Identifier::fromString(vm, "noDeprecation"_s), jsBoolean(true), 0);
+        putDirect(vm, Identifier::fromString(vm, "noDeprecation"_s), jsBoolean(true), readOnlyAlias);
 }
 
 } // namespace Bun

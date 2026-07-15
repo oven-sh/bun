@@ -8,8 +8,6 @@
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 
-extern "C" bool Bun__Node__ProcessNoDeprecation;
-
 using namespace Bun;
 using namespace JSC;
 using namespace WebCore;
@@ -292,7 +290,9 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
         return ERR::CRYPTO_INVALID_AUTH_TAG(scope, globalObject, builder.toString());
     }
 
-    if (cipher->m_ctx.isGcmMode() && !cipher->m_authTagLen.has_value() && tagLen != 16 && !Bun__Node__ProcessNoDeprecation) {
+    // Redundant gate removed: Process::emitWarning already checks the live
+    // per-Worker process.noDeprecation.
+    if (cipher->m_ctx.isGcmMode() && !cipher->m_authTagLen.has_value() && tagLen != 16) {
         Bun::Process::emitWarning(globalObject, jsString(vm, makeString("Using AES-GCM authentication tags of less than 128 bits without specifying the authTagLength option when initializing decryption is deprecated."_s)), jsString(vm, makeString("DeprecationWarning"_s)), jsString(vm, makeString("DEP0182"_s)), jsUndefined());
         CLEAR_IF_EXCEPTION(scope);
     }

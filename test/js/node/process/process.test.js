@@ -1853,6 +1853,41 @@ it("--trace-deprecation seeds process.traceDeprecation", async () => {
   expect(exitCode).toBe(0);
 });
 
+// Node seeds these via addReadOnlyProcessAlias (writable:false, configurable
+// and enumerable:true), so a later assignment is silently ignored in sloppy
+// mode. Verified against node v26.3.0.
+it.each([
+  ["--no-deprecation", "noDeprecation"],
+  ["--throw-deprecation", "throwDeprecation"],
+  ["--trace-deprecation", "traceDeprecation"],
+  ["--trace-warnings", "traceProcessWarnings"],
+])("%s seeds process.%s as a read-only alias", async (flag, prop) => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      flag,
+      "-e",
+      // -e is ESM, so the rejected write throws TypeError rather than no-opping
+      // as it would in sloppy CJS; either way the seeded value must survive.
+      `const k = ${JSON.stringify(prop)};
+       const d = Object.getOwnPropertyDescriptor(process, k);
+       let threw = false;
+       try { process[k] = false; } catch { threw = true; }
+       console.log(JSON.stringify({ d, afterWrite: process[k], threw }));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout.trim())).toEqual({
+    d: { value: true, writable: false, enumerable: true, configurable: true },
+    afterWrite: true,
+    threw: true,
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("removeAllListeners('warning') silences the default print", async () => {
   await using proc = Bun.spawn({
     cmd: [

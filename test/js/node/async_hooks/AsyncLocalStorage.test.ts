@@ -1032,8 +1032,10 @@ describe("async context passes through", () => {
              const sym = Object.getOwnPropertySymbols(st)
                .find(x => x.description === "::bunhttp2asynccontextframe::");
              console.log(sym === undefined ? "SYMBOL-MISSING" : st[sym] === undefined ? "CLEARED" : "PINNED");
+             // Tear the session down and let the loop drain: exiting with the
+             // session still open leaks it, which aborts under ASAN.
+             client.destroy();
              server.close();
-             process.exit(0);
            });
          });`,
       ],
@@ -1067,14 +1069,17 @@ describe("async context passes through", () => {
              req.end();
            });
            req.on("error", () => {});
-           req.on("upgrade", () => { throw new Error("upgrade boom"); });
+           let upgraded;
+           req.on("upgrade", (_res, socket) => { upgraded = socket; throw new Error("upgrade boom"); });
            process.on("uncaughtException", err => {
              if (err.message !== "upgrade boom") throw err;
              const sym = Object.getOwnPropertySymbols(req)
                .find(x => x.description === "kClientAsyncContext");
              console.log(sym === undefined ? "SYMBOL-MISSING" : req[sym] === undefined ? "CLEARED" : "PINNED");
+             // Close the upgraded socket too: exiting with it open leaks it,
+             // which aborts under ASAN.
+             upgraded?.destroy();
              server.close();
-             process.exit(0);
            });
          });`,
       ],

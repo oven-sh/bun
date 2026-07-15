@@ -2427,10 +2427,9 @@ for (let withOverridenBufferWrite of [false, true]) {
       });
 
       it("lastIndexOf/indexOf(Buffer, negativeOffset, 'ucs2') wraps against the raw byte length on odd-length haystacks", () => {
-        // Node's IndexOfBuffer wraps a negative byteOffset against the full
-        // byte length and only then floors to 16-bit units; truncating to an
-        // even length first makes `-byteLength` land before the start and
-        // return -1 for data that is present.
+        // Node's IndexOfBuffer wraps a negative byteOffset against the full byte
+        // length and only then floors to 16-bit units; truncating to even first
+        // makes `-byteLength` land before the start and miss present data.
         const h3 = Buffer.from("bbc", "latin1"); // <62 62 63>
         const n = Buffer.from("bb", "latin1"); // <62 62>
         for (const enc of ["ucs2", "utf16le"]) {

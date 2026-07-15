@@ -1175,9 +1175,10 @@ mod _async_tasks {
     impl FsReturn for FD {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            // Only `ret::Open` is `FD`, so this is the single JS-thread point
-            // where an fs.open/openSync fd reaches user code (sync, threadpool
-            // async, and Windows libuv async all converge here).
+            // Only `ret::Open` is `FD`; sync, threadpool async, and Windows
+            // libuv async all converge here. fs.promises.open reaches this too
+            // and immediately untracks via `untrackFd` when wrapping the fd in
+            // a managed FileHandle.
             global.bun_vm().as_mut().add_unmanaged_fd(*self);
             Ok(crate::node::types::FdJsc::to_js(*self, global))
         }

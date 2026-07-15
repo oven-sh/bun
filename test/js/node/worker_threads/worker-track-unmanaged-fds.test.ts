@@ -6,16 +6,20 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 // Verified by inode identity so fd-number reuse can never fake a verdict. Windows is
 // skipped because workers receive uv-tagged fd numbers that don't map 1:1 to parent fds.
 describe.concurrent.skipIf(isWindows)("Worker trackUnmanagedFds", () => {
-  async function probe(openHow: "sync" | "async", closeIt: boolean, opts: string) {
+  async function probe(openHow: "sync" | "async" | "promise", closeIt: boolean, opts: string) {
+    // The worker waits for a parent ack before exiting so `during` is always
+    // captured while the fd is still live (no race with the exit sweep).
     const worker =
       `const { parentPort, workerData } = require("node:worker_threads");` +
       `const fs = require("node:fs");` +
       `const done = fd => {` +
       `  if (workerData.closeIt) fs.closeSync(fd);` +
+      `  parentPort.on("message", () => process.exit(0));` +
       `  parentPort.postMessage({ fd });` +
       `};` +
       `if (workerData.openHow === "sync") done(fs.openSync(workerData.target, "r"));` +
-      `else fs.open(workerData.target, "r", (e, fd) => done(fd));`;
+      `else if (workerData.openHow === "async") fs.open(workerData.target, "r", (e, fd) => done(fd));` +
+      `else fs.promises.open(workerData.target, "r").then(h => { globalThis.KEEP = h; done(h.fd); });`;
     const fixture = `
       const { Worker } = require("node:worker_threads");
       const fs = require("node:fs");
@@ -35,7 +39,7 @@ describe.concurrent.skipIf(isWindows)("Worker trackUnmanagedFds", () => {
       w.on("message", m => {
         const during = ${closeIt} || points(m.fd);
         w.on("exit", () => console.log(JSON.stringify({ during, after: points(m.fd) })));
-        w.terminate();
+        w.postMessage("ack");
       });
     `;
     using dir = tempDir("worker-track-unmanaged-fds", {});
@@ -78,6 +82,18 @@ describe.concurrent.skipIf(isWindows)("Worker trackUnmanagedFds", () => {
     expect(await probe("async", false, "{}")).toEqual({
       stderr: "",
       out: { during: true, after: false },
+      exitCode: 0,
+    });
+  });
+
+  test("fs.promises.open FileHandle fd is excluded from the sweep", async () => {
+    // Node only tracks raw fs.open/openSync fds; a FileHandle is managed and
+    // may be transferred to another thread, so the sweep must never close its
+    // fd out from under a receiver. The worker keeps a strong reference so
+    // only the sweep (not FileHandle GC) could close it here.
+    expect(await probe("promise", false, "{}")).toEqual({
+      stderr: "",
+      out: { during: true, after: true },
       exitCode: 0,
     });
   });

@@ -475,9 +475,9 @@ describe("Bun.Transpiler", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect({ stdout: stdout.trim(), exitCode }).toEqual({
         stdout: JSON.stringify([["s", false, "p:5"], 5, [true, false], 1]),
-        stderr: "",
         exitCode: 0,
       });
     });

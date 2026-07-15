@@ -216,10 +216,7 @@ describe("Bun.Transpiler", () => {
       exp("class Foo { declare foo: number }", "class Foo {\n}");
 
       // Class body "abstract": a newline makes it a field named "abstract" followed by a method.
-      exp(
-        "abstract class A { abstract\n foo() {} }\nnew A",
-        "class A {\n  abstract;\n  foo() {}\n}\nnew A;\n",
-      );
+      exp("abstract class A { abstract\n foo() {} }\nnew A", "class A {\n  abstract;\n  foo() {}\n}\nnew A;\n");
       exp("abstract class A { abstract foo(): void }\nnew A", "class A {\n}\nnew A;\n");
 
       // Class body "accessor": a newline makes it a field named "accessor" followed by a field.

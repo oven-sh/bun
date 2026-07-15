@@ -3096,6 +3096,72 @@ test_dataview_info_byte_offset(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static napi_value test_napi_float16_array(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  // napi_float16_array == 11; cast so older headers without the member compile.
+  const napi_typedarray_type float16 = static_cast<napi_typedarray_type>(11);
+
+  napi_value view = info[1];
+  bool is = false;
+  NODE_API_CALL(env, napi_is_typedarray(env, view, &is));
+
+  napi_typedarray_type type = static_cast<napi_typedarray_type>(999);
+  size_t length = 0;
+  void *data = nullptr;
+  napi_value arraybuffer = nullptr;
+  size_t byte_offset = SIZE_MAX;
+  napi_status si = napi_get_typedarray_info(env, view, &type, &length, &data,
+                                            &arraybuffer, &byte_offset);
+  uint16_t e0 = (si == napi_ok && data && length > 0)
+                    ? static_cast<uint16_t *>(data)[0]
+                    : 0;
+  printf("is_typedarray=%d info_status=%d type=%d length=%zu byte_offset=%zu "
+         "e0=0x%04X\n",
+         is ? 1 : 0, static_cast<int>(si), static_cast<int>(type), length,
+         byte_offset, e0);
+
+  void *ab_data = nullptr;
+  size_t ab_len = 0;
+  NODE_API_CALL(
+      env, napi_get_arraybuffer_info(env, arraybuffer, &ab_data, &ab_len));
+  printf("arraybuffer_byte_length=%zu data_is_ab_plus_offset=%d\n", ab_len,
+         static_cast<uint8_t *>(ab_data) + byte_offset ==
+                 static_cast<uint8_t *>(data)
+             ? 1
+             : 0);
+
+  napi_value created = nullptr;
+  napi_status sc =
+      napi_create_typedarray(env, float16, 4, arraybuffer, 0, &created);
+  bool created_is = false;
+  napi_typedarray_type created_type = static_cast<napi_typedarray_type>(999);
+  size_t created_len = 0;
+  if (sc == napi_ok) {
+    NODE_API_CALL(env, napi_is_typedarray(env, created, &created_is));
+    NODE_API_CALL(env,
+                  napi_get_typedarray_info(env, created, &created_type,
+                                           &created_len, nullptr, nullptr,
+                                           nullptr));
+  }
+  printf("create_status=%d created_is_typedarray=%d created_type=%d "
+         "created_length=%zu\n",
+         static_cast<int>(sc), created_is ? 1 : 0,
+         static_cast<int>(created_type), created_len);
+
+  bool is_instance = false;
+  if (sc == napi_ok) {
+    napi_value global = nullptr;
+    napi_value ctor = nullptr;
+    NODE_API_CALL(env, napi_get_global(env, &global));
+    NODE_API_CALL(env,
+                  napi_get_named_property(env, global, "Float16Array", &ctor));
+    NODE_API_CALL(env, napi_instanceof(env, created, ctor, &is_instance));
+  }
+  printf("created instanceof Float16Array=%d\n", is_instance ? 1 : 0);
+
+  return ok(env);
+}
+
 static napi_value
 test_create_arraybuffer_zeroed(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -3160,6 +3226,7 @@ test_napi_adjust_external_memory(const Napi::CallbackInfo &info) {
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_typedarray_info_byte_offset);
   REGISTER_FUNCTION(env, exports, test_dataview_info_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_napi_float16_array);
   REGISTER_FUNCTION(env, exports, test_create_arraybuffer_zeroed);
   REGISTER_FUNCTION(env, exports, test_napi_adjust_external_memory);
   REGISTER_FUNCTION(env, exports, test_issue_7685);

@@ -2658,10 +2658,11 @@ declare module "bun" {
      *
      * - `string[]` (default `[]`): each entry is matched against the import
      *   specifier; `*` is supported as a wildcard.
-     * - `false`: no module may be left external. Any import of a Node.js or
-     *   Bun builtin (e.g. `node:fs`, `fs`, `bun:sqlite`) that cannot be
-     *   bundled fails the build. Cannot be combined with
-     *   `packages: "external"`.
+     * - `false`: no module may be left external. Any import that would
+     *   otherwise be emitted as a runtime external reference (Node.js/Bun
+     *   builtins such as `node:fs`, `fs`, `bun:sqlite`, `ws`; subpath
+     *   imports that map to a builtin) fails the build. Cannot be combined
+     *   with `packages: "external"`.
      */
     external?: string[] | false;
     /**

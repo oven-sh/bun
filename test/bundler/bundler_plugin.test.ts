@@ -26,6 +26,11 @@ describe("bundler", () => {
           expect(resolved.sort()).toEqual(["net", "node:fs", "path"]);
           // Falling through to default resolution keeps them external.
           api.expectFile("out.js").toContain('require("net")');
+          if (target === "bun") {
+            // https://github.com/oven-sh/bun/issues/18545
+            api.expectFile("out.js").toContain('from "fs"');
+            api.expectFile("out.js").not.toContain('from "node:fs"');
+          }
         },
       };
     });

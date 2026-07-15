@@ -1477,29 +1477,52 @@ test("Bun.build can be called thousands of times in one process without crashing
 }, 180_000);
 
 describe("Bun.build external: false", () => {
-  const cases: Array<["bun" | "node" | "browser", string, string]> = [
-    ["bun", "node:fs", 'import fs from "node:fs"; console.log(fs);'],
-    ["bun", "fs", 'import fs from "fs"; console.log(fs);'],
-    ["bun", "bun:sqlite", 'import { Database } from "bun:sqlite"; console.log(Database);'],
-    ["bun", "bun", 'import { serve } from "bun"; console.log(serve);'],
-    ["bun", "net", 'const net = require("net"); console.log(net);'],
-    ["node", "node:fs", 'import fs from "node:fs"; console.log(fs);'],
-    ["node", "path", 'import path from "path"; console.log(path);'],
-    ["browser", "node:fs", 'import fs from "node:fs"; console.log(fs);'],
+  type Case = { target: "bun" | "node" | "browser"; specifier: string; code: string; files?: Record<string, string> };
+  const cases: Case[] = [
+    { target: "bun", specifier: "node:fs", code: 'import fs from "node:fs"; console.log(fs);' },
+    { target: "bun", specifier: "fs", code: 'import fs from "fs"; console.log(fs);' },
+    { target: "bun", specifier: "bun:sqlite", code: 'import { Database } from "bun:sqlite"; console.log(Database);' },
+    { target: "bun", specifier: "bun", code: 'import { serve } from "bun"; console.log(serve);' },
+    { target: "bun", specifier: "net", code: 'const net = require("net"); console.log(net);' },
+    { target: "bun", specifier: "ws", code: 'import WebSocket from "ws"; console.log(WebSocket);' },
+    {
+      target: "bun",
+      specifier: "#fs",
+      code: 'import { readFileSync } from "#fs"; console.log(readFileSync);',
+      files: { "package.json": JSON.stringify({ imports: { "#fs": "node:fs" } }) },
+    },
+    { target: "node", specifier: "node:fs", code: 'import fs from "node:fs"; console.log(fs);' },
+    { target: "node", specifier: "path", code: 'import path from "path"; console.log(path);' },
   ];
 
-  test.each(cases)("target %s rejects builtin %s", async (target, specifier, code) => {
-    using dir = tempDir("external-false", { "entry.js": code });
+  test.each(cases)("target $target rejects $specifier", async ({ target, specifier, code, files }) => {
+    using dir = tempDir("external-false", { "entry.js": code, ...files });
     const result = await buildNoThrow({
       entrypoints: [join(String(dir), "entry.js")],
       target,
       external: false,
     });
-    expect(result.success).toBe(false);
     const messages = result.logs.map(m => String((m as any).message ?? m));
-    expect(messages.join("\n")).toContain(`builtin module "${specifier}" because 'external' is set to false`);
+    expect({ success: result.success, messages: messages.join("\n") }).toEqual({
+      success: false,
+      messages: expect.stringContaining(`"${specifier}" because 'external' is set to false`),
+    });
     const position = (result.logs[0] as any)?.position;
     expect(position?.file).toContain("entry.js");
+  });
+
+  test("target browser bundles polyfillable builtins", async () => {
+    using dir = tempDir("external-false-browser", {
+      "entry.js": 'import path from "path"; console.log(path.join("a", "b"));',
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "browser",
+      external: false,
+    });
+    expect(result.success).toBe(true);
+    const out = await result.outputs[0].text();
+    expect(out).not.toContain('from "path"');
   });
 
   test("succeeds with no builtin imports", async () => {
@@ -1515,27 +1538,30 @@ describe("Bun.build external: false", () => {
     expect(result.success).toBe(true);
   });
 
-  test("still fails when a matching onResolve plugin returns undefined", async () => {
-    using dir = tempDir("external-false-plugin-fallthrough", {
-      "entry.js": 'import fs from "node:fs"; console.log(fs);',
-    });
-    const result = await buildNoThrow({
-      entrypoints: [join(String(dir), "entry.js")],
-      target: "node",
-      external: false,
-      plugins: [
-        {
-          name: "noop",
-          setup(build) {
-            build.onResolve({ filter: /.*/ }, () => undefined);
+  test.each(["bun", "node"] as const)(
+    "still fails when a matching onResolve plugin returns undefined (target %s)",
+    async target => {
+      using dir = tempDir("external-false-plugin-fallthrough", {
+        "entry.js": 'import fs from "node:fs"; console.log(fs);',
+      });
+      const result = await buildNoThrow({
+        entrypoints: [join(String(dir), "entry.js")],
+        target,
+        external: false,
+        plugins: [
+          {
+            name: "noop",
+            setup(build) {
+              build.onResolve({ filter: /.*/ }, () => undefined);
+            },
           },
-        },
-      ],
-    });
-    expect(result.success).toBe(false);
-    const messages = result.logs.map(m => String((m as any).message ?? m));
-    expect(messages.join("\n")).toContain("builtin module \"node:fs\" because 'external' is set to false");
-  });
+        ],
+      });
+      expect(result.success).toBe(false);
+      const messages = result.logs.map(m => String((m as any).message ?? m));
+      expect(messages.join("\n")).toContain("\"node:fs\" because 'external' is set to false");
+    },
+  );
 
   test("plugin onResolve can redirect a builtin under external: false", async () => {
     using dir = tempDir("external-false-plugin", {
@@ -1575,13 +1601,13 @@ describe("Bun.build external: false", () => {
     ).toThrow('external: false cannot be combined with packages: "external"');
   });
 
-  test("non-array non-boolean value is rejected", () => {
+  test.each(["node:fs", true, 42])("invalid external value %p is rejected", value => {
     using dir = tempDir("external-invalid", { "entry.js": "console.log(1);" });
     expect(() =>
       Bun.build({
         entrypoints: [join(String(dir), "entry.js")],
         // @ts-expect-error
-        external: "node:fs",
+        external: value,
       }),
     ).toThrow("external must be an array of strings or false");
   });

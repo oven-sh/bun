@@ -931,21 +931,19 @@ pub mod js_bundler {
             if let Some(externals) =
                 config.get_own(global_this, &BunString::static_str("external"))?
             {
-                if externals.is_boolean() {
-                    this.disallow_external = !externals.as_boolean();
-                } else if !externals.is_undefined_or_null() {
-                    if externals.is_cell() && externals.js_type().is_array() {
-                        let mut iter = externals.array_iterator(global_this)?;
-                        while let Some(entry_point) = iter.next()? {
-                            let slice = entry_point.to_slice_or_null(global_this)?;
-                            this.external.insert(slice.slice())?;
-                            drop(slice);
-                        }
-                    } else {
-                        return Err(global_this.throw_invalid_arguments(format_args!(
-                            "external must be an array of strings or false"
-                        )));
+                if externals.is_boolean() && !externals.as_boolean() {
+                    this.disallow_external = true;
+                } else if externals.is_cell() && externals.js_type().is_array() {
+                    let mut iter = externals.array_iterator(global_this)?;
+                    while let Some(entry_point) = iter.next()? {
+                        let slice = entry_point.to_slice_or_null(global_this)?;
+                        this.external.insert(slice.slice())?;
+                        drop(slice);
                     }
+                } else if !externals.is_undefined_or_null() {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "external must be an array of strings or false"
+                    )));
                 }
             }
 

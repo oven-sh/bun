@@ -354,8 +354,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     // "[import: number]"
+                    // "[import?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -384,8 +385,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     // "[new: number]"
+                    // "[new?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -418,13 +420,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // Valid:
                             //   "[keyof: string]"
+                            //   "[keyof?: string]"
                             //   "{[keyof: string]: number}"
                             //   "{[keyof in string]: number}"
                             //
                             // Invalid:
                             //   "A extends B ? keyof : string"
                             //
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -443,7 +448,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         TsIdentKind::PrefixReadonly => {
                             self.lexer.next()?;
 
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -467,7 +474,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "type Foo = Bar extends [infer T extends string] ? T : null"
                             // "type Foo = Bar extends [infer T extends string ? infer T : never] ? T : null"
                             // "type Foo = { [infer in Bar]: number }"
-                            if (self.lexer.token != T::TColon && self.lexer.token != T::TIn)
+                            // "type Foo = [infer?: number]"
+                            if (self.lexer.token != T::TColon
+                                && self.lexer.token != T::TQuestion
+                                && self.lexer.token != T::TIn)
                                 || (!opts.contains(SkipTypeOptions::IsIndexSignature)
                                     && !opts.contains(SkipTypeOptions::AllowTupleLabels))
                             {
@@ -642,8 +652,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.lexer.next()?;
 
                     // "[typeof: number]"
+                    // "[typeof?: number]"
                     if opts.contains(SkipTypeOptions::AllowTupleLabels)
-                        && self.lexer.token == T::TColon
+                        && (self.lexer.token == T::TColon || self.lexer.token == T::TQuestion)
                     {
                         return Ok(());
                     }
@@ -754,7 +765,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         self.lexer.next()?;
 
-                        if self.lexer.token != T::TColon {
+                        if self.lexer.token != T::TColon && self.lexer.token != T::TQuestion {
                             self.lexer.expect(T::TColon)?;
                         }
 

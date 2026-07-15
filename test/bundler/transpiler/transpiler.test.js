@@ -702,6 +702,14 @@ function foo() {}
       exp("let x: [keyof: string]", "let x;\n");
       exp("let x: [readonly: string]", "let x;\n");
       exp("let x: [infer: string]", "let x;\n");
+      exp("let x: [keyof?: string]", "let x;\n");
+      exp("let x: [readonly?: string]", "let x;\n");
+      exp("let x: [infer?: string]", "let x;\n");
+      exp("let x: [import?: string]", "let x;\n");
+      exp("let x: [new?: string]", "let x;\n");
+      exp("let x: [typeof?: string]", "let x;\n");
+      exp("let x: [function?: string]", "let x;\n");
+      exp("let x: [a: number, readonly?: string, ...infer: number[]]", "let x;\n");
       err("let x: A extends B ? keyof : string", "Unexpected :");
       err("let x: A extends B ? readonly : string", "Unexpected :");
       err("let x: A extends B ? infer : string", 'Expected identifier but found ":"');

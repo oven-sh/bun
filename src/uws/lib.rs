@@ -17,9 +17,11 @@ use bun_core::ZStr;
 // `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
 // bearing variants of the same names that are not yet reconciled.
 
+#[cfg(windows)]
+pub use bun_uws_sys::Timer;
 pub use bun_uws_sys::{
     AnyWebSocket, BodyReaderMixin, ConnectingSocket, ListenSocket, NewApp, RawWebSocket, Request,
-    Timer, WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
+    WebSocketBehavior, us_socket_stream_buffer_t, us_socket_t, uws_res,
 };
 
 /// `#[uws_callback]` — wraps a `&self`/`&mut self` method in an `extern "C"`
@@ -356,7 +358,6 @@ pub mod ssl_wrapper {
         OutOfMemory,
         InvalidOptions,
     }
-    bun_core::named_error_set!(InitError);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
@@ -364,7 +365,6 @@ pub mod ssl_wrapper {
         WantRead,
         WantWrite,
     }
-    bun_core::named_error_set!(WriteDataError);
 
     // SAFETY: SSLWrapper is an inline field of the owning socket; handler vtable
     // re-entry may write `flags`/`ssl` but never frees the wrapper (only
@@ -1273,7 +1273,7 @@ pub mod ssl_wrapper {
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
-pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
+pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN, PosixLoop, Timespec, WindowsLoop};
 
 /// Carrier trait so `set_parent_event_loop` can accept the higher-tier
 /// `EventLoopHandle` without depending on it. The event-loop crate impls this

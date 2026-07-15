@@ -512,6 +512,82 @@ it("Readable.fromWeb destroyed before the first read cancels the web stream", as
   expect(r.destroyed).toBe(true);
 });
 
+it("Readable.fromWeb: breaking out of for-await cancels the web source with ABORT_ERR", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  let seen = 0;
+  for await (const chunk of r) {
+    seen++;
+    break;
+    void chunk;
+  }
+  await closed;
+  expect(seen).toBe(1);
+  expect({ code: cancelReason?.code, name: cancelReason?.name }).toEqual({ code: "ABORT_ERR", name: "AbortError" });
+});
+
+it("Readable.fromWeb: destroy(err) after consuming a chunk cancels the web source with that error", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const r = Readable.fromWeb(web);
+  r.on("error", () => {});
+  const closed = new Promise(resolve => r.once("close", resolve));
+  const gotData = new Promise(resolve => r.once("data", resolve));
+  const first = await gotData;
+  expect(first.length).toBe(64);
+  r.destroy(new RangeError("consumer-gone"));
+  await closed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
+it("Readable.toWeb(Readable.fromWeb(rs)).cancel(reason) propagates to the web source", async () => {
+  let cancelReason;
+  const web = new ReadableStream({
+    start(c) {
+      for (let i = 0; i < 6; i++) c.enqueue(new Uint8Array(64).fill(i));
+      c.close();
+    },
+    cancel(reason) {
+      cancelReason = reason;
+    },
+  });
+  const inner = Readable.fromWeb(web);
+  inner.on("error", () => {});
+  const innerClosed = new Promise(resolve => inner.once("close", resolve));
+  const outer = Readable.toWeb(inner);
+  const reader = outer.getReader();
+  const first = await reader.read();
+  expect(first.done).toBe(false);
+  await reader.cancel(new RangeError("consumer-gone")).catch(() => {});
+  await innerClosed;
+  expect({ name: cancelReason?.name, message: cancelReason?.message }).toEqual({
+    name: "RangeError",
+    message: "consumer-gone",
+  });
+});
+
 it("#9242.5 Stream has constructor", () => {
   const s = new Stream({});
   expect(s.constructor).toBe(Stream);
@@ -788,6 +864,34 @@ describe("webstreams adapters (Node v26 sync)", () => {
     expect(done).toBe(true);
   });
 
+  // The toWeb adapter's pull() calls resume() on the source. After 'end' and
+  // autoDestroy, Node 26's resume() is a no-op on destroyed streams, so the
+  // source is left paused / non-flowing. We narrow that guard (see the
+  // fd-slicer test below) but must still match Node's resting state here.
+  it("Readable.toWeb leaves the source paused / non-flowing after EOF", async () => {
+    const src = Readable.from([Buffer.from("a"), Buffer.from("b")], { objectMode: false });
+    const reader = Readable.toWeb(src).getReader();
+    const chunks = [];
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    await new Promise(resolve => (src.closed ? resolve() : src.once("close", resolve)));
+    expect(Buffer.concat(chunks).toString()).toBe("ab");
+    expect({
+      readableEnded: src.readableEnded,
+      destroyed: src.destroyed,
+      readableFlowing: src.readableFlowing,
+      isPaused: src.isPaused(),
+    }).toEqual({
+      readableEnded: true,
+      destroyed: true,
+      readableFlowing: false,
+      isPaused: true,
+    });
+  });
+
   // Upstream: v26 adapters use eos(stream, { writable: false }) so a Duplex
   // readable side completes without waiting for the half-open writable side.
   it("Readable.toWeb of a half-open Duplex closes when the readable side ends", async () => {
@@ -827,9 +931,6 @@ describe("webstreams adapters (Node v26 sync)", () => {
     duplex.destroy();
   });
 
-  // Readable.fromWeb()'s pump pushes several chunks per _read(), and Readable
-  // calls _read() again as soon as push() is called. Two pumps racing on one
-  // reader used to hand back the chunks out of order.
   it("Readable.fromWeb(Readable.toWeb()) preserves chunk order", async () => {
     const src = Readable.from(["A", "B", "C", "D", "E", "F"]);
     const chunks = [];
@@ -1203,8 +1304,59 @@ describe("node v26 stream semantics", () => {
     expect(r.read()).toBeNull();
   });
 
-  // Deliberate divergence from Node 26 (nodejs/node#62557 made pause/resume
-  // no-ops on destroyed streams): legacy Readable subclasses like fd-slicer
+  // Upstream: nodejs/node#62557 (test-stream-destroy.js).
+  it("pause() is a no-op on a destroyed stream", async () => {
+    const r = new Readable({ read() {} });
+    r.resume();
+    r.destroy();
+    const emitted = [];
+    r.on("pause", () => emitted.push("pause"));
+    expect(r.pause()).toBe(r);
+    expect(r.readableFlowing).toBe(true);
+    expect(r.isPaused()).toBe(false);
+    await new Promise(resolve => setImmediate(resolve));
+    expect(emitted).toEqual([]);
+  });
+
+  // A completed pipe unpipes the source, and unpipe() calls source.pause().
+  // On a source that autoDestroy'd itself at 'end', that pause() must no-op so
+  // the post-pipe readable state matches a plain resume()'d stream.
+  it("a source autoDestroyed by a completed pipe stays flowing", async () => {
+    const sink = () =>
+      new Writable({
+        write(chunk, encoding, callback) {
+          callback();
+        },
+      });
+    // 'unpipe' on the destination is emitted by Readable.prototype.unpipe right
+    // after it calls source.pause(), so it is the exact point to assert on.
+    const unpiped = dest => new Promise(resolve => dest.on("unpipe", resolve));
+
+    const resumed = new PassThrough();
+    resumed.resume();
+    resumed.end("x");
+
+    const pipedDest = sink();
+    const piped = new PassThrough();
+    piped.pipe(pipedDest);
+    piped.end("x");
+
+    // autoDestroy: false keeps the source alive, so unpipe() does pause it.
+    const aliveDest = sink();
+    const pipedAlive = new PassThrough({ autoDestroy: false });
+    pipedAlive.pipe(aliveDest);
+    pipedAlive.end("x");
+
+    await Promise.all([new Promise(resolve => resumed.on("close", resolve)), unpiped(pipedDest), unpiped(aliveDest)]);
+
+    const state = s => ({ readableFlowing: s.readableFlowing, isPaused: s.isPaused(), destroyed: s.destroyed });
+    expect(state(resumed)).toEqual({ readableFlowing: true, isPaused: false, destroyed: true });
+    expect(state(piped)).toEqual({ readableFlowing: true, isPaused: false, destroyed: true });
+    expect(state(pipedAlive)).toEqual({ readableFlowing: false, isPaused: true, destroyed: false });
+  });
+
+  // Deliberate divergence from Node 26 (nodejs/node#62557 also made resume() a
+  // no-op on destroyed streams): legacy Readable subclasses like fd-slicer
   // (yauzl → extract-zip → puppeteer/electron tooling) assign
   // `this.destroyed = true` via the prototype setter right before push(null).
   // With the upstream guard, a piped destination's drain can no longer resume

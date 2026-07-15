@@ -89,6 +89,10 @@ pub struct Execution {
     /// the entries themselves are owned by BunTest, which owns Execution.
     pub sequences: Box<[ExecutionSequence]>,
     pub group_index: usize,
+    /// The entry whose callback is synchronously on the stack right now. Set
+    /// around `run_test_callback` so code re-entered from a test body (e.g.
+    /// spawnSync's wait loop) can read the calling entry's own deadline.
+    pub on_stack_entry: core::cell::Cell<Option<NonNull<ExecutionEntry>>>,
 }
 
 pub struct ConcurrentGroup {
@@ -285,6 +289,7 @@ impl Execution {
             groups: Box::default(),
             sequences: Box::default(),
             group_index: 0,
+            on_stack_entry: core::cell::Cell::new(None),
         }
     }
 
@@ -1014,6 +1019,14 @@ fn step_sequence_one(
             }),
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
+
+        let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
+        let on_stack_cell = &raw const this.on_stack_entry;
+        // SAFETY: `on_stack_cell` points into `buntest.execution`, which is
+        // never moved during execution (arena-owned BunTest behind an Rc).
+        let _restore = scopeguard::guard((), move |()| unsafe {
+            (*on_stack_cell).set(prev_on_stack);
+        });
 
         if BunTest::run_test_callback(
             buntest_strong,

@@ -93,9 +93,9 @@ macro_rules! sbuf {
 
 // Dyn dispatch for now — the trait shape is unsettled.
 type Writer = dyn bun_io::Write;
-// `bun_io::Write` returns `core::result::Result<_, bun_core::Error>` (see
-// `bun_io::write::Result`), so the writer error is just the global `bun_core::Error`.
-type WriteError = bun_core::Error;
+// `bun_io::Write` returns `core::result::Result<_, crate::Error>` (see
+// `bun_io::write::Result`), so the writer error is just the global `crate::Error`.
+type WriteError = crate::Error;
 
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -1463,8 +1463,6 @@ pub enum ParseError {
 }
 
 bun_core::oom_from_alloc!(ParseError);
-
-bun_core::named_error_set!(ParseError);
 
 pub(crate) type PkgPathSet = PkgMap<()>;
 

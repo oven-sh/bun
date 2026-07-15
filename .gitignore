@@ -193,7 +193,21 @@ test/integration/bun-types/fixture/bun.lock
 .claude/worktrees
 src/runtime/bake/generated.ts
 /target/
+# Heap snapshots, profiler output, and core dumps can contain secrets from
+# process memory (env vars, tokens). Never commit them, compressed or not.
 *.heapsnapshot
+*.heapsnapshot.*
+*.heapprofile
+*.heapprofile.*
+*.heaptimeline
+*.heaptimeline.*
+*.cpuprofile
+*.cpuprofile.*
+Heap-*.json
+Heap-*.json.*
+isolate-*.log
+core
+core.[0-9]*
 # Legacy codegen outputs (no longer written, but old build trees still have
 # them on disk; keep ignored so they don't show as untracked).
 src/jsc/bindings/GeneratedJS2Native.zig

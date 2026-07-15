@@ -2,7 +2,7 @@ use core::ffi::c_char;
 use core::mem::size_of;
 use core::ptr::NonNull;
 
-use bun_core::{self, err, slice_as_bytes};
+use bun_core::{self, slice_as_bytes};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Re-exports from the printer crate
@@ -84,7 +84,7 @@ impl RecordKind {
     pub const ExportInfoNamespace: Self = Self::EXPORT_INFO_NAMESPACE;
     pub const ExportInfoStar: Self = Self::EXPORT_INFO_STAR;
 
-    pub fn len(self) -> Result<usize, bun_core::Error> {
+    pub fn len(self) -> crate::Result<usize> {
         match self {
             Self::DECLARED_VARIABLE | Self::LEXICAL_VARIABLE => Ok(1),
             Self::IMPORT_INFO_SINGLE => Ok(3),
@@ -95,7 +95,7 @@ impl RecordKind {
             Self::EXPORT_INFO_LOCAL => Ok(3),
             Self::EXPORT_INFO_NAMESPACE => Ok(2),
             Self::EXPORT_INFO_STAR => Ok(1),
-            _ => Err(err!("InvalidRecordKind")),
+            _ => Err(crate::Error::InvalidRecordKind),
         }
     }
 }
@@ -142,7 +142,6 @@ pub enum ModuleInfoError {
     #[error("BadModuleInfo")]
     BadModuleInfo,
 }
-bun_core::named_error_set!(ModuleInfoError);
 
 /// All slice fields are **self-referential** views into `owner`
 /// (`Owner::AllocatedSlice`) or into the parent `ModuleInfo`'s `Vec` storage
@@ -342,7 +341,7 @@ impl ModuleInfoDeserialized {
         Self::create(source).ok()
     }
 
-    pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
+    pub fn serialize(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
         let record_kinds = self.record_kinds();
         writer.write_all(&(record_kinds.len() as u32).to_le_bytes())?;
         writer.write_all(slice_as_bytes(record_kinds))?;

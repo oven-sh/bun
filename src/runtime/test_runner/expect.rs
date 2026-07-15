@@ -546,14 +546,14 @@ impl Expect {
         }
     }
 
-    pub fn get_snapshot_name(&self, hint: &[u8]) -> Result<Vec<u8>, bun_core::Error> {
-        let parent = self.parent.as_ref().ok_or_else(|| bun_core::err!("NoTest"))?;
-        let buntest_strong = parent.bun_test().ok_or_else(|| bun_core::err!("TestNotActive"))?;
+    pub fn get_snapshot_name(&self, hint: &[u8]) -> crate::Result<Vec<u8>> {
+        let parent = self.parent.as_ref().ok_or(crate::Error::NoTest)?;
+        let buntest_strong = parent.bun_test().ok_or(crate::Error::TestNotActive)?;
         let buntest = buntest_strong.get();
         let execution_entry = parent
             .phase
             .entry(buntest)
-            .ok_or_else(|| bun_core::err!("SnapshotInConcurrentGroup"))?;
+            .ok_or(crate::Error::SnapshotInConcurrentGroup)?;
 
         let test_name: &[u8] = execution_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
@@ -1010,10 +1010,10 @@ impl Expect {
         };
         match runner.snapshots.add_count(this, b"") {
             Ok(_) => {}
-            Err(e) if e == bun_core::err!("OutOfMemory") => return Err(JsError::OutOfMemory),
-            Err(e) if e == bun_core::err!("NoTest") => {}
-            Err(e) if e == bun_core::err!("SnapshotInConcurrentGroup") => {}
-            Err(e) if e == bun_core::err!("TestNotActive") => {}
+            Err(crate::Error::Alloc(bun_alloc::AllocError)) => return Err(JsError::OutOfMemory),
+            Err(crate::Error::NoTest) => {}
+            Err(crate::Error::SnapshotInConcurrentGroup) => {}
+            Err(crate::Error::TestNotActive) => {}
             Err(_) => {}
         }
 
@@ -1178,19 +1178,19 @@ impl Expect {
                 let test_file_path = runner.files.items_source()[buntest.file_id as usize].path.text;
                 let test_file_path = bstr::BStr::new(test_file_path);
                 return Err(match err {
-                    e if e == bun_core::err!("FailedToOpenSnapshotFile") => {
+                    crate::Error::FailedToOpenSnapshotFile => {
                         global_this.throw(format_args!("Failed to open snapshot file for test file: {test_file_path}"))
                     }
-                    e if e == bun_core::err!("FailedToMakeSnapshotDirectory") => {
+                    crate::Error::FailedToMakeSnapshotDirectory => {
                         global_this.throw(format_args!("Failed to make snapshot directory for test file: {test_file_path}"))
                     }
-                    e if e == bun_core::err!("FailedToWriteSnapshotFile") => {
+                    crate::Error::FailedToWriteSnapshotFile => {
                         global_this.throw(format_args!("Failed write to snapshot file: {test_file_path}"))
                     }
-                    e if e == bun_core::err!("SyntaxError") || e == bun_core::err!("ParseError") => {
+                    crate::Error::SyntaxError | crate::Error::ParseError => {
                         global_this.throw(format_args!("Failed to parse snapshot file for: {test_file_path}"))
                     }
-                    e if e == bun_core::err!("SnapshotCreationNotAllowedInCI") => {
+                    crate::Error::SnapshotCreationNotAllowedInCI => {
                         let snapshot_name = runner.snapshots.last_error_snapshot_name.take();
                         if let Some(name) = snapshot_name {
                             global_this.throw(format_args!(
@@ -1205,10 +1205,10 @@ impl Expect {
                             ))
                         }
                     }
-                    e if e == bun_core::err!("SnapshotInConcurrentGroup") => {
+                    crate::Error::SnapshotInConcurrentGroup => {
                         global_this.throw(format_args!("Snapshot matchers are not supported in concurrent tests"))
                     }
-                    e if e == bun_core::err!("TestNotActive") => {
+                    crate::Error::TestNotActive => {
                         global_this.throw(format_args!("Snapshot matchers are not supported after the test has finished executing"))
                     }
                     _ => {
@@ -2279,7 +2279,7 @@ __forward_matcher! {
     to_be_type_of                            => to_be_type_of::to_be_type_of,
     to_be_valid_date                         => to_be_valid_date::to_be_valid_date,
     to_contain_equal                         => to_contain_equal::to_contain_equal,
-    to_end_with                              => to_end_with::to_end_with,
+    to_end_with                              => simple_matchers::to_end_with,
     to_equal_ignoring_whitespace             => to_equal_ignoring_whitespace::to_equal_ignoring_whitespace,
     to_have_been_called                      => to_have_been_called::to_have_been_called,
     to_have_been_called_once                 => to_have_been_called_once::to_have_been_called_once,
@@ -2292,13 +2292,13 @@ __forward_matcher! {
     to_have_nth_returned_with                => to_have_nth_returned_with::to_have_nth_returned_with,
     to_have_property                         => to_have_property::to_have_property,
     to_have_returned_with                    => to_have_returned_with::to_have_returned_with,
-    to_include                               => to_include::to_include,
+    to_include                               => simple_matchers::to_include,
     to_match                                 => to_match::to_match,
     to_match_inline_snapshot                 => to_match_inline_snapshot::to_match_inline_snapshot,
     to_match_object                          => to_match_object::to_match_object,
     to_match_snapshot                        => to_match_snapshot::to_match_snapshot,
     to_satisfy                               => to_satisfy::to_satisfy,
-    to_start_with                            => to_start_with::to_start_with,
+    to_start_with                            => simple_matchers::to_start_with,
     to_throw                                 => to_throw::to_throw,
     to_throw_error_matching_inline_snapshot  => to_throw_error_matching_inline_snapshot::to_throw_error_matching_inline_snapshot,
     to_throw_error_matching_snapshot         => to_throw_error_matching_snapshot::to_throw_error_matching_snapshot,
@@ -2649,14 +2649,14 @@ impl ExpectCustomAsymmetricMatcher {
         Ok(JSValue::from(matched))
     }
 
-    fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> Result<bool, bun_core::Error> {
+    fn maybe_clear(global_this: &JSGlobalObject, err: JsError, dont_throw: bool) -> crate::Result<bool> {
         if dont_throw {
             global_this.clear_exception();
             return Ok(false);
         }
         match err {
-            JsError::OutOfMemory => Err(bun_core::Error::OUT_OF_MEMORY),
-            _ => Err(bun_core::Error::UNEXPECTED),
+            JsError::OutOfMemory => Err(crate::Error::Alloc(bun_alloc::AllocError)),
+            _ => Err(crate::Error::Unexpected),
         }
     }
 
@@ -2667,7 +2667,7 @@ impl ExpectCustomAsymmetricMatcher {
         global_this: &JSGlobalObject,
         writer: &mut (impl bun_io::Write + ?Sized),
         dont_throw: bool,
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else { return Ok(false) };
         let fn_value = match matcher_fn.get(global_this, "toAsymmetricMatcher") {
             Ok(v) => v,
@@ -2718,7 +2718,7 @@ impl ExpectCustomAsymmetricMatcher {
         let printed = self
             .custom_print(callframe.this(), global_this, mutable_string.writer(), false)
             .map_err(|e| {
-                if e == bun_core::Error::OUT_OF_MEMORY {
+                if matches!(e, crate::Error::Alloc(_)) {
                     global_this.throw_out_of_memory()
                 } else {
                     // exception already on the VM (see `maybe_clear` with dont_throw=false)

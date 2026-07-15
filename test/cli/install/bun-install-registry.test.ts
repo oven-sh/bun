@@ -4936,6 +4936,227 @@ test("name from manifest is scoped and url encoded", async () => {
 });
 
 describe("update", () => {
+  // Regression test for https://github.com/oven-sh/bun/issues/31748
+  // `bun update` (no args) used to leave the lockfile's root-workspace
+  // dependency snapshot out of sync with the package.json caret ranges it
+  // itself just wrote, so the very next `bun install --frozen-lockfile`
+  // failed. The trigger is a self-referencing override (`"$pkg"`) on a
+  // package that's also a transitive of another root dep.
+  test("no-args leaves lockfile in sync with package.json (regression #31748)", async () => {
+    // The bug is at the in-memory `Dependency.version.literal` level and
+    // affects both lockfile formats. We force text via `--save-text-lockfile`
+    // only so the second regression test below can grep the lockfile text
+    // (suite default is binary).
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "1.0.0",
+          "one-range-dep": "1.0.0",
+        },
+        overrides: {
+          "no-deps": "$no-deps",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    expect(await exists(join(packageDir, "bun.lock"))).toBe(true);
+
+    // Loosen the no-deps range so `bun update` has room to bump it.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+          "one-range-dep": "1.0.0",
+        },
+        overrides: {
+          "no-deps": "$no-deps",
+        },
+      }),
+    );
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+        "one-range-dep": "1.0.0",
+      },
+      overrides: {
+        "no-deps": "$no-deps",
+      },
+    });
+
+    // The fix: `bun install --frozen-lockfile` immediately after `bun update`
+    // must succeed. Pre-fix this errored: "lockfile had changes, but lockfile
+    // is frozen". `runBunInstall` asserts no "error:" in stderr and exit 0.
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
+  // Companion to the regression test above: a user-authored LITERAL override
+  // (not a "$pkg" reference) on one root dep must NOT be silently rewritten
+  // by `bun update` of a different root dep. An earlier draft of the #31748
+  // fix blindly cloned the root dep into every matching override entry; this
+  // test guards against that.
+  test("no-args preserves literal override that differs from root literal (regression #31748)", async () => {
+    // The literal override is on the SAME dep being bumped, with a literal
+    // that differs from the root dep's literal:
+    //
+    //   deps.no-deps        = "^1.0.0"     → root lockfile literal "^1.0.0"
+    //   overrides.no-deps   = "^1.0.1"     → override lockfile literal "^1.0.1"
+    //
+    // After `bun update`, root no-deps bumps to "^1.1.0". A naive override
+    // propagation that copies root.version into every matching override
+    // would clobber the override literal to "^1.1.0", diverging from
+    // package.json's "^1.0.1" and failing the final --frozen-lockfile check.
+    // The fix's "match pre-update root literal" heuristic skips this case.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+        overrides: {
+          "no-deps": "^1.0.1",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    expect(await exists(join(packageDir, "bun.lock"))).toBe(true);
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // The literal override stays exactly as the user wrote it (would have been
+    // clobbered to "^1.1.0" by the naive draft of the fix).
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+      },
+      overrides: {
+        "no-deps": "^1.0.1",
+      },
+    });
+
+    // Lockfile's overrides section must also keep the user's literal range.
+    // Pre-fix naive propagation clobbered this to root's "^1.1.0", which is
+    // why we assert directly rather than relying on `--frozen-lockfile` alone.
+    const lockfileText = await file(join(packageDir, "bun.lock")).text();
+    const overridesMatch = lockfileText.match(/"overrides":\s*\{[^}]*"no-deps":\s*"([^"]+)"/);
+    expect(overridesMatch?.[1]).toBe("^1.0.1");
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
+  // Sharper variant: deps and overrides use the EXACT SAME literal string
+  // (`^1.0.0` in both). The previous heuristic ("override literal matches
+  // pre-update root literal → treat as $-ref") misfired here and tracked the
+  // root after `bun update`. With the explicit `OverrideMap.self_referential`
+  // marker, a literal override is never confused with a `$`-ref.
+  test("no-args preserves literal override that coincides with root literal (regression #31748)", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+        overrides: {
+          // Literal coincides with the deps literal — only the explicit
+          // `self_referential` marker can distinguish this from `"$no-deps"`.
+          "no-deps": "^1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // deps bumps to ^1.1.0; override stays at ^1.0.0 because it was a literal.
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+      },
+      overrides: {
+        "no-deps": "^1.0.0",
+      },
+    });
+
+    const lockfileText = await file(join(packageDir, "bun.lock")).text();
+    const overridesMatch = lockfileText.match(/"overrides":\s*\{[^}]*"no-deps":\s*"([^"]+)"/);
+    expect(overridesMatch?.[1]).toBe("^1.0.0");
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
+  // Guards a regression introduced by the e4a94e7c refactor that dropped the
+  // alias filter from the root-dep mutation pass. The refresh path was then
+  // willing to rewrite an aliased $-ref override (`"a1": "$a1"` where
+  // `"a1": "npm:no-deps@^1"`), but `which_version_is_pinned` on the cloned
+  // alias literal `"npm:no-deps@^1.0.0"` returns `Patch` (leading `n` hits
+  // the default branch), so the override would have been overwritten with a
+  // bare `"1.1.0"` — stripping the `npm:foo@` prefix and the alias semantics.
+  // Same regression existed in the closed #31754 PR.
+  test("no-args leaves aliased \\$-ref overrides untouched (regression #31748)", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          // npm-alias spec on root: "a1" points at no-deps.
+          "a1": "npm:no-deps@^1.0.0",
+        },
+        overrides: {
+          // $-ref override on the alias. Pre-fix this would get rewritten
+          // to "1.1.0" (or similar) after bun update.
+          "a1": "$a1",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    expect(await exists(join(packageDir, "bun.lock"))).toBe(true);
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // package.json should bump the alias spec to the new version.
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a1": "npm:no-deps@^1.1.0",
+      },
+      overrides: {
+        "a1": "$a1",
+      },
+    });
+
+    // The override entry in bun.lock must remain a full alias spec — it is
+    // a clone of the root alias dep, so the literal includes the `npm:foo@`
+    // prefix. Bare `"1.1.0"` here would mean the refresh stripped the alias.
+    const lockfileText = await file(join(packageDir, "bun.lock")).text();
+    const overridesMatch = lockfileText.match(/"overrides":\s*\{[^}]*"a1":\s*"([^"]+)"/);
+    expect(overridesMatch?.[1]).toMatch(/^npm:no-deps@/);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(
       packageJson,

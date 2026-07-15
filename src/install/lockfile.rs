@@ -779,6 +779,158 @@ impl Lockfile {
             .map(Cleaned::New)
     }
 
+    /// Re-sync `$name` self-referencing overrides with the root dep they
+    /// mirror after `bun update` bumps it. Called from `install_with_manager`
+    /// once `clean_with_logger` has produced the lockfile that will be saved.
+    ///
+    /// `"overrides": { "vite": "$vite" }` stores a *clone* of the root `vite`
+    /// dep captured when `package.json` was parsed. `bun update` resolves a
+    /// newer version and rewrites `package.json`'s range *after* resolution,
+    /// so the stored override keeps the pre-bump literal and the saved
+    /// lockfile no longer matches the `package.json` written next to it —
+    /// the next `bun install --frozen-lockfile` reports the override as
+    /// changed. See issue #31748.
+    ///
+    /// Only overrides whose referenced root dep is actually being updated
+    /// (`manager.updating_packages.contains_key(dep_name)`) are touched, so
+    /// untouched deps and user-authored literal overrides
+    /// (`"overrides": { "vite": "1.0.0" }` — not listed in
+    /// `OverrideMap::self_referential`) are left alone.
+    pub fn refresh_self_referential_overrides(
+        &mut self,
+        manager: &mut PackageManager,
+    ) -> Result<(), AllocError> {
+        if self.overrides.self_referential.count() == 0 {
+            return Ok(());
+        }
+
+        let workspace_package_id = manager
+            .root_package_id
+            .get(self, manager.workspace_name_hash);
+        let root_deps_list = self.packages.items_dependencies()[workspace_package_id as usize];
+        let root_resolutions_list =
+            self.packages.items_resolutions()[workspace_package_id as usize];
+
+        // Pass 1: collect (override_key_hash, new_literal_bytes) so the read
+        // of root deps + resolutions doesn't overlap the `StringBuilder`'s
+        // mutable borrow of `buffers.string_bytes`.
+        let mut rewrites: Vec<(PackageNameHash, Vec<u8>)> = Vec::new();
+        {
+            let string_buf = self.buffers.string_bytes.as_slice();
+            let root_deps = root_deps_list.get(self.buffers.dependencies.as_slice());
+            let root_resolution_ids =
+                root_resolutions_list.get(self.buffers.resolutions.as_slice());
+            let resolutions = self.packages.items_resolution();
+            let packages_len = self.packages.len();
+
+            debug_assert_eq!(root_deps.len(), root_resolution_ids.len());
+            for (&override_key_hash, &ref_name_hash) in self
+                .overrides
+                .self_referential
+                .keys()
+                .iter()
+                .zip(self.overrides.self_referential.values())
+            {
+                let Some(override_dep) = self.overrides.map.get(&override_key_hash) else {
+                    continue;
+                };
+
+                // Locate the referenced root dep's resolved npm version.
+                let mut resolved: Option<&Semver::Version> = None;
+                for (dep, &package_id) in root_deps.iter().zip(root_resolution_ids) {
+                    if dep.name_hash != ref_name_hash {
+                        continue;
+                    }
+                    // Only re-sync when this root dep's range is being
+                    // rewritten in package.json (i.e. it's one of the
+                    // packages `bun update` is bumping). If the root dep
+                    // wasn't updated, the override already matches package.json.
+                    if !manager
+                        .updating_packages
+                        .contains_key(dep.name.slice(string_buf))
+                    {
+                        break;
+                    }
+                    if package_id == invalid_package_id || package_id as usize >= packages_len {
+                        break;
+                    }
+                    let resolution = &resolutions[package_id as usize];
+                    if resolution.tag == ResolutionTag::Npm {
+                        resolved = Some(&resolution.npm().version);
+                    }
+                    break;
+                }
+                let Some(resolved_version) = resolved else {
+                    continue;
+                };
+
+                // Scope: only handle plain npm semver. The pin-style logic
+                // below (`which_version_is_pinned` + `^`/`~`/exact prefix)
+                // assumes a `1.2.3`-shaped literal. For `npm:foo@…` aliases
+                // and `catalog:default` references — both of which can show
+                // up in a `$`-ref override as clones of the root dep —
+                // `which_version_is_pinned` falls into the default branch
+                // on the leading `n` / `c`, returns `Patch`, and we'd write
+                // a bare semver, stripping the `npm:foo@` / `catalog:`
+                // prefix and breaking the next install. Leave those alone;
+                // they remain a known limitation tracked in the PR comment.
+                let existing_literal = override_dep.version.literal.slice(string_buf);
+                let trimmed = strings::trim(existing_literal, &strings::WHITESPACE_CHARS);
+                if trimmed.starts_with(b"npm:") || trimmed.starts_with(b"catalog:") {
+                    continue;
+                }
+
+                // Preserve the override's existing pin style (`^`/`~`/exact)
+                // so the new literal matches what `PackageJSONEditor` writes
+                // into `package.json` for the bumped dep.
+                let pinned = Semver::Version::which_version_is_pinned(existing_literal);
+                let version_fmt = resolved_version.fmt(string_buf);
+                let mut new_literal: Vec<u8> = Vec::new();
+                let _ = match pinned {
+                    Semver::PinnedVersion::Patch => write!(&mut new_literal, "{}", version_fmt),
+                    Semver::PinnedVersion::Minor => write!(&mut new_literal, "~{}", version_fmt),
+                    Semver::PinnedVersion::Major => write!(&mut new_literal, "^{}", version_fmt),
+                };
+
+                if new_literal.as_slice() != existing_literal {
+                    rewrites.push((override_key_hash, new_literal));
+                }
+            }
+        }
+
+        if rewrites.is_empty() {
+            return Ok(());
+        }
+
+        let mut string_builder = string_builder!(self);
+        for (_, literal) in &rewrites {
+            string_builder.count(literal);
+        }
+        string_builder.allocate()?;
+
+        for (override_key_hash, literal) in &rewrites {
+            let Some(override_dep) = self.overrides.map.get_mut(override_key_hash) else {
+                continue;
+            };
+            let external = string_builder.append::<ExternalString>(literal);
+            let sliced = external
+                .value
+                .sliced(string_builder.string_bytes.as_slice());
+            override_dep.version = dependency::parse(
+                override_dep.name,
+                override_dep.name_hash,
+                sliced.slice,
+                &sliced,
+                None,
+                &mut *manager,
+            )
+            .unwrap_or_default();
+        }
+        string_builder.clamp();
+
+        Ok(())
+    }
+
     fn preprocess_update_requests(
         old: &mut Lockfile,
         manager: &mut PackageManager,

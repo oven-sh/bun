@@ -626,6 +626,27 @@ pub fn install_with_manager(
         root = *manager.lockfile.packages.get(0);
     }
 
+    // `bun update` bumps a root dep's resolved version and rewrites
+    // package.json's range *after* resolution. Re-sync any `$name`
+    // self-referencing override with the dep it mirrors so the saved
+    // lockfile stays consistent with the package.json it is written next
+    // to — otherwise the next `bun install --frozen-lockfile` reports the
+    // override as changed. No-op unless `OverrideMap::self_referential`
+    // is non-empty and the referenced dep is one `bun update` is bumping.
+    // See issue #31748.
+    if manager.subcommand == Subcommand::Update && manager.lockfile.packages.len() > 0 {
+        // SAFETY: `mgr` is the sole provenance root;
+        // `refresh_self_referential_overrides` reborrows `(*mgr).lockfile`
+        // and reads disjoint `manager` fields through the `&mut *mgr` arg.
+        // No other live `&mut` to `*mgr` exists across the call.
+        let mgr: *mut PackageManager = manager;
+        unsafe {
+            (*mgr)
+                .lockfile
+                .refresh_self_referential_overrides(&mut *mgr)?;
+        }
+    }
+
     if manager.lockfile.packages.len() > 0 {
         for request in &manager.update_requests {
             // prevent redundant errors

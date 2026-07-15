@@ -3,7 +3,7 @@ import { bunEnv, bunExe } from "harness";
 
 // Spawned: isBunTest short-circuits VirtualMachine::unhandled_rejection so the
 // in-process path is not the one users observe.
-async function run(workerSrc: string) {
+async function run(workerSrc: string, expected: { err: string | null; code: number }) {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -19,23 +19,26 @@ async function run(workerSrc: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
-  return JSON.parse(stdout);
+  expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(expected),
+    stderr: "",
+    exitCode: 0,
+  });
 }
 
 describe.concurrent("exit code when a worker dies from an error", () => {
   test("unhandled promise rejection exits 1", async () => {
-    expect(
-      await run(
-        `require("node:worker_threads").parentPort.on("message", () => { Promise.reject(new Error("task-reject")); });`,
-      ),
-    ).toEqual({ err: "Error: task-reject", code: 1 });
+    await run(
+      `require("node:worker_threads").parentPort.on("message", () => { Promise.reject(new Error("task-reject")); });`,
+      { err: "Error: task-reject", code: 1 },
+    );
   });
 
   test("synchronous throw exits 1", async () => {
-    expect(
-      await run(`require("node:worker_threads").parentPort.on("message", () => { throw new Error("task-throw"); });`),
-    ).toEqual({ err: "Error: task-throw", code: 1 });
+    await run(
+      `require("node:worker_threads").parentPort.on("message", () => { throw new Error("task-throw"); });`,
+      { err: "Error: task-throw", code: 1 },
+    );
   });
 
   test("unhandled rejection runs the worker's process.on('exit') with code 1", async () => {
@@ -59,16 +62,19 @@ describe.concurrent("exit code when a worker dies from an error", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({ exitCode: 0, stderr: "" });
-    expect(JSON.parse(stdout)).toEqual({ workerExitArg: 1, code: 1 });
+    expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ workerExitArg: 1, code: 1 }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("process.on('unhandledRejection') handler suppresses the nonzero exit", async () => {
-    expect(
-      await run(
-        `process.on("unhandledRejection", () => process.exit(0));
-         require("node:worker_threads").parentPort.on("message", () => { Promise.reject(new Error("handled")); });`,
-      ),
-    ).toEqual({ err: null, code: 0 });
+    await run(
+      `const { parentPort } = require("node:worker_threads");
+       process.on("unhandledRejection", () => parentPort.close());
+       parentPort.once("message", () => { Promise.reject(new Error("handled")); });`,
+      { err: null, code: 0 },
+    );
   });
 });

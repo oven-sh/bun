@@ -2226,7 +2226,7 @@ Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDel
   // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
   // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
   // negatives and ~~ overflow match Node's no-validate behavior.
-  const initialDelay = Math.max(0, ~~initialDelayMsecs);
+  const initialDelay = MathMax(0, ~~initialDelayMsecs);
 
   if (!this._handle) {
     this[kSetKeepAlive] = enable;

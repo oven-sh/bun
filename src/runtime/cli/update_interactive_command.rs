@@ -171,6 +171,40 @@ impl UpdateInteractiveCommand {
         }
     }
 
+    fn load_current_workspace_package_json(
+        manager: &mut PackageManager,
+        workspace_pkg_id: PackageID,
+    ) -> crate::Result<Expr> {
+        let workspace_path: Box<[u8]> = {
+            let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
+            let workspace_resolution =
+                manager.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
+            match workspace_resolution.tag {
+                resolution::Tag::Workspace => {
+                    Box::from(workspace_resolution.workspace().slice(string_buf))
+                }
+                resolution::Tag::Root => Box::default(),
+                _ => unreachable!("interactive update only scans workspace packages"),
+            }
+        };
+
+        // SAFETY: `FileSystem::init` ran during `PackageManager::init`.
+        let root_dir = FileSystem::get().top_level_dir;
+        let mut path_buf = PathBuffer::uninit();
+        let package_json_path =
+            Self::build_package_json_path(root_dir, &workspace_path, &mut path_buf);
+
+        let log = manager.log_mut();
+        match manager.workspace_package_json_cache.get_with_path(
+            log,
+            package_json_path,
+            Default::default(),
+        ) {
+            GetJsonResult::Entry(entry) => Ok(entry.root),
+            GetJsonResult::ReadErr(err) | GetJsonResult::ParseErr(err) => Err(err.into()),
+        }
+    }
+
     // Helper to update a catalog entry at a specific path in the package.json AST
     // No `*PackageManager` parameter: there is no per-manager allocator,
     // and dropping it avoids overlapping `&mut PackageManager` with the live
@@ -907,6 +941,8 @@ impl UpdateInteractiveCommand {
         let mut version_buf: String = String::new();
 
         for &workspace_pkg_id in workspace_pkg_ids {
+            let current_package_json =
+                Self::load_current_workspace_package_json(manager, workspace_pkg_id)?;
             let pkg_deps =
                 manager.lockfile.packages.items_dependencies()[workspace_pkg_id as usize];
             for dep_id in pkg_deps.begin()..pkg_deps.end() {
@@ -931,6 +967,14 @@ impl UpdateInteractiveCommand {
                 }
 
                 let name_slice = dep.name.slice(string_buf);
+                if !DependencyGroup::FOUR.iter().any(|group| {
+                    current_package_json
+                        .as_property(group.prop)
+                        .and_then(|section| section.expr.as_property(name_slice))
+                        .is_some_and(|dependency| dependency.expr.data.e_string().is_some())
+                }) {
+                    continue;
+                }
                 let package_name =
                     manager.lockfile.packages.items_name()[package_id as usize].slice(string_buf);
 

@@ -2023,6 +2023,13 @@ it.skipIf(!isLinux)("serves the full content of a Bun.file() whose stat size is 
     },
   });
 
+  // no stat-derived framing: Content-Length is either absent (chunked) or
+  // the exact body length written by uWS end() when it fits in one read.
+  const okCL = (res: Response, body: string) => {
+    const cl = res.headers.get("content-length");
+    return cl === null || cl === String(body.length);
+  };
+
   // fetch-handler path (RequestContext.do_sendfile)
   {
     const res = await fetch(new URL("/file", server.url));
@@ -2031,8 +2038,8 @@ it.skipIf(!isLinux)("serves the full content of a Bun.file() whose stat size is 
       status: res.status,
       hasName: body.includes("Name:"),
       nonEmpty: body.length > 0,
-    }).toEqual({ status: 200, hasName: true, nonEmpty: true });
-    expect(res.headers.get("content-length")).not.toBe("0");
+      okCL: okCL(res, body),
+    }).toEqual({ status: 200, hasName: true, nonEmpty: true, okCL: true });
   }
 
   // static-route path (FileRoute)
@@ -2043,8 +2050,18 @@ it.skipIf(!isLinux)("serves the full content of a Bun.file() whose stat size is 
       status: res.status,
       hasName: body.includes("Name:"),
       nonEmpty: body.length > 0,
-    }).toEqual({ status: 200, hasName: true, nonEmpty: true });
-    expect(res.headers.get("content-length")).not.toBe("0");
+      okCL: okCL(res, body),
+    }).toEqual({ status: 200, hasName: true, nonEmpty: true, okCL: true });
+  }
+
+  // HEAD on the fetch-handler path: GET streams without a stat-derived
+  // length, so HEAD must not advertise Content-Length: 0 either.
+  {
+    const res = await fetch(new URL("/file", server.url), { method: "HEAD" });
+    expect({ status: res.status, cl: res.headers.get("content-length") }).toEqual({
+      status: 200,
+      cl: null,
+    });
   }
 
   // a real 0-byte file still serves as empty (one read() hits EOF)

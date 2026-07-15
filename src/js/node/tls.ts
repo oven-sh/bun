@@ -10,6 +10,7 @@ const {
   tlsStringToProtocolVersion,
   secureProtocolToVersionRange,
   processPfxOptions,
+  normalizeRejectUnauthorized,
   validateSecureProtocol,
 } = require("internal/tls");
 const {
@@ -649,6 +650,13 @@ function newNativeSecureContext(options, cached = true) {
       options = { ...options, minVersion, maxVersion };
     }
   }
+  // Node treats any value other than an explicit `false` as "verify"; the native converter
+  // only accepts real booleans, so normalize the falsy-but-not-false spellings Node accepts
+  // (0, "", null) before they can throw or silently disable verification.
+  const rejectUnauthorized = options.rejectUnauthorized;
+  if (rejectUnauthorized !== undefined && typeof rejectUnauthorized !== "boolean") {
+    options = { ...options, rejectUnauthorized: normalizeRejectUnauthorized(rejectUnauthorized) };
+  }
   const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
   if (pfxExtraCAs) {
     for (const pem of pfxExtraCAs) ctx.addCACert(pem);
@@ -1282,7 +1290,7 @@ function Server(options, secureConnectionListener): void {
       const rejectUnauthorized = options.rejectUnauthorized;
 
       if (typeof rejectUnauthorized !== "undefined") {
-        this._rejectUnauthorized = rejectUnauthorized;
+        this._rejectUnauthorized = normalizeRejectUnauthorized(rejectUnauthorized);
       } else this._rejectUnauthorized = rejectUnauthorizedDefault();
 
       const ciphers = options.ciphers;

@@ -5297,6 +5297,8 @@ impl H2FrameParser {
         if global.has_exception() {
             return Some(stream);
         }
+        // The `*mut Stream` above stays live across this call into JS.
+        let _dispatch = self.enter_dispatch();
         match callback.call(
             &global,
             ctx_value,
@@ -5656,6 +5658,36 @@ impl H2FrameParser {
         });
     }
 
+    /// Free streams whose legacy lifecycle finished (queued by `free_resources`). Only runs at
+    /// a quiescent point: no dispatch into JS on the stack (a native frame below such a
+    /// dispatch may still hold `&mut Stream`) and no in-progress receive() borrowing the
+    /// engine cell. Callers at other points simply leave the ids queued for the next one.
+    fn drain_pending_engine_stream_closes(&self) {
+        if self.dispatch_depth.get() != 0 || self.pending_engine_stream_closes.get().is_empty() {
+            return;
+        }
+        let Ok(mut engine_guard) = self.engine.try_borrow_mut() else {
+            return;
+        };
+        let Some(engine) = engine_guard.as_mut() else {
+            return;
+        };
+        self.pending_engine_stream_closes.with_mut(|v| {
+            for id in v.drain(..) {
+                engine.close_stream(id);
+                if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
+                    // SAFETY: stream is the heap::alloc'd *mut Stream owned by the map entry
+                    // just removed; free_resources ran when it was queued; the dispatch-depth
+                    // gate above proves no native frame still borrows it; ids never repeat
+                    // within a session, so this frees exactly once.
+                    unsafe {
+                        drop(bun_core::heap::take(stream));
+                    }
+                }
+            }
+        });
+    }
+
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
@@ -5718,28 +5750,11 @@ impl H2FrameParser {
                     engine.pending_local_settings_acks.push_back(w);
                 }
             });
-            // Streams whose legacy lifecycle finished since the last batch: evict the engine
-            // entry and free the legacy slot. free_resources already ran for these (it is the
-            // only producer of this queue); duplicate ids are fine — remove() yields None.
-            if self.dispatch_depth.get() == 0 {
-                self.pending_engine_stream_closes.with_mut(|v| {
-                    for id in v.drain(..) {
-                        engine.close_stream(id);
-                        if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
-                            // SAFETY: stream is the heap::alloc'd *mut Stream owned by the
-                            // map entry just removed; free_resources ran when it was queued,
-                            // dispatch_depth == 0 means no caller below us on the stack holds
-                            // a `&mut Stream` across anything that can run user JS (every
-                            // such site arms enter_dispatch), ids never repeat within a
-                            // session, so this frees exactly once.
-                            unsafe {
-                                drop(bun_core::heap::take(stream));
-                            }
-                        }
-                    }
-                });
-            }
         }
+        // Streams whose legacy lifecycle finished since the last batch: evict the engine entry
+        // and free the legacy slot at this quiescent point (the helper enforces the safety
+        // rules; deferred ids are also reclaimed at the next host-call boundary).
+        self.drain_pending_engine_stream_closes();
         if self.rewrite_tail.get().is_empty() {
             let feed = {
                 let mut guard = self.engine.borrow_mut();
@@ -7214,6 +7229,9 @@ impl H2FrameParser {
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
         bun_output::scoped_log!(H2FrameParser, "rstStream");
+        // Quiescent host-call boundary: reclaim deferred stream closes before this frame
+        // materializes any `*mut Stream`.
+        this.drain_pending_engine_stream_closes();
         let args_list = callframe.arguments_old::<2>();
         if args_list.len < 2 {
             return Err(global_object.throw(format_args!("Expected stream and code arguments")));
@@ -8116,6 +8134,10 @@ impl H2FrameParser {
             defer_callback_arg,
         ] = args.ptr;
 
+        // Quiescent host-call boundary: reclaim deferred stream closes before this frame
+        // materializes any `*mut Stream`.
+        this.drain_pending_engine_stream_closes();
+
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
         }
@@ -8160,9 +8182,19 @@ impl H2FrameParser {
             }
         };
 
-        let buffer = match StringOrBuffer::from_js_with_encoding(global_object, data_arg, encoding)?
-        {
-            Some(b) => b,
+        // send_data can re-enter JS mid-payload (batch flushes over JS-backed sockets, prior
+        // writes' callbacks): pin + protect an ArrayBuffer payload for the duration so it
+        // cannot be detached out from under the borrowed slice. Strings are immutable, so
+        // they keep the zero-copy path. ThreadSafe's Drop releases the pin/protect.
+        let pin_payload = data_arg.is_cell() && data_arg.js_type().is_array_buffer_like();
+        let buffer = match StringOrBuffer::from_js_with_encoding_maybe_async(
+            global_object,
+            data_arg,
+            encoding,
+            pin_payload,
+            true,
+        )? {
+            Some(b) => bun_jsc::ThreadSafe::adopt(b),
             None => {
                 return Err(global_object.throw_invalid_argument_type_value(
                     b"write",
@@ -8555,6 +8587,8 @@ impl H2FrameParser {
         };
         let mut _count: u32 = 0;
         let mut it = StreamResumableIterator::init(this);
+        // The iterator's `*mut Stream`s stay live across the callbacks below.
+        let _dispatch = this.enter_dispatch();
         while let Some(stream) = it.next() {
             // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {

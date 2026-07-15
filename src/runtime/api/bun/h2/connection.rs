@@ -98,6 +98,18 @@ pub struct Feed {
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
 
+/// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
+/// request checks in `finish_header_block` (nghttp2's NGHTTP2_HTTP_FLAG__* equivalents).
+mod pseudo {
+    pub(super) const METHOD: u8 = 1;
+    pub(super) const SCHEME: u8 = 2;
+    pub(super) const AUTHORITY: u8 = 4;
+    pub(super) const PATH: u8 = 8;
+    pub(super) const STATUS: u8 = 16;
+    pub(super) const PROTOCOL: u8 = 32;
+    pub(super) const UNKNOWN: u8 = 64;
+}
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
@@ -235,6 +247,11 @@ pub struct Connection {
     header_target: u32,
     /// 0 for a normal HEADERS block; the parent stream id when assembling a PUSH_PROMISE block.
     header_push_parent: u32,
+    /// The assembling block opens a new inbound stream (a request block on the server, a
+    /// PUSH_PROMISE request block on the client). False for a later HEADERS on the same stream
+    /// (a trailer section), which RFC 9113 §8.1 forbids from carrying pseudo-headers and which
+    /// must not be held to the request pseudo-header requirements of §8.3.1.
+    header_is_request: bool,
     /// HEADERS arrived on a closed/half-closed-remote stream: the block is still decoded so the
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
@@ -286,6 +303,7 @@ impl Connection {
             header_flags: 0,
             header_target: 0,
             header_push_parent: 0,
+            header_is_request: false,
             header_stream_closed: false,
             header_stream_refused: false,
             terminated: false,
@@ -986,6 +1004,10 @@ impl Connection {
         self.header_flags = hdr.flags;
         self.header_target = hdr.stream_id;
         self.header_push_parent = 0;
+        // Only a server receives request blocks via HEADERS; on a client every response block
+        // looks "new" (the engine only tracks inbound-created streams), so without this gate it
+        // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
+        self.header_is_request = self.is_server && is_new;
         self.header_stream_closed = stream_closed;
         self.header_stream_refused = refused;
         if !end_headers {
@@ -1008,7 +1030,8 @@ impl Connection {
         let cap = (self.enforced_max_header_list_size as usize).max(65536);
         if self.header_block.len().saturating_add(payload.len()) > cap {
             // nghttp2's NGHTTP2_MAX_HEADERSLEN (65536) overflow returns NGHTTP2_ERR_HEADER_COMP,
-            // which node surfaces as a session COMPRESSION_ERROR.
+            // which node surfaces as a session COMPRESSION_ERROR
+            // (test-http2-options-max-headers-exceeds-nghttp2.js).
             self.send_go_away(sink, ErrorCode::CompressionError, b"header block too large");
             return true;
         }
@@ -1056,9 +1079,19 @@ impl Connection {
         let mut malformed = is_trailer && !self.header_end_stream;
         let mut seen_regular = false;
         let mut seen_pseudo: u8 = 0;
+        // Request-block state for the RFC 9113 §8.3.1 checks below (nghttp2's
+        // nghttp2_http_on_request_headers): only an initial HEADERS block (or a PUSH_PROMISE
+        // block) is a request; a later HEADERS on the same stream is a trailer section.
+        let is_request = self.header_is_request;
+        let mut saw_connect = false;
+        let mut saw_host = false;
         let mut informational = false;
+        // nghttp2 check_path() flags for the RFC 9113 §8.3.1 :path validation.
+        let mut path_regular = false;
+        let mut path_asterisk = false;
+        let mut scheme_http = false;
+        let mut meth_options = false;
         let mut content_length: Option<u64> = None;
-        let mut connect = false;
         while off < block.len() {
             match self.hpack.decode(&block[off..]) {
                 Ok(h) => {
@@ -1090,19 +1123,23 @@ impl Connection {
                             malformed = true;
                         } else if let Some(rest) = name_b.strip_prefix(b":") {
                             let bit: u8 = match rest {
-                                b"method" => 1,
-                                b"scheme" => 2,
-                                b"authority" => 4,
-                                b"path" => 8,
-                                b"status" => 16,
-                                b"protocol" => 32,
-                                _ => 64,
+                                b"method" => pseudo::METHOD,
+                                b"scheme" => pseudo::SCHEME,
+                                b"authority" => pseudo::AUTHORITY,
+                                b"path" => pseudo::PATH,
+                                b"status" => pseudo::STATUS,
+                                b"protocol" => pseudo::PROTOCOL,
+                                _ => pseudo::UNKNOWN,
                             };
-                            // 8.3.1: requests never carry :status - a server seeing it inbound is
-                            // a malformed block. (The client direction also constrains pseudo
-                            // headers, but inbound PUSH_PROMISE blocks legitimately carry request
-                            // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            // 8.3.1/8.3.2: request blocks never carry :status; response blocks
+                            // never carry a request pseudo-header. `is_request` (not is_server)
+                            // is the right guard because a client-received PUSH_PROMISE block is
+                            // a request block and legitimately carries request pseudo-headers.
+                            let wrong_direction = if is_request {
+                                bit == pseudo::STATUS
+                            } else {
+                                bit != pseudo::STATUS && bit != pseudo::UNKNOWN
+                            };
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
                             // submitted local value here, not the ACKed one — so a request that arrives
@@ -1112,12 +1149,16 @@ impl Connection {
                             let protocol_disabled = self.is_server
                                 && rest == b"protocol"
                                 && self.local_settings.enable_connect_protocol == 0;
+                            // RFC 9113 §8.1: pseudo-headers never appear in a trailer section.
+                            // nghttp2 (check_pseudo_header) also treats an empty pseudo-header
+                            // value as malformed, so `:path: ""` never counts as a present :path.
                             if seen_regular
-                                || bit == 64
+                                || bit == pseudo::UNKNOWN
                                 || (seen_pseudo & bit) != 0
                                 || wrong_direction
                                 || protocol_disabled
                                 || is_trailer
+                                || value_b.is_empty()
                             {
                                 malformed = true;
                             }
@@ -1125,14 +1166,45 @@ impl Connection {
                                 informational = true;
                             }
                             seen_pseudo |= bit;
-                            if rest == b"method" && value_b == b"CONNECT" {
-                                connect = true;
+                            // nghttp2 http_request_on_header per-field flags used by
+                            // check_path()/nghttp2_http_on_request_headers below. It also
+                            // rejects :method CONNECT on an even (pushed) stream up front:
+                            // "we won't allow CONNECT for push".
+                            match rest {
+                                b"method" => {
+                                    if value_b == b"CONNECT" {
+                                        if push_parent != 0 {
+                                            malformed = true;
+                                        }
+                                        saw_connect = true;
+                                    }
+                                    meth_options |= value_b == b"OPTIONS";
+                                }
+                                b"path" => {
+                                    path_regular |= value_b.first() == Some(&b'/');
+                                    path_asterisk |= value_b == b"*";
+                                }
+                                b"scheme" => {
+                                    scheme_http |= value_b.eq_ignore_ascii_case(b"http")
+                                        || value_b.eq_ignore_ascii_case(b"https");
+                                }
+                                _ => {}
                             }
                         } else {
                             seen_regular = true;
                             match name_b {
                                 b"connection" | b"keep-alive" | b"proxy-connection"
                                 | b"transfer-encoding" | b"upgrade" => malformed = true,
+                                // nghttp2 routes Host through the same check as :authority (empty or
+                                // repeated => malformed), but only for request blocks — a server-received
+                                // block or a client-received PUSH_PROMISE (http_request_on_header). In a
+                                // response, `host` is an ordinary field and node delivers it.
+                                b"host" if self.is_server || is_request => {
+                                    if value_b.is_empty() || saw_host {
+                                        malformed = true;
+                                    }
+                                    saw_host = true;
+                                }
                                 b"te" => {
                                     // RFC 9110 10.1.4: field values are case-insensitive.
                                     if !value_b.eq_ignore_ascii_case(b"trailers") {
@@ -1186,9 +1258,38 @@ impl Connection {
             sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
             return false;
         }
+        // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one
+        // non-empty :method, :scheme and :path plus an :authority or Host — except plain
+        // CONNECT, which must omit :scheme/:path and carry :authority; extended CONNECT
+        // (:protocol, RFC 8441) additionally requires :method CONNECT. Without this a block
+        // with no pseudo-headers reaches JS as a request whose method and url are undefined.
+        // A request block is a server-received HEADERS or a client-received PUSH_PROMISE:
+        // nghttp2 finalizes both through nghttp2_http_on_request_headers.
+        if is_request && !rejected && !malformed {
+            use pseudo::{AUTHORITY, METHOD, PATH, PROTOCOL, SCHEME};
+            let extended_connect = (seen_pseudo & PROTOCOL) != 0;
+            malformed = if saw_connect && !extended_connect {
+                (seen_pseudo & (SCHEME | PATH)) != 0 || (seen_pseudo & AUTHORITY) == 0
+            } else {
+                (seen_pseudo & (METHOD | SCHEME | PATH)) != (METHOD | SCHEME | PATH)
+                    || ((seen_pseudo & AUTHORITY) == 0 && !saw_host)
+                    || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
+                    // nghttp2 check_path(): under http/https, :path must start with '/'
+                    // (or be '*' for OPTIONS).
+                    || (scheme_http && !(path_regular || (meth_options && path_asterisk)))
+            };
+        } else if !is_trailer && !rejected && !malformed && !informational {
+            // RFC 9113 §8.3.2 (nghttp2_http_on_response_headers): a final response block must
+            // carry exactly :status and no request pseudo-header. wrong_direction above already
+            // rejected a request pseudo per-field; this catches a block with :status omitted.
+            malformed = (seen_pseudo & pseudo::STATUS) == 0;
+        }
+        // RFC 9113 §8.1.1: an inbound request's content-length must be coherent — the declared
+        // value is attached to the stream and, at END_STREAM, must equal the DATA received
+        // (plain CONNECT is exempt).
         if push_parent == 0 && self.is_server && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
-                if !connect && s.content_length.is_none() {
+                if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
                 }
                 if self.header_end_stream
@@ -1200,6 +1301,13 @@ impl Connection {
             }
         }
         if malformed && !rejected {
+            // nghttp2 (nghttp2_session.c session_handle_invalid_stream2): a malformed request
+            // block — HEADERS or PUSH_PROMISE — is answered with RST_STREAM(PROTOCOL_ERROR) on
+            // the target stream (the promised id for a push) plus an on_invalid_frame count;
+            // the session stays alive. RFC 9113 §8.4.1 also specifies stream error for a
+            // malformed PUSH_PROMISE. The PUSH_PROMISE reservation was surfaced above so the
+            // embedder can tear the pushed stream down.
+            //
             // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
             // against maxSessionInvalidFrames; exceeding it tears the session down with
             // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).
@@ -1654,6 +1762,7 @@ impl Connection {
         self.header_flags = 0;
         self.header_target = promised;
         self.header_push_parent = hdr.stream_id;
+        self.header_is_request = true;
         self.header_stream_closed = false;
         self.header_stream_refused = false;
         if !end_headers {
@@ -2072,7 +2181,12 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        let block = encode_block(&[(b":method", b"GET"), (b":path", b"/")]);
+        let block = encode_block(&[
+            (b":method", b"GET"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]);
         let flags = wire::flags::END_HEADERS | wire::flags::END_STREAM;
         let f = frame(FrameType::Headers, flags, 1, &block);
         let fed = c.receive(&sink, &f);
@@ -2104,7 +2218,12 @@ mod tests {
         let sink = CaptureSink::default();
         let mut c = Connection::new(true, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
-        let block = encode_block(&[(b":method", b"POST"), (b":path", b"/")]);
+        let block = encode_block(&[
+            (b":method", b"POST"),
+            (b":scheme", b"http"),
+            (b":path", b"/"),
+            (b":authority", b"localhost"),
+        ]);
         // HEADERS without END_STREAM -> stream stays open for DATA.
         let h = frame(FrameType::Headers, wire::flags::END_HEADERS, 1, &block);
         c.receive(&sink, &h);
@@ -2144,7 +2263,9 @@ mod tests {
         let mut client = Connection::new(false, Settings::default());
         client.begin_header_block();
         assert!(client.encode_header(b":method", b"GET", false));
+        assert!(client.encode_header(b":scheme", b"http", false));
         assert!(client.encode_header(b":path", b"/x", false));
+        assert!(client.encode_header(b":authority", b"localhost", false));
         client.send_header_block(&csink, 1, true);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
@@ -2183,7 +2304,9 @@ mod tests {
         let mut server = Connection::new(true, Settings::default());
         server.begin_header_block();
         assert!(server.encode_header(b":method", b"GET", false));
+        assert!(server.encode_header(b":scheme", b"http", false));
         assert!(server.encode_header(b":path", b"/pushed", false));
+        assert!(server.encode_header(b":authority", b"localhost", false));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(

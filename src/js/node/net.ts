@@ -157,6 +157,8 @@ const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
+const { normalizeRejectUnauthorized } = require("internal/tls");
+
 // A completed write whose status is a negative errno: Node hands it to the write
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
@@ -477,12 +479,14 @@ const SocketHandlers: SocketHandler = {
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    let rejectUnauthorized;
-    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
+    const rejectUnauthorized = self._rejectUnauthorized;
+    if (self._requestCert || rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        if (rejectUnauthorized ?? self._rejectUnauthorized) {
+        // Node's onConnectSecure gate: anything but an explicit `false` rejects a
+        // failed verification (never a truthiness test on the raw option).
+        if (rejectUnauthorized !== false) {
           self.destroy(verifyError);
           return;
         }
@@ -901,7 +905,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         data.destroy(error);
       } else if (
         data.isServer &&
-        data._rejectUnauthorized &&
+        data._rejectUnauthorized !== false &&
         /peer did not return a certificate/.test(error?.message)
       ) {
         // Ignore server's authorization errors
@@ -972,8 +976,10 @@ function onconnection(err, clientHandle) {
   _socket.isServer = true;
   _socket._requestCert = requestCert;
   // The raw options object only has rejectUnauthorized when the user passed it explicitly;
-  // fall back to the server's normalized value (defaults to true for tls.Server).
-  _socket._rejectUnauthorized = rejectUnauthorized ?? self._rejectUnauthorized;
+  // an explicit value is normalized (Node: only `false` disables), otherwise the server's
+  // already-normalized value applies (defaults to true for tls.Server).
+  _socket._rejectUnauthorized =
+    rejectUnauthorized !== undefined ? normalizeRejectUnauthorized(rejectUnauthorized) : self._rejectUnauthorized;
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
 
@@ -1259,12 +1265,14 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         verifyError = checkServerIdentity(hostname, cert);
       }
     }
-    let rejectUnauthorized;
-    if (self._requestCert || (rejectUnauthorized = self._rejectUnauthorized)) {
+    const rejectUnauthorized = self._rejectUnauthorized;
+    if (self._requestCert || rejectUnauthorized) {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        if (rejectUnauthorized ?? self._rejectUnauthorized) {
+        // Node's onConnectSecure gate: anything but an explicit `false` rejects a
+        // failed verification (never a truthiness test on the raw option).
+        if (rejectUnauthorized !== false) {
           self.destroy(verifyError);
           return;
         }
@@ -1756,8 +1764,9 @@ Socket.prototype.connect = function connect(...args) {
       this._requestCert = true;
       if (tls) {
         if (typeof rejectUnauthorized !== "undefined") {
-          this._rejectUnauthorized = rejectUnauthorized;
-          tls.rejectUnauthorized = rejectUnauthorized;
+          const normalizedRejectUnauthorized = normalizeRejectUnauthorized(rejectUnauthorized);
+          this._rejectUnauthorized = normalizedRejectUnauthorized;
+          tls.rejectUnauthorized = normalizedRejectUnauthorized;
         } else {
           this._rejectUnauthorized = tls.rejectUnauthorized;
         }
@@ -2818,8 +2827,9 @@ function internalConnect(self, options, address, port, addressType, localAddress
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = options;
       if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+        const normalizedRejectUnauthorized = normalizeRejectUnauthorized(rejectUnauthorized);
+        self._rejectUnauthorized = normalizedRejectUnauthorized;
+        tls.rejectUnauthorized = normalizedRejectUnauthorized;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }
@@ -2971,8 +2981,9 @@ function internalConnectMultiple(context, canceled?) {
     if (tls) {
       const { rejectUnauthorized, session, checkServerIdentity } = context.options;
       if (typeof rejectUnauthorized !== "undefined") {
-        self._rejectUnauthorized = rejectUnauthorized;
-        tls.rejectUnauthorized = rejectUnauthorized;
+        const normalizedRejectUnauthorized = normalizeRejectUnauthorized(rejectUnauthorized);
+        self._rejectUnauthorized = normalizedRejectUnauthorized;
+        tls.rejectUnauthorized = normalizedRejectUnauthorized;
       } else {
         self._rejectUnauthorized = tls.rejectUnauthorized;
       }

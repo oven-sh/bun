@@ -294,8 +294,7 @@ struct HttpResponseData;
                     // Parse comma-separated values, ensuring "chunked" is last if present
                     const auto value = h->value;
                     size_t pos = 0;
-                    size_t lastTokenStart = 0;
-                    size_t lastTokenLen = 0;
+                    bool sawChunkedToken = false;
 
                     while (pos < value.length()) {
                         // Skip leading whitespace
@@ -318,13 +317,20 @@ struct HttpResponseData;
                         }
 
                         size_t tokenLen = tokenEnd - tokenStart;
-                        if (tokenLen > 0) {
-                            lastTokenStart = tokenStart;
-                            lastTokenLen = tokenLen;
+                        if (tokenLen == 7 && strncasecmp(value.data() + tokenStart, "chunked", 7) == 0) {
+                            sawChunkedToken = true;
                         }
 
                         // Move past comma if present
                         if (pos < value.length() && value[pos] == ',') {
+                            /* llhttp (HPE_INVALID_TRANSFER_ENCODING): rejects on the comma
+                             * itself once "chunked" has been seen — so "chunked, chunked",
+                             * "chunked, foo" and a trailing empty list element ("chunked,")
+                             * are all invalid rather than framed as chunked. */
+                            if (sawChunkedToken) {
+                                te.invalid = true;
+                                return te;
+                            }
                             pos++;
                         }
                     }
@@ -339,10 +345,8 @@ struct HttpResponseData;
                      * Content-Length framing (request smuggling; RFC 9112 6.3). */
                     te.has = true;
 
-                    // Check if the last token is "chunked"
-                    if (lastTokenLen == 7 && strncasecmp(value.data() + lastTokenStart, "chunked", 7) == 0) [[likely]] {
-                        te.chunked = true;
-                    }
+                    /* A chunked token with no coding after it (enforced above) is the last one. */
+                    te.chunked = sawChunkedToken;
                 }
             }
 
@@ -996,6 +1000,12 @@ struct HttpResponseData;
                         /* node:http insecureHTTPParser (llhttp lenient headers): control
                          * bytes other than NUL/CR/LF are accepted in field values. */
                         if (useInsecureHTTPParser && stopByte != '\0' && !isNewline(stopByte)) {
+                            postPaddedBuffer++;
+                            continue;
+                        }
+                        /* node:http insecureHTTPParser (llhttp lenient headers): control
+                         * bytes other than NUL/CR/LF are accepted in field values. */
+                        if (useInsecureHTTPParser && postPaddedBuffer[0] != '\0' && postPaddedBuffer[0] != '\n') {
                             postPaddedBuffer++;
                             continue;
                         }

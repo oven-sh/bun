@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const { HTTPParser, ConnectionsList } = process.binding("http_parser");
 const { parsers } = require("node:_http_common");
 
@@ -247,6 +248,33 @@ describe("ConnectionsList", () => {
     // frees the implementation causing remove to not be able
     // to remove it.
     expect(list.all()).toEqual([p1, p4, p3]);
+  });
+
+  // close() frees the impl but leaves the parser in the list (see above): the idle()/expired()
+  // sweeps must skip it instead of dereferencing the freed impl. Spawned because the unfixed
+  // failure mode is a segfault, which would take down the test runner itself.
+  test("idle() and expired() skip a closed parser still in the list", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { HTTPParser, ConnectionsList } = process.binding("http_parser");
+         const list = new ConnectionsList();
+         const p = new HTTPParser();
+         p.initialize(HTTPParser.REQUEST, {}, 0, 0, list);
+         p.close();
+         if (JSON.stringify(list.idle()) !== "[]") throw new Error("idle");
+         if (JSON.stringify(list.expired(1, 1)) !== "[]") throw new Error("expired");
+         if (list.all().length !== 1) throw new Error("all");
+         console.log("OK");`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("OK\n");
+    expect(exitCode).toBe(0);
   });
 });
 

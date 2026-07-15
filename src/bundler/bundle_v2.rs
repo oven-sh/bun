@@ -1808,7 +1808,7 @@ pub mod bv2_impl {
                 // either one must keep the physical file alive even when a CSS
                 // `url(...)` reference to the same asset gets inlined as a data: URI.
                 let importer_loader = self.all_loaders[source_index.get() as usize];
-                let is_js =
+                let keeps_emitted_file =
                     importer_loader.is_javascript_like() || importer_loader == Loader::Html;
                 let is_css = importer_loader.is_css();
 
@@ -1860,12 +1860,12 @@ pub mod bv2_impl {
                             let import_record = &self.all_import_records
                                 [import_record_list_id.get() as usize]
                                 .as_slice()[ir_idx];
-                            // Mark if the file is imported by JS and its URL is inlined for CSS
+                            // Mark if the file is imported by JS or HTML and its URL is inlined for CSS
                             let is_inlined = import_record.source_index.is_valid()
                                 && !self.all_urls_for_css
                                     [import_record.source_index.get() as usize]
                                     .is_empty();
-                            if is_js && is_inlined {
+                            if keeps_emitted_file && is_inlined {
                                 self.additional_files_imported_by_js_and_inlined_in_css
                                     .set(import_record.source_index.get() as usize);
                             } else if is_css && is_inlined {

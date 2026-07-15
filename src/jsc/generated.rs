@@ -315,6 +315,7 @@ pub struct SSLConfig {
     pub ciphers: GenOpt<GenString>,
     pub client_renegotiation_limit: u32,
     pub client_renegotiation_window: u32,
+    pub session_timeout: i32,
 }
 
 // ── refcount release on drop ──────────────────────────────────────────────
@@ -560,6 +561,7 @@ struct ExternSSLConfig {
     ciphers: RawWTFStringImpl,
     client_renegotiation_limit: u32,
     client_renegotiation_window: u32,
+    session_timeout: i32,
 }
 
 // safe: same handle/out-param contract as
@@ -594,6 +596,7 @@ impl SSLConfig {
             ciphers: adopt_opt_string(ext.ciphers),
             client_renegotiation_limit: ext.client_renegotiation_limit,
             client_renegotiation_window: ext.client_renegotiation_window,
+            session_timeout: ext.session_timeout,
         }
     }
 

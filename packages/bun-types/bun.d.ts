@@ -4065,6 +4065,12 @@ declare module "bun" {
     clientRenegotiationLimit?: number;
 
     clientRenegotiationWindow?: number;
+
+    /**
+     * Number of seconds a TLS session minted by this server stays resumable.
+     * When unset or 0, the TLS library's own default lifetime applies.
+     */
+    sessionTimeout?: number;
   }
 
   interface SocketAddress {

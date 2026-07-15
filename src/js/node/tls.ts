@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray, validateSessionTimeout } = require("internal/tls");
 const {
   validateString,
   validateNumber,
@@ -396,23 +396,7 @@ function validateSecureContextOptions(options) {
       throw $ERR_INVALID_ARG_VALUE("options.ticketKeys", ticketKeysByteLength, "must be exactly 48 bytes");
     }
   }
-  // Negative session timeouts are rejected (min 0), matching Node — newer
-  // OpenSSL/BoringSSL do not handle negative values as users expect.
-  // https://github.com/nodejs/node/blob/614050b657e9757c1097aa85f92f2cb51149dc0d/lib/internal/tls/secure-context.js#L319
-  if (sessionTimeout !== undefined && sessionTimeout !== null) {
-    // Node validates this with validateInt32(..., 0), whose range message
-    // reads ">= 0 && <= 2147483647"; the shared validator here words it
-    // differently, so spell the check out to match.
-    if (typeof sessionTimeout !== "number") {
-      throw $ERR_INVALID_ARG_TYPE("options.sessionTimeout", "number", sessionTimeout);
-    }
-    if (!Number.isInteger(sessionTimeout)) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", "an integer", sessionTimeout);
-    }
-    if (sessionTimeout < 0 || sessionTimeout > 2147483647) {
-      throw $ERR_OUT_OF_RANGE("options.sessionTimeout", ">= 0 && <= 2147483647", sessionTimeout);
-    }
-  }
+  validateSessionTimeout(sessionTimeout);
 }
 
 const SymbolReplace = Symbol.replace;
@@ -754,7 +738,9 @@ function newNativeSecureContext(options, cached = true) {
         minVersion = tlsStringToProtocolVersion(optMinVersion ?? DEFAULT_MIN_VERSION);
         maxVersion = tlsStringToProtocolVersion(optMaxVersion ?? DEFAULT_MAX_VERSION);
       }
-      options = { ...options, minVersion, maxVersion };
+      // A null sessionTimeout means "not provided" (Node's check is the same),
+      // but the native option parser only reads `undefined` as absent.
+      options = { ...options, minVersion, maxVersion, sessionTimeout: options.sessionTimeout ?? undefined };
     }
   }
   const ctx = (cached ? NativeSecureContext.intern : NativeSecureContext.createPrivate)(options);
@@ -1247,6 +1233,7 @@ function Server(options, secureConnectionListener): void {
   this.ca = undefined;
   this.passphrase = undefined;
   this.secureOptions = undefined;
+  this.sessionTimeout = undefined;
   this._rejectUnauthorized = rejectUnauthorizedDefault();
   this._requestCert = undefined;
   this.servername = undefined;
@@ -1379,6 +1366,11 @@ function Server(options, secureConnectionListener): void {
       }
       this.secureOptions = secureOptions;
 
+      // validateSecureContextOptions already range-checked this, and exempts
+      // null the way Node does. Assign unconditionally so an omitted (or null)
+      // sessionTimeout clears a previous call's value on the next listen.
+      this.sessionTimeout = options.sessionTimeout ?? undefined;
+
       const requestCert = options.requestCert || false;
 
       if (requestCert) this._requestCert = requestCert;
@@ -1440,6 +1432,7 @@ function Server(options, secureConnectionListener): void {
         ca: this.ca,
         passphrase: this.passphrase,
         secureOptions: this.secureOptions,
+        sessionTimeout: this.sessionTimeout,
         rejectUnauthorized: this._rejectUnauthorized,
         requestCert: isClient ? true : this._requestCert,
         ALPNProtocols: this.ALPNProtocols,

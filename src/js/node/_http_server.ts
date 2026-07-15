@@ -19,7 +19,7 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { throwOnInvalidTLSArray, validateSessionTimeout } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -303,6 +303,10 @@ function Server(options, callback): void {
     }
 
     if (this[isTlsSymbol]) {
+      // Node's https.Server extends tls.Server, so it rejects the same values the
+      // tls.createServer path does, synchronously. Guarded by isTlsSymbol: a plain
+      // http.createServer has no TLS context and must keep ignoring the option.
+      validateSessionTimeout(options.sessionTimeout);
       this[tlsSymbol] = normalizeServerTls({
         serverName,
         key,
@@ -310,6 +314,8 @@ function Server(options, callback): void {
         ca,
         passphrase,
         secureOptions,
+        // null means "not provided"; the native parser only reads undefined as absent.
+        sessionTimeout: options.sessionTimeout ?? undefined,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
       });
@@ -464,7 +470,11 @@ Server.prototype.listen = function () {
 
       const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
-        tls = normalizeServerTls({ ...otherTLS });
+        // Bun-only: listen({ tls }) replaces the constructor's bag, so apply the
+        // same sessionTimeout handling here (validate synchronously; null means
+        // "not provided", which the native parser only reads as undefined).
+        validateSessionTimeout(otherTLS.sessionTimeout);
+        tls = normalizeServerTls({ ...otherTLS, sessionTimeout: otherTLS.sessionTimeout ?? undefined });
       }
     } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])

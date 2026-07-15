@@ -423,7 +423,7 @@ fn message_with_type_and_level_(
     len: usize,
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
-    // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
+    // `defer console.default_indent +|= is_start_group as u16;`
     // Capture the raw pointer (Copy) by `move` so no borrow of the local is
     // held across the body; dereference only at scope-exit.
     let is_start_group = matches!(

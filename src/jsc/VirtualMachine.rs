@@ -4386,6 +4386,28 @@ impl VirtualMachine {
             IS_A_FILE_PATH,
         );
         if let Err(err_) = resolve_result {
+            // Inside a standalone executable, a relative `require.resolve()`
+            // should agree with `import.meta.resolve()`: the target may have
+            // been inlined into the entry chunk (so it has no separate graph
+            // entry) but it is still "in the binary", so return the joined
+            // virtual path instead of MODULE_NOT_FOUND.
+            if is_user_require_resolve && jsc_vm.standalone_module_graph.is_some() {
+                let source_slice = normalize_source(source_utf8.slice());
+                let spec = specifier_utf8.slice();
+                if bun_options_types::standalone_path::is_bun_standalone_file_path(source_slice)
+                    && (spec.starts_with(b"./") || spec.starts_with(b"../"))
+                {
+                    let source_dir =
+                        bun_resolver::fs::PathName::init(source_slice).dir_with_trailing_slash();
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    let joined = bun_paths::resolve_path::join_abs_string_buf::<
+                        bun_paths::resolve_path::platform::Loose,
+                    >(source_dir, &mut buf[..], &[spec]);
+                    *res = ErrorableString::ok(bun_core::String::clone_utf8(joined));
+                    return Ok(());
+                }
+            }
+
             let err = err_;
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt

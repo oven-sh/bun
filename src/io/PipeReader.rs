@@ -405,6 +405,15 @@ impl PosixBufferedReader {
     }
 
     pub fn on_error(&mut self, err: sys::Error) {
+        // Unregister a level-triggered poll before dispatching: a fd with a
+        // persistent error (PTY master `EIO` after slave close, with
+        // `EPOLLHUP` set) would otherwise re-fire every `epoll_wait`. One-shot
+        // callers are unchanged (the kernel already disarmed the fd).
+        // `on_reader_error` may free the struct embedding `self`, so close
+        // first.
+        if self.flags.contains(PosixFlags::LEVEL_TRIGGERED) {
+            self.close_without_reporting();
+        }
         self.vtable.on_reader_error(err);
     }
 
@@ -704,6 +713,9 @@ impl PosixBufferedReader {
                                     ReadState::Progress
                                 },
                             );
+                            if parent.is_done() {
+                                return;
+                            }
                         } else {
                             parent
                                 ._buffer

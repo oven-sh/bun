@@ -514,11 +514,14 @@ public:
 // Per-invocation accumulator state lives in sqlite3_aggregate_context — a
 // scratch buffer SQLite zeroes on first access and discards after xFinal. We
 // store a Strong<> there so the JS accumulator value survives GC between
-// xStep calls (window functions step across multiple sqlite3_step()s); the
-// accumulator is per-query and cannot capture the database, so it cannot
-// form the cycle the registered callbacks could. The callbacks themselves
-// (start/step/result/inverse) are raw pointers rooted by the cell's
-// m_registeredCallbacks, same as NodeSqliteUDF above.
+// xStep calls (window functions step across multiple sqlite3_step()s).
+// Capturing the database in the accumulator is safe: the statement stays
+// independently collectable, and finalizing it runs xFinal -> destroyState.
+// Capturing the statement itself would root it through this Strong<> and
+// leak, since xFinal then never fires; node has the same behavior
+// (Global<Value> in sqlite3_aggregate_context, node_sqlite.cc). The
+// callbacks (start/step/result/inverse) are raw pointers rooted by the
+// cell's m_registeredCallbacks, same as NodeSqliteUDF above.
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct NodeSqliteAggregate {

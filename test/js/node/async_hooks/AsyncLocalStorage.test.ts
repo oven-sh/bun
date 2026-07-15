@@ -927,6 +927,48 @@ describe("async context passes through", () => {
     }
   });
 
+  // The session frame is read-and-cleared before the emit, so a throwing
+  // 'close' listener cannot leave a retained session pinning the store.
+  // Subprocess: the listener throws, which the test runner would otherwise
+  // claim as its own failure.
+  test("http2 clears the session frame even if a 'close' listener throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const http2 = require("http2");
+         const als = new AsyncLocalStorage();
+         process.on("uncaughtException", () => {});
+         const server = http2.createServer((_q, r) => r.end("ok"));
+         server.listen(0, () => {
+           let client;
+           als.run({ marker: true }, () => {
+             client = http2.connect("http://127.0.0.1:" + server.address().port);
+             const s = client.request({ ":path": "/" });
+             s.resume();
+             s.on("close", () => client.close());
+             s.end();
+           });
+           client.on("close", () => { throw new Error("listener boom"); });
+           client.on("error", () => {});
+           setTimeout(() => {
+             const sym = Object.getOwnPropertySymbols(client)
+               .find(x => x.description === "::bunhttp2asynccontextframe::");
+             console.log(sym === undefined ? "SYMBOL-MISSING" : client[sym] === undefined ? "CLEARED" : "PINNED");
+             server.close();
+           }, 200);
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
+    expect(stderr).not.toContain("AssertionError");
+  });
+
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();
     let a = undefined;

@@ -193,15 +193,27 @@ impl UpdateInteractiveCommand {
             Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
         let log = manager.log_mut();
-        match manager.workspace_package_json_cache.get_with_path(
+match manager.workspace_package_json_cache.get_with_path(
             log,
             package_json_path,
             Default::default(),
         ) {
             GetJsonResult::Entry(entry) => Ok(entry.root),
-            GetJsonResult::ReadErr(err) | GetJsonResult::ParseErr(err) => Err(err.into()),
+            GetJsonResult::ReadErr(err) => {
+                Output::err_generic(
+                    "Failed to read package.json at {s}: {s}",
+                    (BStr::new(package_json_path), err.name()),
+                );
+                Err(err.into())
+            }
+            GetJsonResult::ParseErr(err) => {
+                Output::err_generic(
+                    "Failed to parse package.json at {s}: {s}",
+                    (BStr::new(package_json_path), err.name()),
+                );
+                Err(err.into())
+            }
         }
-    }
 
     // Helper to update a catalog entry at a specific path in the package.json AST
     // No `*PackageManager` parameter: there is no per-manager allocator,

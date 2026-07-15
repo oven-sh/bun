@@ -819,6 +819,16 @@ To mark all imports as external, use the wildcard `*`:
   </Tab>
 </Tabs>
 
+To disallow _any_ runtime external reference, set `external` to `false`. Any import that would otherwise be emitted as a runtime external (Node.js/Bun builtins such as `node:fs`, `fs`, `bun:sqlite`) fails the build with an error naming the importing file. This cannot be combined with `packages: "external"`.
+
+```ts title="build.ts" icon="/icons/typescript.svg"
+await Bun.build({
+  entrypoints: ['./index.tsx'],
+  outdir: './out',
+  external: false,
+})
+```
+
 ### packages
 
 Controls whether package dependencies are included in the bundle. Possible values: `bundle` (default), `external`. Bun treats any import whose path does not start with `.`, `..`, or `/` as a package.
@@ -1679,7 +1689,7 @@ interface BuildConfig {
   root?: string; // project root
   splitting?: boolean; // default false, enable code splitting
   plugins?: BunPlugin[];
-  external?: string[];
+  external?: string[] | false;
   packages?: "bundle" | "external";
   publicPath?: string;
   define?: Record<string, string>;

@@ -2303,7 +2303,7 @@ pub mod bv2_impl {
 
             let disallow_external = self.transpiler.options.disallow_external
                 && import_record.importer_source_index != Index::RUNTIME.get();
-            if target.is_bun() {
+            if target.is_bun() && !import_record.kind.is_from_css() {
                 let rewrite_jest_for_tests = self.transpiler.options.rewrite_jest_for_tests;
                 let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                     [import_record.importer_source_index as usize]
@@ -6083,6 +6083,7 @@ pub mod bv2_impl {
                 }
 
                 if ctx.target.is_bun()
+                    && !import_record.kind.is_from_css()
                     && mark_bun_builtin_external(
                         import_record,
                         self.transpiler.options.rewrite_jest_for_tests,

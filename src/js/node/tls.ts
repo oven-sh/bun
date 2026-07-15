@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { normalizeKeyOption, throwOnInvalidTLSArray } = require("internal/tls");
 const {
   validateString,
   validateNumber,
@@ -782,7 +782,12 @@ var InternalSecureContext = class SecureContext {
       const cert = options.cert;
       if (cert) throwOnInvalidTLSArray("options.cert", cert);
       const key = options.key;
-      if (key) throwOnInvalidTLSArray("options.key", key);
+      if (key) {
+        // `normalizeKeyOption` returns a new array only when it unwrapped a
+        // `{ pem, passphrase? }` element, so the common path stays copy-free.
+        const normalizedKey = normalizeKeyOption(key);
+        if (normalizedKey !== key) options = { ...options, key: normalizedKey };
+      }
       const ca = options.ca;
       if (ca) throwOnInvalidTLSArray("options.ca", ca);
       if (options.servername != null && typeof options.servername !== "string")
@@ -1299,7 +1304,7 @@ function Server(options, secureConnectionListener): void {
 
       let key = options.key;
       if (key) {
-        throwOnInvalidTLSArray("options.key", key);
+        key = normalizeKeyOption(key);
       }
       this.key = key;
 

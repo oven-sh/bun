@@ -6425,6 +6425,13 @@ declare module "bun" {
      * @default false
      */
     allowHalfOpen?: boolean;
+    /**
+     * The maximum length of the queue of pending connections. The actual
+     * length will be capped by the OS (`net.core.somaxconn` on Linux).
+     *
+     * @default 511
+     */
+    backlog?: number;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
@@ -6466,6 +6473,13 @@ declare module "bun" {
      * TLS configuration with which to create the socket
      */
     tls?: TLSOptions | boolean;
+    /**
+     * The maximum length of the queue of pending connections for
+     * {@link Bun.listen}. Ignored by {@link Bun.connect}.
+     *
+     * @default 511
+     */
+    backlog?: number;
   }
 
   interface FdSocketOptions<Data = undefined> extends SocketOptions<Data> {

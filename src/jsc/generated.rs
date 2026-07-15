@@ -629,6 +629,7 @@ pub struct SocketConfig {
     pub allow_half_open: bool,
     pub reuse_port: bool,
     pub ipv6_only: bool,
+    pub backlog: Option<i32>,
 }
 
 impl Drop for SocketConfig {
@@ -688,6 +689,7 @@ struct ExternSocketConfig {
     ipv6_only: bool,
     unix_: RawWTFStringImpl,
     fd: ExternOptional<i32>,
+    backlog: ExternOptional<i32>,
 }
 
 // safe: same handle/out-param contract as
@@ -714,6 +716,7 @@ impl SocketConfig {
             ipv6_only: ext.ipv6_only,
             unix_: adopt_opt_string(ext.unix_),
             fd: ext.fd.get(),
+            backlog: ext.backlog.get(),
         }
     }
 

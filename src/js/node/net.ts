@@ -3451,10 +3451,14 @@ Server.prototype[kRealListen] = function (
   contexts,
   _onListen,
   fd,
+  backlog,
 ) {
   // NOTE: accepted sockets are always allowHalfOpen:true at the native layer
   // (hardcoded below); the stream layer implements allowHalfOpen=false
   // semantics itself, so the server option is consumed in JS only.
+  // Node normalizes as `backlog || 511` then hands to uv_listen via Int32Value();
+  // Bun.listen's `backlog` uses a strict integer converter, so truncate here.
+  backlog = backlog > 0 ? backlog | 0 : undefined;
   if (path) {
     this._handle = Bun.listen({
       unix: path,
@@ -3465,6 +3469,7 @@ Server.prototype[kRealListen] = function (
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      backlog,
       socket: serverHandlersFor(this),
       data: this,
     });
@@ -3497,6 +3502,7 @@ Server.prototype[kRealListen] = function (
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      backlog,
       socket: serverHandlersFor(this),
       data: this,
     });
@@ -3509,6 +3515,7 @@ Server.prototype[kRealListen] = function (
       reusePort: reusePort || this[bunSocketServerOptions]?.reusePort || false,
       ipv6Only: ipv6Only || this[bunSocketServerOptions]?.ipv6Only || false,
       exclusive: exclusive || this[bunSocketServerOptions]?.exclusive || false,
+      backlog,
       socket: serverHandlersFor(this),
       data: this,
     });
@@ -3627,6 +3634,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      backlog,
     );
     return;
   }
@@ -3658,6 +3666,7 @@ function listenInCluster(
       contexts,
       onListen,
       fd,
+      backlog,
     );
   });
 }

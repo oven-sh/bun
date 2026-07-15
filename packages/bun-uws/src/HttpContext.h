@@ -681,7 +681,7 @@ public:
         int error = 0;
         /* HTTP clients always send first (the request, or ClientHello for TLS), so defer
          * accept() until data arrives and dispatch the read immediately after accept. */
-        auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, options | LIBUS_LISTEN_DEFER_ACCEPT, sizeof(HttpResponseData<SSL>), &error);
+        auto socket = us_socket_group_listen(&group, socketKind(), sslCtx, host, port, LIBUS_LISTEN_DEFAULT_BACKLOG, options | LIBUS_LISTEN_DEFER_ACCEPT, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
           us_socket_unref(&socket->s);
@@ -692,7 +692,7 @@ public:
     /* Listen to unix domain socket using this HttpContext */
     us_listen_socket_t *listen_unix(struct ssl_ctx_st *sslCtx, const char *path, size_t pathlen, int options) {
         int error = 0;
-        auto* socket = us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, options, sizeof(HttpResponseData<SSL>), &error);
+        auto* socket = us_socket_group_listen_unix(&group, socketKind(), sslCtx, path, pathlen, LIBUS_LISTEN_DEFAULT_BACKLOG, options, sizeof(HttpResponseData<SSL>), &error);
         // we dont depend on libuv ref for keeping it alive
         if (socket) {
             us_socket_unref(&socket->s);

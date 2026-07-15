@@ -1104,6 +1104,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     LIBUS_SOCKET_DESCRIPTOR listenFd,
     struct addrinfo *listenAddr,
     int port,
+    int backlog,
     int options,
     int* error
 ) {
@@ -1130,7 +1131,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     }
 #endif
 
-    if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512, error)) {
+    if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, backlog, error)) {
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1157,7 +1158,7 @@ int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd) {
 
 // return LIBUS_SOCKET_ERROR or the fd that represents listen socket
 // listen both on ipv6 and ipv4
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int options, int* error) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int backlog, int options, int* error) {
     struct addrinfo hints, *result;
     memset(&hints, 0, sizeof(struct addrinfo));
 
@@ -1182,7 +1183,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, backlog, options, error) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
@@ -1199,7 +1200,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
             }
 
             listenAddr = a;
-            if (bsd_bind_listen_fd(listenFd, listenAddr, port, options, error) != LIBUS_SOCKET_ERROR) {
+            if (bsd_bind_listen_fd(listenFd, listenAddr, port, backlog, options, error) != LIBUS_SOCKET_ERROR) {
                 freeaddrinfo(result);
                 return listenFd;
             }
@@ -1350,7 +1351,7 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
     return 0;
 }
 
-static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
+static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char* path, int backlog, int options, struct sockaddr_un* server_address, size_t addrlen, int* error) {
     LIBUS_SOCKET_DESCRIPTOR listenFd = LIBUS_SOCKET_ERROR;
 
     listenFd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
@@ -1359,7 +1360,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
         return LIBUS_SOCKET_ERROR;
     }
 
-    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512, error)) {
+    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, backlog, error)) {
         #if defined(_WIN32)
           int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
         #endif
@@ -1375,7 +1376,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     return listenFd;
 }
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int options, int* error) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t len, int backlog, int options, int* error) {
     int dirfd_workaround_for_unix_path_len = -1;
     struct sockaddr_un server_address;
     size_t addrlen = 0;
@@ -1397,7 +1398,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     }
 #endif
 
-    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, options, &server_address, addrlen, error);
+    LIBUS_SOCKET_DESCRIPTOR listenFd = internal_bsd_create_listen_socket_unix(path, backlog, options, &server_address, addrlen, error);
 
 #if defined(__APPLE__)
     if (dirfd_workaround_for_unix_path_len != -1) {

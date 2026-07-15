@@ -464,6 +464,7 @@ pub struct SocketConfig {
     pub allow_half_open: bool,
     pub reuse_port: bool,
     pub ipv6_only: bool,
+    pub backlog: Option<i32>,
 }
 
 impl SocketConfig {
@@ -521,6 +522,7 @@ impl SocketConfig {
                 allow_half_open: false,
                 reuse_port: false,
                 ipv6_only: false,
+                backlog: generated.backlog,
             };
         };
         // On any `?` below, `result` drops and releases what it owns — no

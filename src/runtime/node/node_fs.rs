@@ -357,7 +357,9 @@ fn is_reserved_standalone_path(path: &[u8]) -> bool {
     #[cfg(windows)]
     let path = without_nt_prefix(path);
     bun_standalone_graph::is_bun_standalone_file_path(path)
-        || path == &bun_standalone_graph::BASE_PATH.as_bytes()[..bun_standalone_graph::BASE_PATH.len() - 1]
+        || path
+            == &bun_standalone_graph::BASE_PATH.as_bytes()
+                [..bun_standalone_graph::BASE_PATH.len() - 1]
         || (cfg!(windows)
             && path
                 == &bun_standalone_graph::BASE_PUBLIC_PATH.as_bytes()

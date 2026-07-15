@@ -10,6 +10,7 @@
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
 extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
 extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
+extern "C" const char* us_socket_alpn_selected(us_socket_t* socket, unsigned int* out_len);
 
 namespace Bun {
 
@@ -35,6 +36,7 @@ JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex);
 JSC_DECLARE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterDuplex);
 JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished);
+JSC_DECLARE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAlpnProtocol);
 
 JSC_DEFINE_CUSTOM_SETTER(noOpSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
 {
@@ -59,6 +61,7 @@ static const JSC::HashTableValue JSNodeHTTPServerSocketPrototypeTableValues[] = 
     { "end"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketEnd, 0 } },
     { "upgradeToTunnel"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), JSC::NoIntrinsic, { JSC::HashTableValue::NativeFunctionType, jsFunctionNodeHTTPServerSocketUpgradeToTunnel, 0 } },
     { "secureEstablished"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterIsSecureEstablished, noOpSetter } },
+    { "alpnProtocol"_s, static_cast<unsigned>(JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::ReadOnly), JSC::NoIntrinsic, { JSC::HashTableValue::GetterSetterType, jsNodeHttpServerSocketGetterAlpnProtocol, noOpSetter } },
 };
 
 void JSNodeHTTPServerSocketPrototype::finishCreation(JSC::VM& vm)
@@ -133,6 +136,27 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterIsSecureEstablished, (JSC::
         return JSValue::encode(JSC::jsUndefined());
     }
     return JSValue::encode(JSC::jsBoolean(thisObject->isAuthorized()));
+}
+
+// Matches node:tls's TLSSocket.alpnProtocol: the negotiated protocol, or
+// `false` when the peer offered no ALPN extension.
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterAlpnProtocol, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    auto& vm = globalObject->vm();
+    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        return JSValue::encode(JSC::jsUndefined());
+    }
+    if (!thisObject->is_ssl || !thisObject->socket) {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+
+    unsigned int length = 0;
+    const char* protocol = us_socket_alpn_selected(thisObject->socket, &length);
+    if (!protocol || length == 0) {
+        return JSValue::encode(JSC::jsBoolean(false));
+    }
+    return JSValue::encode(jsString(vm, WTF::String::fromUTF8(std::span<const char>(protocol, length))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterDuplex, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

@@ -19,7 +19,7 @@ const { ConnResetException, hasObserver, startPerf, stopPerf } = require("intern
 const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { convertALPNProtocols, throwOnInvalidTLSArray } = require("internal/tls");
 const {
   kInternalSocketData,
   serverSymbol,
@@ -244,6 +244,14 @@ function normalizeServerTls(tls) {
   const requestCert = !!tls.requestCert;
   tls.requestCert = requestCert;
   tls.rejectUnauthorized = requestCert ? tls.rejectUnauthorized !== false : false;
+  // node:https accepts ALPNProtocols as a string[] (or a Buffer), but Bun.serve's
+  // native TLS options want the length-prefixed wire format, so normalize it the
+  // way tls.connect / tls.createServer do. Absent leaves Bun.serve to apply its
+  // http/1.1 default, which is what node's https.Server offers.
+  const { ALPNProtocols } = tls;
+  if (ALPNProtocols != null) {
+    convertALPNProtocols(ALPNProtocols, tls);
+  }
   return tls;
 }
 
@@ -312,6 +320,7 @@ function Server(options, callback): void {
         secureOptions,
         requestCert: options.requestCert,
         rejectUnauthorized: options.rejectUnauthorized,
+        ALPNProtocols: options.ALPNProtocols,
       });
     } else {
       this[tlsSymbol] = null;
@@ -1041,6 +1050,9 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   server: Server;
   _httpMessage;
   _secureEstablished = false;
+  // Only populated for TLS connections, matching tls.TLSSocket. `false` when
+  // the client offered no ALPN extension.
+  alpnProtocol: string | false | undefined = undefined;
   #pendingCallback = null;
   constructor(server: Server, handle, encrypted) {
     super();
@@ -1051,6 +1063,11 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     handle.duplex = this;
 
     this.encrypted = encrypted;
+    // The handshake is complete by the time a request reaches the handler, and
+    // the handle is released on close, so read the negotiated protocol once.
+    if (encrypted) {
+      this.alpnProtocol = handle?.alpnProtocol ?? false;
+    }
     this.on("timeout", onNodeHTTPServerSocketTimeout);
     // Like Node.js's socketOnError: connection errors are routed to the
     // server's 'clientError' event instead of crashing as unhandled 'error'

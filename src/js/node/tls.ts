@@ -5,7 +5,7 @@ const Duplex = require("internal/streams/duplex");
 const EventEmitter = require("node:events");
 const addServerName = $newRustFunction("Listener.rs", "jsAddServerName", 3);
 const { throwNotImplemented } = require("internal/shared");
-const { throwOnInvalidTLSArray } = require("internal/tls");
+const { convertALPNProtocols, throwOnInvalidTLSArray } = require("internal/tls");
 const {
   validateString,
   validateNumber,
@@ -435,7 +435,6 @@ const ArrayPrototypeJoin = Array.prototype.join;
 const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSome = Array.prototype.some;
-const ArrayPrototypeReduce = Array.prototype.reduce;
 
 const ObjectFreeze = Object.freeze;
 
@@ -1559,53 +1558,6 @@ function connect(...args) {
 
 function getCiphers() {
   return getDefaultCiphers().split(":");
-}
-
-// Convert protocols array into valid OpenSSL protocols list
-// ("\x06spdy/2\x08http/1.1\x08http/1.0")
-function convertProtocols(protocols) {
-  const lens = new Array(protocols.length);
-  const buff = Buffer.allocUnsafe(
-    ArrayPrototypeReduce.$call(
-      protocols,
-      (p, c, i) => {
-        const len = Buffer.byteLength(c);
-        if (len > 255) {
-          const err = new RangeError(
-            `The byte length of the protocol at index ${i} exceeds the maximum length. It must be <= 255. Received ${len}`,
-          );
-          (err as any).code = "ERR_OUT_OF_RANGE";
-          throw err;
-        }
-        lens[i] = len;
-        return p + 1 + len;
-      },
-      0,
-    ),
-  );
-
-  let offset = 0;
-  for (let i = 0, c = protocols.length; i < c; i++) {
-    buff[offset++] = lens[i];
-    buff.write(protocols[i], offset);
-    offset += lens[i];
-  }
-
-  return buff;
-}
-
-// Matches Node's convertALPNProtocols:
-// https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/tls.js#L268
-function convertALPNProtocols(protocols, out) {
-  // If protocols is Array - translate it into buffer
-  if (Array.isArray(protocols)) {
-    out.ALPNProtocols = convertProtocols(protocols);
-  } else if (isArrayBufferView(protocols)) {
-    // Copy new buffer not to be modified by user.
-    out.ALPNProtocols = Buffer.from(
-      protocols.buffer.slice(protocols.byteOffset, protocols.byteOffset + protocols.byteLength),
-    );
-  }
 }
 
 let bundledRootCertificates: string[] | undefined;

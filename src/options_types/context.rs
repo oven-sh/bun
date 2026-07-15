@@ -42,8 +42,43 @@ pub struct ContextData {
     pub sequential: bool,
     pub no_exit_on_error: bool,
 
-    pub preloads: Vec<Box<[u8]>>,
+    pub preloads: Vec<Preload>,
     pub has_loaded_global_config: bool,
+}
+
+/// How a preload module was requested. `--require` resolves with CommonJS
+/// `require` semantics (e.g. the `require` export condition); `--preload`,
+/// `--import`, and bunfig `preload` resolve as ESM imports.
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub enum PreloadKind {
+    Import,
+    Require,
+}
+
+/// A module to load before the entry point, from `--preload` / `--require` /
+/// `--import` or bunfig `preload`.
+#[derive(Clone)]
+pub struct Preload {
+    pub specifier: Box<[u8]>,
+    pub kind: PreloadKind,
+}
+
+impl Preload {
+    #[inline]
+    pub fn import(specifier: Box<[u8]>) -> Self {
+        Self {
+            specifier,
+            kind: PreloadKind::Import,
+        }
+    }
+
+    #[inline]
+    pub fn require(specifier: Box<[u8]>) -> Self {
+        Self {
+            specifier,
+            kind: PreloadKind::Require,
+        }
+    }
 }
 
 impl Default for ContextData {

@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -209,5 +209,50 @@ plugin({
       expect(stdout.toString()).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/34226
+describe("preload export conditions", () => {
+  test.concurrent.each([
+    ["--require", "require"],
+    ["--import", "import"],
+    ["--preload", "import"],
+  ])("%s resolves dual package exports with the '%s' condition", async (flag, expected) => {
+    using dir = tempDir("preload-conditions", {
+      "main.js": `console.log("main");`,
+      "node_modules/dual-preload/package.json": JSON.stringify({
+        name: "dual-preload",
+        version: "1.0.0",
+        type: "module",
+        exports: {
+          ".": {
+            import: "./import.js",
+            require: "./require.cjs",
+          },
+        },
+      }),
+      "node_modules/dual-preload/import.js": `console.log("import");`,
+      "node_modules/dual-preload/require.cjs": `console.log("require");`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), flag, "dual-preload", "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      proc.exited,
+    ]);
+
+    expect({ stdout, exitCode, stderr: stderr.includes("error") ? stderr : "" }).toEqual({
+      stdout: `${expected}\nmain\n`,
+      exitCode: 0,
+      stderr: "",
+    });
   });
 });

@@ -22,6 +22,7 @@
 
 use bun_core::WTFStringImplExt as _;
 use bun_options_types::LoaderExt as _;
+use bun_options_types::context::PreloadKind;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr;
@@ -690,7 +691,14 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: `i < n`; the `Box<[u8]>` allocation is stable across the
         // `resolve_and_auto_install` call below (which only touches
         // `vm.transpiler.resolver`, not `vm.preload`).
-        let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i] };
+        let preload: *const [u8] = unsafe { &raw const *(&(*vm).preload)[i].specifier };
+        // `--require` preloads resolve with CommonJS `require` semantics
+        // (e.g. the `require` export condition), matching Node.
+        // SAFETY: `i < n`; plain enum field read.
+        let import_kind = match unsafe { &(&(*vm).preload)[i] }.kind {
+            PreloadKind::Require => ImportKind::Require,
+            PreloadKind::Import => ImportKind::Stmt,
+        };
         // SAFETY: `preload` points at a live boxed slice for this iteration
         // (heap-stable `Box<[u8]>` payload; nothing below mutates `vm.preload`).
         let preload_slice: &[u8] = unsafe { &*preload };
@@ -713,7 +721,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 (*vm).transpiler.resolver.resolve_and_auto_install(
                     &*top_level_dir,
                     normalized,
-                    ImportKind::Stmt,
+                    import_kind,
                     global_cache,
                 )
             } {

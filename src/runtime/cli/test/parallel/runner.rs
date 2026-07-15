@@ -10,7 +10,7 @@ use std::io::Write as _;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_options_types::context::MacroOptions;
+use bun_options_types::context::{MacroOptions, PreloadKind};
 use bun_ptr::Interned;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_sys::{Fd, FdDirExt, FdExt};
@@ -369,8 +369,11 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         argv.push(dupe_z(pattern));
     }
     for preload in ctx.preloads.iter() {
-        argv.push(lit(b"--preload\0"));
-        argv.push(dupe_z(preload));
+        argv.push(lit(match preload.kind {
+            PreloadKind::Require => b"--require\0",
+            PreloadKind::Import => b"--preload\0",
+        }));
+        argv.push(dupe_z(&preload.specifier));
     }
     if let Some(define) = &ctx.args.define {
         debug_assert_eq!(define.keys.len(), define.values.len());

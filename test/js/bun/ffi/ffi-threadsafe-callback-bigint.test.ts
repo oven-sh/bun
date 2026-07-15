@@ -136,9 +136,7 @@ test.skipIf(!canRun)(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout.trim()).toBe("OK");
-    expect(exitCode).toBe(0);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "OK", stderr: "", exitCode: 0 });
   },
   30_000,
 );

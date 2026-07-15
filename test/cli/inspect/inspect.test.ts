@@ -1,7 +1,7 @@
 import { Subprocess, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isPosix, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isPosix, randomPort, tempDir, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { WebSocket } from "ws";
@@ -602,4 +602,100 @@ test("error.stack doesnt lose frames", () => {
 
   // We allow it to differ by the existence of <anonymous> as a string. But that's it.
   expect(no.split("\n").slice(0, -2).join("\n").trim()).toBe(yes.split("\n").slice(0, -2).join("\n").trim());
+});
+
+test("rapid inspector connect/close does not unref the debuggee's event loop", async () => {
+  // A close that arrives before the queued context-thread connect task runs used to
+  // skip the +1 while the disconnect task still applied its -1. Enough raced cycles
+  // drove the debuggee's loop refcount to zero and it exited 0 mid-run.
+  using dir = tempDir("inspect-churn", {
+    "debuggee.js": `
+      Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: () => new Response("alive") });
+      let tick = 0;
+      setInterval(() => {
+        process.stdout.write("TICK " + ++tick + "\\n");
+        const until = Date.now() + 400;
+        while (Date.now() < until) {}
+      }, 50);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--inspect=127.0.0.1:0/insp", "debuggee.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let stderr = "";
+  let inspectorUrl: URL | undefined;
+  for await (const chunk of proc.stderr) {
+    stderr += Buffer.from(chunk).toString();
+    for (const line of stderr.split("\n")) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith("ws://")) {
+        inspectorUrl = new URL(trimmed);
+        break;
+      }
+    }
+    if (inspectorUrl || stderr.includes("error")) break;
+  }
+  if (!inspectorUrl) throw new Error("inspector URL not found in stderr:\n" + stderr);
+
+  // Build a promise that resolves when the Nth TICK line is seen, and a way
+  // to await a given tick without polling time.
+  let ticksSeen = 0;
+  const tickWaiters: { n: number; resolve: () => void }[] = [];
+  (async () => {
+    let stdout = "";
+    for await (const chunk of proc.stdout) {
+      stdout += Buffer.from(chunk).toString();
+      while (stdout.includes("\n")) {
+        const nl = stdout.indexOf("\n");
+        const line = stdout.slice(0, nl);
+        stdout = stdout.slice(nl + 1);
+        if (line.startsWith("TICK ")) {
+          ticksSeen++;
+          for (const w of tickWaiters) if (ticksSeen >= w.n) w.resolve();
+        }
+      }
+    }
+  })();
+  const waitForTick = (n: number) =>
+    ticksSeen >= n
+      ? Promise.resolve()
+      : new Promise<void>(resolve => {
+          tickWaiters.push({ n, resolve });
+        });
+
+  // Wait until the debuggee is inside its first busy burst so the churn lands
+  // while the context thread is blocked.
+  await Promise.race([waitForTick(1), proc.exited.then(() => Promise.reject(new Error("exited before first tick")))]);
+
+  // Churn: rapid connect/close on the debugger thread while the debuggee's
+  // context thread is busy. The debugger-thread WS server stays responsive.
+  for (let i = 0; i < 40; i++) {
+    const ws = new WebSocket(inspectorUrl);
+    await new Promise<void>(resolve => {
+      ws.addEventListener("open", () => ws.close());
+      ws.addEventListener("close", () => resolve());
+      ws.addEventListener("error", () => resolve());
+    });
+  }
+
+  // The debuggee must survive past the tick that applies the accumulated
+  // concurrent-ref delta. Race the next few ticks against process exit.
+  const target = ticksSeen + 3;
+  const outcome = await Promise.race([
+    waitForTick(target).then(() => "alive" as const),
+    proc.exited.then(code => `exited code=${code} signal=${proc.signalCode}` as const),
+  ]);
+
+  expect({ outcome, ticksSeen: ticksSeen >= target ? `>=${target}` : ticksSeen }).toEqual({
+    outcome: "alive",
+    ticksSeen: `>=${target}`,
+  });
+
+  proc.kill();
 });

@@ -93,7 +93,7 @@ public:
         : Inspector::FrontendChannel()
         , globalObject(globalObject)
         , scriptExecutionContextIdentifier(scriptExecutionContext.identifier())
-        , unrefOnDisconnect(shouldRefEventLoop)
+        , shouldRefEventLoop(shouldRefEventLoop)
     {
     }
 
@@ -115,7 +115,8 @@ public:
     {
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
-        if (this->unrefOnDisconnect) {
+        if (this->shouldRefEventLoop) {
+            this->unrefOnDisconnect = true;
             Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
         }
         globalObject->setInspectable(true);
@@ -433,6 +434,10 @@ public:
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
+    bool shouldRefEventLoop = false;
+
+    // Set only after the +1 in doConnect() actually happens; gates the -1 in
+    // disconnect() so a raced connect/close cannot leak an unbalanced unref.
     bool unrefOnDisconnect = false;
 
     bool hasEverConnected = false;

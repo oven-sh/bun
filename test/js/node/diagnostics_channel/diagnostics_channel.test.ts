@@ -621,9 +621,9 @@ describe("http server channels (#29586)", () => {
   // resOnFinish publishes to the channel before calling socket.end().
   test("response.finish publishes before the socket is ended (Connection: close)", async () => {
     const finish = channel("http.server.response.finish");
-    let writableEndedAtPublish: boolean | undefined;
+    let stateAtPublish: { finished: boolean; writableEnded: boolean } | undefined;
     const onFinish = (msg: any) => {
-      writableEndedAtPublish = msg.socket.writableEnded;
+      stateAtPublish = { finished: msg.response.finished, writableEnded: msg.socket.writableEnded };
     };
     finish.subscribe(onFinish);
     let client: any;
@@ -640,7 +640,9 @@ describe("http server channels (#29586)", () => {
         client.on("error", reject);
       });
       await drain();
-      expect(writableEndedAtPublish).toBe(false);
+      // Node's resOnFinish runs as a 'finish' listener: the response is
+      // finished but the socket is not yet ended at publish time.
+      expect(stateAtPublish).toEqual({ finished: true, writableEnded: false });
     } finally {
       client?.destroy?.();
       finish.unsubscribe(onFinish);
@@ -657,12 +659,12 @@ describe("http server channels (#29586)", () => {
     const requestStart = channel("http.server.request.start");
     const finish = channel("http.server.response.finish");
     const seen: string[] = [];
-    let writableEndedAtPublish: boolean | undefined;
+    let stateAtPublish: { finished: boolean; writableEnded: boolean } | undefined;
     const onCreated = () => seen.push("created");
     const onStart = () => seen.push("start");
     const onFinish = (msg: any) => {
       seen.push("finish");
-      writableEndedAtPublish = msg.socket.writableEnded;
+      stateAtPublish = { finished: msg.response.finished, writableEnded: msg.socket.writableEnded };
     };
     created.subscribe(onCreated);
     requestStart.subscribe(onStart);
@@ -694,7 +696,8 @@ describe("http server channels (#29586)", () => {
       });
       await drain();
       expect(seen.sort()).toEqual(["created", "finish", "start"]);
-      expect(writableEndedAtPublish).toBe(false);
+      // Same publish-time state as the plain http path / Node's resOnFinish.
+      expect(stateAtPublish).toEqual({ finished: true, writableEnded: false });
     } finally {
       created.unsubscribe(onCreated);
       requestStart.unsubscribe(onStart);

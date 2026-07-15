@@ -5443,6 +5443,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     ended: false,
     finished: false,
     aborted: false,
+    closeDelimited: false,
     bufferedAmount: 0,
     shouldKeepAlive,
     onfinished: null,
@@ -5480,14 +5481,14 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (chunked && !noBody) socket.write("0\r\n\r\n");
       this.ended = true;
       this.finished = true;
+      // A close-delimited body ends at EOF, so the response must end the
+      // connection; the 'finish' listener in connectionListenerHTTP1 does
+      // that after the diagnostics publish.
+      this.closeDelimited = closeDelimited;
       const onfinished = this.onfinished;
       if (onfinished) {
         this.onfinished = null;
         onfinished();
-      }
-      // A close-delimited body ends at EOF, so the response ends the connection.
-      if (closeDelimited && !socket.destroyed) {
-        socket.end();
       }
       return length;
     },
@@ -5575,17 +5576,21 @@ function connectionListenerHTTP1(server, socket, options) {
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
-      // Publish before socket.end() so subscribers observe the socket before
-      // its writable side is ended, like resOnFinish in node:_http_server.
-      if (onHttp1ResponseFinishChannel.hasSubscribers) {
-        onHttp1ResponseFinishChannel.publish({ request, response: res, socket, server });
-      }
-      if (!shouldKeepAlive && !socket.destroyed) {
-        socket.end();
-      }
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
+
+    // Like resOnFinish in node:_http_server: publish from the 'finish' event
+    // (so subscribers observe the finished response) and only then end the
+    // socket on non-keep-alive / close-delimited responses.
+    res.once("finish", () => {
+      if (onHttp1ResponseFinishChannel.hasSubscribers) {
+        onHttp1ResponseFinishChannel.publish({ request, response: res, socket, server });
+      }
+      if ((!shouldKeepAlive || handle.closeDelimited) && !socket.destroyed) {
+        socket.end();
+      }
+    });
 
     if (onHttp1RequestStartChannel.hasSubscribers) {
       onHttp1RequestStartChannel.publish({ request, response: res, socket, server });

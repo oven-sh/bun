@@ -313,6 +313,7 @@ pub mod test {
 #[path = "Arguments.rs"]
 pub mod arguments;
 pub use arguments as Arguments;
+pub mod worker_exec_argv;
 // bunfig.toml without a tier-6 dependency. Re-export under the original path so
 // existing `crate::cli::bunfig` / `crate::cli::Bunfig` callers are unaffected.
 pub use bun_bunfig::Bunfig;

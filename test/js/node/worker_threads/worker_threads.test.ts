@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +21,11 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// A debug build starts a worker VM about an order of magnitude more slowly, so
+// the tests that spawn a subprocess that then builds a chain of workers need
+// headroom past the 5s default to finish under `bun bd`.
+const subprocessTimeout = isDebug ? 60_000 : 20_000;
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -326,10 +331,14 @@ describe("execArgv option", async () => {
     expect(await proc.stdout.text()).toBe(expected);
   }
 
-  it("inherits the parent's execArgv when falsy or unspecified", async () => {
-    await run("null", '["--smol"]\n');
-    await run("0", '["--smol"]\n');
-  });
+  it(
+    "inherits the parent's execArgv when falsy or unspecified",
+    async () => {
+      await run("null", '["--smol"]\n');
+      await run("0", '["--smol"]\n');
+    },
+    subprocessTimeout,
+  );
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
     await run("[]", "[]\n");
@@ -338,21 +347,147 @@ describe("execArgv option", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
   });
   // TODO(@190n) get our handling of non-string array elements in line with Node's
+
+  // https://github.com/nodejs/node/blob/v26.3.0/test/parallel/test-worker-execargv-invalid.js
+  it("throws ERR_INVALID_ARG_TYPE when execArgv is not an array", async () => {
+    for (const execArgv of ["hello", 6]) {
+      let worker: InstanceType<typeof Worker> | undefined;
+      try {
+        expect(() => {
+          worker = new Worker("", { eval: true, execArgv: execArgv as any });
+        }).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", name: "TypeError" }));
+      } finally {
+        await worker?.terminate();
+      }
+    }
+  });
+
+  describe("throws ERR_WORKER_INVALID_EXEC_ARGV for", () => {
+    // A worker is only born when the constructor fails to throw, which is the
+    // bug this suite is about. Clean it up so a failure doesn't then leak a
+    // thread into every test that follows.
+    async function expectRejected(execArgv: string[], expected: Record<string, string>) {
+      let worker: InstanceType<typeof Worker> | undefined;
+      try {
+        expect(() => {
+          worker = new Worker("", { eval: true, execArgv });
+        }).toThrow(expect.objectContaining(expected));
+      } finally {
+        await worker?.terminate();
+      }
+    }
+
+    it.each([
+      // Unknown to both Bun and Node.
+      [["--definitely-not-a-flag"], "--definitely-not-a-flag"],
+      [["-x"], "-x"],
+      // Reported together, in order.
+      [["--definitely-not-a-flag", "--also-not-a-flag"], "--definitely-not-a-flag, --also-not-a-flag"],
+      // Flags that configure the process, not a thread.
+      [["--title=blah"], "--title=blah"],
+      [["--zero-fill-buffers"], "--zero-fill-buffers"],
+      [["--use-openssl-ca"], "--use-openssl-ca"],
+      [["--use-bundled-ca"], "--use-bundled-ca"],
+      // Engine flags: these have to be set before the JS engine starts.
+      [["--expose-gc"], "--expose-gc"],
+      [["--stack-trace-limit=7"], "--stack-trace-limit=7"],
+      [["--max-old-space-size=64"], "--max-old-space-size=64"],
+      // A flag whose value is missing.
+      [["--redirect-warnings"], "--redirect-warnings requires an argument"],
+      [["--conditions"], "--conditions requires an argument"],
+      // The value of a flag is consumed, so validation resumes after it.
+      [["--conditions", "react-server", "--definitely-not-a-flag"], "--definitely-not-a-flag"],
+      // Node strips `no-` exactly once, so a doubled prefix names nothing.
+      [["--no-no-addons"], "--no-no-addons"],
+      // `_` is canonicalised to `-` for the lookup, but the entry is reported
+      // as the user spelled it.
+      [["--definitely_not_a_flag"], "--definitely_not_a_flag"],
+      // A Bun flag whose only name is negative (`--no-macros`) has no positive
+      // spelling, in Bun or in Node.
+      [["--macros"], "--macros"],
+      [["--clear-screen"], "--clear-screen"],
+      // Only a boolean can be negated.
+      [["--no-inspect-port"], "--no-inspect-port is an invalid negation because it is not a boolean option"],
+    ])("%p", async (execArgv, message) => {
+      await expectRejected(execArgv, {
+        code: "ERR_WORKER_INVALID_EXEC_ARGV",
+        name: "Error",
+        message: `Initiated Worker with invalid execArgv flags: ${message}`,
+      });
+    });
+
+    // Classifying a flag must not recurse per `no-`, or this overflows the
+    // stack instead of reporting the flag. The message is 600 KB, so only the
+    // error's identity is asserted.
+    it("a pathologically repeated negation, without overflowing the stack", async () => {
+      await expectRejected(["--" + "no-".repeat(200_000)], {
+        code: "ERR_WORKER_INVALID_EXEC_ARGV",
+        name: "Error",
+      });
+    });
+  });
+
+  describe("accepts", () => {
+    it.each([
+      // Bun's own runtime flags, including ones it only spells negatively.
+      [["--smol"]],
+      [["--no-addons"]],
+      [["--no-macros", "--no-clear-screen"]],
+      [["--conditions", "react-server"]],
+      // Node flags Bun does not implement: Node accepts them in execArgv, so
+      // rejecting them here would be stricter than Node.
+      [["--experimental-vm-modules"]],
+      [["--no-warnings", "--no-deprecation", "--tls-min-v1.2"]],
+      // Node registers every boolean under one name and derives the other
+      // spelling, so both are valid even when only one is documented.
+      [["--warnings", "--addons", "--deprecation"]],
+      // Node canonicalises `_` to `-` in a long flag's name.
+      [["--experimental_vm_modules", "--no_warnings"]],
+      // Unlike its two siblings above, Node made this one per-environment.
+      [["--use-system-ca"]],
+      // `--inspect[=host:port]` negates like the boolean Node registers it as.
+      [["--no-inspect", "--no-inspect-brk", "--no-inspect-wait"]],
+      // Everything from the first positional on is a positional, never a flag.
+      [["--", "--definitely-not-a-flag"]],
+      [["entrypoint.js", "--definitely-not-a-flag"]],
+    ])("%p", async execArgv => {
+      const worker = new Worker("require('worker_threads').parentPort.postMessage(process.execArgv)", {
+        eval: true,
+        execArgv,
+      });
+      // A worker that fails to start never posts a message, so report its
+      // error rather than waiting out the timeout.
+      const { promise, resolve, reject } = Promise.withResolvers<string[]>();
+      worker.on("message", resolve);
+      worker.on("error", reject);
+      try {
+        expect(await promise).toEqual(execArgv);
+      } finally {
+        await worker.terminate();
+      }
+    });
+  });
 });
 
-test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "eval-source-leak-fixture.js"],
-    env: bunEnv,
-    cwd: __dirname,
-    stderr: "pipe",
-    stdout: "ignore",
-  });
-  await proc.exited;
-  const errors = await proc.stderr.text();
-  if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
-});
+test(
+  "eval does not leak source code",
+  async () => {
+    const proc = Bun.spawn({
+      cmd: [bunExe(), "eval-source-leak-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    await proc.exited;
+    const errors = await proc.stderr.text();
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  },
+  // The fixture hands 600 MiB of source to six workers; that takes ~30s under a
+  // debug build, well past the 5s default.
+  isDebug ? 120_000 : 20_000,
+);
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
@@ -500,21 +635,25 @@ describe("environmentData", () => {
     expect(getEnvironmentData("does_not_exist")).toBeUndefined();
   });
 
-  test("is deeply inherited", async () => {
-    const proc = Bun.spawn({
-      cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
-      env: bunEnv,
-      cwd: __dirname,
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    await proc.exited;
-    const errors = await proc.stderr.text();
-    if (errors.length > 0) throw new Error(errors);
-    expect(proc.exitCode).toBe(0);
-    const out = await proc.stdout.text();
-    expect(out).toBe("foo\n".repeat(5));
-  });
+  test(
+    "is deeply inherited",
+    async () => {
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "environmentdata-inherit-fixture.js"],
+        env: bunEnv,
+        cwd: __dirname,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      await proc.exited;
+      const errors = await proc.stderr.text();
+      if (errors.length > 0) throw new Error(errors);
+      expect(proc.exitCode).toBe(0);
+      const out = await proc.stdout.text();
+      expect(out).toBe("foo\n".repeat(5));
+    },
+    subprocessTimeout,
+  );
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({
@@ -615,58 +754,70 @@ describe("getHeapSnapshot", () => {
     }
   });
 
-  test("queues while the worker is starting and rejects once it has exited", async () => {
-    const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
-    // Called immediately after construction (m_state still Pending): node — and now
-    // bun — queues into m_pendingTasks and resolves once the worker is Running,
-    // instead of racing against dispatchOnline and spuriously rejecting.
-    const pendingCall = worker.getHeapSnapshot();
-    await once(worker, "online");
-    await expect(pendingCall).resolves.toBeDefined();
-    worker.postMessage("done");
-    await once(worker, "exit");
-    // After exit (m_state Closed) it rejects.
-    await expect(worker.getHeapSnapshot()).rejects.toMatchObject({
-      name: "Error",
-      code: "ERR_WORKER_NOT_RUNNING",
-      message: "Worker instance not running",
-    });
-  });
+  // getHeapSnapshot itself is a full V8-format heap dump, which on top of
+  // worker startup time puts it past 5s under a debug build.
+  const heapSnapshotTimeout = isDebug ? 60_000 : 20_000;
 
-  test("resolves to a Stream.Readable with JSON text in V8 format", async () => {
-    const worker = new Worker(
-      /* js */ `
+  test(
+    "queues while the worker is starting and rejects once it has exited",
+    async () => {
+      const worker = new Worker("require('worker_threads').parentPort.once('message', () => {})", { eval: true });
+      // Called immediately after construction (m_state still Pending): node — and now
+      // bun — queues into m_pendingTasks and resolves once the worker is Running,
+      // instead of racing against dispatchOnline and spuriously rejecting.
+      const pendingCall = worker.getHeapSnapshot();
+      await once(worker, "online");
+      await expect(pendingCall).resolves.toBeDefined();
+      worker.postMessage("done");
+      await once(worker, "exit");
+      // After exit (m_state Closed) it rejects.
+      await expect(worker.getHeapSnapshot()).rejects.toMatchObject({
+        name: "Error",
+        code: "ERR_WORKER_NOT_RUNNING",
+        message: "Worker instance not running",
+      });
+    },
+    heapSnapshotTimeout,
+  );
+
+  test(
+    "resolves to a Stream.Readable with JSON text in V8 format",
+    async () => {
+      const worker = new Worker(
+        /* js */ `
         import { parentPort } from "node:worker_threads";
         parentPort.on("message", () => process.exit(0));
       `,
-      { eval: true },
-    );
-    await once(worker, "online");
-    const stream = await worker.getHeapSnapshot();
-    expect(stream).toBeInstanceOf(Readable);
-    expect(stream.constructor.name).toBe("HeapSnapshotStream");
-    const json = await new Promise<string>(resolve => {
-      let json = "";
-      stream.on("data", chunk => {
-        json += chunk;
+        { eval: true },
+      );
+      await once(worker, "online");
+      const stream = await worker.getHeapSnapshot();
+      expect(stream).toBeInstanceOf(Readable);
+      expect(stream.constructor.name).toBe("HeapSnapshotStream");
+      const json = await new Promise<string>(resolve => {
+        let json = "";
+        stream.on("data", chunk => {
+          json += chunk;
+        });
+        stream.on("end", () => {
+          resolve(json);
+        });
       });
-      stream.on("end", () => {
-        resolve(json);
-      });
-    });
-    const object = JSON.parse(json);
-    expect(Object.keys(object).toSorted()).toEqual([
-      "edges",
-      "locations",
-      "nodes",
-      "samples",
-      "snapshot",
-      "strings",
-      "trace_function_infos",
-      "trace_tree",
-    ]);
-    worker.postMessage(0);
-  });
+      const object = JSON.parse(json);
+      expect(Object.keys(object).toSorted()).toEqual([
+        "edges",
+        "locations",
+        "nodes",
+        "samples",
+        "snapshot",
+        "strings",
+        "trace_function_infos",
+        "trace_tree",
+      ]);
+      worker.postMessage(0);
+    },
+    heapSnapshotTimeout,
+  );
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {
@@ -1383,28 +1534,36 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
 
   // main -> A (snapshot env) -> B (SHARE_ENV) is a tree disjoint from
   // main -> C (SHARE_ENV); values must not cross between them.
-  it("keeps disjoint SHARE_ENV chains isolated", async () => {
-    expect(await run("tree")).toEqual({
-      B_sees_FROM_A: "a",
-      B_sees_FROM_MAIN: "main",
-      A_sees_FROM_B: "b",
-      C_sees_FROM_B: null,
-      C_sees_FROM_MAIN: "main",
-      main_sees_FROM_B: null,
-      main_sees_FROM_C: "c",
-    });
-  });
+  it(
+    "keeps disjoint SHARE_ENV chains isolated",
+    async () => {
+      expect(await run("tree")).toEqual({
+        B_sees_FROM_A: "a",
+        B_sees_FROM_MAIN: "main",
+        A_sees_FROM_B: "b",
+        C_sees_FROM_B: null,
+        C_sees_FROM_MAIN: "main",
+        main_sees_FROM_B: null,
+        main_sees_FROM_C: "c",
+      });
+    },
+    subprocessTimeout,
+  );
 
   // Founding a store must not adopt another tree's value for a key the founding
   // thread already has.
-  it("does not clobber a worker's own env when it founds a store", async () => {
-    expect(await run("clobber")).toEqual({
-      A_SHARED_KEY_before: "from-A",
-      A_SHARED_KEY_after: "from-A",
-      B_sees_SHARED_KEY: "from-A",
-      main_SHARED_KEY: "from-main",
-    });
-  });
+  it(
+    "does not clobber a worker's own env when it founds a store",
+    async () => {
+      expect(await run("clobber")).toEqual({
+        A_SHARED_KEY_before: "from-A",
+        A_SHARED_KEY_after: "from-A",
+        B_sees_SHARED_KEY: "from-A",
+        main_SHARED_KEY: "from-main",
+      });
+    },
+    subprocessTimeout,
+  );
 
   // An accessor installed via defineProperty lands on the base object, but reads hit
   // the store first — so the store entry must go, or the getter is shadowed. (Node
@@ -1487,16 +1646,20 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
 
   // Two SHARE_ENV children of one thread alias a single store: writes, deletes and
   // enumeration cross between them, and a default-env grandchild snapshots it.
-  it("aliases one store across siblings, deletes and enumeration", async () => {
-    expect(await run("siblings")).toEqual({
-      s2_sees_S1_write: "s1",
-      s2_sees_TO_DELETE: null,
-      s2_keys_have_FROM_S1: true,
-      grandchild_sees_S1_write: "s1",
-      main_sees_FROM_S1: "s1",
-      main_sees_TO_DELETE: null,
-    });
-  });
+  it(
+    "aliases one store across siblings, deletes and enumeration",
+    async () => {
+      expect(await run("siblings")).toEqual({
+        s2_sees_S1_write: "s1",
+        s2_sees_TO_DELETE: null,
+        s2_keys_have_FROM_S1: true,
+        grandchild_sees_S1_write: "s1",
+        main_sees_FROM_S1: "s1",
+        main_sees_TO_DELETE: null,
+      });
+    },
+    subprocessTimeout,
+  );
 
   // Founding a tree replaces process.env; Bun.env is reified from the same object
   // at startup and must not be left observing the orphaned pre-swap env.

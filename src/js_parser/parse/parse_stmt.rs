@@ -1860,10 +1860,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let after_declare_range = p.lexer.range();
                 let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
-                // Anything that we don't expect is a syntax error ("declare foo",
-                // "declare interface \n Foo {}", "declare type \n Foo = number").
-                // esbuild rewinds its lexer and calls `Unexpected()` here; we
-                // point at the token range captured before recursing instead.
+                // Anything unexpected is a syntax error ("declare foo", "declare type \n Foo").
+                // esbuild rewinds its lexer here; we point at the range captured above instead.
                 if !matches!(
                     &stmt.data,
                     js_ast::StmtData::STypeScript(_)

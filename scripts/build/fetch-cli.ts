@@ -242,13 +242,18 @@ function normalizeLf(s: string): string {
  * so a CRLF-mangled checkout still applies cleanly. --no-index: dest/ is
  * not a git repo. --ignore-whitespace / --ignore-space-change: patches are
  * authored against upstream which may have different trailing whitespace.
+ *
+ * GIT_CEILING_DIRECTORIES hides the enclosing repo: run from a repo subdir,
+ * `git apply` treats a git-format (`diff --git`) patch as toplevel-relative and
+ * silently skips it with exit 0. -v + LC_ALL=C make that skip detectable below.
  */
 function applyPatch(dest: string, patchPath: string, patchBody: string): void {
-  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-"], {
+  const result = spawnSync("git", ["apply", "--ignore-whitespace", "--ignore-space-change", "--no-index", "-v", "-"], {
     cwd: dest,
     input: normalizeLf(patchBody),
     stdio: ["pipe", "ignore", "pipe"],
     encoding: "utf8",
+    env: { ...process.env, GIT_CEILING_DIRECTORIES: join(dest, ".."), LC_ALL: "C" },
   });
 
   if (result.error) {
@@ -262,6 +267,16 @@ function applyPatch(dest: string, patchPath: string, patchBody: string): void {
     throw new BuildError(`Patch failed: ${result.stderr}`, {
       file: patchPath,
       hint: "The patch may be out of date with the pinned commit",
+    });
+  }
+
+  // A file git considers outside the current directory is skipped with exit 0.
+  // Nothing under patches/ should ever be skipped: a skip here means the .ref
+  // stamp would certify a tree the patch never touched.
+  if (result.stderr !== null && result.stderr.includes("Skipped patch")) {
+    throw new BuildError(`git apply skipped one or more files: ${result.stderr.trim()}`, {
+      file: patchPath,
+      hint: "GIT_CEILING_DIRECTORIES should prevent this. A skip means git resolved the patch's paths outside the dependency's source directory.",
     });
   }
 }

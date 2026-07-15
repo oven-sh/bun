@@ -1,0 +1,29 @@
+--- a/src/win/poll.c
++++ b/src/win/poll.c
+@@ -217,8 +217,14 @@ static void uv__fast_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+       handle->submitted_events_2)) != 0) {
+     uv__fast_poll_submit_poll_req(loop, handle);
+   } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++             !(handle->flags & UV_HANDLE_CLOSED) &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
++    /* A nested uv_run entered from inside poll_cb may have already run this
++     * handle's endgame: uv__process_endgames cleared ENDGAME_QUEUED and
++     * uv__handle_close set CLOSED. Re-queuing it here would run the endgame
++     * again, which uv__poll_endgame asserts against and which invokes
++     * close_cb a second time. */
+     uv__want_endgame(loop, (uv_handle_t*) handle);
+   }
+ }
+@@ -418,8 +424,11 @@ static void uv__slow_poll_process_poll_req(uv_loop_t* loop, uv_poll_t* handle,
+       handle->submitted_events_2)) != 0) {
+     uv__slow_poll_submit_poll_req(loop, handle);
+   } else if ((handle->flags & UV_HANDLE_CLOSING) &&
++             !(handle->flags & UV_HANDLE_CLOSED) &&
+              handle->submitted_events_1 == 0 &&
+              handle->submitted_events_2 == 0) {
++    /* Same as the fast path: never re-queue an endgame that a nested uv_run
++     * already ran for this handle. */
+     uv__want_endgame(loop, (uv_handle_t*) handle);
+   }
+ }

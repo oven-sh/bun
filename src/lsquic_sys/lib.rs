@@ -129,6 +129,8 @@ pub struct NqVtable {
         unsafe extern "C" fn(conn_ctx: *mut c_void, chunk: *const u8, len: usize, fin: c_int),
     pub get_ssl_ctx:
         unsafe extern "C" fn(owner: *mut c_void, local: *const sockaddr) -> *mut SSL_CTX,
+    pub get_client_ssl_ctx:
+        unsafe extern "C" fn(owner: *mut c_void, local: *const sockaddr) -> *mut SSL_CTX,
     pub lookup_cert: unsafe extern "C" fn(
         owner: *mut c_void,
         local: *const sockaddr,

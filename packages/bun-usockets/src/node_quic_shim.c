@@ -51,6 +51,10 @@ struct us_nq_vtable {
                       int fin);
     /* TLS */
     SSL_CTX *(*get_ssl_ctx)(void *owner, const struct sockaddr *local);
+    /* ea_get_ssl_ctx is per-engine but peer_ctx is the endpoint, which owns
+     * both engines; an endpoint that has listen()ed and connect()ed needs a
+     * different context for each, so the client engine gets its own thunk. */
+    SSL_CTX *(*get_client_ssl_ctx)(void *owner, const struct sockaddr *local);
     SSL_CTX *(*lookup_cert)(void *owner, const struct sockaddr *local,
                             const char *sni);
     /* packets out */
@@ -410,6 +414,10 @@ static SSL_CTX *nq_get_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
     struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
     return vt->get_ssl_ctx(vt->owner, local);
 }
+static SSL_CTX *nq_get_client_ssl_ctx(void *peer_ctx, const struct sockaddr *local) {
+    struct us_nq_vtable *vt = *(struct us_nq_vtable **) peer_ctx;
+    return vt->get_client_ssl_ctx(vt->owner, local);
+}
 static SSL_CTX *nq_lookup_cert(void *cert_ctx, const struct sockaddr *local,
                                const char *sni) {
     struct us_nq_vtable *vt = cert_ctx;
@@ -563,7 +571,7 @@ lsquic_engine_t *us_nq_engine_new(int is_server, int is_http,
     api.ea_stream_if_ctx = vt;
     api.ea_packets_out = nq_packets_out;
     api.ea_packets_out_ctx = vt;
-    api.ea_get_ssl_ctx = nq_get_ssl_ctx;
+    api.ea_get_ssl_ctx = is_server ? nq_get_ssl_ctx : nq_get_client_ssl_ctx;
     if (is_server) {
         api.ea_lookup_cert = nq_lookup_cert;
         api.ea_cert_lu_ctx = vt;

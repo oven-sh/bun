@@ -741,12 +741,27 @@ lsquic_callback! {
         sent as c_int
     }
 
+    /// The SERVER engine's `ea_get_ssl_ctx`.
     fn get_ssl_ctx(this: &QuicEndpoint, _local: *const c_void) -> *mut lsquic::SSL_CTX = null_mut(); {
-        // The server engine asks first; fall back to the client context.
+        // Server context first; an endpoint that has only connect()ed still
+        // answers from the client one.
         this.server_tls
             .get()
             .as_ref()
             .or_else(|| this.client_tls.get().as_ref())
+            .map(|t| t.raw().cast())
+            .unwrap_or(null_mut())
+    }
+
+    /// The CLIENT engine's `ea_get_ssl_ctx`. An endpoint that has both
+    /// listen()ed and connect()ed owns two contexts, and the client engine
+    /// must not be handed the server's (its ALPN and verify settings are the
+    /// server's) -- reachable via `connect(addr, { endpoint: listener })`.
+    fn get_client_ssl_ctx(this: &QuicEndpoint, _local: *const c_void) -> *mut lsquic::SSL_CTX = null_mut(); {
+        this.client_tls
+            .get()
+            .as_ref()
+            .or_else(|| this.server_tls.get().as_ref())
             .map(|t| t.raw().cast())
             .unwrap_or(null_mut())
     }
@@ -1110,6 +1125,7 @@ impl QuicEndpoint {
             on_path_switch: session::on_path_switch,
             on_origin: session::on_origin,
             get_ssl_ctx,
+            get_client_ssl_ctx,
             lookup_cert,
             packets_out,
             on_mini_conn_failed,
@@ -2255,13 +2271,21 @@ impl QuicEndpoint {
                 0,
                 resume_ptr,
                 resume_len,
+                // `connect({token})` is validated in JS but not yet plumbed:
+                // handing the NEW_TOKEN blob to lsquic here makes the handshake
+                // time out (see test-quic-token-secret), so it stays a no-op
+                // until the Retry path is understood.
                 null(),
                 0,
             )
         };
         if conn.is_null() {
-            // SAFETY: session was just created; its wrapper Strong keeps it
-            // alive — releasing here is the only owner.
+            // The session is not in `self.sessions` yet (that happens below),
+            // so no endpoint teardown will ever reach it: its own wrapper
+            // Strong would root it, and the endpoint through `endpoint_js`,
+            // for the process lifetime. Release it here.
+            // SAFETY: `session` was just created and nothing else owns it.
+            unsafe { (*session).teardown(global) };
             return Ok(JSValue::UNDEFINED);
         }
         // SAFETY: `conn` is live; out-params are stack slots.

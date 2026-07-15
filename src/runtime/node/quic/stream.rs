@@ -376,6 +376,17 @@ impl QuicStream {
     pub(super) fn pre_reset_code(&self) -> Option<u64> {
         self.with_state(|s| (s.reset != 0).then_some(s.reset_code))
     }
+    /// lsquic closed the stream and `on_stream_close` nulled `raw`, so nothing
+    /// native can reach this object again. Once the session drops it from
+    /// `streams`, the self-referential Strong is the only thing keeping the
+    /// wrapper alive — release it or every cleanly-closed stream leaks for the
+    /// process lifetime. `inbound` is deliberately left intact: JS may still
+    /// drain buffered data after `onStreamClose`, and it holds the wrapper
+    /// through its own reference until it does.
+    pub(super) fn release_close_root(&self) {
+        self.this_value.with_mut(|r| r.downgrade());
+    }
+
     /// A remote-initiated stream has wire presence the moment lsquic creates
     /// it — the peer's frame is what created it.
     pub(super) fn mark_wrote_to_lsquic(&self) {

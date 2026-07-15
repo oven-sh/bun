@@ -269,7 +269,11 @@ const {
   validateString,
 } = require("internal/validators");
 
-const { buildNgHeaderString, assertValidPseudoHeader, assertValidPseudoHeaderTrailer } = require("internal/quic/http2util");
+const {
+  buildNgHeaderString,
+  assertValidPseudoHeader,
+  assertValidPseudoHeaderTrailer,
+} = require("internal/quic/http2util");
 
 const kEmptyObject = { __proto__: null };
 
@@ -2790,6 +2794,10 @@ class QuicStream {
     inner.headers = undefined;
     inner.pendingTrailers = undefined;
     this.#handle = undefined;
+    // Wake anything parked in waitForDrain(): only the native StreamDrain
+    // event resolves it, and that stops at close. `#handle` is already
+    // cleared, so the resumed writer sees `destroyed` and bails.
+    this[kDrain]?.();
     if (inner.fileHandle !== undefined) {
       // Close the FileHandle that was used as a body source. The close
       // may fail if the user already closed it -- that's expected and
@@ -5311,7 +5319,10 @@ function processTlsOptions(tls, forServer) {
       buf.write(protocols[i], offset, "ascii");
       offset += protocols[i].length;
     }
-    encodedAlpn = buf.toString("latin1");
+    // Pass the Buffer itself: a latin1 string round-trips through
+    // to_utf8_bytes() natively, which two-byte-encodes any length prefix
+    // >= 0x80 (a 128-255 char protocol name) and desyncs the wire format.
+    encodedAlpn = buf;
   }
 
   if (ca !== undefined) {

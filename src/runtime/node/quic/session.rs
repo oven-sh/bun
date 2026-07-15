@@ -1565,6 +1565,11 @@ impl QuicSession {
                     // The JS callback may have torn it down already; this is
                     // a no-op then.
                     self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
+                    // Registry entry gone and `raw` already null, so nothing
+                    // else reaches this stream: drop the self-root and let the
+                    // wrapper be collected once JS is done with it. `stream`
+                    // stays valid — the retain above only dropped a pointer.
+                    stream.release_close_root();
                 }
             }
         }
@@ -1907,7 +1912,7 @@ impl QuicSession {
         }
     }
 
-    fn teardown(&self, _global: &JSGlobalObject) {
+    pub(super) fn teardown(&self, _global: &JSGlobalObject) {
         if self.destroyed.replace(true) {
             return;
         }

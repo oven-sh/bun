@@ -1238,17 +1238,18 @@ describe.concurrent("Bun.spawn with terminal option", () => {
         bunExe(),
         "-e",
         `
+          let out = "";
           const events = [];
-          const child = Bun.spawn([process.execPath, "-e", "console.log('hi')"], {
+          const child = Bun.spawn([process.execPath, "-e", "console.log('hi from pty')"], {
             env: process.env,
             terminal: {
-              data: (_t, d) => events.push("data:" + Buffer.from(d).toString().includes("hi")),
+              data: (_t, d) => { out += Buffer.from(d).toString(); },
               exit: (_t, code) => events.push("exit:" + code),
             },
           });
           await child.exited;
           events.push("exited");
-          process.stdout.write(JSON.stringify(events));
+          process.stdout.write(JSON.stringify({ events, gotOutput: out.includes("hi from pty") }));
         `,
       ],
       env: bunEnv,
@@ -1258,8 +1259,9 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The terminal exit callback fires once with code 0 (clean EOF), before
     // proc.exited resolves, and the outer process exits on its own.
-    expect({ events: JSON.parse(stdout), stderr, exitCode }).toEqual({
-      events: ["data:true", "exit:0", "exited"],
+    expect({ ...JSON.parse(stdout), stderr, exitCode }).toEqual({
+      events: ["exit:0", "exited"],
+      gotOutput: true,
       stderr: "",
       exitCode: 0,
     });

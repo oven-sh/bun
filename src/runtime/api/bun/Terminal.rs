@@ -689,6 +689,10 @@ impl Terminal {
         if flags.contains(Flags::CLOSED) {
             return;
         }
+        // Both reader callbacks below re-enter user JS and may deref; hold a
+        // +1 so `self` stays live for the trailing field accesses.
+        self.ref_();
+        let guard = scopeguard::guard((), |()| self.deref_());
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled via the raw-pointer dispatch
@@ -718,6 +722,7 @@ impl Terminal {
             let ctx = self.event_loop_handle.as_event_loop_ctx();
             self.writer.with_mut(|w| w.update_ref(ctx, false));
         }
+        drop(guard);
     }
 
     /// Windows: close only the ConPTY handle so conhost releases its pipe ends and

@@ -1378,7 +1378,7 @@ function Socket(options?) {
   this[kSetKeepAlive] = Boolean(keepAlive);
   // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
   // Bun.Socket), so store ms here. Node stores seconds because libuv does.
-  this[kSetKeepAliveInitialDelay] = ~~keepAliveInitialDelay;
+  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
 
   this[khandlers] = SocketHandlers2;
   this.bytesRead = 0;
@@ -3139,7 +3139,7 @@ function Server(options?, connectionListener?) {
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1880
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = Boolean(keepAlive);
-  this.keepAliveInitialDelay = ~~keepAliveInitialDelay;
+  this.keepAliveInitialDelay = MathMax(0, ~~keepAliveInitialDelay);
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = Boolean(noDelay);

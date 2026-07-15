@@ -739,27 +739,41 @@ describe("async context passes through", () => {
     const { promise, resolve, reject } = Promise.withResolvers<string>();
 
     const agent = new http.Agent();
+    let injected: import("net").Socket | undefined;
     agent.createConnection = function () {
       const sock = new net.Socket();
+      injected = sock;
+      let armed = false;
       const on = sock.on.bind(sock);
       sock.on = function (ev, fn) {
         const r = on(ev, fn);
-        // Enqueued during onSocket()'s own socket.on("error") registration, so
+        // Arm once, during onSocket()'s own socket.on("error") registration, so
         // it fires before onSocket()'s process.nextTick(onSocketNT, ...).
-        if (ev === "error") process.nextTick(() => sock.emit("error", new Error("boom")));
+        if (ev === "error" && !armed) {
+          armed = true;
+          process.nextTick(() => sock.emit("error", new Error("boom")));
+        }
         return r;
       };
       return sock;
     };
 
-    s.run("X", () => {
-      const req = http.request({ host: "127.0.0.1", port: 1, agent });
-      req.on("error", () => resolve(String(s.getStore())));
-      req.on("response", () => reject(new Error("unexpected response")));
-      req.end();
-    });
+    try {
+      s.run("X", () => {
+        const req = http.request({ host: "127.0.0.1", port: 1, agent });
+        // Assert on the injected error specifically: a connect-refusal error
+        // reaching here instead means the pre-onSocketNT window was missed and
+        // the test would otherwise pass without exercising the fix.
+        req.on("error", err => resolve(`${(err as Error).message}|${s.getStore()}`));
+        req.on("response", () => reject(new Error("unexpected response")));
+        req.end();
+      });
 
-    expect(await promise).toBe("X");
+      expect(await promise).toBe("boom|X");
+    } finally {
+      injected?.destroy();
+      agent.destroy();
+    }
   });
 
   test("http agent reuse: req 'error'/'close' see the reused request's context", async () => {
@@ -859,6 +873,7 @@ describe("async context passes through", () => {
     const port = (server.address() as import("net").AddressInfo).port;
     const s = new AsyncLocalStorage<object>();
     let stream: any, client: any;
+    let closed!: Promise<void>;
     try {
       await s.run(
         { marker: true },
@@ -866,6 +881,9 @@ describe("async context passes through", () => {
           new Promise<void>((resolve, reject) => {
             client = http2.connect(`http://127.0.0.1:${port}`);
             client.on("error", reject);
+            // Registered before the await: the session can close on its own and
+            // this must not miss the event.
+            closed = new Promise<void>(r => client.on("close", () => r()));
             stream = client.request({ ":path": "/" });
             stream.on("error", reject);
             stream.resume();
@@ -879,7 +897,6 @@ describe("async context passes through", () => {
       expect(frameSym).toBeDefined();
       expect(stream[frameSym!]).toBeUndefined();
 
-      const closed = new Promise<void>(r => client.on("close", () => r()));
       client.close();
       await closed;
       expect(client[frameSym!]).toBeUndefined();

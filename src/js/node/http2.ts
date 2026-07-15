@@ -412,7 +412,9 @@ function emitSessionCloseNT(self: Http2Session) {
   if (self.listenerCount("close") > 0) {
     runInFrame(self[bunHTTP2AsyncContextFrame], self.emit, self, "close");
   }
-  // Last use of the frame: drop it so a retained session stops pinning the store.
+  // Last use of the frame — a session 'error' is always emitted before the
+  // nextTick that lands here — so drop it: a retained session must not pin
+  // the store.
   self[bunHTTP2AsyncContextFrame] = undefined;
 }
 function emitErrorNT(self: any, error: any, destroy: boolean) {

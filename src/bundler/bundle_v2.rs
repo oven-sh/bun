@@ -2301,9 +2301,10 @@ pub mod bv2_impl {
                 }
             }
 
+            let disallow_external = self.transpiler.options.disallow_external
+                && import_record.importer_source_index != Index::RUNTIME.get();
             if target.is_bun() {
                 let rewrite_jest_for_tests = self.transpiler.options.rewrite_jest_for_tests;
-                let disallow_external = self.transpiler.options.disallow_external;
                 let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                     [import_record.importer_source_index as usize]
                     .as_mut_slice()[import_record.import_record_index as usize];
@@ -2483,7 +2484,7 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
-                if self.transpiler.options.disallow_external && !import_record.kind.is_from_css() {
+                if disallow_external && !import_record.kind.is_from_css() {
                     let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
                         [import_record.importer_source_index as usize]
                         .as_mut_slice()[import_record.import_record_index as usize];
@@ -4709,6 +4710,7 @@ pub mod bv2_impl {
                     if result.external
                         && this.transpiler.options.disallow_external
                         && resolve.import_record.kind != ImportKind::EntryPointBuild
+                        && resolve.import_record.importer_source_index != Index::RUNTIME.get()
                     {
                         let record: &mut ImportRecord =
                             &mut this.graph.ast.items_import_records_mut()

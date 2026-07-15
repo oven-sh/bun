@@ -1600,11 +1600,34 @@ describe("Bun.build external: false", () => {
           },
         ],
       });
-      expect(result.success).toBe(false);
       const messages = result.logs.map(m => String((m as any).message ?? m));
-      expect(messages.join("\n")).toContain("\"node:fs\" because 'external' is set to false");
+      expect({ success: result.success, messages }).toEqual({
+        success: false,
+        messages: [expect.stringContaining("\"node:fs\" because 'external' is set to false")],
+      });
     },
   );
+
+  test("succeeds with no builtin imports and a broad noop plugin (target node)", async () => {
+    using dir = tempDir("external-false-noop-node", {
+      "entry.js": 'import { foo } from "./foo.js"; console.log(foo);',
+      "foo.js": "export const foo = 1;",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "node",
+      external: false,
+      plugins: [
+        {
+          name: "noop",
+          setup(build) {
+            build.onResolve({ filter: /.*/ }, () => undefined);
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
 
   test("plugin onResolve returning { external: true } is rejected under external: false", async () => {
     using dir = tempDir("external-false-plugin-external", {

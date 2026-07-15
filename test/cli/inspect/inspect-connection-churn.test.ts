@@ -29,14 +29,18 @@ test("rapid inspector connect/close does not unref the debuggee's event loop", a
   let inspectorUrl: URL | undefined;
   for await (const chunk of proc.stderr) {
     stderr += Buffer.from(chunk).toString();
-    for (const line of stderr.split("\n")) {
+    const lines = stderr.split("\n");
+    // Leave the unterminated tail for the next chunk so a URL split across
+    // reads is not parsed as a truncated endpoint.
+    stderr = lines.pop() ?? "";
+    for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.startsWith("ws://")) {
         inspectorUrl = new URL(trimmed);
         break;
       }
     }
-    if (inspectorUrl || stderr.includes("error")) break;
+    if (inspectorUrl || lines.some(l => l.includes("error"))) break;
   }
   if (!inspectorUrl) throw new Error("inspector URL not found in stderr:\n" + stderr);
 
@@ -72,12 +76,23 @@ test("rapid inspector connect/close does not unref the debuggee's event loop", a
 
   // Churn: rapid connect/close on the debugger thread while the debuggee's
   // context thread is busy. The debugger-thread WS server stays responsive.
+  let opened = 0;
   for (let i = 0; i < 40; i++) {
     const ws = new WebSocket(inspectorUrl);
-    await new Promise<void>(resolve => {
-      ws.addEventListener("open", () => ws.close());
-      ws.addEventListener("close", () => resolve());
-      ws.addEventListener("error", () => resolve());
+    await new Promise<void>((resolve, reject) => {
+      let didOpen = false;
+      ws.addEventListener("open", () => {
+        didOpen = true;
+        opened++;
+        ws.close();
+      });
+      ws.addEventListener("close", event => {
+        if (didOpen) resolve();
+        else reject(new Error("inspector WebSocket closed before opening", { cause: event }));
+      });
+      ws.addEventListener("error", event => {
+        reject(new Error("inspector WebSocket error", { cause: event }));
+      });
     });
   }
 
@@ -89,7 +104,8 @@ test("rapid inspector connect/close does not unref the debuggee's event loop", a
     proc.exited.then(code => `exited code=${code} signal=${proc.signalCode}` as const),
   ]);
 
-  expect({ outcome, ticksSeen: ticksSeen >= target ? `>=${target}` : ticksSeen }).toEqual({
+  expect({ opened, outcome, ticksSeen: ticksSeen >= target ? `>=${target}` : ticksSeen }).toEqual({
+    opened: 40,
     outcome: "alive",
     ticksSeen: `>=${target}`,
   });

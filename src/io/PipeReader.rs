@@ -456,12 +456,15 @@ impl PosixBufferedReader {
             self.handle = PollOrFd::Fd(fd);
         }
         if let sys::Result::Err(err) = self.try_register_poll() {
-            // On Linux, epoll_ctl(EPOLL_CTL_ADD) returns EPERM for fds whose
-            // file_operations lack .poll (e.g. /dev/null, /dev/zero). Such fds
-            // are always-readable, so fall back to the non-pollable path
-            // instead of tearing the reader down. Mirrors IOWriter::__start.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if err.get_errno() == sys::E::EPERM {
+            // epoll_ctl/kevent reject fds whose driver has no poll support
+            // (e.g. /dev/null, /dev/zero): EPERM from epoll on Linux, EINVAL
+            // from kqueue on macOS. Such fds are always-readable, so fall
+            // back to the non-pollable path instead of tearing the reader
+            // down. Mirrors IOWriter::__start.
+            let fd_not_pollable = matches!(err.get_errno(), sys::E::EINVAL)
+                || (cfg!(any(target_os = "linux", target_os = "android"))
+                    && err.get_errno() == sys::E::EPERM);
+            if fd_not_pollable {
                 self.flags
                     .remove(PosixFlags::POLLABLE | PosixFlags::NONBLOCKING);
                 if matches!(self.handle, PollOrFd::Poll(_)) {

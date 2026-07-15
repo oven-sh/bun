@@ -114,6 +114,34 @@ impl JsonCache {
     }
 }
 
+/// The directory an "include" pattern covers: the literal prefix before the
+/// first wildcard, truncated to the last separator. A wildcard-free pattern
+/// naming a file maps to its dirname; otherwise it is the directory itself.
+pub(crate) fn include_pattern_dir(pattern: &[u8]) -> &[u8] {
+    match pattern.iter().position(|&c| c == b'*' || c == b'?') {
+        Some(glob) => {
+            let prefix = &pattern[..glob];
+            match prefix.iter().rposition(|&c| bun_paths::is_sep_any(c)) {
+                Some(sep) => &prefix[..sep],
+                None => b"",
+            }
+        }
+        None => {
+            const SOURCE_EXTENSIONS: &[&[u8]] = &[
+                b".ts", b".tsx", b".mts", b".cts", b".js", b".jsx", b".mjs", b".cjs", b".json",
+            ];
+            if SOURCE_EXTENSIONS
+                .iter()
+                .any(|ext| strings::ends_with(pattern, ext))
+            {
+                bun_paths::dirname(pattern).unwrap_or(b"")
+            } else {
+                pattern
+            }
+        }
+    }
+}
+
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
@@ -145,6 +173,25 @@ pub struct TSConfigJSON {
     pub base_url_for_paths: Box<[u8]>,
 
     pub extends: Box<[u8]>,
+
+    /// Paths from "references[].path", made absolute by the resolver.
+    /// Non-empty for solution-style configs; consumed by the dir-info walk,
+    /// which loads them into `reference_configs`.
+    pub references: Box<[Box<[u8]>]>,
+
+    /// Parsed configs for `references`, interned like the owning config.
+    /// `for_source_dir` picks the one covering a given source directory.
+    pub reference_configs: Box<[&'static TSConfigJSON]>,
+
+    /// Absolute directories derived from the "files" entries; `None` when the
+    /// key is absent. Used only to select a referenced project for a source
+    /// directory (see `covers_dir`).
+    pub files_dirs: Option<Box<[Box<[u8]>]>>,
+
+    /// Absolute directories derived from the "include" patterns (the literal
+    /// prefix before any wildcard); `None` when the key is absent.
+    pub include_dirs: Option<Box<[Box<[u8]>]>>,
+
     /// The verbatim values of "compilerOptions.paths". The keys are patterns to
     /// match and the values are arrays of fallback paths to search. Each key and
     /// each fallback path can optionally have a single "*" wildcard character.
@@ -172,6 +219,10 @@ impl Default for TSConfigJSON {
             base_url: Box::default(),
             base_url_for_paths: Box::default(),
             extends: Box::default(),
+            references: Box::default(),
+            reference_configs: Box::default(),
+            files_dirs: None,
+            include_dirs: None,
             paths: PathsMap::default(),
             jsx: options::jsx::Pragma::default(),
             jsx_flags: JsxFieldSet::empty(),
@@ -224,6 +275,40 @@ impl TSConfigJSON {
 
     pub fn has_base_url(&self) -> bool {
         !self.base_url.is_empty()
+    }
+
+    /// Whether files in `source_dir` belong to this project, judged by the
+    /// absolute directories derived from "files"/"include" (see `files_dirs`).
+    /// When neither key is present, TypeScript defaults "include" to `**/*`,
+    /// so the config covers its whole directory subtree.
+    pub fn covers_dir(&self, source_dir: &[u8]) -> bool {
+        use bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
+        if self.files_dirs.is_none() && self.include_dirs.is_none() {
+            let config_dir = bun_paths::dirname(&self.abs_path).unwrap_or(b"");
+            return !config_dir.is_empty()
+                && is_parent_or_equal(config_dir, source_dir) != ParentEqual::Unrelated;
+        }
+        self.files_dirs
+            .iter()
+            .flatten()
+            .chain(self.include_dirs.iter().flatten())
+            .any(|dir| {
+                !dir.is_empty() && is_parent_or_equal(dir, source_dir) != ParentEqual::Unrelated
+            })
+    }
+
+    /// The effective config for files in `source_dir`. For a solution-style
+    /// config (loaded "references") that doesn't itself cover the directory,
+    /// the first referenced project covering it wins, matching how tsc picks
+    /// the project for a file. Otherwise `self`.
+    pub fn for_source_dir<'a>(&'a self, source_dir: &[u8]) -> &'a TSConfigJSON {
+        if self.reference_configs.is_empty() || self.covers_dir(source_dir) {
+            return self;
+        }
+        self.reference_configs
+            .iter()
+            .find(|r| r.covers_dir(source_dir))
+            .map_or(self, |r| r)
     }
 
     pub fn merge_jsx(&self, current: options::jsx::Pragma) -> options::jsx::Pragma {
@@ -346,6 +431,9 @@ impl TSConfigJSON {
         // `jsxImportSource`) is preserved.
         let mut extends_value: Option<&bun_ast::E::JsonValue> = None;
         let mut compiler_opts: Option<&bun_ast::E::JsonValue> = None;
+        let mut references_value: Option<&bun_ast::E::JsonValue> = None;
+        let mut files_value: Option<&bun_ast::E::JsonValue> = None;
+        let mut include_value: Option<&bun_ast::E::JsonValue> = None;
         if let bun_ast::ExprData::EObjectJSON(obj) = &json.data {
             for property in obj.get().properties() {
                 match property.key.slice() {
@@ -353,6 +441,11 @@ impl TSConfigJSON {
                     b"compilerOptions" if compiler_opts.is_none() => {
                         compiler_opts = Some(&property.value)
                     }
+                    b"references" if references_value.is_none() => {
+                        references_value = Some(&property.value)
+                    }
+                    b"files" if files_value.is_none() => files_value = Some(&property.value),
+                    b"include" if include_value.is_none() => include_value = Some(&property.value),
                     _ => {}
                 }
             }
@@ -363,6 +456,68 @@ impl TSConfigJSON {
                 if let Some(str) = extends_value.as_str() {
                     result.extends = Box::from(str);
                 }
+            }
+        }
+
+        // Parse "references" (solution-style configs). Like "extends", skipped
+        // inside node_modules.
+        if let Some(references_value) = references_value {
+            if !source.path.is_node_module() {
+                if let Some(array) = references_value.as_array() {
+                    let mut refs: Vec<Box<[u8]>> = Vec::with_capacity(array.items().len());
+                    for item in array.items() {
+                        if let Some(obj) = item.as_object() {
+                            if let Some(path) = obj.get(b"path").and_then(|v| v.as_str()) {
+                                if !path.is_empty() {
+                                    let path = match Self::str_replacing_templates(
+                                        Box::from(path),
+                                        source,
+                                    ) {
+                                        Ok(v) => v,
+                                        Err(_) => return Ok(None),
+                                    };
+                                    refs.push(path);
+                                }
+                            }
+                        }
+                    }
+                    result.references = refs.into_boxed_slice();
+                }
+            }
+        }
+
+        // Parse "files" and "include" into the directories they cover, used to
+        // pick the referenced project for a source directory. `Some` records
+        // that the key was present even when it covers nothing ("files": []).
+        if let Some(files_value) = files_value {
+            if let Some(array) = files_value.as_array() {
+                let mut dirs: Vec<Box<[u8]>> = Vec::with_capacity(array.items().len());
+                for item in array.items() {
+                    if let Some(str) = item.as_str() {
+                        let str = match Self::str_replacing_templates(Box::from(str), source) {
+                            Ok(v) => v,
+                            Err(_) => return Ok(None),
+                        };
+                        dirs.push(Box::from(bun_paths::dirname(&str).unwrap_or(b"")));
+                    }
+                }
+                result.files_dirs = Some(dirs.into_boxed_slice());
+            }
+        }
+
+        if let Some(include_value) = include_value {
+            if let Some(array) = include_value.as_array() {
+                let mut dirs: Vec<Box<[u8]>> = Vec::with_capacity(array.items().len());
+                for item in array.items() {
+                    if let Some(str) = item.as_str() {
+                        let str = match Self::str_replacing_templates(Box::from(str), source) {
+                            Ok(v) => v,
+                            Err(_) => return Ok(None),
+                        };
+                        dirs.push(Box::from(include_pattern_dir(&str)));
+                    }
+                }
+                result.include_dirs = Some(dirs.into_boxed_slice());
             }
         }
         let mut has_base_url = false;

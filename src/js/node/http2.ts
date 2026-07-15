@@ -5575,6 +5575,11 @@ function connectionListenerHTTP1(server, socket, options) {
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
+      // Publish before socket.end() so subscribers observe the socket before
+      // its writable side is ended, like resOnFinish in node:_http_server.
+      if (onHttp1ResponseFinishChannel.hasSubscribers) {
+        onHttp1ResponseFinishChannel.publish({ request, response: res, socket, server });
+      }
       if (!shouldKeepAlive && !socket.destroyed) {
         socket.end();
       }
@@ -5582,13 +5587,6 @@ function connectionListenerHTTP1(server, socket, options) {
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
 
-    // Attached unconditionally to match Node's resOnFinish; the hasSubscribers
-    // check happens inside.
-    res.on("finish", () => {
-      if (onHttp1ResponseFinishChannel.hasSubscribers) {
-        onHttp1ResponseFinishChannel.publish({ request, response: res, socket, server });
-      }
-    });
     if (onHttp1RequestStartChannel.hasSubscribers) {
       onHttp1RequestStartChannel.publish({ request, response: res, socket, server });
     }

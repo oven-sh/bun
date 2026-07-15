@@ -618,8 +618,7 @@ describe("http server channels (#29586)", () => {
 
   // Node's resOnFinish publishes before it ends the socket, so on the
   // connection-close path a subscriber still sees a not-yet-ended socket.
-  // The finish listener is registered before endSocketOnFinishIfNeeded to
-  // preserve that ordering.
+  // resOnFinish publishes to the channel before calling socket.end().
   test("response.finish publishes before the socket is ended (Connection: close)", async () => {
     const finish = channel("http.server.response.finish");
     let writableEndedAtPublish: boolean | undefined;
@@ -650,15 +649,21 @@ describe("http server channels (#29586)", () => {
 
   // Node routes http2 allowHTTP1 through the full http1 connectionListener, so
   // all three channels fire on the HTTP/1 fallback. Bun's fallback lives in
-  // http2.ts and must publish the same three.
+  // http2.ts and must publish the same three. Connection: close also checks
+  // that the finish publish observes the socket before it is ended, like
+  // resOnFinish in node:_http_server.
   test("all three channels fire on the http2 allowHTTP1 fallback", async () => {
     const created = channel("http.server.response.created");
     const requestStart = channel("http.server.request.start");
     const finish = channel("http.server.response.finish");
     const seen: string[] = [];
+    let writableEndedAtPublish: boolean | undefined;
     const onCreated = () => seen.push("created");
     const onStart = () => seen.push("start");
-    const onFinish = () => seen.push("finish");
+    const onFinish = (msg: any) => {
+      seen.push("finish");
+      writableEndedAtPublish = msg.socket.writableEnded;
+    };
     created.subscribe(onCreated);
     requestStart.subscribe(onStart);
     finish.subscribe(onFinish);
@@ -671,7 +676,13 @@ describe("http server channels (#29586)", () => {
       // node:https client negotiates http/1.1 (no h2 ALPN) → HTTP/1 fallback.
       await new Promise<void>((resolve, reject) => {
         const req = https.request(
-          { port, host: "127.0.0.1", rejectUnauthorized: false, ALPNProtocols: ["http/1.1"] },
+          {
+            port,
+            host: "127.0.0.1",
+            rejectUnauthorized: false,
+            ALPNProtocols: ["http/1.1"],
+            headers: { connection: "close" },
+          },
           res => {
             res.resume();
             res.on("end", resolve);
@@ -683,6 +694,7 @@ describe("http server channels (#29586)", () => {
       });
       await drain();
       expect(seen.sort()).toEqual(["created", "finish", "start"]);
+      expect(writableEndedAtPublish).toBe(false);
     } finally {
       created.unsubscribe(onCreated);
       requestStart.unsubscribe(onStart);

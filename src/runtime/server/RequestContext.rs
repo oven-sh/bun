@@ -1185,7 +1185,11 @@ where
     pub fn end(&mut self, data: &[u8], close_connection: bool) {
         ctx_log!("end");
         if let Some(resp) = self.resp {
-            self.detach_response();
+            if self.detach_response_after_complete(close_connection) {
+                // SAFETY: FFI handle
+                resp.end(data, close_connection);
+                return;
+            }
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end(data, close_connection);
@@ -1198,13 +1202,18 @@ where
     pub fn end_stream(&mut self, close_connection: bool) {
         ctx_log!("endStream");
         if let Some(resp) = self.resp {
-            self.detach_response();
-            self.end_request_streaming_and_drain();
+            let parked = self.detach_response_after_complete(close_connection);
+            if !parked {
+                self.end_request_streaming_and_drain();
+            }
             // This will send a terminating 0\r\n\r\n chunk to the client
             // We only want to do that if they're still expecting a body
             // We cannot call this function if the Content-Length header was previously set
             if resp.state().is_response_pending() {
                 resp.end_stream(close_connection);
+            }
+            if parked {
+                return;
             }
             // No early returns above; explicit deref instead of a scopeguard
             // that would alias `&mut self` through a captured raw pointer.
@@ -1231,6 +1240,21 @@ where
     pub fn end_already_responded_stream(&mut self) {
         ctx_log!("endAlreadyRespondedStream");
         debug_assert!(!HTTP3);
+        if self.resp.is_none() {
+            return;
+        }
+        // `has_body_abort_handler` means uws kept `onAborted` armed across
+        // `markDone()`, which proves the socket is still alive (`on_abort`
+        // would have nulled `resp`). Both branches below may touch `resp`.
+        if self.park_for_request_body_drain(false) {
+            return;
+        }
+        if self.flags.has_body_abort_handler() {
+            self.detach_response();
+            self.end_request_streaming_and_drain();
+            self.deref();
+            return;
+        }
         if self.resp.take().is_some() {
             self.flags.set_is_waiting_for_request_body(false);
             self.flags.set_has_abort_handler(false);
@@ -1246,7 +1270,11 @@ where
     pub fn end_without_body(&mut self, close_connection: bool) {
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp {
-            self.detach_response();
+            if self.detach_response_after_complete(close_connection) {
+                // SAFETY: FFI handle
+                resp.end_without_body(close_connection);
+                return;
+            }
             self.end_request_streaming_and_drain();
             // SAFETY: FFI handle
             resp.end_without_body(close_connection);
@@ -1675,9 +1703,12 @@ where
         let write_offset: usize = write_offset_ as usize;
 
         let bytes = &bytes_[bytes_.len().min(write_offset)..];
+        let close_connection = self.should_close_connection();
         // SAFETY: FFI handle
-        if resp.try_end(bytes, bytes_.len(), self.should_close_connection()) {
-            self.detach_response();
+        if resp.try_end(bytes, bytes_.len(), close_connection) {
+            if self.detach_response_after_complete(close_connection) {
+                return true;
+            }
             self.end_request_streaming_and_drain();
             self.deref();
             true
@@ -1712,7 +1743,9 @@ where
         let done = resp.try_end(bytes, total_len, close_connection);
         if done {
             self.response_buf_owned.clear();
-            self.detach_response();
+            if self.detach_response_after_complete(close_connection) {
+                return true;
+            }
             self.end_request_streaming_and_drain();
             self.deref();
         } else {
@@ -1951,6 +1984,9 @@ where
         self.flags.set_has_abort_handler(true);
         self.flags.set_has_marked_pending(true);
 
+        // Sendfile never drains a request body: hand uws back the right to
+        // disarm the handlers FileResponseStream is about to take over.
+        self.stop_keeping_request_body();
         if self.flags.is_waiting_for_request_body() {
             self.flags.set_is_waiting_for_request_body(false);
             resp.clear_on_data();
@@ -2388,6 +2424,136 @@ where
         }
     }
 
+    /// A `.text()`/`.json()`/… promise or a `req.body` stream is waiting on
+    /// request bytes. `Body::Value::Locked` on its own is not enough: every
+    /// request carrying a body starts out `Locked`, even when nobody reads it.
+    fn request_body_has_pending_consumer(&mut self) -> bool {
+        if self.request_body_readable_stream_ref.has() {
+            return true;
+        }
+        match self.request_body_mut() {
+            Some(Body::Value::Locked(locked)) => locked.promise.is_some() || locked.readable.has(),
+            _ => false,
+        }
+    }
+
+    /// A consumer asked for the request body while it is still arriving. Tell
+    /// uws to keep feeding us once the response is finished (node.js keeps
+    /// delivering request bytes past `res.end()`) and arm `onAborted` so the
+    /// consumer is rejected when the peer disappears instead of waiting
+    /// forever.
+    ///
+    /// Invariant: `has_body_abort_handler()` is set exactly while uws's
+    /// `keepRequestBodyOnDone` is, and implies `onAborted` is armed — which in
+    /// turn means `resp` cannot be a freed socket, since `on_abort` nulls it.
+    /// [`stop_keeping_request_body`] and [`detach_response`] undo both.
+    fn mark_request_body_consumer(&mut self) {
+        if HTTP3 || self.flags.has_body_abort_handler() || !self.flags.is_waiting_for_request_body()
+        {
+            return;
+        }
+        let Some(resp) = self.resp else { return };
+        self.flags.set_has_body_abort_handler(true);
+        // SAFETY: FFI handle valid while resp is Some
+        resp.set_keep_request_body_on_done(true);
+        if !self.flags.has_abort_handler() {
+            resp.on_aborted(|this, resp| Self::on_abort(this, resp), self);
+        }
+    }
+
+    /// Undo [`mark_request_body_consumer`] while `resp` is still live: the body
+    /// is complete (or will never be read), so uws may disarm the handlers on
+    /// the next `markDone()` as it normally would.
+    fn stop_keeping_request_body(&mut self) {
+        if !self.flags.has_body_abort_handler() {
+            return;
+        }
+        self.flags.set_has_body_abort_handler(false);
+        let Some(resp) = self.resp else { return };
+        // SAFETY: FFI handle
+        resp.set_keep_request_body_on_done(false);
+        if !self.flags.has_abort_handler() {
+            // It was armed only to report the peer going away mid-body.
+            resp.clear_aborted();
+        }
+    }
+
+    /// The response finished cleanly while a consumer is still waiting on
+    /// request bytes that have not arrived. Stay alive (and keep uws's body
+    /// handler armed) until the body completes or the peer goes away, instead
+    /// of rejecting a body the client is still happily sending.
+    ///
+    /// Returns `true` when parked: the caller must not tear the request body
+    /// down or `deref()` — [`on_buffered_body_chunk`] and [`on_abort`] take
+    /// over that ref.
+    fn park_for_request_body_drain(&mut self, close_connection: bool) -> bool {
+        if HTTP3
+            || close_connection
+            || self.flags.aborted()
+            || self.flags.is_draining_request_body()
+            || !self.flags.is_waiting_for_request_body()
+            || self.server.is_none()
+            // SAFETY: BACKREF, just checked Some
+            || self.server().terminated()
+        {
+            return false;
+        }
+        // `mark_request_body_consumer` set this when the consumer appeared,
+        // which is what keeps uws's `inStream`/`onAborted` alive across the
+        // response's `markDone()`. Without it there is nothing to park on —
+        // and no proof that `resp` is still a live socket, so this has to come
+        // before anything dereferences it (`end_already_responded_stream`
+        // reaches here with a `resp` that may already be freed).
+        if !self.flags.has_body_abort_handler() || !self.request_body_has_pending_consumer() {
+            return false;
+        }
+        // Nothing is left to read the body on once the socket goes away.
+        if self.resp.is_none() || self.should_close_connection() {
+            return false;
+        }
+        ctx_log!("parkForRequestBodyDrain");
+        self.flags.set_is_draining_request_body(true);
+        true
+    }
+
+    /// Response-completion teardown. Parks instead when the request body is
+    /// still owed to a consumer; `true` means the caller must skip its
+    /// `end_request_streaming*()` and `deref()`.
+    fn detach_response_after_complete(&mut self, close_connection: bool) -> bool {
+        if self.park_for_request_body_drain(close_connection) {
+            return true;
+        }
+        self.detach_response();
+        false
+    }
+
+    /// The parked request body finished. Release the base ref the completion
+    /// path handed us. `self` may be freed: do not touch it afterwards.
+    fn finish_request_body_drain(&mut self) {
+        debug_assert!(self.flags.is_draining_request_body());
+        if let Some(resp) = self.resp {
+            // uws disarms the idle timeout when it hands over the body's last
+            // chunk, expecting the response on its way out to re-arm it. Ours
+            // already went out, so nothing else will, and the keep-alive socket
+            // would never be reaped.
+            // SAFETY: FFI handle; `is_draining_request_body` proves it is live.
+            resp.reset_timeout();
+        }
+        self.detach_response();
+        self.deref();
+    }
+
+    /// The last request-body chunk was handed to its consumer. `self` may be
+    /// freed when the context was only alive to finish that delivery: do not
+    /// touch it afterwards.
+    fn finish_request_body_stage(&mut self) {
+        if self.flags.is_draining_request_body() {
+            self.finish_request_body_drain();
+        } else {
+            self.stop_keeping_request_body();
+        }
+    }
+
     fn end_request_streaming(&mut self) -> JsResult<bool> {
         debug_assert!(self.server.is_some());
 
@@ -2415,11 +2581,22 @@ where
         self.request_body_buf = Vec::new();
 
         if let Some(resp) = self.resp.take() {
-            if self.flags.is_waiting_for_request_body() {
+            // `mark_request_body_consumer` asked uws to keep `inStream` and
+            // `onAborted` armed past `markDone()`. Either flag proves `resp` is
+            // a live socket (on_abort nulls it), so disarm both here rather
+            // than leave them pointing at a context on its way to the pool.
+            let body_handlers_kept =
+                self.flags.has_body_abort_handler() || self.flags.is_draining_request_body();
+            if body_handlers_kept {
+                self.flags.set_has_body_abort_handler(false);
+                self.flags.set_is_draining_request_body(false);
+                resp.set_keep_request_body_on_done(false);
+            }
+            if self.flags.is_waiting_for_request_body() || body_handlers_kept {
                 self.flags.set_is_waiting_for_request_body(false);
                 resp.clear_on_data();
             }
-            if self.flags.has_abort_handler() {
+            if self.flags.has_abort_handler() || body_handlers_kept {
                 resp.clear_aborted();
                 self.flags.set_has_abort_handler(false);
             }
@@ -2432,8 +2609,11 @@ where
 
     pub fn is_aborted_or_ended(&self) -> bool {
         // resp == null or aborted or server.stop(true)
+        // A draining context still holds `resp` (uws keeps feeding it the
+        // request body), but the response itself is finished and unwritable.
         self.resp.is_none()
             || self.flags.aborted()
+            || self.flags.is_draining_request_body()
             || self.server.is_none()
             // SAFETY: BACKREF, just checked Some
             || self.server().terminated()
@@ -3836,9 +4016,11 @@ where
         // outlive the `try_end`/`on_writable` calls below; detaching the
         // borrow lets `&mut *self` reborrow disjoint fields without aliasing.
         let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.slice()) };
+        let mut close_connection = false;
         if let Some(resp) = self.resp {
+            close_connection = self.should_close_connection();
             // SAFETY: FFI handle
-            if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {
+            if !resp.try_end(bytes, bytes.len(), close_connection) {
                 self.flags.set_has_marked_pending(true);
                 // SAFETY: FFI handle
                 resp.on_writable(
@@ -3848,7 +4030,9 @@ where
                 return;
             }
         }
-        self.detach_response();
+        if self.detach_response_after_complete(close_connection) {
+            return;
+        }
         self.end_request_streaming_and_drain();
         self.deref();
     }
@@ -3916,7 +4100,10 @@ where
         debug_assert!(this.resp.is_some());
 
         this.flags.set_is_waiting_for_request_body(!last);
-        if this.is_aborted_or_ended() || this.flags.has_marked_complete() {
+        // A draining context reports ended (its response is finished and
+        // unwritable) but these bytes are exactly what it is still alive for.
+        let draining = this.flags.is_draining_request_body();
+        if (this.is_aborted_or_ended() && !draining) || this.flags.has_marked_complete() {
             return;
         }
         if !last && chunk.is_empty() {
@@ -3924,6 +4111,11 @@ where
             // We have to ignore those chunks unless it's the last one
             return;
         }
+        // Handing the chunk to its consumer runs user JS, which drains
+        // microtasks and can therefore observe a socket close (`on_abort`) and
+        // release the last ref before the bookkeeping below runs. Borrow one.
+        this.ref_();
+        let _ref = RequestContextRef(std::ptr::from_mut::<Self>(this));
         // SAFETY: BACKREF
         let server = this.server();
         let vm = server.vm();
@@ -3960,6 +4152,12 @@ where
                         err.to_stream_error(global_this),
                     ));
                     err.reset();
+                }
+
+                if draining {
+                    // The response already went out; there is no 413 to send.
+                    this.finish_request_body_stage();
+                    return;
                 }
 
                 // Route through the normal end path so this.resp is detached
@@ -3999,7 +4197,10 @@ where
                 this.request_body_take_unref();
 
                 readable.value.ensure_still_alive();
+                // `finish_request_body_stage` has to run on every `last` path: a
+                // parked context is only alive to deliver this chunk.
                 let readable_stream::Source::Bytes(bytes_ptr) = readable.ptr else {
+                    this.finish_request_body_stage();
                     return;
                 };
                 // BACKREF: `Source::Bytes` payload is the live non-null `m_ctx`
@@ -4009,6 +4210,7 @@ where
                 );
                 // TODO: properly propagate exception upwards
                 let _ = bytes.on_data(WebCore::streams::Result::TemporaryAndDone(borrowed));
+                this.finish_request_body_stage();
             }
 
             return;
@@ -4040,6 +4242,12 @@ where
                     )),
                     global_this,
                 );
+
+                if draining {
+                    // The response already went out; there is no 413 to send.
+                    this.finish_request_body_stage();
+                    return;
+                }
 
                 // Route through the normal end path so this.resp is
                 // detached and the base ref released. Writing directly on
@@ -4086,6 +4294,7 @@ where
 
                     let _ = Body::Value::resolve(&mut old, body, global_this, None); // TODO: properly propagate exception upwards
                 }
+                this.finish_request_body_stage();
                 return;
             }
 
@@ -4101,9 +4310,12 @@ where
 
     pub fn on_start_streaming_request_body(&mut self) -> WebCore::DrainResult {
         ctx_log!("onStartStreamingRequestBody");
-        if self.is_aborted_or_ended() {
+        // A draining context reports ended (the response is unwritable) but the
+        // request body is exactly what it is still alive for.
+        if self.is_aborted_or_ended() && !self.flags.is_draining_request_body() {
             return WebCore::DrainResult::Aborted;
         }
+        self.mark_request_body_consumer();
 
         // This means we have received part of the body but not the whole thing
         if !self.request_body_buf.is_empty() {
@@ -4149,7 +4361,9 @@ where
                     let _ = Body::Value::resolve(&mut old, &mut new_body, global_this, None); // TODO: properly propagate exception upwards
                     *body = new_body;
                 }
+                return;
             }
+            self.mark_request_body_consumer();
         }
     }
 
@@ -4166,6 +4380,7 @@ where
         debug_assert!(!this.request_body_readable_stream_ref.has());
         this.request_body_readable_stream_ref =
             readable_stream::Strong::init(readable, global_this);
+        this.mark_request_body_consumer();
     }
 
     /// # Safety
@@ -4436,7 +4651,7 @@ pub struct SendfileContext {
 // `is_web_browser_navigation` / `has_finalized` accessors on the const params.
 bitflags::bitflags! {
     #[derive(Default, Clone, Copy)]
-    pub struct FlagsBits: u16 {
+    pub struct FlagsBits: u32 {
         const HAS_MARKED_COMPLETE         = 1 << 0;
         const HAS_MARKED_PENDING          = 1 << 1;
         const HAS_ABORT_HANDLER           = 1 << 2;
@@ -4457,6 +4672,13 @@ bitflags::bitflags! {
         const ABORTED                     = 1 << 13;
         const HAS_FINALIZED               = 1 << 14;
         const IS_ERROR_PROMISE_PENDING    = 1 << 15;
+        /// uws `onAborted` armed purely so a pending request-body read learns
+        /// when the peer disappears. Tracked apart from `HAS_ABORT_HANDLER`,
+        /// which additionally means "the request went async".
+        const HAS_BODY_ABORT_HANDLER      = 1 << 16;
+        /// The response is finished, but the request body is still arriving
+        /// and a consumer is waiting for it, so the context stays alive.
+        const IS_DRAINING_REQUEST_BODY    = 1 << 17;
     }
 }
 
@@ -4535,6 +4757,16 @@ impl<const DEBUG_MODE: bool> Flags<DEBUG_MODE> {
         is_error_promise_pending,
         set_is_error_promise_pending,
         IS_ERROR_PROMISE_PENDING
+    );
+    flag_accessor!(
+        has_body_abort_handler,
+        set_has_body_abort_handler,
+        HAS_BODY_ABORT_HANDLER
+    );
+    flag_accessor!(
+        is_draining_request_body,
+        set_is_draining_request_body,
+        IS_DRAINING_REQUEST_BODY
     );
 
     #[inline]

@@ -300,6 +300,12 @@ private:
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
+            /* A just-routed request is in-flight, never idle. The onData
+             * prologue already cleared isIdle, but a prior request's teardown
+             * earlier in this same segment (markDone(), or a draining request
+             * body finishing) may have set it true again, so closeIdleConnections()
+             * must not see this new request as idle. */
+            httpResponseData->isIdle = false;
 
             /* Mark this response as connectionClose if ancient or connection: close */
             if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
@@ -314,6 +320,10 @@ private:
              * framing. */
             httpResponseData->noBodyStatus = false;
             httpResponseData->closeDelimited = false;
+            /* Likewise per-request: a stale true would keep the previous
+             * request's inStream/onAborted armed past this response's
+             * markDone(), pointing at a freed request context. */
+            httpResponseData->keepRequestBodyOnDone = false;
 
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;
@@ -403,6 +413,9 @@ private:
                  * requests on the same socket won't trigger any previously registered behavior */
                 if (fin) {
                     httpResponseData->inStream = nullptr;
+                    /* The body is complete: a later markDone() has nothing left to
+                     * keep armed, so let it disarm onAborted as it normally would. */
+                    httpResponseData->keepRequestBodyOnDone = false;
                 }
             }
             return user;

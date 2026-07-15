@@ -475,6 +475,13 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_on_data(Self::ssl_flag(), self.as_raw(), None, core::ptr::null_mut())
     }
 
+    /// Keep `on_data`/`on_aborted` armed once the response is finished, so a
+    /// consumer still reading the request body receives the remaining bytes.
+    /// The caller owns disarming them when the body completes.
+    pub fn set_keep_request_body_on_done(&mut self, value: bool) {
+        c::uws_res_set_keep_request_body_on_done(Self::ssl_flag(), self.as_raw(), value)
+    }
+
     pub fn on_data<U, H>(&mut self, _handler: H, optional_data: *mut U)
     where
         H: Fn(*mut U, &mut Response<SSL>, &[u8], bool) + Copy + 'static,
@@ -895,6 +902,24 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.clear_on_data())
     }
 
+    /// Keep `on_data`/`on_aborted` armed once the response is finished, so a
+    /// consumer still reading the request body receives the remaining bytes.
+    /// The caller owns disarming them when the body completes.
+    ///
+    /// HTTP/3 has no equivalent: the QUIC stream carries the body and is torn
+    /// down with the response, so callers gate this on `!HTTP3`.
+    pub fn set_keep_request_body_on_done(self, value: bool) {
+        match self {
+            AnyResponse::SSL(ptr) => {
+                TLSResponse::as_handle(ptr).set_keep_request_body_on_done(value)
+            }
+            AnyResponse::TCP(ptr) => {
+                TCPResponse::as_handle(ptr).set_keep_request_body_on_done(value)
+            }
+            AnyResponse::H3(_) => {}
+        }
+    }
+
     pub fn is_connect_request(self) -> bool {
         any_dispatch!(self, |r| r.is_connect_request())
     }
@@ -1151,6 +1176,11 @@ pub mod c {
                 unsafe extern "C" fn(*mut uws_res, *const u8, usize, bool, *mut c_void),
             >,
             optional_data: *mut c_void,
+        );
+        pub(crate) safe fn uws_res_set_keep_request_body_on_done(
+            ssl: i32,
+            res: &mut uws_res,
+            value: bool,
         );
         pub(crate) fn uws_res_upgrade(
             ssl: i32,

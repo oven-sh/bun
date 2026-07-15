@@ -1531,22 +1531,19 @@ describe("Bun.build external: false", () => {
     expect(out).not.toContain('from "path"');
   });
 
-  test.each(["bun", "node"] as const)(
-    "succeeds with no builtin imports (target %s)",
-    async target => {
-      using dir = tempDir("external-false-ok", {
-        "entry.js": 'import { foo } from "./foo.js"; console.log(foo);',
-        "foo.js": "export const foo = 1;",
-      });
-      const result = await Bun.build({
-        entrypoints: [join(String(dir), "entry.js")],
-        target,
-        external: false,
-      });
-      expect(result.success).toBe(true);
-      expect(await result.outputs[0].text()).not.toContain("node:module");
-    },
-  );
+  test.each(["bun", "node"] as const)("succeeds with no builtin imports (target %s)", async target => {
+    using dir = tempDir("external-false-ok", {
+      "entry.js": 'import { foo } from "./foo.js"; console.log(foo);',
+      "foo.js": "export const foo = 1;",
+    });
+    const result = await Bun.build({
+      entrypoints: [join(String(dir), "entry.js")],
+      target,
+      external: false,
+    });
+    expect(result.success).toBe(true);
+    expect(await result.outputs[0].text()).not.toContain("node:module");
+  });
 
   test.each(["bun", "node"] as const)(
     "still fails when a matching onResolve plugin returns undefined (target %s)",

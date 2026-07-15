@@ -841,8 +841,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     // only load preloads once.
     // SAFETY: per fn contract.
     if !unsafe { &*vm }.test_isolation_enabled {
-        // `Vec::clear` drops the `Box<[u8]>`
-        // payloads but keeps capacity.
+        // `Vec::clear` drops each entry (freeing its
+        // specifier) but keeps capacity.
         // SAFETY: per fn contract — `vm` is the live per-thread VM.
         unsafe { (*vm).preload.clear() };
     }

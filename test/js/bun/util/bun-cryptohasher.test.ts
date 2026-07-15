@@ -15,6 +15,35 @@ test("CryptoHasher update should throw when no parameter/null/undefined is passe
   // @ts-expect-error
   expect(() => new Bun.CryptoHasher("sha1").update(null)).toThrow();
 });
+describe("input buffer detached during output-encoding coercion", () => {
+  // The output-encoding argument is coerced after the input is parsed; a
+  // `toString` that detaches the input must not make the hash read the old
+  // (freed) backing memory. The detached input hashes as empty.
+  test("Bun.CryptoHasher.hash", () => {
+    const empty = Bun.CryptoHasher.hash("sha256", new Uint8Array(0), "hex");
+    const buf = new Uint8Array(1 << 20).fill(42);
+    const evil = new (class extends String {
+      toString() {
+        (buf.buffer as ArrayBuffer).transfer(16);
+        return "hex";
+      }
+    })("hex");
+    expect(Bun.CryptoHasher.hash("sha256", buf, evil as any)).toBe(empty);
+  });
+
+  test("Bun.SHA256.hash", () => {
+    const empty = Bun.SHA256.hash(new Uint8Array(0), "hex");
+    const buf = new Uint8Array(1 << 20).fill(42);
+    const evil = new (class extends String {
+      toString() {
+        (buf.buffer as ArrayBuffer).transfer(16);
+        return "hex";
+      }
+    })("hex");
+    expect(Bun.SHA256.hash(buf, evil as any)).toBe(empty);
+  });
+});
+
 test("CryptoHasher throws on non-latin1 algorithm names instead of crashing", () => {
   // @ts-expect-error
   expect(() => Bun.CryptoHasher.hash("🚀", "hello")).toThrow(/Unsupported algorithm/);

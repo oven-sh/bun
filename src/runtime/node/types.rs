@@ -151,6 +151,23 @@ impl BlobOrStringOrBuffer {
         Self::from_js_maybe_file(global, value, true)
     }
 
+    /// [`Self::from_js`] with the user-JS re-entry effect explicit and the
+    /// ArrayBuffer view deferred to [`ScopedBlobOrStringOrBuffer::materialize`].
+    /// Coercions (string/blob arms) still run here, in argument order.
+    pub fn from_js_scoped<'s>(
+        scope: &mut jsc::scope::Scope<'s>,
+        value: jsc::scope::Local<'s>,
+    ) -> JsResult<Option<ScopedBlobOrStringOrBuffer<'s>>> {
+        let raw = value.raw();
+        if raw.is_cell() && raw.js_type().is_array_buffer_like() {
+            return Ok(Some(ScopedBlobOrStringOrBuffer::Deferred {
+                value,
+                materialized: None,
+            }));
+        }
+        Ok(Self::from_js(scope.unscoped_global(), raw)?.map(ScopedBlobOrStringOrBuffer::Ready))
+    }
+
     pub fn from_js_async(
         global: &JSGlobalObject,
         value: JSValue,
@@ -229,6 +246,40 @@ impl BlobOrStringOrBuffer {
         )? {
             Some(s) => Ok(Some(Self::StringOrBuffer(s))),
             None => Ok(None),
+        }
+    }
+}
+
+/// [`BlobOrStringOrBuffer`] parsed under a [`jsc::scope::Scope`]: coercions
+/// run at parse time, but ArrayBuffer-backed views are captured only in
+/// [`Self::materialize`], whose shared scope borrow keeps user JS (which
+/// could detach or resize the buffer) out until the bytes are consumed.
+pub enum ScopedBlobOrStringOrBuffer<'s> {
+    /// ArrayBuffer-backed input; the view is captured in [`Self::materialize`].
+    Deferred {
+        value: jsc::scope::Local<'s>,
+        materialized: Option<BlobOrStringOrBuffer>,
+    },
+    /// String (copied) or Blob (duped) — already detach-proof.
+    Ready(BlobOrStringOrBuffer),
+}
+
+impl<'s> ScopedBlobOrStringOrBuffer<'s> {
+    pub fn materialize<'a>(
+        &'a mut self,
+        scope: &'a jsc::scope::Scope<'s>,
+    ) -> &'a BlobOrStringOrBuffer {
+        match self {
+            Self::Deferred {
+                value,
+                materialized,
+            } => materialized.insert(BlobOrStringOrBuffer::StringOrBuffer(
+                StringOrBuffer::Buffer(Buffer::from_array_buffer(
+                    scope.unscoped_global(),
+                    value.raw(),
+                )),
+            )),
+            Self::Ready(b) => b,
         }
     }
 }
@@ -489,6 +540,14 @@ impl StringOrBuffer {
     #[inline]
     pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<StringOrBuffer>> {
         Self::from_js_maybe_async(global, value, false, true)
+    }
+
+    /// [`Self::from_js`] with its user-JS re-entry effect made explicit.
+    pub fn from_js_scoped<'s>(
+        scope: &mut jsc::scope::Scope<'s>,
+        value: jsc::scope::Local<'s>,
+    ) -> JsResult<Option<StringOrBuffer>> {
+        Self::from_js(scope.unscoped_global(), value.raw())
     }
 
     #[inline]

@@ -6,7 +6,7 @@ use bun_boringssl_sys as boring_ssl;
 use bun_core::ZigString;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
-    JsError, JsResult,
+    JsError, JsResult, scope::Scope,
 };
 
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
@@ -242,61 +242,73 @@ impl CryptoHasher {
     /// Hand-expanded static-method argument decode for the parameter list
     /// `(algorithm string, input, optional output buffer/encoding)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<3>();
-        let mut i = 0usize;
-        let mut next_eat = || {
-            if i < arguments.len {
-                let v = arguments.ptr[i];
-                i += 1;
-                Some(v)
-            } else {
-                None
-            }
-        };
-
-        let algorithm = {
-            let Some(string_value) = next_eat() else {
-                return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
+        Scope::with(global, |scope| {
+            let arguments = callframe.arguments_old::<3>();
+            let mut i = 0usize;
+            let mut next_eat = || {
+                if i < arguments.len {
+                    let v = arguments.ptr[i];
+                    i += 1;
+                    Some(v)
+                } else {
+                    None
+                }
             };
-            if string_value.is_undefined_or_null() {
-                return Err(global.throw_invalid_arguments(format_args!("Expected string")));
-            }
-            string_value.get_zig_string(global)?
-        };
+            let global = scope.unscoped_global();
 
-        // Node.BlobOrStringOrBuffer
-        let input = {
-            let Some(arg) = next_eat() else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
+            let algorithm = {
+                let Some(string_value) = next_eat() else {
+                    return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
+                };
+                if string_value.is_undefined_or_null() {
+                    return Err(global.throw_invalid_arguments(format_args!("Expected string")));
+                }
+                string_value.get_zig_string(global)?
             };
-            match BlobOrStringOrBuffer::from_js(global, arg)? {
-                Some(b) => b,
-                None => {
+
+            // Node.BlobOrStringOrBuffer — coercions run here (argument order
+            // preserved); ArrayBuffer views are captured in `materialize` below.
+            let mut input = {
+                let Some(arg) = next_eat() else {
                     return Err(global
                         .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-            }
-        };
-
-        // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let output: Option<StringOrBuffer> = match next_eat() {
-            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
-                Some(v) => Some(v),
-                None => {
-                    if arg.is_undefined() {
-                        None
-                    } else {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("expected string or buffer")));
+                };
+                let arg = scope.local(arg);
+                match BlobOrStringOrBuffer::from_js_scoped(scope, arg)? {
+                    Some(b) => b,
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "expected blob, string or buffer"
+                        )));
                     }
                 }
-            },
-            None => None,
-        };
+            };
 
-        Self::hash_(global, algorithm, &input, output)
+            // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
+            let output: Option<StringOrBuffer> = match next_eat() {
+                Some(arg) => {
+                    let arg = scope.local(arg);
+                    match StringOrBuffer::from_js_scoped(scope, arg)? {
+                        Some(v) => Some(v),
+                        None => {
+                            if arg.raw().is_undefined() {
+                                None
+                            } else {
+                                return Err(global.throw_invalid_arguments(format_args!(
+                                    "expected string or buffer"
+                                )));
+                            }
+                        }
+                    }
+                }
+                None => None,
+            };
+
+            // All user-JS coercions are done; the shared scope borrow keeps
+            // them out between capturing the input view and consuming it.
+            let input = input.materialize(scope);
+            Self::hash_(global, algorithm, input, output)
+        })
     }
 
     fn throw_hmac_consumed(global: &JSGlobalObject) -> JsError {
@@ -1223,51 +1235,63 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
     /// Hand-expanded `wrapStaticMethod` decode for the parameter list
     /// `(*JSGlobalObject, Node.BlobOrStringOrBuffer, ?Node.StringOrBuffer)`.
     pub fn hash(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<2>();
-        let mut i = 0usize;
-        let mut next_eat = || {
-            if i < arguments.len {
-                let v = arguments.ptr[i];
-                i += 1;
-                Some(v)
-            } else {
-                None
-            }
-        };
-
-        // Node.BlobOrStringOrBuffer
-        let input = {
-            let Some(arg) = next_eat() else {
-                return Err(
-                    global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
-                );
+        Scope::with(global, |scope| {
+            let arguments = callframe.arguments_old::<2>();
+            let mut i = 0usize;
+            let mut next_eat = || {
+                if i < arguments.len {
+                    let v = arguments.ptr[i];
+                    i += 1;
+                    Some(v)
+                } else {
+                    None
+                }
             };
-            match BlobOrStringOrBuffer::from_js(global, arg)? {
-                Some(b) => b,
-                None => {
+            let global = scope.unscoped_global();
+
+            // Node.BlobOrStringOrBuffer — coercions run here (argument order
+            // preserved); ArrayBuffer views are captured in `materialize` below.
+            let mut input = {
+                let Some(arg) = next_eat() else {
                     return Err(global
                         .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
-                }
-            }
-        };
-
-        // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
-        let output: Option<StringOrBuffer> = match next_eat() {
-            Some(arg) => match StringOrBuffer::from_js(global, arg)? {
-                Some(v) => Some(v),
-                None => {
-                    if arg.is_undefined() {
-                        None
-                    } else {
-                        return Err(global
-                            .throw_invalid_arguments(format_args!("expected string or buffer")));
+                };
+                let arg = scope.local(arg);
+                match BlobOrStringOrBuffer::from_js_scoped(scope, arg)? {
+                    Some(b) => b,
+                    None => {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "expected blob, string or buffer"
+                        )));
                     }
                 }
-            },
-            None => None,
-        };
+            };
 
-        Self::hash_(global, &input, output)
+            // ?Node.StringOrBuffer (static-method arm: only `undefined` → None)
+            let output: Option<StringOrBuffer> = match next_eat() {
+                Some(arg) => {
+                    let arg = scope.local(arg);
+                    match StringOrBuffer::from_js_scoped(scope, arg)? {
+                        Some(v) => Some(v),
+                        None => {
+                            if arg.raw().is_undefined() {
+                                None
+                            } else {
+                                return Err(global.throw_invalid_arguments(format_args!(
+                                    "expected string or buffer"
+                                )));
+                            }
+                        }
+                    }
+                }
+                None => None,
+            };
+
+            // All user-JS coercions are done; the shared scope borrow keeps
+            // them out between capturing the input view and consuming it.
+            let input = input.materialize(scope);
+            Self::hash_(global, input, output)
+        })
     }
 
     pub fn get_byte_length(_this: &Self, _: &JSGlobalObject) -> JSValue {

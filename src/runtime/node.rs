@@ -21,8 +21,8 @@ pub mod assert {
 pub mod types;
 pub use types::{
     BlobOrStringOrBuffer, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob, PathOrBuffer,
-    PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer, js_assert_encoding_valid,
-    mode_from_js,
+    PathOrFileDescriptor, ScopedBlobOrStringOrBuffer, StringOrBuffer, Valid, VectorArrayBuffer,
+    js_assert_encoding_valid, mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;

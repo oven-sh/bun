@@ -87,6 +87,8 @@ pub mod js_uint8_array;
 pub mod marked_argument_buffer;
 #[path = "RegularExpression.rs"]
 pub mod regular_expression;
+#[path = "scope.rs"]
+pub mod scope;
 #[path = "ScriptExecutionStatus.rs"]
 pub mod script_execution_status;
 #[path = "sizes.rs"]

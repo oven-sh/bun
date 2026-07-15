@@ -673,6 +673,48 @@ describe("trailing directory separator", async () => {
       expect(entries).toEqual(["d1", j("d1", "d2"), j("d1", "d2", "d3"), "e1"]);
     });
   });
+
+  describe("excludes files when the final component carries a trailing separator", () => {
+    const files = {
+      "foo": "x",
+      "file.txt": "x",
+      "sub/foo": "x",
+      "bar/placeholder": "x",
+    };
+    const j = (...p: string[]) => p.join(path.sep);
+    const scan = (dir: string, p: string) => [...new Glob(p).scanSync({ cwd: dir, onlyFiles: false })].sort();
+
+    test("**/foo/ does not yield a file named foo", () => {
+      using dir = tempDir("glob-trailing-sep-peek", files);
+      expect(scan(String(dir), "**/foo/")).toEqual([]);
+    });
+
+    test("**/*/ yields only directories", () => {
+      using dir = tempDir("glob-trailing-sep-star", files);
+      expect(scan(String(dir), "**/*/")).toEqual(["bar", "sub"]);
+    });
+
+    test("literal/ does not yield a file via the statat fast path", () => {
+      using dir = tempDir("glob-trailing-sep-literal", files);
+      expect(scan(String(dir), "foo/")).toEqual([]);
+      expect(scan(String(dir), "bar/")).toEqual(["bar"]);
+    });
+
+    test("prefix/literal/ does not yield a file", () => {
+      using dir = tempDir("glob-trailing-sep-prefix-literal", files);
+      expect(scan(String(dir), "sub/foo/")).toEqual([]);
+      expect(scan(String(dir), "*/foo/")).toEqual([]);
+    });
+
+    test("**/foo/ yields a directory named foo", () => {
+      using dir = tempDir("glob-trailing-sep-dir-named-foo", {
+        "foo/placeholder": "x",
+        "sub/foo/placeholder": "x",
+        "sub/bar": "x",
+      });
+      expect(scan(String(dir), "**/foo/")).toEqual(["foo", j("sub", "foo")]);
+    });
+  });
 });
 
 describe("absolute path pattern", async () => {

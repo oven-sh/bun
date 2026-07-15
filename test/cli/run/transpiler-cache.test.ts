@@ -223,6 +223,24 @@ describe("transpiler cache", () => {
     expect(b.stdout == "production 5");
     expect(newCacheCount()).toBe(0);
   });
+  test("does not inline process.env in Worker threads", () => {
+    // https://github.com/oven-sh/bun/issues/34210
+    writeFileSync(
+      join(temp_dir, "big-env.js"),
+      dummyFile((50 * 1024 * 1.5) | 0, "1", { code: "process.env.TRANSPILER_CACHE_TEST_ID" }),
+    );
+    writeFileSync(join(temp_dir, "worker-entry.js"), `await import("./big-env.js");`);
+    writeFileSync(join(temp_dir, "worker-main.js"), `new Worker(new URL("./worker-entry.js", import.meta.url));`);
+
+    const a = bunRun(join(temp_dir, "worker-main.js"), { ...env, TRANSPILER_CACHE_TEST_ID: "first" });
+    expect(a.stdout).toBe("first");
+    expect(newCacheCount()).toBe(1);
+
+    // A second process with a different env must not observe the first
+    // process's value through the shared cache entry.
+    const b = bunRun(join(temp_dir, "worker-main.js"), { ...env, TRANSPILER_CACHE_TEST_ID: "second" });
+    expect(b.stdout).toBe("second");
+  });
   test("--feature flag invalidates cache", () => {
     // feature() can only appear in an if/ternary, so wrap it
     const code = `import { feature } from "bun:bundle";\nif (feature("SUPER_SECRET")) console.log("enabled"); else console.log("disabled");`;

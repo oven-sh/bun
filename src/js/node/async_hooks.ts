@@ -188,10 +188,10 @@ class AsyncLocalStorage {
     // Node short-circuits when the value is unchanged: no enterWith, no
     // finally-restore. Observable when the callback calls enterWith() —
     // the new value survives past run() (verified against Node v22/v26).
-    if (sameValue(this.getStore(), store_value)) {
-      // run() always re-enables (Node's docs; Node's frame impl has no
-      // disabled flag at all).
-      this.#disabled = false;
+    // Not while disabled: getStore() masks the frame with #defaultValue then,
+    // so a match here would skip installing store_value and let the callback
+    // read the unmasked frame value instead.
+    if (!this.#disabled && sameValue(this.getStore(), store_value)) {
       return callback(...args);
     }
     var context = get() as any[]; // we make sure to .slice() before mutating

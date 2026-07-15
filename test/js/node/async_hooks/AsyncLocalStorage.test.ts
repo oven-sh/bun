@@ -116,8 +116,29 @@ describe("AsyncLocalStorage", () => {
     expect(c.getStore()).toBe("D");
   });
 
-  // The sameValue short-circuit must still clear #disabled so the NEXT run()
-  // restores properly. Verified against Node.
+  // A snapshot-restored frame can hold a value for a disabled storage, which
+  // getStore() masks with defaultValue — run() must not short-circuit on that
+  // comparison and leave the masked value visible. Verified against Node v26.3.0.
+  test("run() inside a snapshot does not expose a disabled storage's frame value", () => {
+    const als = new AsyncLocalStorage<string>();
+    let snap!: <T>(fn: () => T) => T;
+    als.run("X", () => {
+      snap = AsyncLocalStorage.snapshot();
+    });
+    als.disable();
+    expect(snap(() => als.exit(() => als.getStore()))).toBeUndefined();
+
+    const withDefault = new AsyncLocalStorage<string>({ defaultValue: "D" });
+    let snap2!: <T>(fn: () => T) => T;
+    withDefault.run("Y", () => {
+      snap2 = AsyncLocalStorage.snapshot();
+    });
+    withDefault.disable();
+    expect(snap2(() => withDefault.run(undefined, () => withDefault.getStore()))).toBeUndefined();
+  });
+
+  // run() on a disabled storage takes the full path and re-enables it.
+  // Verified against Node.
   test("run(undefined)/exit() on a disabled storage re-enables it", () => {
     const als = new AsyncLocalStorage();
     als.disable();

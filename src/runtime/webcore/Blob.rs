@@ -5067,6 +5067,41 @@ pub fn write_file_internal(
         }
     }
 
+    // Inside a compiled executable, the `/$bunfs/` virtual root is reserved:
+    // writes must not fall through and create a real `/$bunfs/` tree on disk.
+    if bun_standalone_graph::Graph::get().is_some() {
+        let dest_path: Option<&[u8]> = match path_or_blob {
+            PathOrBlob::Path(PathOrFileDescriptor::Path(p)) => Some(p.slice()),
+            PathOrBlob::Blob(b) => match b.store.get() {
+                Some(store) => match &store.data {
+                    store::Data::File(f) => match &f.pathlike {
+                        PathOrFileDescriptor::Path(p) => Some(p.slice()),
+                        PathOrFileDescriptor::Fd(_) => None,
+                    },
+                    _ => None,
+                },
+                None => None,
+            },
+            _ => None,
+        };
+        if let Some(p) = dest_path {
+            if bun_standalone_graph::is_bun_standalone_file_path(p) {
+                let err = bun_sys::Error {
+                    errno: bun_sys::E::EROFS as _,
+                    syscall: bun_sys::Tag::open,
+                    path: p.into(),
+                    ..Default::default()
+                };
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err.to_js(global_this),
+                    ),
+                );
+            }
+        }
+    }
+
     let input_store: Option<StoreRef> = if let PathOrBlob::Blob(ref b) = *path_or_blob {
         b.store.get().clone()
     } else {

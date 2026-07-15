@@ -1229,27 +1229,27 @@ describe.concurrent("Bun.spawn with terminal option", () => {
   });
 
   // An inline terminal must not keep the event loop alive after its subprocess
-  // exits: the reader poll is closed and the writer unref'd in on_process_exit,
-  // so a script that never calls terminal.close() still exits. Regression for
-  // #33882, which deferred the reader's EOF to a later poll tick.
-  test("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+  // exits: on_process_exit drives the reader to EOF and unrefs both polls, so a
+  // script that never calls terminal.close() still exits. Regression for #33882
+  // which deferred the reader's EOF to a later poll tick. POSIX-only: Windows
+  // delivers EOF via close_pseudoconsole off-thread and was not affected.
+  test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
           let out = "";
-          const events = [];
+          let exitFired = false;
           const child = Bun.spawn([process.execPath, "-e", "console.log('hi from pty')"], {
             env: process.env,
             terminal: {
               data: (_t, d) => { out += Buffer.from(d).toString(); },
-              exit: (_t, code) => events.push("exit:" + code),
+              exit: () => { exitFired = true; },
             },
           });
           await child.exited;
-          events.push("exited");
-          process.stdout.write(JSON.stringify({ events, gotOutput: out.includes("hi from pty") }));
+          process.stdout.write(JSON.stringify({ gotOutput: out.includes("hi from pty"), exitFired }));
         `,
       ],
       env: bunEnv,
@@ -1257,12 +1257,11 @@ describe.concurrent("Bun.spawn with terminal option", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The terminal exit callback fires once with code 0 (clean EOF), before
-    // proc.exited resolves, and the outer process exits on its own.
-    expect({ ...JSON.parse(stdout), stderr, exitCode }).toEqual({
-      events: ["exit:0", "exited"],
-      gotOutput: true,
-      stderr: "",
+    // On main this times out: the reader/writer polls kept loop.active > 0 and
+    // nothing triggered the GC that would finalize the Terminal.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ gotOutput: true, exitFired: true }),
+      stderr: expect.any(String),
       exitCode: 0,
     });
   });

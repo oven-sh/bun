@@ -679,9 +679,9 @@ impl Terminal {
         }
     }
 
-    /// Drain buffered pty output, close our slave_fd, then close the reader so
-    /// on_reader_done fires and its poll is unregistered. BSD kernels flush the
-    /// output queue on last slave close; holding ours until
+    /// Drain buffered pty output, close our slave_fd, then drive the reader to
+    /// EOF and unref both polls so the event loop can exit. BSD kernels flush
+    /// the output queue on last slave close; holding ours until
     /// Subprocess::on_process_exit keeps a fast child's writes.
     #[cfg(unix)]
     pub(crate) fn drain_and_close_slave_fd(&self) {
@@ -703,24 +703,19 @@ impl Terminal {
             }
         }
         self.close_slave_fd();
-        // Close the reader so on_reader_done fires now and its poll is gone.
-        // Leaving EOF/EIO to the next tick keeps the loop alive past script
-        // end, which then blocks waiting on a GC that never runs.
+        // Read again so the exit callback fires now (EOF on macOS, EIO on
+        // Linux) instead of on the next tick when nothing may wake the loop.
+        // A grandchild holding the slave keeps this at EAGAIN and re-arms.
         let flags = self.flags.get();
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: same as the `read()` call above.
-            unsafe { (*self.reader.as_ptr()).close() };
-            self.read_fd.set(Fd::INVALID);
+            unsafe { (*self.reader.as_ptr()).read() };
         }
-        // The writer poll stays for late `write()` calls but no longer keeps
-        // the event loop alive; the child is gone so no drain will ever fire.
-        if !self
-            .flags
-            .get()
-            .intersects(Flags::CLOSED | Flags::WRITER_DONE)
-        {
-            let ctx = self.event_loop_handle.as_event_loop_ctx();
-            self.writer.with_mut(|w| w.update_ref(ctx, false));
+        // An inline terminal whose child has exited no longer keeps the event
+        // loop alive; the polls stay registered so grandchild output still
+        // arrives while anything else keeps the loop running.
+        if !self.flags.get().contains(Flags::CLOSED) {
+            self.update_ref(false);
         }
         drop(guard);
     }

@@ -239,7 +239,7 @@ impl<const SSL: bool> App<SSL> {
     pub fn listen(
         &mut self,
         port: i32,
-        handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
+        handler: extern "C" fn(*mut UwsListenSocket, c_int, *mut c_void),
         user_data: *mut c_void,
     ) {
         // Callers supply the C-ABI shim directly (see the RouteHandler note above).
@@ -284,7 +284,7 @@ impl<const SSL: bool> App<SSL> {
 
     pub fn listen_on_unix_socket(
         &mut self,
-        handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
+        handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, c_int, *mut c_void),
         user_data: *mut c_void,
         domain_name: &ZStr,
         flags: i32,
@@ -486,7 +486,10 @@ pub type uws_app_t = uws_app_s;
 pub mod c {
     use super::*;
 
-    pub(crate) type uws_listen_handler = Option<extern "C" fn(*mut UwsListenSocket, *mut c_void)>;
+    // The second arg is the errno from the bind/listen syscall when the listen
+    // socket is null (0 on success). See packages/bun-uws/src/App.h.
+    pub(crate) type uws_listen_handler =
+        Option<extern "C" fn(*mut UwsListenSocket, c_int, *mut c_void)>;
     pub(crate) type uws_method_handler =
         Option<extern "C" fn(*mut uws_res, *mut Request, *mut c_void)>;
     pub(crate) type uws_filter_handler = Option<extern "C" fn(*mut uws_res, i32, *mut c_void)>;
@@ -674,7 +677,7 @@ pub mod c {
             domain: *const c_char,
             pathlen: usize,
             flags: i32,
-            handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, *mut c_void),
+            handler: extern "C" fn(*mut UwsListenSocket, *const c_char, i32, c_int, *mut c_void),
             user_data: *mut c_void,
         );
 

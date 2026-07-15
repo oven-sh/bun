@@ -214,6 +214,12 @@ describe("console.table", () => {
       );
     });
 
+    test("properties filter is ignored for Set and Map inputs", () => {
+      expect(columnNames(Bun.inspect.table(new Set([{ a: 1 }]), ["a"]))).toEqual(["Values"]);
+      expect(columnNames(Bun.inspect.table(new Set([{ a: 1 }]).values(), ["a"]))).toEqual(["Values"]);
+      expect(columnNames(Bun.inspect.table(new Map([["k", { a: 1 }]]), ["a"]))).toEqual(["Key", "Values"]);
+    });
+
     test("multi-row column union puts integer-like keys first", () => {
       expect(columnNames(Bun.inspect.table([{ b: 1 }, { a: 2, "7": 3 }]))).toEqual(["7", "b", "a"]);
       expect(

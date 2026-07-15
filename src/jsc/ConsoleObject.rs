@@ -995,8 +995,14 @@ impl<'a> TablePrinter<'a> {
             });
         }
 
+        // Map/Set route every row through fixed Key/Values columns and never
+        // read the properties filter (Node returns from its map/setlike
+        // branches before `properties` is consulted).
+        let setlike =
+            self.jstype.is_map() || self.jstype.is_set() || self.jstype == jsc::JSType::SetIterator;
+
         // if the "properties" arg was provided, pre-populate the columns
-        if !self.properties.is_undefined() {
+        if !self.properties.is_undefined() && !setlike {
             let mut properties_iter = jsc::JSArrayIterator::init(self.properties, global_object)?;
             while let Some(value) = properties_iter.next()? {
                 let name = value.to_bun_string(global_object)?;

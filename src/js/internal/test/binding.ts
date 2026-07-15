@@ -34,7 +34,7 @@ class UDP {
 
 function bindInternal(self, address, port, flags, type) {
   const rval = clusterRawBind(type, address, port | 0, flags | 0);
-  if (typeof rval === "number") return rval; // negative errno
+  if (typeof rval === "number") return rval;
   self.fd = rval.fd;
   return 0;
 }

@@ -28,7 +28,7 @@ export default class SharedHandle {
     const rval = clusterRawBind(addressType, address, typeof port === "number" ? port : 0, flags | 0);
     if (typeof rval === "number") this.errno = rval;
     else {
-      this.handle = rval; // { fd, port }
+      this.handle = rval;
       if (addressType === -1 && (typeof address !== "string" || address.charCodeAt(0) !== 0)) {
         this.handle.path = address;
       }

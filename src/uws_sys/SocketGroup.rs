@@ -210,7 +210,6 @@ impl SocketGroup {
         }
     }
 
-    /// Adopt an already-bound fd (cluster shared handle) as a listen socket.
     pub fn listen_fd(
         &mut self,
         kind: SocketKind,

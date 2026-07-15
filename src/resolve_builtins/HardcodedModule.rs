@@ -176,9 +176,6 @@ pub enum HardcodedModule {
     /// This is gated behind '--expose-internals'
     #[strum(serialize = "bun:internal-for-testing")]
     BunInternalForTesting,
-    /// node's `--expose-internals` surface for vendored cluster tests
-    /// (`require('internal/cluster/round_robin_handle')`); gated like
-    /// `bun:internal-for-testing`.
     #[strum(serialize = "internal:cluster/RoundRobinHandle")]
     InternalClusterRoundRobinHandle,
     /// Node.js-internal testing shim (`require('internal/test/binding')`),

@@ -47,10 +47,6 @@ impl Socket {
         }
     }
 
-    /// Adopt an existing bound UDP fd. `shared` throttles recvmmsg to
-    /// 1 packet/syscall for cluster shared handles (fd is duped into every
-    /// worker); standalone fd-adopts pass `false` to keep the batch.
-    /// POSIX only — returns null on Windows builds.
     pub fn create_from_fd(
         loop_: *mut Loop,
         data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
@@ -106,7 +102,6 @@ impl Socket {
         us_udp_socket_bound_port(self)
     }
 
-    /// Underlying socket descriptor.
     pub fn fd(&mut self) -> crate::LIBUS_SOCKET_DESCRIPTOR {
         us_udp_socket_fd(self)
     }

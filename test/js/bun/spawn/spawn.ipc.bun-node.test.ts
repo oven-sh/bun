@@ -19,11 +19,6 @@ p I am your father
   expect(await new Response(child.stderr).text()).toEqual("");
 });
 
-// A `net.Socket` handle sent by a node child is delivered to the `ipc`
-// callback's third argument. The received descriptor is a dup of the child's
-// socket, so the server only observes the FIN once this process closes it too
-// — that is what makes the close observable proof the descriptor was real and
-// is not leaked.
 test.skipIf(isWindows || !nodeExe())(
   "receives a net.Socket handle from a node child and releases its descriptor",
   async () => {
@@ -49,8 +44,6 @@ test.skipIf(isWindows || !nodeExe())(
       `console.log("handle is a net.Socket:", handle instanceof net.Socket);`,
       `child.kill();`,
       `await child.exited;`,
-      // The child is gone but its connection is still open: this process holds
-      // the only remaining descriptor for it.
       `handle.destroy();`,
       `await socketClosed.promise;`,
       `server.close();`,
@@ -73,9 +66,6 @@ test.skipIf(isWindows || !nodeExe())(
   },
 );
 
-// `dgram.Socket` handles are not implemented: parsing must throw rather than
-// deliver a half-built handle, and the received descriptor must be closed
-// instead of leaked.
 test.skipIf(isWindows || !nodeExe())(
   "releases the descriptor of a received handle whose type it does not accept",
   async () => {

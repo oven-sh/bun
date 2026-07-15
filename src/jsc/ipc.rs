@@ -646,25 +646,11 @@ pub type Socket = bun_uws::SocketHandler<false>;
 pub struct Handle {
     pub fd: Fd,
     pub js: Protected,
-    /// Close the sender's copy of the socket once the handle message
-    /// completes (ack received, or retransmissions exhausted). node detaches
-    /// and closes the local handle after NODE_HANDLE_ACK unless the caller
-    /// passed `keepOpen`.
     pub close_on_complete: bool,
-    /// `fd` is this Handle's own dup (closed on Drop). A handle message can
-    /// sit queued behind a pending ack or backpressure; without the dup, the
-    /// user destroying the socket meanwhile invalidates - or worse, recycles -
-    /// the descriptor that sendmsg(SCM_RIGHTS) ships.
     pub owns_fd: bool,
-    /// Cluster's seq for this message: on NACK-giveup, `on_ack_nack` reclaims
-    /// the seq-level reply callback with `{accepted:false}`.
     pub cluster_seq: Option<i32>,
-    /// Windows: the hex-encoded WSAPROTOCOL_INFOW as embedded in the
-    /// serialized bytes; on NACK retransmit, a fresh export overwrites this
-    /// exact byte range in `SendHandle.data` (the info can be used only once).
     #[cfg(windows)]
     pub win_export_hex: Option<Box<[u8]>>,
-    /// Windows: target pid for `WSADuplicateSocketW` on retransmit.
     #[cfg(windows)]
     pub peer_pid: u32,
 }
@@ -684,10 +670,6 @@ impl Handle {
         }
     }
 
-    /// Borrow `fd` for the wire (no dup: `owns_fd` stays false) but close the
-    /// JS handle once the message completes. Windows counterpart of
-    /// `init_dup(fd, js, true)`, where the wire copy is the exported
-    /// `WSAPROTOCOL_INFOW` rather than a duplicated descriptor.
     pub fn init_close_on_complete(fd: Fd, js: JSValue) -> Self {
         Self {
             fd,
@@ -702,8 +684,6 @@ impl Handle {
         }
     }
 
-    /// Capture a Handle-owned dup of `fd` for the wire (see `owns_fd`).
-    /// `Err` carries the `dup(2)` errno so the caller can surface it.
     pub fn init_dup(fd: Fd, js: JSValue, close_on_complete: bool) -> Result<Self, bun_sys::Error> {
         let wire_fd = bun_sys::dup(fd)?;
         Ok(Self {
@@ -820,10 +800,6 @@ impl SendHandle {
         // self drops here → data/callbacks/handle Drop.
     }
 
-    /// Drop a queued item whose bytes never left the process (channel closed
-    /// before send). The dup'd wire fd is released via Drop; the user's socket
-    /// is closed so it doesn't hold the loop, but the send callback is NOT
-    /// fired with `null` — node never affirms success for an unsent message.
     pub fn abort_unsent(self, global: &JSGlobalObject) {
         if let Some(handle) = &self.handle {
             if handle.close_on_complete {
@@ -1551,9 +1527,6 @@ impl SendQueue {
         }
     }
 
-    /// Windows: the IPC pipe's peer PID as computed by `uv_pipe_open(ipc=1)`
-    /// via `GetNamedPipe{Client,Server}ProcessId` — the target for
-    /// `WSADuplicateSocketW`. 0 when the pipe is closed or unknown.
     #[cfg(windows)]
     pub fn ipc_peer_pid(&self) -> u32 {
         match &self.socket {
@@ -1889,8 +1862,6 @@ impl Drop for SendQueue {
 
 const MAX_HANDLE_RETRANSMISSIONS: u32 = 3;
 
-/// Windows: `WSADuplicateSocketW(fd, peer_pid)` → hex-encoded
-/// `WSAPROTOCOL_INFOW` (as embedded in the serialized message).
 #[cfg(windows)]
 pub fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
     let size = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
@@ -1913,17 +1884,8 @@ pub fn windows_export_socket_hex(fd: Fd, peer_pid: u32) -> Option<Box<[u8]>> {
     Some(hex.into_boxed_slice())
 }
 
-/// Key under which a Windows in-band socket transfer rides on a handle
-/// message: hex-encoded `WSAPROTOCOL_INFOW` produced by `bsd_socket_export`
-/// (`WSADuplicateSocketW`) in the sending process. POSIX sends the fd as
-/// SCM_RIGHTS ancillary data instead and never sets this key.
 pub const WIN_SOCKET_INFO_KEY: &[u8] = b"$winSocketInfo";
 
-/// Windows: reconstruct the socket serialized under [`WIN_SOCKET_INFO_KEY`]
-/// on `msg_data`, returning the imported descriptor as an [`Fd`]. Deletes the
-/// key from the object on success so JS never sees the blob. Returns `None`
-/// when the key is missing or the import failed (the caller NACKs, and the
-/// sender retransmits or gives up).
 #[cfg(windows)]
 fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> Option<Fd> {
     let info_value = match msg_data.get(global, WIN_SOCKET_INFO_KEY) {
@@ -1959,9 +1921,6 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
     Some(Fd::from_system(sock as *mut c_void))
 }
 
-/// JS-visible fd number for a received socket: the raw SOCKET value on
-/// Windows (the established convention - see
-/// `to_js_without_making_lib_uv_owned`), the plain fd on POSIX.
 fn received_fd_to_js(fd: Fd) -> JSValue {
     #[cfg(windows)]
     {

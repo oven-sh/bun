@@ -285,11 +285,7 @@ pub struct UDPSocketConfig {
     pub port: u16,
     pub flags: i32,
     pub binary_type: BinaryType,
-    /// Adopt an existing bound UDP fd instead of creating + binding a new one.
     pub fd: Option<i32>,
-    /// The adopted fd is a cluster shared handle (duped into every worker):
-    /// throttle recvmmsg to 1 packet/syscall. Standalone `bind({fd})` and
-    /// `Bun.udpSocket({fd})` leave this false so they keep the batch.
     pub shared_fd: bool,
 }
 

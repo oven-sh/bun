@@ -305,16 +305,6 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
 
-/// `clusterRawBind(addressType, address, port, flags)` — bind-only socket
-/// creation for cluster's SharedHandle (node's `net._createServerHandle` /
-/// `dgram._createSocketHandle` without the wrap object). The primary binds and
-/// ships the fd to workers over SCM_RIGHTS; each worker does its own
-/// `listen(2)` (TCP/pipe) or `recv` (UDP) on a dup of the fd.
-///
-/// addressType: 4 | 6 | -1 (pipe) | "udp4" | "udp6".
-/// flags: bit 0 = ipv6only, bit 2 (0x4) = UV_UDP_REUSEADDR.
-/// Returns `{ fd, port }` on success or a negative errno number on failure
-/// (matching the uv-style codes `util.getSystemErrorName` understands).
 #[bun_jsc::host_fn]
 pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     #[cfg(windows)]
@@ -716,12 +706,6 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
     }
 }
 
-/// `clusterValidateFd(fd)` — check that a worker-supplied numeric fd is a
-/// listenable socket in *this* process before SharedHandle stores (and later
-/// closes) it. Node routes fd through `createHandle` → `guessHandleType`,
-/// which returns EINVAL for non-socket fds; without this a worker's
-/// `listen({fd:2})` would make the primary close its own stderr on remove().
-/// Returns 0 for a socket, or a negative uv-style errno.
 #[bun_jsc::host_fn]
 pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let _ = global;
@@ -762,11 +746,6 @@ pub(crate) fn cluster_validate_fd(global: &JSGlobalObject, frame: &CallFrame) ->
     }
 }
 
-/// `clusterCloseHandle(fd)` — close a numeric fd held by cluster JS (shared
-/// listen handles that were never adopted by a native socket). On Windows the
-/// number is a raw SOCKET, which must go through closesocket();
-/// `fs.closeSync` would route it through the CRT fd table and close an
-/// unrelated descriptor.
 #[bun_jsc::host_fn]
 pub(crate) fn cluster_close_handle(
     global: &JSGlobalObject,

@@ -172,11 +172,6 @@ bun_core::opaque_extern!(
     pub UpgradedDuplex, pub WindowsNamedPipe,
 );
 
-/// Cross-process socket transfer. On Windows this wraps WSADuplicateSocketW /
-/// WSASocketW(FROM_PROTOCOL_INFO): the exporter serializes the SOCKET for a
-/// target pid into an opaque blob that travels in-band over the IPC pipe; the
-/// importer reconstructs an independent descriptor from it. On POSIX these
-/// return ENOTSUP - fds travel as SCM_RIGHTS ancillary data there instead.
 pub mod socket_transfer {
     use super::LIBUS_SOCKET_DESCRIPTOR;
     use core::ffi::{c_char, c_int, c_uint, c_void};

@@ -379,12 +379,6 @@ server.listen(0, '127.0.0.1', () => {
   }).on('error', () => {});
 });
 `,
-        // B only stays queued while A's NODE_HANDLE ack is outstanding, so the
-        // child must not ack. A child that turns its event loop acks A almost
-        // immediately and B is written too (racy: B's callback then legitimately
-        // fires). Block the child's loop instead — it never acks, so B is still
-        // queued when SIGKILL closes the channel. The child is killed long
-        // before this deadline.
         "child.js": `const end = Date.now() + 30_000; while (Date.now() < end) {}`,
       });
       await using proc = Bun.spawn({

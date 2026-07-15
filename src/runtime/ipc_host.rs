@@ -33,14 +33,6 @@ pub(crate) enum FromEnum {
     Process,
 }
 
-/// Windows: serialize `fd` (a SOCKET) for adoption by `peer_pid` with
-/// `WSADuplicateSocketW` and attach the hex-encoded `WSAPROTOCOL_INFOW` to
-/// `message` under `$winSocketInfo`, where the receiving process imports it
-/// (see `import_windows_socket_payload` in ipc.rs). The source socket must
-/// stay open until the receiver acks - the existing handle ACK protocol
-/// guarantees that. Returns the hex bytes on success (retained on the Handle
-/// so a NACK retransmit can re-export and overwrite them in place), or `None`
-/// when the export failed (dead peer, WSA error).
 #[cfg(windows)]
 pub(crate) fn attach_windows_socket_payload(
     global: &JSGlobalObject,

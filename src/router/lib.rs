@@ -1377,17 +1377,12 @@ thread_local! {
 /// (`AllocError`) and leaking one heap buffer per append. Same pattern as
 /// `intern_transpile_path` in `jsc_hooks.rs`.
 fn intern_route_path(value: &[u8]) -> &'static [u8] {
-    let dirname_store = FileSystem::instance().dirname_store();
-    if dirname_store.exists(value) {
-        // SAFETY: `exists` is a pointer-range check against the store's
-        // process-lifetime backing buffer, so `value` is already `'static`.
-        return unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) };
-    }
     ROUTE_PATH_INTERN.with_borrow_mut(|set| {
         if let Some((interned, ())) = set.get_key_value(value) {
             return *interned;
         }
-        let interned: &'static [u8] = bun_core::handle_oom(dirname_store.append(value));
+        let interned: &'static [u8] =
+            bun_core::handle_oom(FileSystem::instance().dirname_store().append(value));
         set.insert(interned, ());
         interned
     })

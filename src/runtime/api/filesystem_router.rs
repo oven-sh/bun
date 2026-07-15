@@ -53,6 +53,18 @@ pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemR
 
 pub(crate) const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
 
+/// Exposed via `bun:internal-for-testing` so leak tests can assert
+/// `reload()` performed zero new `DirnameStore` appends.
+#[bun_jsc::host_fn]
+pub fn js_dirname_store_append_count(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    Ok(JSValue::js_number(
+        Fs::DirnameStore::instance().append_count() as f64,
+    ))
+}
+
 // ── local shims ───────────────────────────────────────────────────────────
 // `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
 // auto-detects UTF-8.

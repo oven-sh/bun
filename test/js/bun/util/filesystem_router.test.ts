@@ -5,7 +5,6 @@ import {
   bunEnv,
   bunExe,
   isASAN,
-  isLinux,
   isMacOS,
   isWindows,
   normalizeBunSnapshot,
@@ -412,60 +411,39 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
-// The deep-path fixture needs ~1500-byte absolute paths so the leaked abs_path
-// interns dominate RSS over the unrelated per-reload DirEntry churn; Linux's
-// PATH_MAX=4096 fits that, macOS's (1024) does not, and running 200*400 file
-// opens through Windows is too slow for CI. The leak and fix are
-// platform-independent (Route::parse).
-it.skipIf(!isLinux)(
-  "reload() does not leak route paths into the process-global intern store",
-  async () => {
-    // Route::parse interns each route's public path, absolute path, and basename
-    // into the never-freed DirnameStore. Without content dedup, every reload()
-    // re-appended identical strings, leaking one heap buffer per append and
-    // eventually panicking with `unreachable: AllocError` when the store's slot
-    // capacity was exhausted.
-    const seg = Buffer.alloc(100, "d").toString();
-    const parts = Array.from({ length: 14 }, () => seg);
-    const files: Record<string, string> = {};
-    for (let i = 0; i < 200; i++) files[[...parts, "pages", `Page${i}.tsx`].join("/")] = "export default 1;\n";
-    using dir = tempDir("fsr-reload-intern", files);
-    const pagesDir = path.join(String(dir), ...parts, "pages");
+it("reload() does not leak route paths into the process-global intern store", () => {
+  // Route::parse interns each route's public path, absolute path, basename and
+  // lowercased match name into the never-freed DirnameStore. Without content
+  // dedup every reload() re-appended identical strings, leaking one heap
+  // buffer per append and eventually panicking with `unreachable: AllocError`
+  // when the store's slot capacity was exhausted.
+  const { dirnameStoreAppendCount } = require("bun:internal-for-testing") as {
+    dirnameStoreAppendCount: () => number;
+  };
+  const routes = 40;
+  const reloads = 50;
+  const files: Record<string, string> = { "pages/sub/Nested.tsx": "export default 1;\n" };
+  for (let i = 0; i < routes; i++) files[`pages/Page${i}.tsx`] = "export default 1;\n";
+  using dir = tempDir("fsr-reload-intern", files);
 
-    const code = /* ts */ `
-    const router = new Bun.FileSystemRouter({
-      dir: ${JSON.stringify(pagesDir)},
-      style: "nextjs",
-      fileExtensions: [".tsx"],
-    });
-    const m = router.match("/Page7");
-    if (!m || !m.filePath.endsWith("Page7.tsx")) throw new Error("match() broken: " + m?.filePath);
-    for (let i = 0; i < 5; i++) router.reload();
-    Bun.gc(true);
-    const before = process.memoryUsage.rss();
-    for (let i = 0; i < 400; i++) router.reload();
-    Bun.gc(true);
-    const m2 = router.match("/Page7");
-    if (!m2 || !m2.filePath.endsWith("Page7.tsx")) throw new Error("match() broken after reload: " + m2?.filePath);
-    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
-    console.error("RSS growth: " + growthMB.toFixed(1) + "MB");
-    if (growthMB > 110) throw new Error("leaked " + growthMB.toFixed(1) + "MB");
-  `;
-
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "--smol", "-e", code],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("leaked");
-    expect(stderr).not.toContain("AllocError");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  const router = new Bun.FileSystemRouter({
+    dir: path.join(String(dir), "pages"),
+    style: "nextjs",
+    fileExtensions: [".tsx"],
+  });
+  router.reload();
+  const before = dirnameStoreAppendCount();
+  for (let i = 0; i < reloads; i++) router.reload();
+  const delta = dirnameStoreAppendCount() - before;
+  // Route::parse itself must perform zero new appends after the first reload.
+  // The resolver's bust-then-reread path still interns a couple of directory
+  // paths per reload (tracked separately), so allow O(dirs) residual but fail
+  // on any O(routes) growth. Without the fix delta is routes * 4 * reloads
+  // (~8000 here); with it, ~6 * reloads.
+  expect(delta).toBeLessThan(routes * reloads);
+  expect(router.match("/Page7")?.filePath).toEndWith("Page7.tsx");
+  expect(router.match("/sub/Nested")?.filePath).toEndWith("Nested.tsx");
+});
 
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);

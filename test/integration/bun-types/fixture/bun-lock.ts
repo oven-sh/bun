@@ -81,3 +81,8 @@ const pathAsRoot: BunLockFileRootPackage = ["dep@link:./dep", {}];
 const gitAsTarball: BunLockFileTarballPackage = ["dep@git+https://github.com/u/r.git", {}, "abcdef1"];
 // @ts-expect-error a tarball specifier is not a git specifier (`@git+`/`@github:`)
 const tarballAsGit: BunLockFileGitPackage = ["dep@./dep-1.0.0.tgz", {}, "sha512-abc"];
+
+// Known overlap: `BunLockFileTarballPackage` uses a plain `string` pkg, so a
+// two-element path (`@file:`/`@link:`) tuple is also structurally a tarball.
+// Tarball is the fallback shape, discriminated by exclusion, not by a prefix.
+const pathIsAlsoTarball: BunLockFileTarballPackage = ["dep@file:./dep", info];

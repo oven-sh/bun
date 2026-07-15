@@ -1126,7 +1126,6 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     }
 
-    slot.setThisValue(thisValue);
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 }
 

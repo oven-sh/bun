@@ -234,7 +234,7 @@ impl WTFTimer {
     /// # Safety
     /// `this` is the container of an `EventLoopTimer` just popped from
     /// `All.timers`; `_vm` is the live per-thread VM.
-    pub unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: *mut VirtualMachine) {
+    pub unsafe fn fire(this: *mut Self, _now: &ElTimespec, _vm: *mut VirtualMachine) {
         // SAFETY: per fn contract — `this` is live. Single raw write to
         // `event_loop_timer.state` precedes the `ThisPtr` borrow; subsequent
         // field reads via `t` create fresh short-lived `&Self`.
@@ -254,16 +254,6 @@ impl WTFTimer {
             Ordering::SeqCst,
         );
         t.run_without_removing();
-
-        // JSC's GC activity callbacks land here, not in `run`: `didAllocate` schedules them with
-        // a positive delay, so they take the timer heap rather than the imminent slot.
-        //
-        // SAFETY: per fn contract `vm` is the live per-thread VM, and we are on its JS thread --
-        // which is what makes the theap walk inside legal.
-        unsafe {
-            let jsc_vm = (*vm).jsc_vm();
-            (*vm).gc_controller.maybe_return_pages(jsc_vm);
-        }
     }
 
     /// # Safety

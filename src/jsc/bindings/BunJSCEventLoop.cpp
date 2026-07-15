@@ -26,10 +26,6 @@ extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {
     ASSERT(vm);
-    // Called only on a tick that really parks, so it is the signal the GC controller uses to stay
-    // out of the park path's way -- the park already sweeps this thread's theap.
-    if (auto* clientData = WebCore::clientData(*vm))
-        clientData->parkCounter().didPark();
     const bool previouslyHadAccess = vm->heap.hasHeapAccess();
     // sanity check for debug builds to ensure we're not doing a
     // use-after-free here

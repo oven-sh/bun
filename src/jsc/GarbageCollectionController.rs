@@ -33,12 +33,6 @@ pub struct GarbageCollectionController {
     pub gc_timer: EventLoopTimer,
     pub gc_repeating_timer: EventLoopTimer,
     pub gc_last_heap_size: usize,
-    /// Finished-collection count when we last returned pages; tells us a collection has actually
-    /// run since, rather than inferring it from the heap size.
-    pub gc_last_cycle_count: u64,
-    /// Park count when we last looked. If it moves, the event loop is parking and the park path
-    /// is already sweeping this thread's theap, so we stay out of its way.
-    pub gc_last_park_count: u64,
     pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_state: GCTimerState,
@@ -61,8 +55,6 @@ impl Default for GarbageCollectionController {
             gc_timer: EventLoopTimer::init_paused(TimerTag::GcOneShot),
             gc_repeating_timer: EventLoopTimer::init_paused(TimerTag::GcRepeating),
             gc_last_heap_size: 0,
-            gc_last_cycle_count: 0,
-            gc_last_park_count: 0,
             gc_last_heap_size_on_repeating_timer: 0,
             heap_size_didnt_change_for_repeating_timer_ticks_count: 0,
             gc_timer_state: GCTimerState::Pending,
@@ -223,45 +215,8 @@ impl GarbageCollectionController {
         self.process_gc_timer_with_heap_size(vm, vm.block_bytes_allocated());
     }
 
-    /// The theap collect that `heapStats()` does incidentally via `mi_collect(false)`, which is
-    /// the only demonstrated cure for the sustained-load ratchet. Frees empty pages back to the
-    /// arena and wakes the scavenger to madvise them; no free-list hole scan.
-    #[inline]
-    fn return_pages_to_arena() {
-        if bun_core::USE_MIMALLOC {
-            let theap = bun_alloc::mimalloc::mi_theap_get_default();
-            if !theap.is_null() {
-                bun_alloc::mimalloc::mi_theap_collect(theap, false);
-            }
-        }
-    }
-
-    /// Give this thread's now-empty mimalloc pages back to the arena, once per finished
-    /// collection, for a loop that never parks -- a loop that parks is already swept there, and
-    /// doing it twice is measurable. `perform_gc` only *requests* a collection, so the cycle
-    /// count is the one honest "it finished" signal.
-    pub fn maybe_return_pages(&mut self, vm: &VM) {
-        if self.disabled {
-            return;
-        }
-
-        let parks = vm.park_count();
-        let loop_is_parking = parks != self.gc_last_park_count;
-        self.gc_last_park_count = parks;
-
-        let cycles = vm.gc_cycle_count();
-        let collected = cycles != self.gc_last_cycle_count;
-        self.gc_last_cycle_count = cycles;
-
-        if collected && !loop_is_parking {
-            Self::return_pages_to_arena();
-        }
-    }
-
     fn process_gc_timer_with_heap_size(&mut self, vm: &VM, this_heap_size: usize) {
         let prev = self.gc_last_heap_size;
-
-        self.maybe_return_pages(vm);
 
         match self.gc_timer_state {
             GCTimerState::RunOnNextTick => {

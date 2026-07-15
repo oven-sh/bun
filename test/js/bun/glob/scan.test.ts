@@ -637,6 +637,42 @@ describe("trailing directory separator", async () => {
     const entries = await Array.fromAsync(glob.scan({ onlyFiles: false, cwd: tmpdir }));
     expect(entries.sort()).toEqual(files.slice(2, 3).sort());
   });
+
+  describe("globstar recurses into nested directories", () => {
+    const files = {
+      "d1/d2/d3/deep.txt": "x",
+      "d1/f.txt": "x",
+      "e1/g.txt": "x",
+    };
+    const j = (...p: string[]) => p.join(path.sep);
+    const scan = (dir: string, p: string) => [...new Glob(p).scanSync({ cwd: dir, onlyFiles: false })].sort();
+
+    test("**/ yields every directory at every depth and no files", () => {
+      using dir = tempDir("glob-trailing-globstar", files);
+      expect(scan(String(dir), "**/")).toEqual(["d1", j("d1", "d2"), j("d1", "d2", "d3"), "e1"]);
+    });
+
+    test("prefix/**/ yields every directory under prefix", () => {
+      using dir = tempDir("glob-trailing-globstar-prefix", files);
+      expect(scan(String(dir), "d1/**/")).toEqual([j("d1", "d2"), j("d1", "d2", "d3")]);
+    });
+
+    test("**/ and match() agree on nested directory paths", () => {
+      using dir = tempDir("glob-trailing-globstar-match", files);
+      const g = new Glob("d1/**/");
+      const entries = scan(String(dir), "d1/**/");
+      expect(entries).toEqual([j("d1", "d2"), j("d1", "d2", "d3")]);
+      for (const e of entries) {
+        expect(g.match(e.replaceAll(path.sep, "/") + "/")).toBe(true);
+      }
+    });
+
+    test("async scan agrees with sync", async () => {
+      using dir = tempDir("glob-trailing-globstar-async", files);
+      const entries = (await Array.fromAsync(new Glob("**/").scan({ cwd: String(dir), onlyFiles: false }))).sort();
+      expect(entries).toEqual(["d1", j("d1", "d2"), j("d1", "d2", "d3"), "e1"]);
+    });
+  });
 });
 
 describe("absolute path pattern", async () => {

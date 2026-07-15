@@ -2081,9 +2081,24 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
             return None;
         }
 
+        // The final component of a pattern may carry its trailing `/` inside
+        // `len`. Classify the syntax hint on the same slice `pattern_slice()`
+        // returns (i.e. without that separator) so `**/` is recognized as a
+        // globstar and recurses like `**` during scan().
+        let last_idx = (component.start + component.len - 1) as usize;
+        if pattern[last_idx] == b'/' {
+            component.trailing_sep = true;
+        } else {
+            #[cfg(windows)]
+            {
+                component.trailing_sep = pattern[last_idx] == b'\\';
+            }
+        }
+        let effective_len = component.len - u32::from(component.trailing_sep);
+
         'out: {
             let comp_slice =
-                &pattern[component.start as usize..(component.start + component.len) as usize];
+                &pattern[component.start as usize..(component.start + effective_len) as usize];
             if comp_slice == b"." {
                 component.syntax_hint = SyntaxHint::Dot;
                 break 'out;
@@ -2098,7 +2113,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                 break 'out;
             }
 
-            match component.len {
+            match effective_len {
                 1 => {
                     if pattern[component.start as usize] == b'*' {
                         component.syntax_hint = SyntaxHint::Single;
@@ -2144,16 +2159,6 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
                     component.syntax_hint = SyntaxHint::WildcardFilepath;
                     break 'out;
                 }
-            }
-        }
-
-        let last_idx = (component.start + component.len).saturating_sub(1) as usize;
-        if pattern[last_idx] == b'/' {
-            component.trailing_sep = true;
-        } else {
-            #[cfg(windows)]
-            {
-                component.trailing_sep = pattern[last_idx] == b'\\';
             }
         }
 

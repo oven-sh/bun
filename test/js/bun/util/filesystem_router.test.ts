@@ -402,6 +402,54 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
+it("reload() does not leak route paths into the process-global intern store", async () => {
+  // Route::parse interns each route's public path, absolute path, and basename
+  // into the never-freed DirnameStore. Without content dedup, every reload()
+  // re-appended identical strings, leaking one heap buffer per append and
+  // eventually panicking with `unreachable: AllocError` when the store's slot
+  // capacity was exhausted. Nest the pages directory deeply so the absolute
+  // path (which dominates bytes) is long enough for the leak to show over the
+  // unrelated per-reload overhead.
+  const seg = Buffer.alloc(100, "d").toString();
+  const parts = Array.from({ length: 14 }, () => seg);
+  const files: Record<string, string> = {};
+  for (let i = 0; i < 200; i++) files[path.join(...parts, "pages", `Page${i}.tsx`)] = "export default 1;\n";
+  using dir = tempDir("fsr-reload-intern", files);
+  const pagesDir = path.join(String(dir), ...parts, "pages");
+
+  const code = /* ts */ `
+    const router = new Bun.FileSystemRouter({
+      dir: ${JSON.stringify(pagesDir)},
+      style: "nextjs",
+      fileExtensions: [".tsx"],
+    });
+    const m = router.match("/Page7");
+    if (!m || !m.filePath.endsWith("Page7.tsx")) throw new Error("match() broken: " + m?.filePath);
+    for (let i = 0; i < 5; i++) router.reload();
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    for (let i = 0; i < 400; i++) router.reload();
+    Bun.gc(true);
+    const m2 = router.match("/Page7");
+    if (!m2 || !m2.filePath.endsWith("Page7.tsx")) throw new Error("match() broken after reload: " + m2?.filePath);
+    const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
+    console.error("RSS growth: " + growthMB.toFixed(1) + "MB");
+    if (growthMB > 110) throw new Error("leaked " + growthMB.toFixed(1) + "MB");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--smol", "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("leaked");
+  expect(stderr).not.toContain("AllocError");
+  expect(stdout).toBe("");
+  expect(exitCode).toBe(0);
+}, 60_000);
+
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);
 

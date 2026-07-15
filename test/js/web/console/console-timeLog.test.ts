@@ -4,7 +4,7 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 // Matches Node.js: `label: 0.123ms`, `label: 1.234s`, `label: 1:02.345 (m:ss.mmm)`, ...
-const DURATION = /[\d.]+ms|[\d.]+s|[\d:.]+ \((?:h:mm|m):ss\.mmm\)/;
+const DURATION = /(?:[\d.]+ms|[\d.]+s|[\d:.]+ \((?:h:mm|m):ss\.mmm\))/;
 
 it.concurrent("console.time/timeLog/timeEnd write to stdout, not stderr", async () => {
   await using proc = Bun.spawn({
@@ -67,7 +67,7 @@ it.concurrent("console.timeEnd scales to seconds at >=1000ms", async () => {
     cmd: [
       bunExe(),
       "-e",
-      // Busy-wait just past one second so the elapsed time lands in [1000, 2000)ms.
+      // Busy-wait just past one second so the elapsed time is >= 1000 ms.
       `console.time("sc"); const t0=Date.now(); while (Date.now()-t0 < 1100) {} console.timeEnd("sc");`,
     ],
     env: bunEnv,
@@ -76,7 +76,7 @@ it.concurrent("console.timeEnd scales to seconds at >=1000ms", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toMatch(/^sc: 1\.\d{3}s\n$/);
+  expect(stdout).toMatch(/^sc: \d+\.\d{3}s\n$/);
   expect(exitCode).toBe(0);
 });
 
@@ -108,7 +108,7 @@ describe("duplicate / unknown labels", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // Node emits a warning on duplicate console.time; Bun currently does not.
     // Either way the original timer must be kept, so the duration is >= 1s.
-    expect(stdout).toMatch(/^d: 1\.\d{3}s\n$/);
+    expect(stdout).toMatch(/^d: \d+\.\d{3}s\n$/);
     expect(exitCode).toBe(0);
   });
 

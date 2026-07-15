@@ -2093,13 +2093,7 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
 
   const empty = "Query contained no valid SQL statement; likely empty query.";
   expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
-    stdout: JSON.stringify([
-      "lone: " + empty,
-      "trailing: ok",
-      "leading: " + empty,
-      "mid: ok",
-      "run: ok",
-    ]),
+    stdout: JSON.stringify(["lone: " + empty, "trailing: ok", "leading: " + empty, "mid: ok", "run: ok"]),
     stderr: "",
     signalCode: null,
     exitCode: 0,

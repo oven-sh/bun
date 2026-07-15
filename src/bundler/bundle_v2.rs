@@ -5942,12 +5942,13 @@ pub mod bv2_impl {
                     && options::is_builtin_specifier(import_record.path.text)
                 {
                     // SAFETY: log lives in DevServer/transpiler, disjoint from `self.graph`.
-                    let log: &mut bun_ast::Log = unsafe {
-                        bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                            source.path.text,
-                            ctx.target.bake_graph(),
-                        ))
-                    };
+                    let log: &mut bun_ast::Log =
+                        unsafe {
+                            bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+                                source.path.text,
+                                ctx.target.bake_graph(),
+                            ))
+                        };
                     bun_ast::Log::add_resolve_error_with_text_dupe(
                         log,
                         Some(source),

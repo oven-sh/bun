@@ -1497,9 +1497,7 @@ describe("Bun.build external: false", () => {
     });
     expect(result.success).toBe(false);
     const messages = result.logs.map(m => String((m as any).message ?? m));
-    expect(messages.join("\n")).toContain(
-      `builtin module "${specifier}" because 'external' is set to false`,
-    );
+    expect(messages.join("\n")).toContain(`builtin module "${specifier}" because 'external' is set to false`);
     const position = (result.logs[0] as any)?.position;
     expect(position?.file).toContain("entry.js");
   });
@@ -1536,9 +1534,7 @@ describe("Bun.build external: false", () => {
     });
     expect(result.success).toBe(false);
     const messages = result.logs.map(m => String((m as any).message ?? m));
-    expect(messages.join("\n")).toContain(
-      'builtin module "node:fs" because \'external\' is set to false',
-    );
+    expect(messages.join("\n")).toContain("builtin module \"node:fs\" because 'external' is set to false");
   });
 
   test("plugin onResolve can redirect a builtin under external: false", async () => {

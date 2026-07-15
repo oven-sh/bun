@@ -114,10 +114,7 @@ pub fn is_node_builtin(str: &[u8]) -> bool {
 /// True for any specifier that names a Node.js or Bun builtin module (bare
 /// or prefixed). Used by the `external: false` build option.
 pub fn is_builtin_specifier(str: &[u8]) -> bool {
-    str == b"bun"
-        || str.starts_with(b"bun:")
-        || str.starts_with(b"node:")
-        || is_node_builtin(str)
+    str == b"bun" || str.starts_with(b"bun:") || str.starts_with(b"node:") || is_node_builtin(str)
 }
 
 const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[

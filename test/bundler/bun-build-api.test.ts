@@ -1502,13 +1502,19 @@ describe("Bun.build external: false", () => {
       target,
       external: false,
     });
-    const messages = result.logs.map(m => String((m as any).message ?? m));
-    expect({ success: result.success, messages: messages.join("\n") }).toEqual({
+    const logs = result.logs.map(m => ({
+      message: String((m as any).message ?? m),
+      file: (m as any).position?.file ?? "",
+    }));
+    expect({ success: result.success, logs }).toEqual({
       success: false,
-      messages: expect.stringContaining(`"${specifier}" because 'external' is set to false`),
+      logs: [
+        {
+          message: expect.stringContaining(`"${specifier}" because 'external' is set to false`),
+          file: expect.stringContaining("entry.js"),
+        },
+      ],
     });
-    const position = (result.logs[0] as any)?.position;
-    expect(position?.file).toContain("entry.js");
   });
 
   test("target browser bundles polyfillable builtins", async () => {
@@ -1525,18 +1531,22 @@ describe("Bun.build external: false", () => {
     expect(out).not.toContain('from "path"');
   });
 
-  test("succeeds with no builtin imports", async () => {
-    using dir = tempDir("external-false-ok", {
-      "entry.js": 'import { foo } from "./foo.js"; console.log(foo);',
-      "foo.js": "export const foo = 1;",
-    });
-    const result = await Bun.build({
-      entrypoints: [join(String(dir), "entry.js")],
-      target: "bun",
-      external: false,
-    });
-    expect(result.success).toBe(true);
-  });
+  test.each(["bun", "node"] as const)(
+    "succeeds with no builtin imports (target %s)",
+    async target => {
+      using dir = tempDir("external-false-ok", {
+        "entry.js": 'import { foo } from "./foo.js"; console.log(foo);',
+        "foo.js": "export const foo = 1;",
+      });
+      const result = await Bun.build({
+        entrypoints: [join(String(dir), "entry.js")],
+        target,
+        external: false,
+      });
+      expect(result.success).toBe(true);
+      expect(await result.outputs[0].text()).not.toContain("node:module");
+    },
+  );
 
   test.each(["bun", "node"] as const)(
     "still fails when a matching onResolve plugin returns undefined (target %s)",
@@ -1562,6 +1572,31 @@ describe("Bun.build external: false", () => {
       expect(messages.join("\n")).toContain("\"node:fs\" because 'external' is set to false");
     },
   );
+
+  test("plugin onResolve returning { external: true } is rejected under external: false", async () => {
+    using dir = tempDir("external-false-plugin-external", {
+      "entry.js": 'import x from "some-pkg"; console.log(x);',
+    });
+    const result = await buildNoThrow({
+      entrypoints: [join(String(dir), "entry.js")],
+      target: "bun",
+      external: false,
+      plugins: [
+        {
+          name: "mark-external",
+          setup(build) {
+            build.onResolve({ filter: /^some-pkg$/ }, args => ({
+              path: args.path,
+              external: true,
+            }));
+          },
+        },
+      ],
+    });
+    expect(result.success).toBe(false);
+    const messages = result.logs.map(m => String((m as any).message ?? m));
+    expect(messages.join("\n")).toContain("\"some-pkg\" because 'external' is set to false");
+  });
 
   test("plugin onResolve can redirect a builtin under external: false", async () => {
     using dir = tempDir("external-false-plugin", {

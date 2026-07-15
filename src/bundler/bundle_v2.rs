@@ -4692,6 +4692,25 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Success(result) => {
                     let mut out_source_index: Option<Index> = None;
+                    if result.external
+                        && this.transpiler.options.disallow_external
+                        && resolve.import_record.kind != ImportKind::EntryPointBuild
+                    {
+                        let record: &mut ImportRecord =
+                            &mut this.graph.ast.items_import_records_mut()
+                                [resolve.import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [resolve.import_record.import_record_index as usize];
+                        record.path.is_disabled = true;
+                        this.fail_disallowed_external(
+                            resolve.import_record.importer_source_index,
+                            resolve.import_record.original_target.bake_graph(),
+                            resolve.import_record.range,
+                            resolve.import_record.kind,
+                            &resolve.import_record.specifier,
+                        );
+                        return;
+                    }
                     if !result.external {
                         // SAFETY: `result.{path,namespace}` are `Box<[u8]>` whose heap
                         // allocations are moved into `this.free_list` below (in the
@@ -5918,6 +5937,8 @@ pub mod bv2_impl {
             let source = ctx.source;
             let loader = ctx.loader;
             let source_dir = source.path.source_dir();
+            let disallow_external =
+                self.transpiler.options.disallow_external && !source.index.is_runtime();
             let mut estimated_resolve_queue_count: usize = 0;
             for import_record in ctx.import_records.iter_mut() {
                 if import_record
@@ -6024,7 +6045,7 @@ pub mod bv2_impl {
                         self.transpiler.options.rewrite_jest_for_tests,
                     )
                 {
-                    if self.transpiler.options.disallow_external {
+                    if disallow_external {
                         self.fail_disallowed_external(
                             source.index.0,
                             ctx.target.bake_graph(),
@@ -6368,7 +6389,7 @@ pub mod bv2_impl {
                 };
 
                 if resolve_result.flags.is_external() {
-                    if self.transpiler.options.disallow_external {
+                    if disallow_external {
                         self.fail_disallowed_external(
                             source.index.0,
                             ctx.target.bake_graph(),

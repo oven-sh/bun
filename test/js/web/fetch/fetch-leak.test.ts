@@ -293,8 +293,10 @@ test("fetch() compress option does not leak bodies or compressor state", async (
     const deltaMB = (final - baseline) / 1024 / 1024;
     console.log(JSON.stringify({ baselineMB: (baseline / 1024 / 1024) | 0, finalMB: (final / 1024 / 1024) | 0, deltaMB: Math.round(deltaMB) }));
     // 80 rounds × 5 encodings × ~700 KiB bodies → a per-request leak of the
-    // body or compressor state would grow RSS by hundreds of MB.
-    if (deltaMB > ${isASAN ? 256 : 32}) {
+    // body or compressor state would grow RSS by hundreds of MB. macOS arm64
+    // Tart runners settle at ~25-40 MB (vs 2-4 on Linux); 64 still catches a
+    // real leak by ~4x.
+    if (deltaMB > ${isASAN ? 256 : 64}) {
       throw new Error("fetch({compress}) leaked " + Math.round(deltaMB) + " MB over 80 rounds");
     }
   `;
@@ -403,7 +405,9 @@ test("fetch() does not leak streaming decompressor state across fragmented compr
     // 60 rounds × 3 encodings = 180 streaming Decompressor handles + 180
     // ~700 KiB compressed request bodies. A leaked boxed zlib/brotli/zstd
     // reader or an un-freed compressed body Vec would grow RSS by >100 MB.
-    if (deltaMB > ${isASAN ? 256 : 32}) {
+    // macOS arm64 Tart runners settle at ~32-43 MB where Linux measures ~9;
+    // 64 still catches a real leak with headroom.
+    if (deltaMB > ${isASAN ? 256 : 64}) {
       throw new Error("fragmented compressed fetch leaked " + Math.round(deltaMB) + " MB over 60 rounds");
     }
   `;
@@ -726,7 +730,10 @@ test("should not leak using readable stream", async () => {
       SERVER_URL: server.url.href,
       // ASAN's quarantine retains freed allocations so RSS stays elevated
       // under bun-asan; the fixture only allows MAX_MEMORY_INCREASE MiB.
-      MAX_MEMORY_INCREASE: isASAN ? "64" : "5", // in MB
+      // Windows/macOS arm64 release lanes routinely measure 6-14 MiB here
+      // (allocator page retention, not a leak — a body leak over the
+      // 250 iterations between sample and end would be >32 MiB).
+      MAX_MEMORY_INCREASE: isASAN ? "64" : "20", // in MB
     },
     stdout: "pipe",
     stderr: "pipe",

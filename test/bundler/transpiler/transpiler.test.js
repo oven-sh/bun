@@ -2900,7 +2900,24 @@ console.log(resolve.length)
     expectPrinted_("export { x, \\u0074ype y } from 'mod'", 'export { x } from "mod"');
     expectPrinted_("export { x, type if } from 'mod'", 'export { x } from "mod"');
     expectPrinted_("export { x, type y as if }; let x", "export { x };\nlet x");
-    expectPrinted_("export { type x };", "");
+
+    // "export { type x }" must leave an "export {}" ESM marker behind rather than
+    // erasing the statement entirely. This matches esbuild and tsc.
+    expectPrinted_("export { type x };", "export {}");
+    expectPrinted_("export { type x as y };", "export {}");
+    expectPrinted_("export { type as };", "export {}");
+    expectPrinted_("export { type x, type y };", "export {}");
+    expectPrinted_("export { \\u0074ype x };", "export {}");
+    // With "from" the whole re-export is still dropped (nothing to import).
+    expectPrinted_("export { type x } from 'mod';", "");
+    expectPrinted_("export { type as } from 'mod';", "");
+
+    // "import { type as }" is a type-only import of the identifier "as" and
+    // must be dropped entirely; previously it leaked a bare "import 'mod'".
+    expectPrinted_("import { type as } from 'mod';", "");
+    expectPrinted_("import { type as, x } from 'mod'; x", 'import { x } from "mod";\nx');
+    expectPrinted_("import { type foo } from 'mod';", "");
+    expectPrinted_("import { type as xxx } from 'mod'; xxx", 'import { type as xxx } from "mod";\nxxx');
   });
 
   it("delete + optional chain", () => {

@@ -24,6 +24,7 @@ const {
   kInternalSocketData,
   serverSymbol,
   kHandle,
+  kHttp1FallbackResponse,
   kRealListen,
   tlsSymbol,
   optionsSymbol,
@@ -1955,7 +1956,8 @@ ServerResponse.prototype.writeContinue = function (cb) {
   if (this.headersSent) {
     throw $ERR_HTTP_HEADERS_SENT("write");
   }
-  if (!this[kHandle]) {
+  const handle = this[kHandle];
+  if (!handle) {
     // Standalone path: route through writeInformation like Node.js v26.3.0
     // (and like the writeProcessing/writeEarlyHints siblings) so the 100
     // Continue line reaches the assigned socket.
@@ -1963,7 +1965,13 @@ ServerResponse.prototype.writeContinue = function (cb) {
     this._sent100 = true;
     return;
   }
-  this.socket[kHandle]?.response?.writeContinue();
+  if (handle[kHttp1FallbackResponse]) {
+    // HTTP/1.1 fallback on an Http2SecureServer: the handle writes the 100
+    // Continue line directly to its TLS socket.
+    handle.writeContinue();
+  } else {
+    this.socket[kHandle]?.response?.writeContinue();
+  }
   this._sent100 = true;
   cb?.();
 };

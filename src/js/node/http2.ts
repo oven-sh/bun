@@ -28,7 +28,7 @@
  */
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, kHttp1FallbackResponse } = require("internal/http");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -5439,6 +5439,12 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     bufferedAmount: 0,
     shouldKeepAlive,
     onfinished: null,
+    [kHttp1FallbackResponse]: true,
+    writeContinue() {
+      // Informational responses precede the final status line, so only write
+      // the 100 before the headers have gone out.
+      if (!headWritten) socket.write("HTTP/1.1 100 Continue\r\n\r\n");
+    },
     cork(callback) {
       return callback();
     },
@@ -5498,7 +5504,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 // the socket to the HTTP/1 connection listener.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
-  const { HTTPParser } = require("node:_http_common");
+  const { HTTPParser, continueExpression } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
@@ -5571,6 +5577,27 @@ function connectionListenerHTTP1(server, socket, options) {
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
+
+    // Mirror node's HTTP/1 parserOnIncoming Expect handling so RFC-following
+    // uploaders that wait for a 100 Continue don't stall on the fallback path.
+    // Per RFC 7231 5.1.1 the expectation is ignored below HTTP/1.1.
+    const expectHeader = headers.expect;
+    if (expectHeader !== undefined && versionMajor === 1 && versionMinor === 1) {
+      if (continueExpression.test(expectHeader)) {
+        if (server.listenerCount("checkContinue") > 0) {
+          server.emit("checkContinue", req, res);
+        } else {
+          res.writeContinue();
+          server.emit("request", req, res);
+        }
+      } else if (server.listenerCount("checkExpectation") > 0) {
+        server.emit("checkExpectation", req, res);
+      } else {
+        res.writeHead(417);
+        res.end();
+      }
+      return 0;
+    }
 
     server.emit("request", req, res);
     return 0;

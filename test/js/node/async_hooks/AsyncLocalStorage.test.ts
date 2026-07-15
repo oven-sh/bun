@@ -939,7 +939,6 @@ describe("async context passes through", () => {
         `const { AsyncLocalStorage } = require("async_hooks");
          const http2 = require("http2");
          const als = new AsyncLocalStorage();
-         process.on("uncaughtException", () => {});
          const server = http2.createServer((_q, r) => r.end("ok"));
          server.listen(0, () => {
            let client;
@@ -952,12 +951,50 @@ describe("async context passes through", () => {
            });
            client.on("close", () => { throw new Error("listener boom"); });
            client.on("error", () => {});
-           setTimeout(() => {
+           // The throw IS the condition: it can only come from the 'close'
+           // emit, which runs strictly after the read-and-clear.
+           process.on("uncaughtException", err => {
+             if (err.message !== "listener boom") throw err;
              const sym = Object.getOwnPropertySymbols(client)
                .find(x => x.description === "::bunhttp2asynccontextframe::");
              console.log(sym === undefined ? "SYMBOL-MISSING" : client[sym] === undefined ? "CLEARED" : "PINNED");
              server.close();
-           }, 200);
+           });
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
+    expect(stderr).not.toContain("AssertionError");
+  });
+
+  // destroy(err) with no 'error' listener throws out of the emit, which must
+  // not skip the frame clear (the 'close' tick after it never runs).
+  test("http2 clears the session frame when destroy(err) throws past the emit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const http2 = require("http2");
+         const als = new AsyncLocalStorage();
+         const server = http2.createServer((_q, r) => r.end("ok"));
+         server.listen(0, () => {
+           let client;
+           als.run({ marker: true }, () => {
+             client = http2.connect("http://127.0.0.1:" + server.address().port);
+           });
+           client.on("connect", () => {
+             try { client.destroy(new Error("boom")); } catch {}
+             const sym = Object.getOwnPropertySymbols(client)
+               .find(x => x.description === "::bunhttp2asynccontextframe::");
+             console.log(sym === undefined ? "SYMBOL-MISSING" : client[sym] === undefined ? "CLEARED" : "PINNED");
+             server.close();
+             process.exit(0);
+           });
          });`,
       ],
       env: bunEnv,

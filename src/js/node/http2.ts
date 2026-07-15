@@ -408,12 +408,10 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
     self.emit(event, ...args);
   }
 }
-function emitSessionCloseNT(self: Http2Session) {
-  // Read-and-clear before emitting: this is the frame's last use (a session
-  // 'error' always precedes this tick), and a throwing 'close' listener must
-  // not leave a retained session pinning the store.
-  const frame = self[bunHTTP2AsyncContextFrame];
-  self[bunHTTP2AsyncContextFrame] = undefined;
+// The frame is passed in: destroy() clears it off the session before emitting
+// 'error', so a throwing listener on either event cannot leave a retained
+// session pinning the store.
+function emitSessionCloseNT(self: Http2Session, frame) {
   if (self.listenerCount("close") > 0) {
     runInFrame(frame, self.emit, self, "close");
   }
@@ -4108,12 +4106,16 @@ class ServerHttp2Session extends Http2Session {
     }
     this[bunHTTP2Socket] = null;
 
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
+    const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    this[bunHTTP2AsyncContextFrame] = undefined;
     if (error) {
-      runInFrame(this[bunHTTP2AsyncContextFrame], this.emit, this, "error", error);
+      runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this);
+    process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -4927,12 +4929,16 @@ class ClientHttp2Session extends Http2Session {
     this.#parser = null;
     this[bunHTTP2Socket] = null;
 
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
+    const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    this[bunHTTP2AsyncContextFrame] = undefined;
     if (error) {
-      runInFrame(this[bunHTTP2AsyncContextFrame], this.emit, this, "error", error);
+      runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this);
+    process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 
   request(headers: any, options?: any) {

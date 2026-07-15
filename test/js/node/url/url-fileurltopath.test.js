@@ -168,7 +168,10 @@ describe("url.fileURLToPath", () => {
     assert.strictEqual(url.fileURLToPath(duck("", "/tmp"), { windows: false }), "/tmp");
     assert.strictEqual(url.fileURLToPath(duck("", "/a%20b"), { windows: false }), "/a b");
     assert.strictEqual(
-      url.fileURLToPath({ __proto__: null, href: "x", protocol: "file:", hostname: "", pathname: "/tmp" }, { windows: false }),
+      url.fileURLToPath(
+        { __proto__: null, href: "x", protocol: "file:", hostname: "", pathname: "/tmp" },
+        { windows: false },
+      ),
       "/tmp",
     );
 
@@ -211,10 +214,9 @@ describe("url.fileURLToPath", () => {
     });
 
     // Legacy url.parse() results have `auth` / `path` set and must be rejected.
-    assert.throws(
-      () => url.fileURLToPath({ href: "file:///tmp", protocol: "file:", auth: null, path: "/tmp" }),
-      { code: "ERR_INVALID_ARG_TYPE" },
-    );
+    assert.throws(() => url.fileURLToPath({ href: "file:///tmp", protocol: "file:", auth: null, path: "/tmp" }), {
+      code: "ERR_INVALID_ARG_TYPE",
+    });
     assert.throws(() => url.fileURLToPath(url.parse("file:///tmp")), { code: "ERR_INVALID_ARG_TYPE" });
 
     // Still rejects plain non-URL-like values.

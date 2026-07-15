@@ -1135,9 +1135,9 @@ describe("createContext with a non-extensible sandbox", () => {
     expect(runInContext("v1", sandbox)).toBe(3);
     expect(runInContext("function f1(){ return 7 }; typeof f1", sandbox)).toBe("function");
     expect(runInContext("f1()", sandbox)).toBe(7);
-    expect(
-      runInContext("Object.defineProperty(globalThis,'d1',{value:4,configurable:true}); typeof d1", sandbox),
-    ).toBe("number");
+    expect(runInContext("Object.defineProperty(globalThis,'d1',{value:4,configurable:true}); typeof d1", sandbox)).toBe(
+      "number",
+    );
     expect(
       runInContext("Object.defineProperty(globalThis,'ac1',{get(){return 42},configurable:true}); ac1", sandbox),
     ).toBe(42);

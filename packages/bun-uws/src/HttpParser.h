@@ -65,6 +65,7 @@ namespace uWS
         HTTP_PARSER_ERROR_INVALID_EOF = 8,
         HTTP_PARSER_ERROR_INVALID_METHOD = 9,
         HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
+        HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER = 11,
     };
 
 
@@ -857,7 +858,7 @@ namespace uWS
 
     /* This is the only caller of getHeaders and is thus the deepest part of the parser. */
     template <bool ConsumeMinimally>
-    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
+    HttpParserResult fenceAndConsumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool rejectDuplicateHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, HttpRequest *req, MoveOnlyFunction<void *(void *, HttpRequest *)> &requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &dataHandler) {
 
         /* How much data we CONSUMED (to throw away) */
         unsigned int consumedTotal = 0;
@@ -886,16 +887,27 @@ namespace uWS
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
 
-            /* Add all headers to bloom filter */
+            /* Add all headers to bloom filter, counting Host lines for the RFC 9112 5.4 check */
             req->bf.reset();
-
+            unsigned int hostHeaderCount = 0;
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
+                if (h->key.length() == 4 && !strncasecmp(h->key.data(), "host", 4)) {
+                    hostHeaderCount++;
+                }
             }
-            /* Break if no host header (but we can have empty string which is different from nullptr).
-             * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
+            /* RFC 9112 5.4: a request with more than one Host header field line MUST be
+             * answered with 400. Not exempted for Upgrade/CONNECT/HTTP-1.0: the duplicate
+             * makes the request's authority ambiguous regardless of method or version.
+             * node:http opts out (Node.js accepts duplicates and keeps the first value). */
+            if (rejectDuplicateHostHeader && hostHeaderCount > 1) {
+                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER);
+            }
+            /* RFC 9112 5.4: an HTTP/1.1 request with no Host header MUST be answered with
+             * 400 (an empty value is permitted; it is not absent). Upgrade and CONNECT are
+             * exempt from the missing-Host check: Node.js dispatches them through the
              * 'upgrade'/'connect' events before its Host requirement is enforced. */
-            if (!req->ancientHttp && requireHostHeader && !req->getHeader("host").data()
+            if (!req->ancientHttp && requireHostHeader && hostHeaderCount == 0
                 && !isConnectRequest && !req->getHeader("upgrade").data()) {
                 return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_MISSING_HOST_HEADER);
             }
@@ -1039,7 +1051,7 @@ namespace uWS
     }
 
 public:
-    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
+    HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool rejectDuplicateHostHeader, bool useStrictMethodValidation, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;
@@ -1093,7 +1105,7 @@ public:
             fallback.append(data, maxCopyDistance);
 
             // break here on break
-            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
+            HttpParserResult consumed = fenceAndConsumePostPadded<true>(maxHeaderSize, isConnectRequest, requireHostHeader, rejectDuplicateHostHeader, useStrictMethodValidation, fallback.data(), (unsigned int) fallback.length(), user, reserved, &req, requestHandler, dataHandler);
             /* Return data will be different than user if we are upgraded to WebSocket or have an error */
             if (consumed.returnedData != user) {
                 return consumed;
@@ -1156,7 +1168,7 @@ public:
             }
         }
 
-        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
+        HttpParserResult consumed = fenceAndConsumePostPadded<false>(maxHeaderSize, isConnectRequest, requireHostHeader, rejectDuplicateHostHeader, useStrictMethodValidation, data, length, user, reserved, &req, requestHandler, dataHandler);
         /* Return data will be different than user if we are upgraded to WebSocket or have an error */
         if (consumed.returnedData != user) {
             return consumed;

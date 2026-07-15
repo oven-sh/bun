@@ -34,6 +34,9 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
+    /* RFC 9112 5.4: reject a request carrying more than one Host header line.
+     * node:http clears this (Node.js accepts duplicates and keeps the first). */
+    bool rejectDuplicateHostHeader: 1 = true;
 };
 
 template <bool SSL>

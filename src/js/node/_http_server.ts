@@ -970,6 +970,7 @@ enum HttpParserError {
   HTTP_PARSER_ERROR_INVALID_EOF = 8,
   HTTP_PARSER_ERROR_INVALID_METHOD = 9,
   HTTP_PARSER_ERROR_INVALID_HEADER_TOKEN = 10,
+  HTTP_PARSER_ERROR_DUPLICATE_HOST_HEADER = 11,
 }
 function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, rawPacket: ArrayBuffer) {
   const self = this as Server;

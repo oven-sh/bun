@@ -16,11 +16,11 @@ using namespace JSC;
 // callbacks live exactly as long as something that can still invoke them.
 // Replaces manual gcProtect/gcUnprotect of raw JSValues, and lets `reload` swap
 // callbacks in place for live sockets.
-class JSSocketHandlers final : public JSC::JSInternalFieldObjectImpl<14> {
+class JSSocketHandlers final : public JSC::JSInternalFieldObjectImpl<15> {
 public:
-    using Base = JSC::JSInternalFieldObjectImpl<14>;
+    using Base = JSC::JSInternalFieldObjectImpl<15>;
 
-    // Field order is ABI shared with src/runtime/socket/Handlers.rs.
+    // Field order is ABI shared with src/runtime/socket/JSSocketHandlers.rs.
     enum class Field : uint32_t {
         Open = 0,
         Close,
@@ -32,6 +32,7 @@ public:
         Error,
         Handshake,
         Session,
+        ResumeSession,
         Keylog,
         ServerName,
         ALPNCallback,

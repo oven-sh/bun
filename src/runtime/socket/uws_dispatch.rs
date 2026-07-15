@@ -225,13 +225,20 @@ pub(crate) unsafe extern "C" fn us_dispatch_ssl_raw_tap(
 /// parks the serialized session while `SSL_read`/`SSL_do_handshake` runs;
 /// `ssl_flush_pending_session()` dispatches it here once that stack has
 /// unwound. Mirrors Node's `NewSessionCallback` → `onnewsession` flow. Only
-/// `bun_socket_tls` sockets reach this.
+/// `bun_socket_tls` sockets reach this. The first `id_len` bytes of `data`
+/// are the `SSL_SESSION_get_id` prefix; the rest is the `i2d_SSL_SESSION`
+/// blob.
 ///
 /// # Safety
 /// `openssl.c` must pass a live, non-null `s` whose ext slot holds a valid
 /// `*mut TLSSocket`, and `data` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u8, len: c_int) {
+pub unsafe extern "C" fn us_dispatch_session(
+    s: *mut us_socket_t,
+    data: *const u8,
+    len: c_int,
+    id_len: c_int,
+) {
     let s_ref = us_socket_t::opaque_mut(s);
     if s_ref.kind() != SocketKind::BunSocketTls {
         return;
@@ -245,10 +252,49 @@ pub unsafe extern "C" fn us_dispatch_session(s: *mut us_socket_t, data: *const u
     let Ok(len) = usize::try_from(len) else {
         return;
     };
+    let id_len = usize::try_from(id_len).unwrap_or(0).min(len);
     // SAFETY: `data` points to `len` readable bytes owned by the caller for the
     // duration of this call.
     let slice = unsafe { core::slice::from_raw_parts(data, len) };
-    let _ = TLSSocket::on_session(tls, slice);
+    let (id, session) = slice.split_at(id_len);
+    let _ = TLSSocket::on_session(tls, session, id);
+}
+
+/// A TLS <= 1.2 server handshake is suspended on the external session-id
+/// lookup (node:tls server `'resumeSession'`): `get_session_cb` parked the
+/// offered id and returned the magic pending pointer. Hands the id to the
+/// owner's `resumeSession` handler; the handler (or this fn, when no owner
+/// exists) must call `us_socket_session_resolve` or the handshake hangs.
+///
+/// # Safety
+/// `openssl.c` must pass a live, non-null `s`, and `id` must point to
+/// `id_len` readable bytes.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn us_dispatch_resume_session(
+    s: *mut us_socket_t,
+    id: *const u8,
+    id_len: c_int,
+) {
+    let s_ref = us_socket_t::opaque_mut(s);
+    if s_ref.kind() != SocketKind::BunSocketTls {
+        // Not a bun socket (or the ext is not stamped yet): resolve as a
+        // cache miss so the handshake proceeds instead of stalling forever.
+        s_ref.session_resolve(&[]);
+        return;
+    }
+    type TLSSocket = super::NewSocket<true>;
+    let Some(tls) = *s_ref.ext::<Option<bun_ptr::ThisPtr<TLSSocket>>>() else {
+        s_ref.session_resolve(&[]);
+        return;
+    };
+    let Ok(id_len) = usize::try_from(id_len) else {
+        s_ref.session_resolve(&[]);
+        return;
+    };
+    // SAFETY: `id` points to `id_len` readable bytes owned by the caller for
+    // the duration of this call.
+    let slice = unsafe { core::slice::from_raw_parts(id, id_len) };
+    let _ = TLSSocket::on_resume_session(tls, slice);
 }
 
 /// Hands an NSS key-log line parked by the keylog callback to the JS

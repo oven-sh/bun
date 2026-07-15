@@ -56,6 +56,10 @@ function toZigNamespace(name: string): string {
 function listOutputs(): void {
   const outputs: string[] = [];
   for (const type of getNamedExports()) {
+    // Headers are declared too: a type whose layout changes rewrites only its
+    // own header, and ninja needs that edge to dirty the .cpp files that embed
+    // the type but were not themselves regenerated.
+    if (type.hasCppHeader) outputs.push(cppHeaderPath(type));
     if (type.hasCppSource) outputs.push(cppSourcePath(type));
   }
   process.stdout.write(outputs.join(";"));

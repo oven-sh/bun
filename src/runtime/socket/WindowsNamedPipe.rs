@@ -161,9 +161,10 @@ pub struct Handlers {
     pub on_writable: fn(*mut c_void),
     pub on_error: fn(*mut c_void, bun_sys::Error),
     pub on_timeout: fn(*mut c_void),
-    /// A new resumable TLS session (serialized SSL_SESSION) - node's
-    /// `'session'` event on the wrapping TLSSocket.
-    pub on_session: fn(*mut c_void, &[u8]),
+    /// A new resumable TLS session (serialized SSL_SESSION, plus its
+    /// `SSL_SESSION_get_id` bytes) - node's `'session'` event on the
+    /// wrapping TLSSocket (and the server's `'newSession'`).
+    pub on_session: fn(*mut c_void, &[u8], &[u8]),
     /// An NSS key-log line - node's `'keylog'` event.
     pub on_keylog: fn(*mut c_void, &[u8]),
 }
@@ -375,9 +376,9 @@ impl WindowsNamedPipe {
         (self.handlers.on_data)(self.handlers.ctx, decoded_data);
     }
 
-    fn on_session(&mut self, session: &[u8]) {
+    fn on_session(&mut self, session: &[u8], id: &[u8]) {
         bun_output::scoped_log!(WindowsNamedPipe, "onSession ({})", session.len());
-        (self.handlers.on_session)(self.handlers.ctx, session);
+        (self.handlers.on_session)(self.handlers.ctx, session, id);
     }
 
     fn on_keylog(&mut self, line: &[u8]) {
@@ -403,9 +404,9 @@ impl WindowsNamedPipe {
         // SAFETY: see `ssl_on_open`.
         unsafe { (*this).on_data(d) }
     }
-    fn ssl_on_session(this: *mut Self, d: &[u8]) {
+    fn ssl_on_session(this: *mut Self, d: &[u8], id: &[u8]) {
         // SAFETY: see `ssl_on_open`.
-        unsafe { (*this).on_session(d) }
+        unsafe { (*this).on_session(d, id) }
     }
     fn ssl_on_keylog(this: *mut Self, d: &[u8]) {
         // SAFETY: see `ssl_on_open`.

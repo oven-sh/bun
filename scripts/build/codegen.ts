@@ -18,19 +18,17 @@
  *
  * Several scripts emit MORE files than they report:
  *   - bindgen.ts emits Generated<Name>.h per namespace (only .cpp declared)
- *   - bindgenv2 emits Generated<Type>.h per type (list-outputs skips .h)
  *   - generate-node-errors.ts emits ErrorCode.d.ts (not declared)
  *   - bundle-modules.ts emits eval/ subdir, BunBuiltinNames+extras.h, etc.
  *
- * It WORKS because:
- *   1. The declared .cpp outputs guarantee the step runs before compile
- *   2. Compilation emits .d depfiles that track the .h files for NEXT build
- *   3. PCH order-depends on ALL codegen outputs; every cxx() waits on PCH
- *      → all codegen completes before any compile, undeclared .h exist
+ * Ordering is still correct: PCH order-depends on ALL codegen outputs and every
+ * cxx() waits on PCH, so codegen completes before any compile.
  *
- * Fixing properly (declaring all outputs) would require patching the
- * src/codegen/ scripts to report everything — changing contract with
- * existing tooling.
+ * Staleness is NOT. An undeclared header is a plain source file to ninja, so a
+ * build that rewrites it cannot dirty the .cpp files that include it but were
+ * themselves unchanged (restat prunes them). Those objects keep the previous
+ * layout and the link silently mixes two ABIs; the depfile only catches it on
+ * the NEXT build. bindgenv2 declares its headers for exactly this reason.
  */
 
 import { spawnSync } from "node:child_process";
@@ -839,8 +837,11 @@ function emitBindgenV2({ n, cfg, sources, o, dirStamp }: Ctx): void {
 
   assert(allOutputs.length > 0, "bindgenv2 list-outputs returned no files");
 
+  // Headers are declared outputs too, so that a type whose layout changed
+  // dirties every .cpp that embeds it, not just the .cpp regenerated alongside
+  // it. Only the .cpp files get compiled.
   const cppOutputs = allOutputs.filter(p => p.endsWith(".cpp"));
-  const other = allOutputs.filter(p => !p.endsWith(".cpp"));
+  const other = allOutputs.filter(p => !p.endsWith(".cpp") && !p.endsWith(".h"));
   assert(other.length === 0, `bindgenv2 emitted unexpected output type: ${other.join(", ")}`);
 
   n.build({

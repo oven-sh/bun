@@ -201,6 +201,20 @@ impl us_socket_t {
         c::us_socket_sni_resolve(self, ctx, error as c_int);
     }
 
+    /// Resume a handshake suspended by the server session-id lookup
+    /// (node:tls `'resumeSession'`). `data` is the serialized `SSL_SESSION`
+    /// from the external cache, or an empty slice for a miss.
+    pub fn session_resolve(&mut self, data: &[u8]) {
+        let (ptr, len) = if data.is_empty() {
+            (core::ptr::null(), 0)
+        } else {
+            (data.as_ptr(), data.len().min(c_int::MAX as usize) as c_int)
+        };
+        // SAFETY: `ptr`/`len` come from the live `&[u8]` above (`len` is
+        // clamped to at most `data.len()`), or are null/0 for the miss case.
+        unsafe { c::us_socket_session_resolve(self, ptr, len) };
+    }
+
     /// `SSL*` if TLS, else null. Use `get_fd()` for the descriptor.
     pub fn ssl(&mut self) -> Option<&mut bun_boringssl_sys::SSL> {
         if !self.is_tls() {
@@ -507,6 +521,11 @@ mod c {
             s: &mut us_socket_t,
             ctx: *mut SslCtx,
             error: c_int,
+        );
+        pub(super) fn us_socket_session_resolve(
+            s: &mut us_socket_t,
+            data: *const u8,
+            length: c_int,
         );
         pub(super) safe fn us_socket_keepalive(
             s: &mut us_socket_t,

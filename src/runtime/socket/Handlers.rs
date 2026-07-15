@@ -148,6 +148,9 @@ impl Handlers {
     pub fn on_session(&self) -> JSValue {
         self.cell.on_session()
     }
+    pub fn on_resume_session(&self) -> JSValue {
+        self.cell.on_resume_session()
+    }
     pub fn on_keylog(&self) -> JSValue {
         self.cell.on_keylog()
     }
@@ -365,6 +368,7 @@ impl Handlers {
         let on_error = validated_callback!(on_error, "onError");
         let on_handshake = validated_callback!(on_handshake, "onHandshake");
         let on_session = validated_callback!(on_session, "onSession");
+        let on_resume_session = validated_callback!(on_resume_session, "onResumeSession");
         let on_keylog = validated_callback!(on_keylog, "onKeylog");
         let on_server_name = validated_callback!(on_server_name, "onServerName");
         let on_alpn_callback = validated_callback!(on_alpn_callback, "onALPNCallback");
@@ -386,6 +390,7 @@ impl Handlers {
             on_error,
             on_handshake,
             on_session,
+            on_resume_session,
             on_keylog,
             on_server_name,
             on_alpn_callback,

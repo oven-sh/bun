@@ -121,6 +121,10 @@ function generate(ssl) {
         fn: "resumeSNI",
         length: 2,
       },
+      resolveSession: {
+        fn: "resolveSession",
+        length: 1,
+      },
       setKeepAlive: {
         fn: "setKeepAlive",
         length: 2,

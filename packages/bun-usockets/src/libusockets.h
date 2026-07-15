@@ -373,6 +373,12 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * call consumes the reference. `error` != 0 aborts the handshake. Safe to call
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
+/* Resume a handshake suspended by the server session-id lookup (node:tls
+ * 'resumeSession'): get_session_cb returned the magic pending pointer and the
+ * JS handler was dispatched. `data`/`length` is the serialized SSL_SESSION
+ * from the external cache, or NULL/0 for a miss. Safe to call after the
+ * socket closed, and a no-op when nothing is awaiting a resolution. */
+void us_socket_session_resolve(us_socket_r s, const unsigned char *data, int length);
 void *us_socket_server_name_userdata(us_socket_r s);
 
 /* ── Connect ──────────────────────────────────────────────────────────────
@@ -474,9 +480,11 @@ int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
  * the parked new-session/keylog queues, then drain them with the pop calls
  * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry
  * length (0 = queue empty); entries are capped at 64 KB (sessions) and
- * 4 KB+1 (keylog lines). */
+ * 4 KB+1 (keylog lines). A popped session entry is
+ * `[*out_id_len bytes: SSL_SESSION_get_id][rest: i2d_SSL_SESSION blob]`;
+ * `out_id_len` may be NULL if the caller does not need the id. */
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
-int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
+int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap, int *out_id_len);
 int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
 
 /* Public interfaces for loops */

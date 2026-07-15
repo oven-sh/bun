@@ -1,0 +1,101 @@
+Plumb HTTP/3 application error codes through lsquic's stream error paths.
+
+Upstream lsquic has two gaps that make RFC 9114 §4.1.2 stream errors
+(H3_MESSAGE_ERROR, 0x010E) impossible to emit or observe from an application:
+
+ - lsquic_stream_maybe_reset()'s already-closed-write branch discards the
+   caller's error_code, and generate_stop_sending_frame() hardcodes
+   HEC_NO_ERROR, so a peer that has already FIN'd its send half (every GET)
+   cannot put an application error code on the wire at all.
+ - The peer's incoming RESET_STREAM / STOP_SENDING application error code is
+   parsed and then dropped before the on_reset callback; nothing stores it
+   and no accessor exists.
+
+This records the caller's code so STOP_SENDING carries it, stores the peer's
+incoming code in a new sm_peer_error_code field, and adds the
+lsquic_stream_peer_error_code() accessor. Every internal lsquic caller
+passes error_code == 0, which preserves the HEC_NO_ERROR default, so no
+existing behavior changes. Not upstream: lsquic has no issue tracker entry
+for this; the gap is simply unexposed API surface.
+
+--- a/src/liblsquic/lsquic_stream.h
++++ b/src/liblsquic/lsquic_stream.h
+@@ -275,6 +275,10 @@
+     uint64_t                        max_send_off;
+     uint64_t                        sm_last_recv_off;
+     uint64_t                        error_code;
++    /* Application error code carried by the peer's RESET_STREAM or
++     * STOP_SENDING frame.  Zero until one is received.
++     */
++    uint64_t                        sm_peer_error_code;
+ 
+     /* From the network, we get frames, which we keep on a list ordered
+      * by offset.
+@@ -521,6 +525,12 @@
+ void
+ lsquic_stream_maybe_reset (struct lsquic_stream *, uint64_t error_code, int);
+ 
++/* Application error code from the peer's RESET_STREAM or STOP_SENDING frame,
++ * or zero if none has been received.
++ */
++uint64_t
++lsquic_stream_peer_error_code (const struct lsquic_stream *);
++
+ void
+ lsquic_stream_call_on_close (lsquic_stream_t *);
+ 
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -1221,6 +1221,7 @@
+         return 0;
+     }
+ 
++    stream->sm_peer_error_code = error_code;
+     SM_HISTORY_APPEND(stream, SHE_RST_IN);
+     /* This flag must always be set, even if we are "ignoring" it: it is
+      * used by elision code.
+@@ -1308,6 +1309,7 @@
+         return;
+     }
+ 
++    stream->sm_peer_error_code = error_code;
+     SM_HISTORY_APPEND(stream, SHE_STOP_SENDIG_IN);
+     stream->stream_flags |= STREAM_SS_RECVD;
+ 
+@@ -4313,7 +4315,21 @@
+         stream_reset(stream, error_code, do_close);
+     }
+     else if (do_close)
++    {
++        /* Send half already closed or reset: STOP_SENDING is the only stream
++         * error left, so record the code for generate_stop_sending_frame.
++         * First error wins; a later cancel must not clobber a queued one. */
++        if (!stream->error_code)
++            stream->error_code = error_code;
+         stream_shutdown_read(stream);
++    }
++}
++
++
++uint64_t
++lsquic_stream_peer_error_code (const struct lsquic_stream *stream)
++{
++    return stream->sm_peer_error_code;
+ }
+ 
+ 
+--- a/src/liblsquic/lsquic_full_conn_ietf.c
++++ b/src/liblsquic/lsquic_full_conn_ietf.c
+@@ -2558,7 +2558,11 @@
+ generate_stop_sending_frame (struct ietf_full_conn *conn,
+                                                 struct lsquic_stream *stream)
+ {
+-    if (0 == generate_stop_sending_frame_by_id(conn, stream->id, HEC_NO_ERROR))
++    /* Non-zero error_code is an explicit application stream error (set by
++     * lsquic_stream_maybe_reset); carry it on the STOP_SENDING instead of
++     * NO_ERROR.  Every internal path leaves it zero. */
++    if (0 == generate_stop_sending_frame_by_id(conn, stream->id,
++                    stream->error_code ? stream->error_code : HEC_NO_ERROR))
+     {
+         lsquic_stream_ss_frame_sent(stream);
+         return 1;

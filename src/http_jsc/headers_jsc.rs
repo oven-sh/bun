@@ -197,6 +197,19 @@ impl H3TestingAPIs {
         );
         Ok(obj)
     }
+
+    /// Last HTTP/3 application error code (RFC 9114 §8.1) the h3 server
+    /// observed on a peer RESET_STREAM or STOP_SENDING. Written only by the
+    /// debug-build `x-bun-test-100-then-data` hook; always 0 in release.
+    pub(crate) fn quic_test_peer_stream_error(
+        _global: &JSGlobalObject,
+        _frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        use bun_http::h3_client;
+        Ok(JSValue::js_number_from_uint64(
+            h3_client::test_last_peer_stream_error.load(Ordering::Relaxed),
+        ))
+    }
 }
 
 /// Free-fn aliases of [`H2TestingAPIs::live_counts`] /
@@ -209,4 +222,11 @@ pub fn h2_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
 #[inline]
 pub fn h3_quic_live_counts(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     H3TestingAPIs::quic_live_counts(global, frame)
+}
+#[inline]
+pub fn h3_quic_test_peer_stream_error(
+    global: &JSGlobalObject,
+    frame: &CallFrame,
+) -> JsResult<JSValue> {
+    H3TestingAPIs::quic_test_peer_stream_error(global, frame)
 }

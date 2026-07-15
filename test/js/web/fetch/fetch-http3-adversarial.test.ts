@@ -1,6 +1,7 @@
 import type { Server } from "bun";
+import { fetchH3Internals } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { tls } from "harness";
+import { isDebug, tls } from "harness";
 
 // Adversarial fuzzer-style coverage for the HTTP/3 large-body path. The server
 // binds UDP only (`http1: false`) so a fetch that silently fell back to HTTP/1.1
@@ -224,6 +225,126 @@ test("AbortController during 1MB upload", async () => {
   if (err !== undefined) {
     expect((err as Error).name).toMatch(/Abort/);
   }
+});
+
+// RFC 9110 §15.2 / RFC 9114 §4.1: an interim (1xx) response does not occupy
+// the final-response slot. Bun.serve's HTTP/3 context answers
+// `expect: 100-continue` with an informational HEADERS before routing, so the
+// second fetch's stream carries HEADERS(100) → HEADERS(200) → DATA("body") →
+// FIN and the client must surface only the final response. This is the
+// positive counterpart to the DATA-after-1xx rejection below: it pins the 1xx
+// skip in on_stream_headers, without which the fetch resolves with status 100.
+//
+// The warm-up request is load-bearing. Bun.serve's HTTP/3 server only
+// sequences an informational response followed by a final response correctly
+// on a reused connection: on a connection's first response lsquic is still
+// holding the informational header block when the final HEADERS is written,
+// the stream dies, and the fetch rejects. That is a server-side bug,
+// https://github.com/oven-sh/bun/issues/33082, independent of the client
+// behavior under test here; connection reuse is the common case and keeps
+// this deterministic (0/30 cold vs 30/30 warm).
+test("a 1xx interim response is skipped and the final response is delivered", async () => {
+  using upstream = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    async fetch(req) {
+      return new Response("body", { headers: { "x-recv-len": String((await req.bytes()).length) } });
+    },
+  });
+  const url = `https://127.0.0.1:${upstream.port}/`;
+
+  // Establishes the QUIC connection the interim-response request below reuses.
+  const warmup = await fetch(url, { ...h3, method: "POST", body: "warmup" });
+  expect({ status: warmup.status, body: await warmup.text() }).toEqual({ status: 200, body: "body" });
+
+  const res = await fetch(url, {
+    ...h3,
+    method: "POST",
+    headers: { expect: "100-continue" },
+    body: "request-content",
+  });
+  expect({
+    status: res.status,
+    body: await res.text(),
+    received: res.headers.get("x-recv-len"),
+  }).toEqual({ status: 200, body: "body", received: "15" });
+});
+
+// RFC 9114 §4.1 / RFC 9110 §15.2: response content may only follow the final
+// (non-1xx) HEADERS frame. lsquic's client-side frame filter only checks that
+// *some* HEADERS preceded DATA, so a peer that sends HEADERS(:status 1xx)
+// followed by DATA reaches on_stream_data with status_code still 0. Before
+// this was guarded, deliver() returned without draining body_buffer and the
+// peer could grow it without bound. A conformant server cannot emit this
+// sequence, so in debug builds `on_h3_request` answers a request carrying
+// x-bun-test-100-then-data with HEADERS(100) then the header's value as DATA,
+// never a final response (Response::test_data_after_informational in
+// src/uws_sys/h3.rs). The hook is compiled out of release builds, so this
+// test only runs against debug builds.
+//
+// RFC 9114 §4.1.2 also requires rejecting a malformed message as a stream
+// error of type H3_MESSAGE_ERROR (0x010e), not a graceful close, so the hook
+// additionally records the application error code the client put on the wire
+// (fetchH3Internals.lastPeerStreamError).
+//
+// The never-ending streaming request body, and the hook not FINing its
+// response, are both load-bearing for that assertion: the request body keeps
+// the client's send half open so the guard emits a true RESET_STREAM (not
+// just STOP_SENDING), and together they keep the server's stream from
+// completing on its own, so the only thing that can close it is the client's
+// error frame -- which makes the observation deterministic.
+test.skipIf(!isDebug)("DATA after only a 1xx HEADERS is rejected (RFC 9114 §4.1)", async () => {
+  using upstream = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    // Unreached: the test hook short-circuits before the handler is invoked.
+    fetch: () => new Response("handler-ran", { status: 200 }),
+  });
+  const origin = `https://127.0.0.1:${upstream.port}`;
+
+  let failure: unknown;
+  let delivered: { status: number; body: string } | undefined;
+  try {
+    const res = await fetch(`${origin}/`, {
+      ...h3,
+      method: "POST",
+      headers: { "x-bun-test-100-then-data": "should-not-reach-application" },
+      // A body that never ends: a chunk per pull, never close(). Cancelled
+      // by the fetch failing; see the comment above the test for why it
+      // must not FIN.
+      body: new ReadableStream({ pull: c => void c.enqueue(new Uint8Array(16)) }),
+    });
+    delivered = { status: res.status, body: await res.text() };
+  } catch (e) {
+    failure = e;
+  }
+
+  // The malformed sequence must never surface as a Response. Without the
+  // client-side guard the fetch would instead resolve (if the hook were
+  // absent) or reject with HTTP3StreamReset after buffering the DATA.
+  expect(delivered).toBeUndefined();
+  expect(failure).toBeInstanceOf(Error);
+  expect((failure as any)?.code ?? (failure as any)?.name).toBe("HTTP3ProtocolError");
+
+  // The server observes the client's stream error asynchronously to the
+  // rejection above (lsquic generates the frame on its next tick). Await the
+  // abort handler having recorded a code rather than sleeping a fixed amount.
+  let observed = 0;
+  while ((observed = fetchH3Internals.lastPeerStreamError()) === 0) await Bun.sleep(1);
+  // RFC 9114 §4.1.2: a malformed response is a stream error of type
+  // H3_MESSAGE_ERROR. Before the guard the client's clean teardown put
+  // H3_REQUEST_CANCELLED (0x010c) on the wire instead, which a conformant
+  // server is allowed to treat as a normal cancellation.
+  expect(observed.toString(16)).toBe("10e");
+
+  // A request without the hook header still completes normally on the same
+  // server, so the rejection above is about the malformed frame sequence.
+  const ok = await fetch(`${origin}/`, h3);
+  expect({ status: ok.status, body: await ok.text() }).toEqual({ status: 200, body: "handler-ran" });
 });
 
 describe("http3 response header field validation", () => {

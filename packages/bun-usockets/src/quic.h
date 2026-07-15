@@ -143,7 +143,11 @@ void us_quic_stream_shutdown(us_quic_stream_t *s);
 void us_quic_stream_flush(us_quic_stream_t *s);
 void us_quic_stream_shutdown_read(us_quic_stream_t *s);
 void us_quic_stream_close(us_quic_stream_t *s);
-void us_quic_stream_reset(us_quic_stream_t *s);
+/* Abort the stream with HTTP/3 application error `code` (RFC 9114 §8.1):
+ * RESET_STREAM if the send half is still open, otherwise STOP_SENDING. */
+void us_quic_stream_reset(us_quic_stream_t *s, uint64_t code);
+/* Application error code from the peer's RESET_STREAM or STOP_SENDING, or 0. */
+uint64_t us_quic_stream_peer_error_code(us_quic_stream_t *s);
 int us_quic_stream_has_unacked(us_quic_stream_t *s);
 
 void *us_quic_stream_ext(us_quic_stream_t *s);

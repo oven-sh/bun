@@ -182,6 +182,19 @@ impl Response {
     pub fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
     }
+    /// Application error code from the peer's RESET_STREAM or STOP_SENDING
+    /// frame (RFC 9114 §8.1), or 0 if none has arrived yet.
+    pub fn peer_error_code(&mut self) -> u64 {
+        c::uws_h3_res_peer_error_code(self)
+    }
+    /// Test-only: queue `data` as a DATA frame with no final response HEADERS
+    /// (RFC 9114 §4.1) and leave the stream open so only the client's stream
+    /// error can close it. Exercised by `fetch-http3-adversarial.test.ts`.
+    #[cfg(bun_debug)]
+    pub fn test_data_after_informational(&mut self, data: &[u8]) {
+        // SAFETY: self is a live FFI handle; data ptr/len valid for read
+        unsafe { c::uws_h3_res_test_data_after_informational(self, data.as_ptr(), data.len()) }
+    }
     pub fn flush_headers(&mut self, immediate: bool) {
         c::uws_h3_res_flush_headers(self, immediate)
     }
@@ -603,6 +616,13 @@ mod c {
             opts: BunSocketContextOptions,
         ) -> bool;
         pub(super) safe fn uws_h3_res_write_continue(res: &mut Response);
+        pub(super) safe fn uws_h3_res_peer_error_code(res: &mut Response) -> u64;
+        #[cfg(bun_debug)]
+        pub(super) fn uws_h3_res_test_data_after_informational(
+            res: *mut Response,
+            p: *const u8,
+            n: usize,
+        );
         pub(super) fn uws_h3_app_get(
             app: *mut App,
             p: *const u8,

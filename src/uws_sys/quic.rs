@@ -22,6 +22,7 @@ pub mod stream;
 pub use self::context::Context;
 pub use self::pending_connect::PendingConnect;
 pub use self::socket::Socket;
+pub use self::stream::ErrorCode;
 pub use self::stream::Stream;
 
 pub use self::header::Header;

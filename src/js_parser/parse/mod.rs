@@ -1541,6 +1541,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(stmts)
     }
 
+    /// One-token lookahead: does "=>" immediately follow the current token?
+    /// The lexer is always restored, even if scanning the next token fails.
+    fn check_for_arrow_after_the_current_token(&mut self) -> bool {
+        let old_lexer = self.lexer.snapshot();
+        let old_log_disabled = self.lexer.is_log_disabled;
+        self.lexer.is_log_disabled = true;
+
+        let is_arrow_after_this_token =
+            matches!(self.lexer.next(), Ok(())) && self.lexer.token == T::TEqualsGreaterThan;
+
+        self.lexer.restore(&old_lexer);
+        self.lexer.is_log_disabled = old_log_disabled;
+        is_arrow_after_this_token
+    }
+
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
     pub fn parse_async_prefix_expr(
@@ -1588,36 +1603,47 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if level.lte(Level::Assign) {
                         // p.markLoweredSyntaxFeature();
 
-                        let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
-                        let arg_loc = p.lexer.loc();
-                        let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
-                        let args: &'a mut [G::Arg] = p.arena.alloc_slice_fill_with(1, |_| G::Arg {
-                            binding: arg_binding,
-                            ..Default::default()
-                        });
-                        p.lexer.next()?;
+                        // In TypeScript, "async as" / "async satisfies" (or any identifier not
+                        // followed by "=>") must treat "async" as an identifier, not the start
+                        // of an async arrow. TypeScript resolves this with a two-token lookahead
+                        // in "isUnParenthesizedAsyncArrowFunctionWorker"; see
+                        // https://github.com/microsoft/TypeScript/pull/8444.
+                        let is_arrow_fn = !Self::IS_TYPESCRIPT_ENABLED
+                            || p.check_for_arrow_after_the_current_token();
 
-                        let _ = p.push_scope_for_parse_pass(
-                            js_ast::scope::Kind::FunctionArgs,
-                            async_range.loc,
-                        )?;
+                        if is_arrow_fn {
+                            let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
+                            let arg_loc = p.lexer.loc();
+                            let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
+                            let args: &'a mut [G::Arg] =
+                                p.arena.alloc_slice_fill_with(1, |_| G::Arg {
+                                    binding: arg_binding,
+                                    ..Default::default()
+                                });
+                            p.lexer.next()?;
 
-                        let mut data = FnOrArrowDataParse {
-                            allow_await: AwaitOrYield::AllowExpr,
-                            needs_async_loc: args[0].binding.loc,
-                            ..Default::default()
-                        };
-                        // Pop the scope on the error path too.
-                        let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
-                            Ok(body) => body,
-                            Err(e) => {
-                                p.pop_scope();
-                                return Err(e);
-                            }
-                        };
-                        arrow_body.is_async = true;
-                        p.pop_scope();
-                        return Ok(p.new_expr(arrow_body, async_range.loc));
+                            let _ = p.push_scope_for_parse_pass(
+                                js_ast::scope::Kind::FunctionArgs,
+                                async_range.loc,
+                            )?;
+
+                            let mut data = FnOrArrowDataParse {
+                                allow_await: AwaitOrYield::AllowExpr,
+                                needs_async_loc: args[0].binding.loc,
+                                ..Default::default()
+                            };
+                            // Pop the scope on the error path too.
+                            let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
+                                Ok(body) => body,
+                                Err(e) => {
+                                    p.pop_scope();
+                                    return Err(e);
+                                }
+                            };
+                            arrow_body.is_async = true;
+                            p.pop_scope();
+                            return Ok(p.new_expr(arrow_body, async_range.loc));
+                        }
                     }
                 }
 

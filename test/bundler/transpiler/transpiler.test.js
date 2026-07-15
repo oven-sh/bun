@@ -1252,6 +1252,21 @@ export default class {
       );
     });
 
+    it("identifier named async followed by as/satisfies is not an arrow function", () => {
+      // https://github.com/evanw/esbuild/issues/4027
+      // https://github.com/microsoft/TypeScript/pull/8444
+      ts.expectPrinted_("function f(async?) { g(async as boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async satisfies boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async in x) }", "function f(async) {\n  g(async in x);\n}");
+      ts.expectPrinted_("function f() { g(async as => boolean) }", "function f() {\n  g(async (as) => boolean);\n}");
+      ts.expectPrinted_("function f() { g(async satisfies => boolean) }", "function f() {\n  g(async (satisfies) => boolean);\n}");
+      ts.expectPrinted_("let async = true; let x = async as boolean;", "let async = true;\nlet x = async;\n");
+      ts.expectPrinted_("let async = true; console.log(async satisfies boolean);", "let async = true;\nconsole.log(async);\n");
+      ts.expectPrinted_("const async = 1; export default async as any;", "const async = 1;\nexport default async;\n");
+      ts.expectPrinted_("let f = async x => {}", "let f = async (x) => {}");
+      ts.expectParseError("function f(async) { g(async as) }", "Unexpected )");
+    });
+
     it("satisfies", () => {
       ts.expectPrinted_("const t1 = { a: 1 } satisfies I1;", "const t1 = { a: 1 };\n");
       ts.expectPrinted_("const t2 = { a: 1, b: 1 } satisfies I1;", "const t2 = { a: 1, b: 1 };\n");

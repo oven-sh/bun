@@ -1068,3 +1068,134 @@ describe("inbound stream lifecycle", () => {
     }
   });
 });
+
+describe("inbound flow control (RFC 9113 §6.9)", () => {
+  // A stream's receive window must track what the application has actually read, not what the
+  // wire has delivered: a paused reader that keeps granting WINDOW_UPDATE lets the peer push an
+  // unbounded amount of data into the process (and loses per-stream fairness). Node ties the
+  // stream window to the JS Readable via handle.readStart/readStop; this locks in the same.
+  test("a client that never reads the response stops crediting the stream's receive window", async () => {
+    // Must be well over twice the readable's highWaterMark (64 KiB): the readable legitimately
+    // pre-buffers up to ~HWM before its first rejected push() pauses window crediting, and only
+    // a credited half-window triggers a WINDOW_UPDATE.
+    const STREAM_WINDOW = 512 * 1024; // SETTINGS_INITIAL_WINDOW_SIZE the client advertises
+    const CHUNK = Buffer.alloc(16384, 0x61);
+
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`, {
+      settings: { initialWindowSize: STREAM_WINDOW },
+    });
+    client.on("error", () => {});
+    try {
+      // The readable is never read: _read never runs, so the client must not re-open the
+      // stream window no matter how much the readable buffers internally.
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0); // server SETTINGS
+      raw.sendFrame(FrameType.SETTINGS, 0x1, 0); // ACK the client's SETTINGS
+      raw.sendFrame(FrameType.HEADERS, 0x4 /* END_HEADERS */, 1, Buffer.from([0x88])); // :status 200
+
+      // Push STREAM_WINDOW bytes of DATA, pacing only on the connection-level window (which a
+      // conformant client re-opens on receipt so one slow stream can't starve the session).
+      // The stream-level window is deliberately ignored: whether the never-read client keeps
+      // re-opening it is exactly what this test measures.
+      let connWindow = 65535;
+      let scanned = 0;
+      const connIncrementAt = (f: Frame) => (f.streamId === 0 ? f.payload.readUInt32BE(0) & 0x7fffffff : 0);
+      for (let sent = 0; sent < STREAM_WINDOW; ) {
+        for (; scanned < raw.frames.length; scanned++) {
+          if (raw.frames[scanned].type === FrameType.WINDOW_UPDATE) {
+            connWindow += connIncrementAt(raw.frames[scanned]);
+          }
+        }
+        if (connWindow === 0) {
+          await raw.waitFor(
+            f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 0 && raw.frames.indexOf(f) >= scanned,
+          );
+          continue;
+        }
+        const n = Math.min(CHUNK.length, connWindow, STREAM_WINDOW - sent);
+        raw.sendFrame(FrameType.DATA, 0, 1, CHUNK.subarray(0, n));
+        connWindow -= n;
+        sent += n;
+      }
+
+      // Two PING round trips fence the assertion: the client writes a receipt-driven
+      // WINDOW_UPDATE at the end of the receive batch that crossed the half-window mark, so
+      // the batch that answers the SECOND ping is strictly after any such write.
+      for (const payload of [Buffer.from("fc-barr1"), Buffer.from("fc-barr2")]) {
+        raw.sendFrame(FrameType.PING, 0, 0, payload);
+        await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(payload));
+      }
+
+      // The whole window was delivered but nothing was consumed: the client must not have
+      // granted any of it back.
+      const streamWindowUpdates = () => raw.frames.filter(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      expect(streamWindowUpdates()).toEqual([]);
+
+      // Now consume: the readable must deliver every buffered byte and re-open the whole
+      // window in one WINDOW_UPDATE (nothing was granted incrementally above).
+      const windowUpdate = raw.waitFor(f => f.type === FrameType.WINDOW_UPDATE && f.streamId === 1);
+      let received = 0;
+      const drained = new Promise<void>((resolve, reject) => {
+        // An early close (including the one after a swallowed 'error') fails the drain with
+        // the cause instead of hanging it until the test timeout.
+        req.once("close", () => reject(new Error(`stream closed after ${received} of ${STREAM_WINDOW} bytes`)));
+        req.on("data", (d: Buffer) => {
+          received += d.length;
+          if (received >= STREAM_WINDOW) resolve();
+        });
+      });
+      const [windowUpdateFrame] = await Promise.all([windowUpdate, drained]);
+      expect(windowUpdateFrame.payload.readUInt32BE(0) & 0x7fffffff).toBe(STREAM_WINDOW);
+      // Fence again before asserting "exactly one": any further WINDOW_UPDATE the drain could
+      // have produced must have reached the wire by the time the client answers this ping.
+      const drainFence = Buffer.from("fc-barr3");
+      raw.sendFrame(FrameType.PING, 0, 0, drainFence);
+      await raw.waitFor(f => f.type === FrameType.PING && (f.flags & 0x1) !== 0 && f.payload.equals(drainFence));
+      expect(received).toBe(STREAM_WINDOW);
+      expect(streamWindowUpdates()).toHaveLength(1);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+
+  // The server-side consequence of consumption-driven windows. RFC 9113 §8.1: a server that sent
+  // a complete response and never consumed the request body MUST tell the client to stop sending
+  // it, via RST_STREAM(NO_ERROR). Without it, an upload larger than the stream window deadlocks:
+  // the server will never re-open a window nothing is reading. Node closes the stream from
+  // Http2Stream[kMaybeDestroy] in exactly this case.
+  test("a server that responds without reading the request body resets the stream with NO_ERROR", async () => {
+    const srv = http2.createServer();
+    srv.on("stream", stream => {
+      // Respond without ever touching the request body: no data listener, no resume, no pipe.
+      setImmediate(() => {
+        stream.respond({ ":status": 400 });
+        stream.end();
+      });
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // END_HEADERS only, no END_STREAM: the request body is still incoming and is never sent.
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+
+      const headers = await c.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      const endStream = await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      const rst = await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      expect(rst.payload.readUInt32BE(0)).toBe(ErrorCode.NO_ERROR);
+      // The reset follows the COMPLETE response (HEADERS then END_STREAM); it does not replace it.
+      expect(c.frames.indexOf(headers)).toBeLessThan(c.frames.indexOf(endStream));
+      expect(c.frames.indexOf(endStream)).toBeLessThan(c.frames.indexOf(rst));
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+});

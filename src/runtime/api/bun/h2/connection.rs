@@ -25,6 +25,12 @@ pub struct Stream {
     pub content_length: Option<u64>,
     /// DATA payload bytes (padding excluded) received so far.
     pub recv_body_bytes: u64,
+    /// DATA bytes delivered to the embedder while its reader was not consuming
+    /// (`Sink::is_stream_reading` == false). They are already charged against `recv_window`
+    /// (the peer spent window on them) but are only credited back — and thus granted via
+    /// WINDOW_UPDATE — once the reader resumes. This is what bounds how far a peer can get
+    /// ahead of a slow/paused reader (node: `inbound_consumed_data_while_paused_`).
+    pub recv_deferred: i64,
 }
 
 impl Stream {
@@ -36,6 +42,7 @@ impl Stream {
             recv_final_headers: false,
             content_length: None,
             recv_body_bytes: 0,
+            recv_deferred: 0,
         }
     }
 }
@@ -142,6 +149,16 @@ pub trait Sink {
     /// inbound frames for it are not treated as frames on an idle stream.
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
+    }
+
+    /// Whether the embedder's application-level reader for `stream_id` is currently consuming
+    /// (node: `!kReadPaused`). Queried right after `on_data` so a reader that stopped inside the
+    /// dispatch takes effect for the rest of the batch. While false, delivered DATA is not
+    /// credited back to the stream's receive window (no WINDOW_UPDATE) until the reader resumes
+    /// and `replenish_windows` runs again — the peer stalls at the advertised window instead of
+    /// ballooning an unread buffer.
+    fn is_stream_reading(&self, _stream_id: u32) -> bool {
+        true
     }
 }
 
@@ -369,6 +386,7 @@ impl Connection {
             let data_now = avail.min(inflight.data_remaining as usize);
             if data_now > 0 && !inflight.discard {
                 sink.on_data(inflight.stream_id, &bytes[offset..offset + data_now]);
+                self.credit_stream_recv(sink, inflight.stream_id, data_now as i64);
             }
             inflight.data_remaining -= data_now as u32;
             inflight.payload_remaining -= avail as u32;
@@ -452,8 +470,27 @@ impl Connection {
         }
     }
 
-    /// Send WINDOW_UPDATE for every receive window that has consumed at least half its size.
-    fn replenish_windows(&mut self, sink: &impl Sink) {
+    /// Credit `n` delivered DATA bytes back to `stream_id`'s receive window if its reader is
+    /// consuming, otherwise park them on `recv_deferred` until it resumes. Called after each
+    /// `sink.on_data`, so a reader that stopped inside that dispatch defers the remainder of
+    /// the batch.
+    fn credit_stream_recv(&mut self, sink: &impl Sink, stream_id: u32, n: i64) {
+        // Re-fetch: the on_data dispatch runs arbitrary embedder code.
+        let Some(s) = self.streams.get_mut(&stream_id) else {
+            return;
+        };
+        if sink.is_stream_reading(stream_id) {
+            s.recv_window.consume(n);
+        } else {
+            s.recv_deferred += n;
+        }
+    }
+
+    /// Send WINDOW_UPDATE for every receive window whose application has consumed at least half
+    /// its size. Bytes delivered while a stream's reader was paused sit in `recv_deferred` and
+    /// are credited here once `Sink::is_stream_reading` reports the reader resumed — so the
+    /// embedder's readStart only has to flip its flag and call this (see `H2FrameParser::read_start`).
+    pub(crate) fn replenish_windows(&mut self, sink: &impl Sink) {
         if self.recv_window.needs_update() {
             let inc = self.recv_window.take_update();
             if inc > 0 {
@@ -463,7 +500,15 @@ impl Connection {
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
         for (id, s) in self.streams.iter_mut() {
-            if s.state != State::Closed && s.recv_window.needs_update() {
+            if s.state == State::Closed {
+                continue;
+            }
+            if s.recv_deferred > 0 && sink.is_stream_reading(*id) {
+                let deferred = s.recv_deferred;
+                s.recv_deferred = 0;
+                s.recv_window.consume(deferred);
+            }
+            if s.recv_window.needs_update() {
                 let inc = s.recv_window.take_update();
                 if inc > 0 {
                     buf.push((*id, inc));
@@ -1083,6 +1128,10 @@ impl Connection {
             );
             return StreamedDataStart::Fatal;
         }
+        // The connection window is re-opened on receipt: a paused reader on one stream must not
+        // starve every other stream on the session. Per-stream back-pressure lives in the stream
+        // window below (node does the same: nghttp2_session_consume_connection on receipt).
+        self.recv_window.consume(hdr.length as i64);
 
         if !self.streams.contains_key(&hdr.stream_id) && sink.is_local_stream(hdr.stream_id) {
             let send_init = self.remote_settings.initial_window_size;
@@ -1127,8 +1176,18 @@ impl Connection {
 
         let body_avail = &payload_avail[off..];
         let data_now = body_avail.len().min(data_total);
-        if data_now > 0 && !discard {
-            sink.on_data(hdr.stream_id, &body_avail[..data_now]);
+        if !discard {
+            // Padding and the Pad Length octet never reach the reader: credit them back on
+            // receipt. The data bytes are credited per delivered slice (here and in the
+            // DataInFlight continuation), gated on the reader actually consuming.
+            if let Some(st) = self.streams.get_mut(&hdr.stream_id) {
+                st.recv_window
+                    .consume((hdr.length as usize - data_total) as i64);
+            }
+            if data_now > 0 {
+                sink.on_data(hdr.stream_id, &body_avail[..data_now]);
+                self.credit_stream_recv(sink, hdr.stream_id, data_now as i64);
+            }
         }
         let consumed_payload = off + body_avail.len();
         let inflight = DataInFlight {
@@ -1181,10 +1240,11 @@ impl Connection {
             }
             end -= pad;
         }
-        let consumed = payload.len() as i64; // full frame counts against flow control, incl. padding
+        let frame_len = payload.len() as i64; // full frame counts against flow control, incl. padding
+        let data_len = (end - off) as i64;
 
         // §6.9: the whole frame counts against the connection recv window.
-        self.recv_window.on_data(consumed);
+        self.recv_window.on_data(frame_len);
         if self.recv_window.is_overflowed() {
             self.send_go_away(
                 sink,
@@ -1193,6 +1253,10 @@ impl Connection {
             );
             return true;
         }
+        // The connection window is re-opened on receipt: a paused reader on one stream must not
+        // starve every other stream on the session. Per-stream back-pressure lives in the stream
+        // window below (node does the same: nghttp2_session_consume_connection on receipt).
+        self.recv_window.consume(frame_len);
 
         // An empty DATA frame that does not end the stream carries no information and is only
         // useful for flooding: count it against the session's invalid-frame allowance (node's
@@ -1231,11 +1295,15 @@ impl Connection {
                 if !stream::can_receive_data(s.state) {
                     DataDecision::Rst(ErrorCode::StreamClosed)
                 } else {
-                    s.recv_window.on_data(consumed);
+                    s.recv_window.on_data(frame_len);
                     if s.recv_window.is_overflowed_with(recv_limit) {
                         DataDecision::Rst(ErrorCode::FlowControlError)
                     } else {
-                        s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
+                        s.recv_body_bytes = s.recv_body_bytes.saturating_add(data_len as u64);
+                        // Padding and the Pad Length octet never reach the reader: credit them
+                        // back on receipt. The data bytes are credited after delivery, gated
+                        // on the reader actually consuming (credit_stream_recv below).
+                        s.recv_window.consume(frame_len - data_len);
                         DataDecision::Deliver(0)
                     }
                 }
@@ -1258,6 +1326,7 @@ impl Connection {
         let end_stream = wire::flags::has(hdr.flags, wire::flags::END_STREAM);
         if end != off {
             sink.on_data(hdr.stream_id, &payload[off..end]);
+            self.credit_stream_recv(sink, hdr.stream_id, data_len);
         }
 
         // Window replenishment is deferred to the end of the receive() batch (replenish_windows):

@@ -67,19 +67,26 @@ impl SendWindow {
     }
 }
 
-/// Inbound (recv) window. We advertise `size` and track `consumed`; once enough is consumed we
-/// emit a WINDOW_UPDATE of the consumed amount and reset.
+/// Inbound (recv) window. The peer charges `received` on arrival (§6.9.1 overflow check); the
+/// application credits `consumable` as it actually consumes the bytes. Only `consumable` is ever
+/// granted back via WINDOW_UPDATE — that gap is what gives a slow reader real back-pressure.
+/// Invariant: `consumable <= received` (bytes can only be consumed after they were received).
 #[derive(Clone, Copy, Debug)]
 pub struct RecvWindow {
     pub size: i64,
-    pub consumed: i64,
+    /// Bytes received since the last WINDOW_UPDATE we sent. Exceeding `size` is the §6.9.1
+    /// FLOW_CONTROL_ERROR.
+    pub received: i64,
+    /// Of `received`, bytes the application has consumed and we may grant back to the peer.
+    pub consumable: i64,
 }
 
 impl Default for RecvWindow {
     fn default() -> Self {
         RecvWindow {
             size: DEFAULT_WINDOW_SIZE as i64,
-            consumed: 0,
+            received: 0,
+            consumable: 0,
         }
     }
 }
@@ -88,41 +95,52 @@ impl RecvWindow {
     pub fn new(initial: u32) -> Self {
         RecvWindow {
             size: initial as i64,
-            consumed: 0,
+            received: 0,
+            consumable: 0,
         }
     }
 
+    /// Charge `n` received bytes against the window. Does NOT make them grantable; callers
+    /// pair this with `consume()` once the bytes actually reach (or bypass) the application.
     #[inline]
     pub fn on_data(&mut self, n: i64) {
-        self.consumed += n;
+        self.received += n;
+    }
+
+    /// `n` of the received bytes were consumed by the application: eligible for WINDOW_UPDATE.
+    #[inline]
+    pub fn consume(&mut self, n: i64) {
+        self.consumable += n;
     }
 
     /// Whether the peer exceeded our advertised window (a FLOW_CONTROL_ERROR, §6.9.1).
     #[inline]
     pub fn is_overflowed(&self) -> bool {
-        self.consumed > self.size
+        self.received > self.size
     }
 
     /// Overflow check with an enforcement limit that may exceed the advertised size:
     /// until our SETTINGS shrinking the window is ACKed, the peer may legitimately send
     /// according to the previous (larger) value (RFC 9113 6.5.3).
     pub fn is_overflowed_with(&self, limit: i64) -> bool {
-        self.consumed > limit.max(self.size)
+        self.received > limit.max(self.size)
     }
 
-    /// Replenish heuristic: update once at least half the window has been consumed.
+    /// Replenish heuristic: update once the application has consumed at least half the window.
     #[inline]
     pub fn needs_update(&self) -> bool {
-        self.consumed > 0 && self.consumed >= self.size / 2
+        self.consumable > 0 && self.consumable >= self.size / 2
     }
 
-    /// Take the pending WINDOW_UPDATE increment and reset the consumed counter (0 if none).
+    /// Take the pending WINDOW_UPDATE increment (the consumed bytes) and re-open that much of
+    /// the receive window. Returns 0 if nothing was consumed.
     pub fn take_update(&mut self) -> u32 {
-        if self.consumed <= 0 {
+        if self.consumable <= 0 {
             return 0;
         }
-        let inc = self.consumed.min(MAX_WINDOW_SIZE as i64);
-        self.consumed -= inc;
+        let inc = self.consumable.min(MAX_WINDOW_SIZE as i64);
+        self.consumable -= inc;
+        self.received -= inc;
         inc as u32
     }
 
@@ -146,8 +164,29 @@ mod tests {
     fn recv_window_replenish() {
         let mut w = RecvWindow::new(100);
         w.on_data(60);
+        w.consume(60);
         assert!(w.needs_update());
         assert_eq!(w.take_update(), 60);
-        assert_eq!(w.consumed, 0);
+        assert_eq!(w.received, 0);
+        assert_eq!(w.consumable, 0);
+    }
+
+    #[test]
+    fn recv_window_only_grants_consumed_bytes() {
+        let mut w = RecvWindow::new(100);
+        // 90 bytes arrive but the application only consumes 10: nothing to grant yet, and the
+        // window stays 90 consumed from the peer's point of view.
+        w.on_data(90);
+        w.consume(10);
+        assert!(!w.needs_update());
+        assert!(!w.is_overflowed());
+        // The application catches up: the whole 90 is grantable and the window re-opens.
+        w.consume(80);
+        assert!(w.needs_update());
+        assert_eq!(w.take_update(), 90);
+        assert_eq!(w.received, 0);
+        // 11 more than advertised is still an overflow.
+        w.on_data(101);
+        assert!(w.is_overflowed());
     }
 }

@@ -115,6 +115,19 @@ pub struct Debugger {
     pub mode: Mode,
 
     pub test_reporter_agent: TestReporterAgent,
+    /// Next ID to hand out for a `describe`/`test` reported to the
+    /// TestReporter frontend. Shared between the live-collection path
+    /// (`ScopeFunctions::call`, in `bun_runtime::test_runner`, which
+    /// increments this field directly through its `&mut Debugger` borrow)
+    /// and the retroactive-reporting path
+    /// (`retroactively_report_discovered_tests`, dispatched through
+    /// [`RuntimeHooks`](crate::virtual_machine::RuntimeHooks) as a
+    /// value-in/value-out `i32` — the counter crosses that hook by value
+    /// rather than as a raw `*mut i32`) so the two don't hand out colliding
+    /// IDs when `TestReporter.enable` lands mid-collection (after some
+    /// scopes are registered but before their callbacks, which register
+    /// further nested scopes, have run).
+    pub next_test_id_for_debugger: i32,
     pub lifecycle_reporter_agent: LifecycleAgent,
     /// Reached through a shared `&Debugger` borrow; the slot's `Cell` fields
     /// provide the interior mutability. JS-thread only.
@@ -135,6 +148,7 @@ impl Default for Debugger {
             set_breakpoint_on_first_line: false,
             mode: Mode::Listen,
             test_reporter_agent: TestReporterAgent::default(),
+            next_test_id_for_debugger: 0,
             lifecycle_reporter_agent: LifecycleAgent::default(),
             extension_agent: ErasedAgentSlot::default(),
             http_server_agent: HTTPServerAgent::default(),
@@ -797,10 +811,22 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // LAYERING: `retroactivelyReportDiscoveredTests` reaches into
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
+        //
+        // ID SHARING: `next_test_id_for_debugger` is passed in by value and
+        // the (possibly-advanced) counter comes back by value in the return
+        // — the counter crosses this hook by value rather than as a raw
+        // `*mut i32`. This keeps the retroactive path's IDs from colliding
+        // with the live-collection path in
+        // `ScopeFunctions::call`, which mutates the same field directly
+        // (in-process, not through this hook) whenever collection continues
+        // after `TestReporter.enable` lands mid-collection.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: `handle` is the live C++ agent just stored above.
-            unsafe {
-                (hooks.retroactively_report_discovered_tests)(dbg.test_reporter_agent.handle)
+            dbg.next_test_id_for_debugger = unsafe {
+                (hooks.retroactively_report_discovered_tests)(
+                    dbg.test_reporter_agent.handle,
+                    dbg.next_test_id_for_debugger,
+                )
             };
         }
     }

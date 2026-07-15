@@ -1,6 +1,5 @@
 use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
-use core::sync::atomic::{AtomicI32, Ordering};
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
@@ -352,8 +351,16 @@ impl ScopeFunctions {
         let mut test_id_for_debugger: i32 = 0;
         if let Some(debugger) = (*vm).debugger.as_mut() {
             if debugger.test_reporter_agent.is_enabled() {
-                static MAX_TEST_ID_FOR_DEBUGGER: AtomicI32 = AtomicI32::new(0);
-                let id = MAX_TEST_ID_FOR_DEBUGGER.fetch_add(1, Ordering::Relaxed) + 1;
+                // Shared with the retroactive-reporting path
+                // (`retroactively_report_discovered_tests`, reached through
+                // a value-in/value-out `RuntimeHooks` call) via
+                // `Debugger::next_test_id_for_debugger` so the two don't
+                // hand out colliding IDs when `TestReporter.enable` lands
+                // mid-collection. A `static AtomicI32` here (the previous
+                // approach) could not see IDs the retroactive path assigned
+                // through that separate call, and vice versa.
+                debugger.next_test_id_for_debugger += 1;
+                let id = debugger.next_test_id_for_debugger;
                 let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {

@@ -558,8 +558,12 @@ describe("bundler", () => {
         console.log(JSON.stringify({ rr, imr }));
       `,
       "src/dep.ts": `module.exports = { value: 42 };`,
+      // Decoy: a same-named file in the runtime cwd must not shadow the
+      // bundled module via the resolver's top_level_dir fallback.
+      "run/dep.json": `{ "shadowed": true }`,
     });
     const buildDir = join(String(dir), "src");
+    const runDir = join(String(dir), "run");
     const outfile = join(String(dir), isWindows ? "out.exe" : "out");
     {
       await using proc = Bun.spawn({
@@ -582,7 +586,7 @@ describe("bundler", () => {
     await using proc = Bun.spawn({
       cmd: [outfile],
       env: bunEnv,
-      cwd: String(dir),
+      cwd: runDir,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -599,7 +603,7 @@ describe("bundler", () => {
     expect(normalize(Bun.fileURLToPath(imr))).toBe(expected);
 
     expect(exitCode).toBe(0);
-  });
+  }, 30_000);
   itBundled("compile/VariousBunAPIs", {
     todo: isWindows, // TODO
     compile: true,

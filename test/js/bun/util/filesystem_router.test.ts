@@ -1,7 +1,7 @@
 import { FileSystemRouter } from "bun";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isLinux, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -402,18 +402,21 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
-it("reload() does not leak route paths into the process-global intern store", async () => {
+// The deep-path fixture needs ~1500-byte absolute paths so the leaked abs_path
+// interns dominate RSS over the unrelated per-reload DirEntry churn; Linux's
+// PATH_MAX=4096 fits that, macOS's (1024) does not, and running 200*400 file
+// opens through Windows is too slow for CI. The leak and fix are
+// platform-independent (Route::parse).
+it.skipIf(!isLinux)("reload() does not leak route paths into the process-global intern store", async () => {
   // Route::parse interns each route's public path, absolute path, and basename
   // into the never-freed DirnameStore. Without content dedup, every reload()
   // re-appended identical strings, leaking one heap buffer per append and
   // eventually panicking with `unreachable: AllocError` when the store's slot
-  // capacity was exhausted. Nest the pages directory deeply so the absolute
-  // path (which dominates bytes) is long enough for the leak to show over the
-  // unrelated per-reload overhead.
+  // capacity was exhausted.
   const seg = Buffer.alloc(100, "d").toString();
   const parts = Array.from({ length: 14 }, () => seg);
   const files: Record<string, string> = {};
-  for (let i = 0; i < 200; i++) files[path.join(...parts, "pages", `Page${i}.tsx`)] = "export default 1;\n";
+  for (let i = 0; i < 200; i++) files[[...parts, "pages", `Page${i}.tsx`].join("/")] = "export default 1;\n";
   using dir = tempDir("fsr-reload-intern", files);
   const pagesDir = path.join(String(dir), ...parts, "pages");
 

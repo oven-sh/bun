@@ -113,19 +113,6 @@ const onRequestStartChannel = dc.channel("http.server.request.start");
 const onResponseCreatedChannel = dc.channel("http.server.response.created");
 const onResponseFinishChannel = dc.channel("http.server.response.finish");
 
-function emitResponseFinishChannel(this: { req; res; socket; server }) {
-  // Re-checked here (not at listener-attach) so subscribers that attach
-  // between request-arrival and response-finish are still observed.
-  if (onResponseFinishChannel.hasSubscribers) {
-    onResponseFinishChannel.publish({
-      request: this.req,
-      response: this.res,
-      socket: this.socket,
-      server: this.server,
-    });
-  }
-}
-
 function emitCloseServer(self: Server) {
   callCloseCallback(self);
   self.emit("close");
@@ -681,15 +668,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!requestShouldKeepAlive(http_req)) {
           http_res[kMustCloseConnection] = true;
         }
-
-        // Attached unconditionally to match Node's resOnFinish; the
-        // hasSubscribers check happens in emitResponseFinishChannel. Registered
-        // before endSocketOnFinishIfNeeded so the publish observes the socket
-        // before its writable side is ended (as Node's resOnFinish publishes
-        // before socket.destroySoon()).
-        http_res.on("finish", emitResponseFinishChannel.bind({ req: http_req, res: http_res, socket, server }));
-
-        http_res.once("finish", endSocketOnFinishIfNeeded.bind(undefined, socket, http_res));
+        http_res.once("finish", resOnFinish.bind(undefined, http_req, http_res, socket, server));
 
         if (hasObserver("http")) {
           startPerf(http_res, kServerResponseStatistics, {
@@ -1723,7 +1702,15 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
-function endSocketOnFinishIfNeeded(socket, res) {
+function resOnFinish(req, res, socket, server) {
+  if (onResponseFinishChannel.hasSubscribers) {
+    onResponseFinishChannel.publish({
+      request: req,
+      response: res,
+      socket,
+      server,
+    });
+  }
   if (res[kMustCloseConnection]) {
     socket?.end();
   }

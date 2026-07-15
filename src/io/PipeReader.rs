@@ -465,8 +465,7 @@ impl PosixBufferedReader {
                 self.flags
                     .remove(PosixFlags::POLLABLE | PosixFlags::NONBLOCKING);
                 if matches!(self.handle, PollOrFd::Poll(_)) {
-                    self.handle
-                        .close_impl(None, None::<fn(*mut c_void)>, false);
+                    self.handle.close_impl(None, None::<fn(*mut c_void)>, false);
                 }
                 self.handle = PollOrFd::Fd(fd);
                 return sys::Result::Ok(());

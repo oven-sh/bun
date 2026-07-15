@@ -758,6 +758,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("node_api experimental", () => {
+    it("node_api_set_prototype sets [[Prototype]]", async () => {
+      const output = await checkSameOutput("test_node_api_set_prototype", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "set_prototype: proto_matches=true inherited=123",
+        "set_prototype: null_proto_type=1",
+      ]);
+    });
+    it("node_api_create_object_with_properties creates an object with the given prototype and properties", async () => {
+      const output = await checkSameOutput("test_node_api_create_object_with_properties", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_object_with_properties: proto_type=1 a=1 b=2 sym=3 idx0=4",
+        "create_object_with_properties: bad_name_status=4",
+        "create_object_with_properties: custom_proto_matches=true",
+      ]);
+    });
+    it("node_api_create_sharedarraybuffer / is_sharedarraybuffer / create_external_sharedarraybuffer", async () => {
+      const output = await checkSameOutput("test_node_api_sharedarraybuffer", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_sharedarraybuffer: data_nonnull=true is_sab=true is_ab=false",
+        "create_sharedarraybuffer: info_data_matches=true info_len=16",
+        "is_sharedarraybuffer: plain_ab=false number=false",
+        "create_external_sharedarraybuffer: is_sab=true data_matches=true len=8 first=176 finalized_early=false",
+      ]);
+    });
+  });
+
   describe("napi_get_typedarray_info", () => {
     it("reports a zero byte offset for a view over the whole buffer and the view's byte offset for an offset view", async () => {
       const whole = await checkSameOutput("test_typedarray_info_byte_offset", "[new Uint8Array(new ArrayBuffer(64))]");

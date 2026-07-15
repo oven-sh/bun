@@ -1240,7 +1240,12 @@ describe.concurrent(() => {
       if (code !== undefined) expect(r.exitCode).toBe(code);
     });
 
-    it.skipIf(!nodeExe())(
+    // The abort-expecting differential is skipped on Windows: node's V8-trap
+    // abort there terminates with a status aborted() does not recognise, so it
+    // reports false (observed on all three Windows lanes). Bun's own abort is
+    // recognised, so the bun-side case above still runs everywhere; what this
+    // differential pins is node's ordering, which is not platform-specific.
+    it.skipIf(!nodeExe() || (isWindows && willAbort))(
       `--abort-on-uncaught-exception: process.domain setter — ${name} (node differential)`,
       async () => {
         const r = await spawnAbort(src, [], nodeExe());

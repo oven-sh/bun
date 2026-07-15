@@ -660,6 +660,9 @@ function socketOnDataInner(d) {
         socket._httpMessage = null;
         socket.readableFlowing = null;
 
+        // Clear before the emit: a throwing upgrade/connect handler would skip
+        // closeRequest() and leave the retained request pinning the store.
+        req[kClientAsyncContext] = undefined;
         req.emit(eventName, res, socket, bodyHead);
         req.destroyed = true;
         closeRequest(req);

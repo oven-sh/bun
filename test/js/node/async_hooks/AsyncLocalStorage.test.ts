@@ -1006,6 +1006,87 @@ describe("async context passes through", () => {
     expect(stderr).not.toContain("AssertionError");
   });
 
+  // _destroy emits 'aborted' (and can reach user code via end()/push(null))
+  // before it finishes; the clear must not sit downstream of that. The throw is
+  // swallowed into the stream's 'error', so this leak is otherwise silent.
+  test("http2 clears the stream frame even if an 'aborted' listener throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const http2 = require("http2");
+         const als = new AsyncLocalStorage();
+         const server = http2.createServer((_q, r) => { r.write("a"); });
+         server.listen(0, () => {
+           const client = http2.connect("http://127.0.0.1:" + server.address().port);
+           let st;
+           als.run({ marker: true }, () => { st = client.request({ ":path": "/" }); st.resume(); });
+           st.on("aborted", () => { throw new Error("aborted boom"); });
+           st.on("response", () => st.destroy());
+           // The throw is swallowed into the stream's 'error' — that event IS
+           // the condition, and it fires after _destroy has unwound. ('close'
+           // never arrives: the throw aborts the destroy.)
+           st.on("error", err => {
+             if (err.message !== "aborted boom") throw err;
+             const sym = Object.getOwnPropertySymbols(st)
+               .find(x => x.description === "::bunhttp2asynccontextframe::");
+             console.log(sym === undefined ? "SYMBOL-MISSING" : st[sym] === undefined ? "CLEARED" : "PINNED");
+             server.close();
+             process.exit(0);
+           });
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
+    expect(stderr).not.toContain("AssertionError");
+  });
+
+  // The upgrade/connect branch emits before closeRequest(), which carries the
+  // clear; a throwing handler must not leave the request pinning the store.
+  test("http clears the request frame even if an 'upgrade' handler throws", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const http = require("http");
+         const net = require("net");
+         const als = new AsyncLocalStorage();
+         const server = net.createServer(sock => {
+           sock.once("data", () => sock.write("HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: x\\r\\nConnection: Upgrade\\r\\n\\r\\n"));
+         });
+         server.listen(0, "127.0.0.1", () => {
+           let req;
+           als.run({ marker: true }, () => {
+             req = http.request({ host: "127.0.0.1", port: server.address().port, headers: { Connection: "Upgrade", Upgrade: "x" } });
+             req.end();
+           });
+           req.on("error", () => {});
+           req.on("upgrade", () => { throw new Error("upgrade boom"); });
+           process.on("uncaughtException", err => {
+             if (err.message !== "upgrade boom") throw err;
+             const sym = Object.getOwnPropertySymbols(req)
+               .find(x => x.description === "kClientAsyncContext");
+             console.log(sym === undefined ? "SYMBOL-MISSING" : req[sym] === undefined ? "CLEARED" : "PINNED");
+             server.close();
+             process.exit(0);
+           });
+         });`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "CLEARED", exitCode: 0 });
+    expect(stderr).not.toContain("AssertionError");
+  });
+
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();
     let a = undefined;

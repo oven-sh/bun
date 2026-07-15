@@ -2352,6 +2352,10 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
+    // Cleared first: everything below can reach user code ('aborted', end(),
+    // push(null)) and a throwing listener would otherwise skip the clear and
+    // leave a retained stream pinning the store.
+    this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2397,9 +2401,6 @@ class Http2Stream extends Duplex {
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     this[bunHTTP2Session] = null;
-    // Drop the captured frame too, so a retained stream stops pinning the
-    // store; 'close' is emitted from a tick that already captured it.
-    this[bunHTTP2AsyncContextFrame] = undefined;
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
     // will destroy if it has been closed and there are no other open or

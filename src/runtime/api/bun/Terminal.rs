@@ -10,8 +10,6 @@
 //! - Callbacks are stored via `values` in classes.ts, accessed via js.gc
 
 use core::cell::Cell;
-#[cfg(unix)]
-use core::ffi::c_ulong;
 use core::ffi::{c_int, c_void};
 #[cfg(windows)]
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -126,6 +124,12 @@ pub struct Terminal {
     /// The slave side of the PTY (used by child processes). Unused on Windows.
     slave_fd: Cell<Fd>,
 
+    /// NUL-terminated pts device path from openpty. Read-only after
+    /// construction; used to re-open the slave after a macOS/BSD revoke
+    /// (see `slave_was_revoked`).
+    #[cfg(unix)]
+    slave_path: [u8; SLAVE_PATH_BUF_LEN],
+
     /// Windows ConPTY handle. Used for resize and passed to uv_spawn via
     /// uv_process_options_t.pseudoconsole.
     #[cfg(windows)]
@@ -165,7 +169,7 @@ pub struct Terminal {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub struct Flags: u16 {
         const CLOSED         = 1 << 0;
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
@@ -177,6 +181,10 @@ bitflags::bitflags! {
         /// reuse. Windows: first exit's ClosePseudoConsole would kill a second
         /// child. POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
+        /// The user called `unref()`. The keepalive bit otherwise lives only on
+        /// the reader's `FilePoll`, which a macOS/BSD revoke destroys, so
+        /// `restart_reader_if_done` re-applies this to the fresh poll.
+        const UNREFED        = 1 << 8;
     }
 }
 
@@ -437,6 +445,8 @@ impl Terminal {
             read_fd: Cell::new(pty_result.read_fd),
             write_fd: Cell::new(pty_result.write_fd),
             slave_fd: Cell::new(pty_result.slave),
+            #[cfg(unix)]
+            slave_path: pty_result.slave_path,
             #[cfg(windows)]
             hpcon: Cell::new(Some(pty_result.hpcon)),
             cols: Cell::new(if cfg!(windows) {
@@ -631,6 +641,154 @@ impl Terminal {
         self.slave_fd.get()
     }
 
+    /// True when a session-leader child's exit made the BSD/macOS kernel
+    /// revoke every fd on the pts (xnu `proc_exit` -> `VNOP_REVOKE` on
+    /// `s_ttyvp`), so the held slave fd is no longer a tty. Never true on
+    /// Linux, whose `disassociate_ctty` skips the hangup for PTY drivers.
+    #[cfg(unix)]
+    fn slave_was_revoked(&self) -> bool {
+        let slave = self.slave_fd.get();
+        !self.flags.get().contains(Flags::CLOSED)
+            && slave != Fd::INVALID
+            && get_termios(slave).is_none()
+    }
+
+    #[cfg(not(unix))]
+    fn slave_was_revoked(&self) -> bool {
+        false
+    }
+
+    /// Make the terminal usable for another spawn after a macOS/BSD revoke
+    /// (see `slave_was_revoked`): re-open the slave and, if the master reader
+    /// already observed the resulting hangup, re-arm it. No-op on Linux and
+    /// whenever the held slave fd is still a live tty.
+    #[cfg(unix)]
+    pub(crate) fn ensure_slave_open(&self) {
+        if self.slave_was_revoked() {
+            self.reopen_slave();
+        }
+        // Only re-arm the reader for a terminal that has a slave to read from.
+        // A failed re-open leaves `Fd::INVALID` with the master still hung up;
+        // re-arming there would turn its instant EOF into a spurious exit(0).
+        if self.slave_fd.get() != Fd::INVALID {
+            self.restart_reader_if_done();
+        }
+    }
+
+    /// Re-open the pts slave by path. The fresh slave open resets the line
+    /// discipline to kernel defaults, so termios is snapshotted through the
+    /// master first and written back afterwards; on xnu that same `tcsetattr`
+    /// also restores the master's `TS_CONNECTED`, un-hanging the read side.
+    #[cfg(unix)]
+    fn reopen_slave(&self) {
+        // The held fd is provably dead (the caller's `slave_was_revoked` saw
+        // its tcgetattr fail). Release it first so every exit below, including
+        // a failed `open`, leaves `Fd::INVALID` and the spawn path rejects
+        // this terminal loudly instead of handing the dead fd to a child.
+        let old = self.slave_fd.get();
+        if old != Fd::INVALID {
+            old.close();
+        }
+        self.slave_fd.set(Fd::INVALID);
+
+        let master = self.master_fd.get();
+        // `create_pty_posix` zero-initializes the buffer and forces a trailing
+        // NUL, so a leading NUL means the libc never filled it in and there is
+        // no path to re-open from.
+        let Some(nul) = self.slave_path.iter().position(|&b| b == 0) else {
+            return;
+        };
+        if nul == 0 || master == Fd::INVALID {
+            return;
+        }
+        let path = bun_core::ZStr::from_buf(&self.slave_path, nul);
+        let saved_termios = get_termios(master);
+        let new_fd = match sys::open(path, sys::O::RDWR | sys::O::NOCTTY, 0) {
+            sys::Result::Ok(fd) => fd,
+            sys::Result::Err(_) => return,
+        };
+        self.slave_fd.set(new_fd);
+        if let Some(t) = saved_termios {
+            let _ = set_termios(master, &t);
+        }
+        // xnu zeroes (then defaults to 80x24) the winsize on the slave re-open.
+        let _ = self.set_winsize(self.cols.get(), self.rows.get());
+    }
+
+    /// Re-arm the master reader after it observed the pts hangup caused by a
+    /// revoke. Mirrors the reader start in `init_terminal`: a fresh
+    /// non-blocking CLOEXEC dup of the master, `start` with the PTY poll
+    /// flags, and the reader's ref on `self`.
+    #[cfg(unix)]
+    fn restart_reader_if_done(&self) {
+        let flags = self.flags.get();
+        if !flags.contains(Flags::READER_STARTED) || !flags.contains(Flags::READER_DONE) {
+            return;
+        }
+        let master = self.master_fd.get();
+        if master == Fd::INVALID {
+            return;
+        }
+        let sys::Result::Ok(read_fd) = sys::dup(master) else {
+            return;
+        };
+        let _ = sys::update_nonblocking(read_fd, true);
+        let _ = crate::api::bun_process::spawn_sys::set_close_on_exec(read_fd);
+        let started = self.reader.with_mut(|r| {
+            // The reader torched its previous handle on EOF; clear the
+            // terminal-state flags so `finish()` accepts a future done.
+            r.flags.remove(
+                PosixFlags::IS_DONE
+                    | PosixFlags::RECEIVED_EOF
+                    | PosixFlags::CLOSED_WITHOUT_REPORTING
+                    | PosixFlags::IS_PAUSED,
+            );
+            if r.start(read_fd, true).is_err() {
+                return false;
+            }
+            // PTY behaves like a pipe, not a socket (same as init_terminal).
+            r.flags
+                .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
+            if let Some(poll) = r.handle.get_poll() {
+                poll.set_flag(bun_io::FilePollFlag::Nonblocking);
+            }
+            true
+        });
+        if !started {
+            read_fd.close();
+            return;
+        }
+        self.read_fd.set(read_fd);
+        // The reader's ref was released when READER_DONE was set; re-acquire
+        // it so the refcount balances on the next on_reader_finished.
+        self.ref_();
+        self.update_flags(|f| f.remove(Flags::READER_DONE));
+        // `register_poll` keeps a brand-new poll alive unconditionally; carry
+        // the user's earlier `unref()` over to it.
+        if self.flags.get().contains(Flags::UNREFED) {
+            self.reader.with_mut(|r| r.update_ref(false));
+        }
+    }
+
+    /// `ioctl(master, TIOCSWINSZ)`. Returns false on failure.
+    #[cfg(unix)]
+    fn set_winsize(&self, cols: u16, rows: u16) -> bool {
+        let winsize = Winsize {
+            row: rows,
+            col: cols,
+            xpixel: 0,
+            ypixel: 0,
+        };
+        // SAFETY: master_fd is a live PTY master; TIOCSWINSZ takes *const winsize.
+        unsafe {
+            libc::ioctl(
+                self.master_fd.get().native(),
+                libc::TIOCSWINSZ,
+                &raw const winsize,
+            ) == 0
+        }
+    }
+
     /// `flags.closed` — read by `Bun.spawn` arg validation.
     #[inline]
     pub(crate) fn is_closed(&self) -> bool {
@@ -767,11 +925,21 @@ impl Terminal {
     }
 }
 
+/// Size of the stored pts device path. No real pts path is longer: macOS's
+/// `ioctl(TIOCPTYGNAME)`, which its `openpty` fills the `name` out-param with,
+/// is defined to write at most this many bytes.
+#[cfg(unix)]
+pub const SLAVE_PATH_BUF_LEN: usize = 128;
+
 pub struct PtyResult {
     pub master: Fd,
     pub read_fd: Fd,
     pub write_fd: Fd,
     pub slave: Fd,
+    /// NUL-terminated pts device path (e.g. `/dev/pts/3`); all-zero if the
+    /// libc's openpty did not fill it. Used to re-open the slave on macOS/BSD.
+    #[cfg(unix)]
+    pub slave_path: [u8; SLAVE_PATH_BUF_LEN],
     #[cfg(windows)]
     pub hpcon: windows::HPCON,
     #[cfg(not(windows))]
@@ -912,6 +1080,11 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
 
     let mut master_fd: c_int = -1;
     let mut slave_fd: c_int = -1;
+    // openpty(3)'s `name` out-param has no length, but it receives a device
+    // path, so PATH_MAX is a hard upper bound on what any libc can write.
+    // The (much shorter) result is bounds-copied into `slave_path` below.
+    const NAME_SCRATCH_LEN: usize = libc::PATH_MAX as usize;
+    let mut name_scratch = [0u8; NAME_SCRATCH_LEN];
 
     let winsize = Winsize {
         row: rows,
@@ -920,18 +1093,29 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         ypixel: 0,
     };
 
-    // SAFETY: openpty writes to master_fd/slave_fd; name/termp are null (allowed).
+    // SAFETY: openpty writes to master_fd/slave_fd and a NUL-terminated device
+    // path into `name_scratch` (bounded by PATH_MAX); termp is null (allowed).
     let result = unsafe {
         openpty_fn(
             &raw mut master_fd,
             &raw mut slave_fd,
-            core::ptr::null_mut(),
+            name_scratch.as_mut_ptr(),
             core::ptr::null(),
             &raw const winsize,
         )
     };
     if result != 0 {
         return Err(CreatePtyError::OpenPtyFailed);
+    }
+    // Never rely on the libc having kept the terminator in-bounds.
+    name_scratch[NAME_SCRATCH_LEN - 1] = 0;
+    // A real pts path always fits (macOS's TIOCPTYGNAME writes at most
+    // `SLAVE_PATH_BUF_LEN`); a longer one leaves `slave_path` all-zero and
+    // `reopen_slave` simply has no path to re-open from.
+    let mut slave_path = [0u8; SLAVE_PATH_BUF_LEN];
+    let nul = name_scratch.iter().position(|&b| b == 0).unwrap_or(0);
+    if nul < SLAVE_PATH_BUF_LEN {
+        slave_path[..=nul].copy_from_slice(&name_scratch[..=nul]);
     }
 
     let master_fd_desc = Fd::from_native(master_fd);
@@ -1046,6 +1230,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
         read_fd,
         write_fd,
         slave: slave_fd_desc,
+        slave_path,
         hpcon: (),
     })
 }
@@ -1485,31 +1670,8 @@ impl Terminal {
         };
 
         #[cfg(unix)]
-        {
-            #[cfg(target_os = "macos")]
-            const TIOCSWINSZ: c_ulong = 0x80087467;
-            #[cfg(not(target_os = "macos"))]
-            const TIOCSWINSZ: c_ulong = 0x5414;
-
-            let winsize = bun_core::Winsize {
-                row: new_rows,
-                col: new_cols,
-                xpixel: 0,
-                ypixel: 0,
-            };
-
-            // SAFETY: master_fd is open (closed flag checked above), TIOCSWINSZ
-            // takes a *const winsize.
-            let ioctl_result = unsafe {
-                libc::ioctl(
-                    self.master_fd.get().native(),
-                    TIOCSWINSZ as _,
-                    &raw const winsize,
-                )
-            };
-            if ioctl_result != 0 {
-                return Err(global_object.throw(format_args!("Failed to resize terminal")));
-            }
+        if !self.set_winsize(new_cols, new_rows) {
+            return Err(global_object.throw(format_args!("Failed to resize terminal")));
         }
 
         #[cfg(windows)]
@@ -1596,6 +1758,9 @@ impl Terminal {
     /// Reference the terminal to keep the event loop alive
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_ref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        // The user's intent is remembered here (see `Flags::UNREFED`), not in
+        // `update_ref`: `drain_and_close_slave_fd` also calls `update_ref(false)`.
+        self.update_flags(|f| f.remove(Flags::UNREFED));
         self.update_ref(true);
         Ok(JSValue::UNDEFINED)
     }
@@ -1603,6 +1768,7 @@ impl Terminal {
     /// Unreference the terminal
     #[bun_jsc::host_fn(method)]
     pub(crate) fn do_unref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+        self.update_flags(|f| f.insert(Flags::UNREFED));
         self.update_ref(false);
         Ok(JSValue::UNDEFINED)
     }
@@ -1646,6 +1812,14 @@ impl Terminal {
         if self.flags.get().contains(Flags::CLOSED) {
             return;
         }
+        // A swallowed macOS/BSD revoke left the reader already done without
+        // ever delivering the exit callback, so `reader.close()` below is a
+        // no-op that cannot re-deliver it. Capture that now, before `CLOSED`
+        // makes `slave_was_revoked` unconditionally false, and fire it after
+        // the reader is torn down so `close()` keeps its exit-callback contract.
+        #[cfg(unix)]
+        let exit_was_deferred =
+            self.flags.get().contains(Flags::READER_DONE) && self.slave_was_revoked();
         self.update_flags(|f| f.insert(Flags::CLOSED));
 
         // Close writer (closes write_fd). R-2: `with_mut` borrow is held across
@@ -1676,6 +1850,12 @@ impl Terminal {
             self.reader.with_mut(|r| r.close());
         }
         self.read_fd.set(Fd::INVALID);
+
+        #[cfg(unix)]
+        if exit_was_deferred && !self.flags.get().contains(Flags::FINALIZED) {
+            // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
+            self.call_exit_callback(0, None);
+        }
 
         // Close master fd
         let master = self.master_fd.get();
@@ -1762,7 +1942,12 @@ impl Terminal {
         // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
             self.this_value.with_mut(|v| v.downgrade());
-            self.call_exit_callback(exit_code, None);
+            // A macOS/BSD revoke hung up the master, but the user still holds
+            // an open Terminal: not a terminal exit. `ensure_slave_open` on
+            // the next spawn re-opens the slave and re-arms this reader.
+            if !self.slave_was_revoked() {
+                self.call_exit_callback(exit_code, None);
+            }
         }
         self.deref_();
     }

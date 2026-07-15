@@ -7081,6 +7081,11 @@ declare module "bun" {
        * await proc2.exited;
        * terminal.close();
        * ```
+       *
+       * Reuse is sequential. Each child becomes the session leader with the PTY as its
+       * controlling terminal (like `forkpty(3)`), and a PTY can only be the controlling
+       * terminal of one session at a time, so `await` the previous child's `exited`
+       * before spawning the next one.
        */
       terminal?: TerminalOptions | Terminal;
     }

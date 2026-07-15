@@ -53,6 +53,7 @@ pub struct NodeHTTPResponse {
     /// This should be pretty uncommon though.
     pub buffered_request_body_data_during_pause: JsCell<Vec<u8>>,
     pub bytes_written: Cell<usize>,
+    pub bytes_read: Cell<usize>,
 
     pub upgrade_context: JsCell<UpgradeCTX>,
 
@@ -1225,6 +1226,8 @@ impl NodeHTTPResponse {
             last
         );
 
+        self.bytes_read
+            .set(self.bytes_read.get().saturating_add(chunk.len()));
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.append_slice(chunk));
         if last {
@@ -1332,6 +1335,8 @@ impl NodeHTTPResponse {
             last as u8
         );
 
+        self.bytes_read
+            .set(self.bytes_read.get().saturating_add(chunk.len()));
         self.on_data_or_aborted(chunk, last, AbortEvent::None, self.get_this_value());
     }
 
@@ -1845,6 +1850,10 @@ impl NodeHTTPResponse {
     ) -> JSValue {
         JSValue::js_number(self.bytes_written.get() as f64)
     }
+
+    pub(crate) fn get_bytes_read(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JSValue {
+        JSValue::js_number(self.bytes_read.get() as f64)
+    }
 }
 
 fn handle_corked(
@@ -2108,6 +2117,7 @@ pub unsafe extern "C" fn NodeHTTPResponse__createForJS(
         promise: JsCell::new(StrongOptional::empty()),
         buffered_request_body_data_during_pause: JsCell::new(Vec::new()),
         bytes_written: Cell::new(0),
+        bytes_read: Cell::new(request_ref.headers_byte_length()),
         auto_flusher: JsCell::new(AutoFlusher::default()),
     }));
 

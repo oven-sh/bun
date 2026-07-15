@@ -550,6 +550,15 @@ extern "C"
       uwsApp->setFlags(require_host_header, use_strict_method_validation);
     }
   }
+  void uws_app_set_reject_connect(int ssl, uws_app_t *app, bool value) {
+    if (ssl) {
+      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
+      uwsApp->setRejectConnect(value);
+    } else {
+      uWS::App *uwsApp = (uWS::App *)app;
+      uwsApp->setRejectConnect(value);
+    }
+  }
 
   void uws_app_destroy(int ssl, uws_app_t *app)
   {

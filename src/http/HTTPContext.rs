@@ -1189,12 +1189,11 @@ impl<const SSL: bool> Handler<SSL> {
                 // if we are here is because server rejected us, and the error_no is the cause of this
                 // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
                 if client.flags.did_have_handshaking_error {
-                    // -71 is the EPROTO sentinel from the handshake layer
-                    // (peer sent bytes that are not a TLS record, e.g.
-                    // WRONG_VERSION_NUMBER). Other values, including the
-                    // -46 ECONNRESET sentinel, fall through to the
-                    // cert-error lookup.
-                    let err = if handshake_error.error_no == -71 {
+                    // The EPROTO sentinel (peer sent bytes that are not a TLS
+                    // record, e.g. WRONG_VERSION_NUMBER) is not an X509_V_ERR_*
+                    // code. Other values, including the ECONNRESET sentinel,
+                    // fall through to the cert-error lookup.
+                    let err = if handshake_error.error_no == uws::HANDSHAKE_EPROTO_SENTINEL {
                         crate::Error::TLSHandshakeFailed
                     } else {
                         get_cert_error_from_no(handshake_error.error_no)

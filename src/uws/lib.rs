@@ -93,7 +93,10 @@ pub use bun_uws_sys::{
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`
 // (`createBunSocketErrorToJS` / `verifyErrorToJS`) live as extension traits
 // in the *_jsc crate.
-pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
+pub use bun_uws_sys::{
+    HANDSHAKE_ECONNRESET_SENTINEL, HANDSHAKE_EPROTO_SENTINEL, Opcode, SendStatus,
+    create_bun_socket_error_t, us_bun_verify_error_t,
+};
 
 /// Owned socket-address shape (boxed IP). Distinct from the sys type by
 /// design — that one stores the IP text inline as returned from
@@ -931,11 +934,10 @@ pub mod ssl_wrapper {
                         .set_handshake_state(HandshakeState::HandshakeCompleted);
                     let verify = if ssl_queue_err != 0 {
                         // Same shape `ssl_dispatch_parked_reason` (openssl.c)
-                        // dispatches for a fatal handshake error: error_no =
-                        // -71 (EPROTO sentinel), reason from BoringSSL's
-                        // static error-string table.
+                        // dispatches for a fatal handshake error; reason is from
+                        // BoringSSL's static error-string table.
                         us_bun_verify_error_t {
-                            error_no: -71,
+                            error_no: crate::HANDSHAKE_EPROTO_SENTINEL,
                             code: c"EPROTO".as_ptr(),
                             reason: boring_sys::ERR_reason_error_string(ssl_queue_err),
                         }

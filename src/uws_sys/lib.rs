@@ -34,6 +34,14 @@ pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
 
+/// `error_no` sentinel dispatched by `ssl_dispatch_parked_reason` (openssl.c)
+/// and `SSLWrapper::update_handshake_state` for a fatal TLS protocol error
+/// (BoringSSL `SSL_ERROR_SSL`). Negated Linux `EPROTO`; used cross-platform.
+pub const HANDSHAKE_EPROTO_SENTINEL: core::ffi::c_int = -71;
+/// `error_no` sentinel dispatched by `ssl_trigger_handshake_econnreset`
+/// (openssl.c) when the socket closes before the handshake completes.
+pub const HANDSHAKE_ECONNRESET_SENTINEL: core::ffi::c_int = -46;
+
 /// `struct us_bun_verify_error_t` — TLS handshake verification result.
 ///
 /// Field is named `error_no` so the Node-compat

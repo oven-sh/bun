@@ -456,10 +456,10 @@ fn on_handshake(
         // if we are here is because server rejected us, and the error_no is the cause of this
         // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
         if this.flags.did_have_handshaking_error {
-            // -71 is the EPROTO sentinel from SSLWrapper (peer sent bytes
-            // that are not a TLS record). Other values fall through to the
+            // The EPROTO sentinel (peer sent bytes that are not a TLS record)
+            // is not an X509_V_ERR_* code. Other values fall through to the
             // cert-error lookup.
-            let err = if handshake_error.error_no == -71 {
+            let err = if handshake_error.error_no == uws::HANDSHAKE_EPROTO_SENTINEL {
                 crate::Error::TLSHandshakeFailed
             } else {
                 crate::get_cert_error_from_no(handshake_error.error_no)

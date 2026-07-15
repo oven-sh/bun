@@ -1788,11 +1788,8 @@ it.concurrent("setTypeOfService validates its argument instead of asserting", as
   void stderr;
 });
 
-// setKeepAlive(enable, initialDelay) is documented in milliseconds. The
-// pre-fix binding forwarded the ms value raw into TCP_KEEPIDLE (seconds), so
-// setKeepAlive(true, 4000) armed the first probe at 4000s instead of 4s; and
-// setKeepAlive(true) (default 0) returned false after SO_KEEPALIVE was already
-// on. Verified against the kernel via getsockopt(2) on the live fd.
+// initialDelay is ms; TCP_KEEPIDLE is seconds. 0 = enable SO_KEEPALIVE and
+// leave the kernel-default idle. Verified via getsockopt(2) on the live fd.
 it.concurrent.skipIf(isWindows)("setKeepAlive converts ms to seconds and treats 0 as success", async () => {
   await using proc = Bun.spawn({
     cmd: [

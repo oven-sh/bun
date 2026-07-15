@@ -2224,9 +2224,9 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
   // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
-  // conversion for TCP_KEEPIDLE lives in the native binding. Node divides
-  // here because libuv's uv_tcp_keepalive takes seconds.
-  const initialDelay = ~~initialDelayMsecs;
+  // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
+  // negatives and ~~ overflow match Node's no-validate behavior.
+  const initialDelay = Math.max(0, ~~initialDelayMsecs);
 
   if (!this._handle) {
     this[kSetKeepAlive] = enable;

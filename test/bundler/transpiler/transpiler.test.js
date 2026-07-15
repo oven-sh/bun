@@ -2912,6 +2912,21 @@ console.log(resolve.length)
     expectPrinted_("export { type x } from 'mod';", "");
     expectPrinted_("export { type as } from 'mod';", "");
 
+    // The resulting "export {}" is redundant when something else already marks
+    // the output as ESM, so it is dropped regardless of source order (tsc does
+    // the same; esbuild always keeps it).
+    expectPrinted_("export const a = 1; export { type B };", "export const a = 1");
+    expectPrinted_("export { type B }; export const a = 1;", "export const a = 1");
+    expectPrinted_("export default 1; export { type B };", "export default 1");
+    expectPrinted_("export function f() {} export { type B };", "export function f() {}");
+    expectPrinted_("export class C {} export { type B };", "export class C {\n}");
+    expectPrinted_("export * from 'mod'; export { type B };", 'export * from "mod"');
+    expectPrinted_("let b = 1; export { type A }; export { b };", "let b = 1;\n\nexport { b }");
+    expectPrinted_("let b = 1; export { b }; export { type A };", "let b = 1;\n\nexport { b }");
+    expectPrinted_("export { type A }; export { type B };", "export {}");
+    expectPrinted_("export { type A }; export { unbound };", "export {}");
+    expectPrinted_("await 0; export { type A };", "await 0");
+
     // "import { type as }" is a type-only import of the identifier "as" and
     // must be dropped entirely; previously it leaked a bare "import 'mod'".
     expectPrinted_("import { type as } from 'mod';", "");

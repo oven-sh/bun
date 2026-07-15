@@ -859,6 +859,41 @@ impl<'a> Parser<'a> {
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
 
+        if TS {
+            // Type-stripping can leave redundant `export {}` clauses behind. Scan
+            // for exports that definitely survive so the visit pass can drop them;
+            // top-level await alone also marks the output as ESM.
+            p.has_nonempty_export_stmt = p.top_level_await_keyword.len > 0;
+            for stmt in stmts.iter() {
+                match &stmt.data {
+                    js_ast::StmtData::SExportDefault(_)
+                    | js_ast::StmtData::SExportStar(_)
+                    | js_ast::StmtData::SExportFrom(_) => p.has_nonempty_export_stmt = true,
+                    js_ast::StmtData::SLocal(s) if s.is_export => {
+                        p.has_nonempty_export_stmt = true
+                    }
+                    js_ast::StmtData::SClass(s) if s.is_export => {
+                        p.has_nonempty_export_stmt = true
+                    }
+                    js_ast::StmtData::SFunction(s)
+                        if s.func.flags.contains(js_ast::Flags::Function::IsExport) =>
+                    {
+                        p.has_nonempty_export_stmt = true
+                    }
+                    js_ast::StmtData::SEnum(s) if s.is_export => {
+                        p.has_nonempty_export_stmt = true
+                    }
+                    js_ast::StmtData::SNamespace(s) if s.is_export => {
+                        p.has_nonempty_export_stmt = true
+                    }
+                    js_ast::StmtData::SExportClause(s) if !s.items.is_empty() => {
+                        p.remaining_export_clauses_with_items += 1;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         if p.options.features.react_compiler.is_enabled() {
             let rc_options = bun_react_compiler::ReactCompilerOptions {
                 enabled: true,

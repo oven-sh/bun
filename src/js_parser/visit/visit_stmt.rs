@@ -256,8 +256,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Truncate `data.items` to `end` by reslicing the arena view.
         data.items.truncate(end);
 
+        if TYPESCRIPT && items_len > 0 {
+            p.remaining_export_clauses_with_items =
+                p.remaining_export_clauses_with_items.saturating_sub(1);
+        }
+
         if remove_for_tree_shaking {
             return Ok(());
+        }
+
+        if TYPESCRIPT {
+            if end == 0 {
+                // Drop a redundant empty `export {}` when something else already
+                // marks the output as ESM (another export, TLA, or a later export
+                // clause that still has items to visit).
+                if p.has_nonempty_export_stmt || p.remaining_export_clauses_with_items > 0 {
+                    return Ok(());
+                }
+            }
+            p.has_nonempty_export_stmt = true;
         }
 
         stmts.push(*stmt);

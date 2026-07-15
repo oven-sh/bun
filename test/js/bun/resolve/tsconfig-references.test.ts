@@ -190,7 +190,10 @@ test.concurrent("a missing referenced config is skipped and stays out of error l
       files: [],
       references: [{ path: "./tsconfig.missing.json" }, { path: "./tsconfig.app.json" }],
     }),
+    // The broken "extends" exercises the quiet chain walk for referenced
+    // projects; the config still contributes its own paths.
     "tsconfig.app.json": JSON.stringify({
+      extends: "./tsconfig.missing-base.json",
       include: ["src"],
       compilerOptions: { paths: { "@/*": ["./src/*"] } },
     }),

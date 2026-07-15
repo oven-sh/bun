@@ -4093,9 +4093,14 @@ impl<'a> Resolver<'a> {
     /// Walks the `extends` chain of an already-parsed tsconfig and merges the
     /// chain into a single config. Takes ownership of `tsconfig_json` and
     /// returns the merged config (heap::alloc; the caller interns or frees it).
+    ///
+    /// `quiet` keeps chain-walk failures out of the resolver Log (used for
+    /// referenced projects, where extra log entries would surface in
+    /// unrelated resolution errors); diagnostics go to `debuglog!` instead.
     fn merge_tsconfig_extends_chain(
         &mut self,
         tsconfig_json: *mut TSConfigJSON,
+        quiet: bool,
     ) -> crate::CrateResult<*mut TSConfigJSON> {
         let mut parent_configs: BoundedArray<*mut TSConfigJSON, 64> = BoundedArray::default();
         parent_configs.append(tsconfig_json)?;
@@ -4118,15 +4123,23 @@ impl<'a> Resolver<'a> {
                 match self.parse_tsconfig(abs_path, FD::INVALID) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
-                        let _ = self.log_mut().add_debug_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
+                        if quiet {
+                            debuglog!(
                                 "{} loading tsconfig.json extends {}",
                                 bstr::BStr::new(err.name()),
                                 bun_core::fmt::quote(abs_path)
-                            ),
-                        );
+                            );
+                        } else {
+                            let _ = self.log_mut().add_debug_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "{} loading tsconfig.json extends {}",
+                                    bstr::BStr::new(err.name()),
+                                    bun_core::fmt::quote(abs_path)
+                                ),
+                            );
+                        }
                         break;
                     }
                 };
@@ -4138,14 +4151,21 @@ impl<'a> Resolver<'a> {
                     // SAFETY: `parent_config` came from heap::into_raw above
                     // and was not stored anywhere.
                     TSConfigJSON::destroy(unsafe { bun_core::heap::take(parent_config) });
-                    let _ = self.log_mut().add_debug_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
+                    if quiet {
+                        debuglog!(
                             "tsconfig.json extends chain too long at {}",
                             bun_core::fmt::quote(abs_path)
-                        ),
-                    );
+                        );
+                    } else {
+                        let _ = self.log_mut().add_debug_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "tsconfig.json extends chain too long at {}",
+                                bun_core::fmt::quote(abs_path)
+                            ),
+                        );
+                    }
                     break;
                 }
                 current = bun_ptr::BackRef::from(
@@ -4276,7 +4296,7 @@ impl<'a> Resolver<'a> {
                     continue;
                 }
             };
-            let Ok(merged_ptr) = self.merge_tsconfig_extends_chain(parsed) else {
+            let Ok(merged_ptr) = self.merge_tsconfig_extends_chain(parsed, true) else {
                 continue;
             };
             // SAFETY: `merged_ptr` came from heap::alloc in
@@ -6670,7 +6690,7 @@ impl<'a> Resolver<'a> {
                 // it is always overwritten when parsed_tsconfig.is_some(), and DirInfo defaults
                 // tsconfig_json to None otherwise.
                 if let Some(tsconfig_json) = parsed_tsconfig {
-                    let merged_config = self.merge_tsconfig_extends_chain(tsconfig_json)?;
+                    let merged_config = self.merge_tsconfig_extends_chain(tsconfig_json, false)?;
                     self.load_tsconfig_references(merged_config);
                     // `merged_config` is a leaked Box (heap::alloc) interned into DirInfo; outlives the resolver.
                     info.tsconfig_json = Some(

@@ -66,7 +66,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
 
             // Replace the file:// URL with the absolute path.
             drop(source_url_slice);
-            source_url_string = path;
+            source_url_string = path.into_inner();
             source_url_slice = source_url_string.to_utf8();
         }
     }

@@ -83,6 +83,7 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
   if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
+  if (testPath.includes("test-require-builtins")) return 120_000; // requires every builtin module; ~60s alone under local ASAN debug builds
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -768,6 +769,15 @@ async function runTests() {
           // (test-child-process-*-detached.js), which this flag defeats.
           env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
         }
+        if (isMacOS && basename(execPath).includes("asan")) {
+          // ASAN debug builds resolve asan-dyld-shim.dylib via @rpath
+          // relative to the binary. Tests that copy process.execPath
+          // elsewhere (fork-exec-path, stdin-from-file-spawn, ...) lose
+          // that anchor; give dyld a last-resort search path (prepending
+          // rather than clobbering any inherited value).
+          const dir = dirname(realpathSync(execPath));
+          env.DYLD_FALLBACK_LIBRARY_PATH = [dir, process.env.DYLD_FALLBACK_LIBRARY_PATH].filter(Boolean).join(":");
+        }
         if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
           env.BUN_JSC_validateExceptionChecks = "1";
           env.BUN_JSC_dumpSimulatedThrows = "1";
@@ -1364,6 +1374,12 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
+    // common/tmpdir.js reads NODE_TEST_DIR — point it at the per-test tmpdir
+    // so its `.tmp.<id>` subdir is swept by the finally-rmSync below even
+    // when the test aborts (ASAN abort_on_error skips its exit handler).
+    // POSIX-only: there is no Windows ASAN lane, and relocating testRoot to
+    // realpath(%TEMP%) breaks path-shape assumptions in a few Windows tests.
+    NODE_TEST_DIR: isWindows ? undefined : tmpdirPath,
     TEST_TMPDIR: tmpdirPath, // Used in Node.js tests.
     ...(typeof remapPort == "number"
       ? { BUN_CRASH_REPORT_URL: `http://localhost:${remapPort}` }

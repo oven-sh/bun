@@ -811,7 +811,10 @@ pub(crate) fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> 
     // `#[bun_jsc::host_fn]` on `call_as_function` emits the C-ABI thunk
     // `__jsc_host_call_as_function`; `JSFunction::create` wants the raw
     // `JSHostFn` shape, not the safe Rust signature.
-    let call_fn = bun_jsc::JSFunction::create(global, name.clone(), __jsc_host_call_as_function, 1, Default::default());
+    // `name` is passed by value (bit-copy) with borrow semantics —
+    // `JSFunction__createFromZig` only reads it (`toWTFString()`), so an
+    // owned `clone()` here would never be deref'd and leaks the StringImpl.
+    let call_fn = bun_jsc::JSFunction::create(global, name, __jsc_host_call_as_function, 1, Default::default());
     let bound = JSValueTestExt::bind(call_fn, global, value, &name, 1.0, &[])?;
     set_prototype_direct(bound, value.get_prototype(global), global)?;
     Ok(bound)

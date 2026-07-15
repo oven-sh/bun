@@ -159,9 +159,9 @@ let url = URL::from_utf8(href)?;                  // Option<NonNull<URL>>
 // caller owns the C++ object — destroy it when done:
 // unsafe { URL::destroy(url.as_ptr()) }
 
-url.protocol()   // bun_core::String
-url.pathname()   // bun_core::String
-url.search()     // bun_core::String
+url.protocol()   // bun_core::OwnedString (+1; Drop derefs)
+url.pathname()   // bun_core::OwnedString
+url.search()     // bun_core::OwnedString
 url.port()       // u32 (u32::MAX = unset; otherwise u16 range)
 
 // NOTE: host()/hostname() are SWAPPED relative to JS:
@@ -170,7 +170,9 @@ url.hostname()   // hostname WITH port     (opposite of JS!)
 ```
 
 `URL::href_from_string`, `URL::file_url_from_string`, `URL::path_from_file_url`
-do whole-string conversions.
+do whole-string conversions. Every string getter returns `OwnedString` — use
+`.into_inner()` only when you must transfer the +1 out (e.g. into a struct
+field that will deref later).
 
 ## MIME Types (`bun_http_types::MimeType`)
 

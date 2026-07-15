@@ -241,9 +241,7 @@ pub(crate) fn bun_fetch_preconnect(
         ));
     }
 
-    // `href_from_js` returns a +1 (`Bun::toStringRef`). `bun_core::String` is
-    // `Copy` with no `Drop`, so wrap in `OwnedString` for the scope-exit deref.
-    let url_str = bun_core::OwnedString::new(jsc::URL::href_from_js(arguments[0], global_object)?);
+    let url_str = jsc::URL::href_from_js(arguments[0], global_object)?;
 
     if url_str.tag() == BunStringTag::Dead {
         return Err(global_object
@@ -328,7 +326,7 @@ impl StringOrURL {
         if out.tag() == BunStringTag::Dead {
             return Ok(None);
         }
-        Ok(Some(out))
+        Ok(Some(out.into_inner()))
     }
 }
 
@@ -1017,13 +1015,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     // Handle string format: proxy: "http://proxy.example.com:8080"
                     if is_url_instance || (proxy_arg.is_string() && proxy_arg.get_length(ctx)? > 0)
                     {
-                        // `href_from_js` returns a +1 WTFStringImpl ref; `bun_core::String`
-                        // is `Copy` with no `Drop`, so wrap in `OwnedString` for scope-exit
-                        // deref (mirrors `defer href.deref()` in fetch.zig).
-                        let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
-                            proxy_arg,
-                            global_this,
-                        )?);
+                        let href = jsc::URL::href_from_js(proxy_arg, global_this)?;
                         if href.tag() == BunStringTag::Dead {
                             let err = ctx.to_type_error(
                                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1058,11 +1050,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             if !proxy_url_arg.is_undefined_or_null() {
                                 // Deliberately no type gate: `href_from_js` accepts a string
                                 // or a `URL` object and is the sole validator (Dead = invalid).
-                                // +1 ref; see the string-format branch above.
-                                let href = bun_core::OwnedString::new(jsc::URL::href_from_js(
-                                    proxy_url_arg,
-                                    global_this,
-                                )?);
+                                let href = jsc::URL::href_from_js(proxy_url_arg, global_this)?;
                                 if href.tag() == BunStringTag::Dead {
                                     let err = ctx.to_type_error(
                                         jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -1558,7 +1546,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             };
 
-            url_string = jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path));
+            url_string =
+                jsc::URL::file_url_from_string(BunString::borrow_utf8(temp_file_path)).into_inner();
 
             // `find_or_create_file_from_path` is typed against the
             // `crate::webcore::node_types` stub (until it's swapped to a

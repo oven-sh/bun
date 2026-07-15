@@ -1380,8 +1380,6 @@ class ChildProcess extends EventEmitter {
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
-    const stdioCount = stdio.length;
-    const hasSocketsToEagerlyLoad = stdioCount >= 3;
 
     validateString(options.file, "options.file");
     var file;
@@ -1413,12 +1411,10 @@ class ChildProcess extends EventEmitter {
           this.pid = this.#handle.pid;
           $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
 
-          if (hasSocketsToEagerlyLoad) {
-            process.nextTick(() => {
-              void this.stdio;
-              $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
-            });
-          }
+          process.nextTick(() => {
+            void this.stdio;
+            $debug("ChildProcess: onExit", exitCode, signalCode, err, this.pid);
+          });
 
           process.nextTick(
             (exitCode, signalCode, err) => this.#handleOnExit(exitCode, signalCode, err),
@@ -1458,10 +1454,8 @@ class ChildProcess extends EventEmitter {
         if (options[kFromNode]) this.#closesNeeded += 1;
       }
 
-      if (hasSocketsToEagerlyLoad) {
-        for (let item of this.stdio) {
-          item?.ref?.();
-        }
+      for (let item of this.stdio) {
+        item?.ref?.();
       }
     } catch (ex) {
       const exCode = ex != null && typeof ex === "object" && Object.hasOwn(ex, "code") ? ex.code : undefined;

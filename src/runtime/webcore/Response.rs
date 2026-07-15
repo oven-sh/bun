@@ -1130,7 +1130,7 @@ impl Response {
         // https://fetch.spec.whatwg.org/#dom-response-redirect steps 1 & 6: `Location`
         // gets the serialization of the parsed url, not the raw input. Non-absolute
         // input keeps the raw string: relative redirects are documented Bun behavior.
-        let href = OwnedString::new(bun_url::href_from_string(&url_string));
+        let href = bun_url::href_from_string(&url_string);
         // The JS string's own WTF string (no re-encode), same as `Headers.prototype.set`.
         let location = if href.is_empty() { &url_string } else { &href };
         headers.put(HTTPHeaderName::Location, location, global_this)?;

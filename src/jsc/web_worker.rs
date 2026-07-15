@@ -1200,6 +1200,8 @@ impl WebWorker {
     ///                                  null and skips wakeup() instead of touching
     ///                                  memory freed in step 5.
     ///   2. `vm.onExit()`             — user 'exit' handlers run; needs the JSC VM.
+    ///      `release_strong_refs_before_teardown()` — drop every Rust-side
+    ///                                  `Strong` while the HandleSet is live.
     ///   3. `teardownJSCVM()`         — collectNow + vm.deref (single — the
     ///                                  API-lock path takes no extra
     ///                                  `RefPtr<VM>`, see the `thread_main`
@@ -1285,6 +1287,7 @@ impl WebWorker {
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            vm.release_strong_refs_before_teardown();
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

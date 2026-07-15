@@ -445,10 +445,10 @@ impl NetworkTask {
             // `OwnedString` derefs the WTF-backed result on scope exit —
             // covers both the
             // success path and the InvalidURL early returns below.
-            let tmp = bun_core::OwnedString::new(bun_url::join(
+            let tmp = bun_url::join(
                 &bun_core::String::borrow_utf8(scope.url.href()),
                 &bun_core::String::borrow_utf8(encoded_name),
-            ));
+            );
 
             if tmp.tag() == bun_core::Tag::Dead {
                 if !is_optional {

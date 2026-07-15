@@ -1600,6 +1600,8 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
+            self.release_strong_refs_before_teardown();
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -1613,6 +1615,25 @@ impl VirtualMachine {
             self.destroy();
         }
         bun_core::Global::exit(u32::from(self.exit_handler.exit_code))
+    }
+
+    /// Release every JSC `Strong` handle owned by this VM's Rust-side state
+    /// (direct fields, `RareData`, and `RuntimeState`) while the JSC HandleSet
+    /// is still alive. Called immediately before `destructOnExit` (main VM) /
+    /// `WebWorker__teardownJSCVM` (worker) — dropping any of these afterwards
+    /// reads freed handle storage (ASAN UAF in `Bun__StrongRef__delete`).
+    /// Idempotent; every `deinit()` leaves its slot empty.
+    pub fn release_strong_refs_before_teardown(&mut self) {
+        self.overridden_main.deinit();
+        self.entry_point_result.value.deinit();
+        if let Some(rare) = self.rare_data.as_deref_mut() {
+            rare.s3_default_client.deinit();
+        }
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: JS thread, live VM; the hook only touches the
+            // per-thread RuntimeState it owns.
+            unsafe { (hooks.release_runtime_state_js_handles)(core::ptr::from_mut(self)) };
+        }
     }
 }
 
@@ -1654,6 +1675,11 @@ pub struct RuntimeHooks {
     /// `heap::take`s it and clears its thread-local cache. Without this slot
     /// every worker leaked one box.
     pub deinit_runtime_state: unsafe fn(vm: *mut VirtualMachine, state: RuntimeState),
+    /// Release every JSC `Strong` handle owned by `RuntimeState` (the SQL
+    /// contexts' on_query callbacks). Must run before the JSC VM teardown
+    /// (`destructOnExit`); dropping them in `deinit_runtime_state` afterwards
+    /// reads freed HandleSet storage (ASAN UAF in `Bun__StrongRef__delete`).
+    pub release_runtime_state_js_handles: unsafe fn(vm: *mut VirtualMachine),
     /// `ServerEntryPoint.generate(watch, entry_path)` — produces the synthetic
     /// `bun:main` module body for `entry_path`. Returns `false` on error
     /// (error already logged into `vm.log`).
@@ -4442,6 +4468,13 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // The `global_exit`/worker paths already released these before tearing
+        // the JSC VM down, which makes this a no-op there (every `deinit()`
+        // leaves its slot empty). `bake::production`'s unwind guard reaches
+        // `destroy()` with the JSC VM still live and no prior release, so this
+        // is where its handles are reclaimed.
+        self.release_strong_refs_before_teardown();
+
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 
@@ -4496,8 +4529,6 @@ impl VirtualMachine {
         unsafe { self.transpiler.deinit() };
 
         drop(core::mem::take(&mut self.resolved_path_dups));
-
-        self.overridden_main.deinit();
 
         // `timer`/`entry_point` live in the high-tier `RuntimeState` box, so
         // dispatch the reclaim through the hook.

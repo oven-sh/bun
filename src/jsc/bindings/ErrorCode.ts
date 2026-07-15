@@ -345,5 +345,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
   ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
   ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
+  ["ERR_WORKER_OUT_OF_MEMORY", Error],
 ];
 export default errors;

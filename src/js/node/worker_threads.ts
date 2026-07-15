@@ -81,6 +81,7 @@ const {
   8: _markAsUncloneable,
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
+  11: resourceLimits,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -93,6 +94,7 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  Record<string, number>,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -316,8 +318,6 @@ Object.defineProperty(MessagePort.prototype, kInspectCustom, {
   enumerable: false,
   configurable: true,
 });
-
-let resourceLimits = {};
 
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
@@ -1096,6 +1096,13 @@ class Worker extends EventEmitter {
 
   get threadName() {
     return this.#exited ? null : this.#name;
+  }
+
+  get resourceLimits() {
+    // Read back from native so the user's option is parsed exactly once,
+    // like Node's kHandle.getResourceLimits(): reported and enforced limits
+    // cannot diverge. A fresh object per read; {} once the worker stopped.
+    return this.#worker.resourceLimits;
   }
 
   ref() {

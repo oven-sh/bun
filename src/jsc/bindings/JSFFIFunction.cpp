@@ -270,8 +270,7 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
             arguments.appendWithCrashOnOverflow(arg);
         }
         scope.release();
-        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments);
-    });
+        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments); });
 }
 
 extern "C" JSC::EncodedJSValue

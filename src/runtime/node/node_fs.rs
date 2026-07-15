@@ -767,13 +767,7 @@ mod _async_tasks {
                     {
                         if let Err(err) = reject_standalone_write(args.path.slice(), sys::Tag::open)
                         {
-                            // SAFETY: identity write — `R == ret::Open` for this `F`.
-                            unsafe {
-                                core::ptr::write(
-                                    &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Open>,
-                                    Err(err),
-                                )
-                            };
+                            task.result = Err(err);
                             let task_ptr: *mut Self = task;
                             task.global_object()
                                 .bun_vm()

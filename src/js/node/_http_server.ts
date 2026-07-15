@@ -76,8 +76,23 @@ const { kIncomingMessage } = require("node:_http_common");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 
-const getBunServerAllClosedPromise = $newZigFunction("node_http_binding.zig", "getBunServerAllClosedPromise", 1);
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
+// node.http trace events ('http.server.request' b/e). The agent module is
+// only created on the first request, and emission is gated per-request on the
+// category, so this is near-zero cost when tracing is off.
+const kHttpTraceCat = "node,node.http";
+let traceEvents = null;
+function traceServerRequestStart(http_res) {
+  traceEvents ??= require("internal/trace_events");
+  if (!traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) return;
+  traceEvents.emitEvent("b", kHttpTraceCat, "http.server.request");
+  http_res.once("finish", traceServerRequestEnd);
+}
+function traceServerRequestEnd() {
+  traceEvents.emitEvent("e", kHttpTraceCat, "http.server.request");
+}
+
+const getBunServerAllClosedPromise = $newRustFunction("node_http_binding.rs", "getBunServerAllClosedPromise", 1);
+const sendHelper = $newRustFunction("node_cluster_binding.rs", "sendHelperChild", 3);
 
 const kServerResponse = Symbol("ServerResponse");
 const kChunkedEncoding = Symbol("kChunkedEncoding");
@@ -458,24 +473,26 @@ Server.prototype.listen = function () {
 
   // This logic must align with:
   // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
-  if (arguments.length > 0) {
-    if (($isObject(arguments[0]) || $isCallable(arguments[0])) && arguments[0] !== null) {
+  const argc = arguments.length;
+  if (argc > 0) {
+    const arg0 = arguments[0];
+    if (($isObject(arg0) || $isCallable(arg0)) && arg0 !== null) {
       // (options[...][, cb])
-      port = arguments[0].port;
-      host = arguments[0].host;
-      socketPath = arguments[0].path;
+      port = arg0.port;
+      host = arg0.host;
+      socketPath = arg0.path;
 
-      const otherTLS = arguments[0].tls;
+      const otherTLS = arg0.tls;
       if (otherTLS && $isObject(otherTLS)) {
         tls = normalizeServerTls({ ...otherTLS });
       }
-    } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
+    } else if (typeof arg0 === "string" && !(Number(arg0) >= 0)) {
       // (path[...][, cb])
-      socketPath = arguments[0];
+      socketPath = arg0;
     } else {
       // ([port][, host][...][, cb])
-      port = arguments[0];
-      if (arguments.length > 1 && typeof arguments[1] === "string") {
+      port = arg0;
+      if (argc > 1 && typeof arguments[1] === "string") {
         host = arguments[1];
       }
     }
@@ -494,8 +511,9 @@ Server.prototype.listen = function () {
     }
   }
 
-  if ($isCallable(arguments[arguments.length - 1])) {
-    onListen = arguments[arguments.length - 1];
+  const lastArg = arguments[argc - 1];
+  if ($isCallable(lastArg)) {
+    onListen = lastArg;
   }
 
   try {
@@ -752,6 +770,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setCloseCallback(http_res, onClose);
+        // Node traces every parsed request before Expect/limit routing
+        // (parserOnIncoming); upgrades never reach that path.
+        if (!is_upgrade) traceServerRequestStart(http_res);
 
         // Like Node.js: with the optimizeEmptyRequests server option,
         // requests without body headers skip the Readable life cycle (no
@@ -817,25 +838,28 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           // honor requireHostHeader, like Node.js.
           http_res.writeHead(400, { Connection: "close" });
           http_res.end();
-        } else if (http_req.headers.expect !== undefined) {
-          // Case-insensitive, token-boundary match like Node's
-          // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
-          // case-insensitively).
-          if (continueExpression.test(http_req.headers.expect)) {
-            if (server.listenerCount("checkContinue") > 0) {
-              server.emit("checkContinue", http_req, http_res);
-            } else {
-              http_res.writeContinue();
-              server.emit("request", http_req, http_res);
-            }
-          } else if (server.listenerCount("checkExpectation") > 0) {
-            server.emit("checkExpectation", http_req, http_res);
-          } else {
-            http_res.writeHead(417);
-            http_res.end();
-          }
         } else {
-          server.emit("request", http_req, http_res);
+          const expectHeader = http_req.headers.expect;
+          if (expectHeader !== undefined) {
+            // Case-insensitive, token-boundary match like Node's
+            // parserOnIncoming (RFC 7231 5.1.1: expectation values compare
+            // case-insensitively).
+            if (continueExpression.test(expectHeader)) {
+              if (server.listenerCount("checkContinue") > 0) {
+                server.emit("checkContinue", http_req, http_res);
+              } else {
+                http_res.writeContinue();
+                server.emit("request", http_req, http_res);
+              }
+            } else if (server.listenerCount("checkExpectation") > 0) {
+              server.emit("checkExpectation", http_req, http_res);
+            } else {
+              http_res.writeHead(417);
+              http_res.end();
+            }
+          } else {
+            server.emit("request", http_req, http_res);
+          }
         }
 
         socket.cork();
@@ -1027,6 +1051,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
 
 const kBytesWritten = Symbol("kBytesWritten");
 const kEnableStreaming = Symbol("kEnableStreaming");
+const kIsTunnel = Symbol("kIsTunnel");
 function onServerSocketError(this: any, _err) {
   // Default 'error' listener so socket-level errors (e.g. res.destroy(err)
   // forwarding the error to the socket) do not crash the process as
@@ -1044,6 +1069,7 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   connecting = false;
   timeout = 0;
   [kBytesWritten] = 0;
+  [kIsTunnel] = false;
   [kHandle];
   server: Server;
   _httpMessage;
@@ -1077,6 +1103,10 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
   }
 
   [kEnableStreaming](enable: boolean) {
+    // kIsTunnel latches: once a socket is detached into CONNECT/upgrade tunnel
+    // mode it never returns to normal request handling, and #onClose relies on
+    // it to emit 'close' on native close.
+    if (enable) this[kIsTunnel] = true;
     const handle = this[kHandle];
     if (handle) {
       if (enable) {
@@ -1163,6 +1193,13 @@ const NodeHTTPServerSocket = class Socket extends Duplex {
     // onServerResponseClose socket listener does.
     if (message && !message._closed) {
       process.nextTick(emitCloseNT, message);
+    }
+
+    // A tunneled/upgraded connection (CONNECT or WebSocket upgrade) is detached
+    // from the request/response lifecycle, so end the Duplex on native close to
+    // emit 'close' for the upgrade handler and user listeners, like Node.js.
+    if (this[kIsTunnel] && !this.destroyed) {
+      this.destroy();
     }
   }
   #onCloseForDestroy(closeCallback, err?: Error) {
@@ -1559,8 +1596,9 @@ function renderNativeHeaders(res) {
         }
       } else if (key === "keep-alive") hasKeepAlive = true;
       if ($isArray(value)) {
-        if (value.length < 2 || key !== "cookie") {
-          for (let i = 0; i < value.length; i++) {
+        const valueLength = value.length;
+        if (valueLength < 2 || key !== "cookie") {
+          for (let i = 0; i < valueLength; i++) {
             flat.push(name, String(value[i]));
           }
         } else {
@@ -1628,8 +1666,9 @@ function renderNativeHeaders(res) {
       const keepAliveTimeout = res._keepAliveTimeout;
       if (keepAliveTimeout && !hasKeepAlive) {
         let max = "";
-        if (~~res._maxRequestsPerSocket > 0) {
-          max = `, max=${res._maxRequestsPerSocket}`;
+        const maxRequestsPerSocket = res._maxRequestsPerSocket;
+        if (~~maxRequestsPerSocket > 0) {
+          max = `, max=${maxRequestsPerSocket}`;
         }
         flat.push("Keep-Alive", `timeout=${MathFloor(keepAliveTimeout / 1000)}${max}`);
       }
@@ -1918,16 +1957,17 @@ ServerResponse.prototype.writeInformation = function writeInformation(statusCode
 
   if (headers !== undefined && headers !== null) {
     if ($isArray(headers)) {
-      if (headers.length && $isArray(headers[0])) {
-        for (let i = 0; i < headers.length; i++) {
+      const headersLength = headers.length;
+      if (headersLength && $isArray(headers[0])) {
+        for (let i = 0; i < headersLength; i++) {
           const entry = headers[i];
           head += processInformationHeader(entry[0], entry[1]);
         }
       } else {
-        if (headers.length % 2 !== 0) {
+        if (headersLength % 2 !== 0) {
           throw $ERR_INVALID_ARG_VALUE("headers", headers);
         }
-        for (let i = 0; i < headers.length; i += 2) {
+        for (let i = 0; i < headersLength; i += 2) {
           head += processInformationHeader(headers[i], headers[i + 1]);
         }
       }

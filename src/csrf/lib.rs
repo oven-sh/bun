@@ -26,8 +26,6 @@ pub enum Error {
 }
 bun_core::impl_tag_error!(Error);
 
-bun_core::named_error_set!(Error);
-
 /// Options for generating CSRF tokens. Defaults are noted on
 /// each field; callers must specify all fields.
 pub struct GenerateOptions<'a> {
@@ -93,7 +91,7 @@ pub fn generate<'a>(
 ) -> Result<&'a mut [u8], Error> {
     // Generate nonce from entropy
     let mut nonce = [0u8; 16];
-    bun_core::csprng(&mut nonce);
+    boring::rand_bytes(&mut nonce);
 
     // Current timestamp in milliseconds
     let timestamp: i64 = bun_core::time::milli_timestamp();

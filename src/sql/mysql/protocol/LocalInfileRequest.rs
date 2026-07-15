@@ -29,7 +29,10 @@ impl LocalInfileRequest {
             return Err(AnyMySQLError::InvalidLocalInfileRequest);
         }
 
-        self.filename = reader.read((self.packet_size - 1) as usize)?;
+        let Some(filename_len) = self.packet_size.checked_sub(1) else {
+            return Err(AnyMySQLError::InvalidLocalInfileRequest);
+        };
+        self.filename = reader.read(filename_len as usize)?;
         Ok(())
     }
 

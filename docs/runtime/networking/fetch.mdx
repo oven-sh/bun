@@ -9,7 +9,7 @@ Bun also implements `node:http`, but `fetch` is generally recommended instead.
 
 ## Sending an HTTP request
 
-To send an HTTP request, use `fetch`
+To send an HTTP request, use `fetch`:
 
 ```ts
 const response = await fetch("http://example.com");
@@ -47,11 +47,11 @@ const response = await fetch("http://example.com", {
 });
 ```
 
-`body` can be a string, a `FormData` object, an `ArrayBuffer`, a `Blob`, and more. See the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#setting_a_body) for more information.
+`body` can be a string, a `FormData` object, an `ArrayBuffer`, a `Blob`, or another of the body types listed in the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Fetch_API/Using_Fetch#setting_a_body).
 
 ### Proxying requests
 
-To proxy a request, pass an object with the `proxy` property set to a URL string:
+To proxy a request, pass an object with the `proxy` property set to a URL string, a `URL` instance, or to an object whose `url` is a string or a `URL`:
 
 ```ts
 const response = await fetch("http://example.com", {
@@ -59,7 +59,7 @@ const response = await fetch("http://example.com", {
 });
 ```
 
-You can also use an object format to send custom headers to the proxy server:
+To send custom headers to the proxy server, pass an object instead:
 
 ```ts
 const response = await fetch("http://example.com", {
@@ -121,7 +121,7 @@ for await (const chunk of response.body) {
 }
 ```
 
-You can also more directly access the `ReadableStream` object.
+You can also access the `ReadableStream` directly.
 
 ```ts
 const response = await fetch("http://example.com");
@@ -155,7 +155,7 @@ const response = await fetch("http://example.com", {
 When using streams with HTTP(S):
 
 - The data is streamed directly to the network without buffering the entire body in memory
-- If the connection is lost, the stream will be canceled
+- If the connection is lost, the stream is canceled
 - The `Content-Length` header is not automatically set unless the stream has a known size
 
 When using streams with S3:
@@ -219,7 +219,7 @@ await fetch("https://example.com", {
 
 #### Custom TLS Validation
 
-To customize the TLS validation, use the `checkServerIdentity` option in `tls`
+To customize TLS validation, use the `checkServerIdentity` option in `tls`:
 
 ```ts
 await fetch("https://example.com", {
@@ -231,7 +231,7 @@ await fetch("https://example.com", {
 });
 ```
 
-This is similar to how it works in Node's `net` module.
+This option is similar to the one in Node's `tls` module.
 
 #### Disable TLS validation
 
@@ -245,7 +245,7 @@ await fetch("https://example.com", {
 });
 ```
 
-This is especially useful to avoid SSL errors when using self-signed certificates, but this disables TLS validation and should be used with caution.
+This avoids SSL errors with self-signed certificates, but it disables TLS validation, so use it with caution.
 
 ### Request options
 
@@ -287,9 +287,9 @@ const response = await fetch("s3://my-bucket/path/to/object", {
 });
 ```
 
-Note: Only PUT and POST methods support request bodies when using S3. For uploads, Bun automatically uses multipart upload for streaming bodies.
+Only PUT and POST methods support request bodies when using S3. For uploads, Bun automatically uses multipart upload for streaming bodies.
 
-You can read more about Bun's S3 support in the [S3](/runtime/s3) documentation.
+See the [S3](/runtime/s3) documentation.
 
 #### File URLs - `file://`
 
@@ -331,8 +331,8 @@ const response = await fetch(url);
 
 Bun's fetch implementation includes several specific error cases:
 
-- Using a request body with GET/HEAD methods will throw an error (which is expected for the fetch API)
-- Attempting to use both `proxy` and `unix` options together will throw an error
+- Using a request body with GET/HEAD methods throws an error (which is expected for the fetch API)
+- Using the `proxy` and `unix` options together throws an error
 - TLS certificate validation failures when `rejectUnauthorized` is true (or undefined)
 - S3 operations may throw specific errors related to authentication or permissions
 
@@ -345,7 +345,7 @@ Bun automatically sets the `Content-Type` header for request bodies when not exp
 
 ## Debugging
 
-To help with debugging, you can pass `verbose: true` to `fetch`:
+For debugging, pass `verbose: true` to `fetch`:
 
 ```ts
 const response = await fetch("http://example.com", {
@@ -353,7 +353,7 @@ const response = await fetch("http://example.com", {
 });
 ```
 
-This will print the request and response headers to your terminal:
+This prints the request and response headers to your terminal:
 
 ```sh
 [fetch] > HTTP/1.1 GET http://example.com/
@@ -378,21 +378,17 @@ This will print the request and response headers to your terminal:
 [fetch] < Content-Length: 648
 ```
 
-Note: `verbose: boolean` is not part of the Web standard `fetch` API and is specific to Bun.
+`verbose: boolean` is a Bun-specific extension, not part of the Web standard `fetch` API.
 
 ## Performance
 
-Before an HTTP request can be sent, the DNS lookup must be performed. This can take a significant amount of time, especially if the DNS server is slow or the network connection is poor.
+Before an HTTP request can be sent, Bun has to resolve DNS, connect the TCP socket, and sometimes complete a TLS handshake. Each step takes time, especially over a slow DNS server or a poor network connection. After the request completes, consuming the response body also takes time and memory.
 
-After the DNS lookup, the TCP socket must be connected and the TLS handshake might need to be performed. This can also take a significant amount of time.
-
-After the request completes, consuming the response body can also take a significant amount of time and memory.
-
-At every step of the way, Bun provides APIs to help you optimize the performance of your application.
+Bun provides APIs to optimize each of these steps.
 
 ### DNS prefetching
 
-To prefetch a DNS entry, you can use the `dns.prefetch` API. This API is useful when you know you'll need to connect to a host soon and want to avoid the initial DNS lookup.
+Use `dns.prefetch` when you know you'll connect to a host soon and want to avoid the initial DNS lookup.
 
 ```ts
 import { dns } from "bun";
@@ -402,13 +398,13 @@ dns.prefetch("bun.com");
 
 #### DNS caching
 
-By default, Bun caches and deduplicates DNS queries in-memory for up to 30 seconds. You can see the cache stats by calling `dns.getCacheStats()`:
+By default, Bun caches and deduplicates DNS queries in-memory for up to 30 seconds. `dns.getCacheStats()` returns the cache stats.
 
-To learn more about DNS caching in Bun, see the [DNS caching](/runtime/networking/dns) documentation.
+See [DNS caching](/runtime/networking/dns).
 
 ### Preconnect to a host
 
-To preconnect to a host, you can use the `fetch.preconnect` API. This API is useful when you know you'll need to connect to a host soon and want to start the initial DNS lookup, TCP socket connection, and TLS handshake early.
+`fetch.preconnect` starts the DNS lookup, TCP socket connection, and TLS handshake for a host before you're ready to send a request to it.
 
 ```ts
 import { fetch } from "bun";
@@ -416,44 +412,42 @@ import { fetch } from "bun";
 fetch.preconnect("https://bun.com");
 ```
 
-Note: calling `fetch` immediately after `fetch.preconnect` will not make your request faster. Preconnecting only helps if you know you'll need to connect to a host soon, but you're not ready to make the request yet.
+Calling `fetch` immediately after `fetch.preconnect` does not make your request faster. Preconnecting only helps when there's a gap between knowing the host and sending the request.
 
 #### Preconnect at startup
 
-To preconnect to a host at startup, you can pass `--fetch-preconnect`:
+To preconnect to a host at startup, pass `--fetch-preconnect`:
 
 ```sh
 bun --fetch-preconnect https://bun.com ./my-script.ts
 ```
 
-This is sort of like `<link rel="preconnect">` in HTML.
-
-This feature is not implemented on Windows yet. If you're interested in using this feature on Windows, please file an issue and we can implement support for it on Windows.
+`--fetch-preconnect` is similar to `<link rel="preconnect">` in HTML. It is not implemented on Windows; if you need it there, file an issue.
 
 ### Connection pooling & HTTP keep-alive
 
-Bun automatically reuses connections to the same host. This is known as connection pooling. This can significantly reduce the time it takes to establish a connection. Connection pooling is enabled automatically.
+Bun automatically reuses connections to the same host. This is called **connection pooling**, and it can significantly reduce the time spent establishing connections.
 
 #### Simultaneous connection limit
 
-By default, Bun limits the maximum number of simultaneous `fetch` requests to 256. We do this for several reasons:
+By default, Bun limits the number of simultaneous `fetch` requests to 256, for two reasons:
 
 - It improves overall system stability. Operating systems have an upper limit on the number of simultaneous open TCP sockets, usually in the low thousands. Nearing this limit causes your entire computer to behave strangely. Applications hang and crash.
 - It encourages HTTP Keep-Alive connection reuse. For short-lived HTTP requests, the slowest step is often the initial connection setup. Reusing connections can save a lot of time.
 
-When the limit is exceeded, the requests are queued and sent as soon as the next request ends.
+When the limit is exceeded, requests are queued and sent as soon as the next request ends.
 
-You can increase the maximum number of simultaneous connections via the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable:
+To raise the limit, set the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable:
 
 ```sh
 BUN_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts
 ```
 
-The max value for this limit is currently set to 65,336. The maximum port number is 65,535, so it's quite difficult for any one computer to exceed this limit.
+The max value for this limit is 65,535. The maximum port number is 65,535, so it's quite difficult for any one computer to exceed this limit.
 
 ### Response buffering
 
-Bun goes to great lengths to optimize the performance of reading the response body. The fastest way to read the response body is to use one of these methods:
+The fastest way to read the response body is to use one of these methods:
 
 - `response.text(): Promise<string>`
 - `response.json(): Promise<any>`
@@ -472,7 +466,7 @@ await write("output.txt", response);
 
 ### Implementation details
 
-- Connection pooling is enabled by default but can be disabled per-request with `keepalive: false`. The `"Connection: close"` header can also be used to disable keep-alive.
+- Connection pooling is enabled by default but can be disabled per-request with `keepalive: false` or the `"Connection: close"` header.
 - Large file uploads are optimized using the operating system's `sendfile` syscall under specific conditions:
   - The file must be larger than 32KB
   - The request must not be using a proxy
@@ -481,4 +475,4 @@ await write("output.txt", response);
   - This optimization is particularly effective for HTTP (not HTTPS) requests where the file can be sent directly from the kernel to the network stack
 - S3 operations automatically handle signing requests and merging authentication headers
 
-Note: Many of these features are Bun-specific extensions to the standard fetch API.
+Many of these features are Bun-specific extensions to the standard fetch API.

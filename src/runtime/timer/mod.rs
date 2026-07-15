@@ -1,14 +1,5 @@
 //! Timer subsystem: setTimeout/setInterval/setImmediate scheduling and the
 //! event-loop timer heap.
-//!
-//! Structs + state machines are real. JS-facing method bodies
-//! (`set_timeout`/`clear_timer`/`warn_invalid_countdown`/etc.) remain
-//! ``-gated on `bun_jsc` (commented out in Cargo.toml).
-//! `All::insert`/`remove`/`update`/`get_timeout`/`drain_timers` — the surface
-//! `EventLoop::auto_tick` blocks on — are real.
-//!
-//! Full earlier drafts are preserved gated under ` mod *_draft`
-//! so this file can be diffed against `Timer.rs` once `bun_jsc` is green.
 
 use bun_collections::ArrayHashMap;
 use bun_core::{Timespec, TimespecMockMode};
@@ -34,7 +25,7 @@ use crate::jsc::JSValue;
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 // Named `timer` so codegen (`generated_js2native.rs`) resolves
 // `crate::timer::timer::internal_bindings::timer_clock_ms` per the
-// `$zig(Timer.zig, …)` → `crate::<dir>::<file>` path-mapping.
+// `$rust(Timer.rs, …)` → `crate::<dir>::<file>` path-mapping.
 
 #[path = "Timer.rs"]
 pub mod timer;
@@ -549,9 +540,7 @@ impl EventLoopDelayMonitor {
     }
 }
 
-// ─── TimerObjectInternals / TimeoutObject / ImmediateObject (struct-only) ───
-// `Flags` is the real packed-u32 state machine; method bodies that touch
-// `bun_jsc::JsRef`/`Debugger` stay gated.
+// ─── TimerObjectInternals / TimeoutObject / ImmediateObject ─────────────────
 
 pub mod timer_object_internals;
 pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
@@ -755,7 +744,13 @@ impl All {
             // https://github.com/nodejs/node/blob/f552c86fecd6c2ba9e832ea129b731dd63abdbe2/src/env.cc#L1512
             let wait_ms = core::cmp::max(1, wait.ms_unsigned());
 
-            self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+            // SAFETY: `uv_timer_init` ran above; the handle is live.
+            let due_in = unsafe { uv::uv_timer_get_due_in(&self.uv_timer) };
+            // Restarting an overdue handle shifts the wakeup out by 1ms. Done
+            // on every insert, the already-due callback never runs.
+            if !(self.uv_timer.is_active() && due_in <= wait_ms) {
+                self.uv_timer.start(wait_ms, 0, Some(Self::on_uv_timer));
+            }
 
             if self.active_timer_count > 0 {
                 self.uv_timer.ref_();
@@ -863,7 +858,8 @@ impl All {
     }
 
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
-    /// Returns `true` if `spec` was written.
+    /// Returns `true` if `spec` was written. `now_out` receives the monotonic reading this
+    /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
     ///
     /// Note (b2): `vm` is erased per §Dispatch (the caller is in
     /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
@@ -882,6 +878,7 @@ impl All {
         has_pending_immediate: bool,
         quic_next_tick_us: Option<i64>,
         vm: *mut (), /* erased *mut VirtualMachine, forwarded to fire() */
+        now_out: &mut Option<Timespec>,
     ) -> bool {
         #[cfg(unix)]
         if has_pending_immediate {
@@ -905,7 +902,7 @@ impl All {
         // still creates a `&mut All` for the call frame; switch the signature
         // to `this: *mut Self` (see the `get_timeout` call sites in jsc_hooks.rs).
         let this: *mut Self = self;
-        let mut maybe_now: Option<Timespec> = None;
+        let maybe_now: &mut Option<Timespec> = now_out;
         loop {
             // SAFETY: `this` derived from `&mut self`; short-lived exclusive
             // borrow scoped to this `peek()` call only.
@@ -919,8 +916,11 @@ impl All {
             // deref and fire via raw deref (mirroring `drain_timers`).
             let (min_next_sec, min_next_nsec, min_tag) =
                 unsafe { ((*min).next.sec, (*min).next.nsec, (*min).tag) };
+            // Real clock: `self.timers` is the opt-out-of-fake-timers set, all
+            // armed in real-time units. Comparing against the mocked clock made
+            // internal pacing (GC, WTFTimer, test timeouts) spin on re-arm.
             let now =
-                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::AllowMockedTime));
+                *maybe_now.get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
 
             // bun_event_loop carries its own Timespec stub; compare field-wise.
             let min_next = Timespec {
@@ -988,7 +988,8 @@ impl All {
         let out = (|| {
             let timer = self.timers.peek()?;
             if !*has_set_now {
-                *now = Timespec::now(TimespecMockMode::AllowMockedTime);
+                // Real clock: this heap is the opt-out-of-fake-timers set.
+                *now = Timespec::now(TimespecMockMode::ForceRealTime);
                 *has_set_now = true;
             }
             // SAFETY: peek returns a live heap node
@@ -1245,12 +1246,6 @@ impl All {
         }
     }
 }
-
-// ─── JS-facing surface (gated on bun_jsc) ────────────────────────────────────
-// `set_timeout`/`set_interval`/`set_immediate`/`sleep`/`clear_*` and the
-// host_fn export thunks all need `JSGlobalObject::bun_vm()`,
-// `JSValue::to_number()`, `bun_core::String::transfer_to_js()`, etc.
-// Kept gated until `bun_jsc.workspace = true` is re-enabled.
 
 // ─── enums / value types ─────────────────────────────────────────────────────
 

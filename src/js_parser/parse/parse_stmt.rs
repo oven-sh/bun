@@ -1,7 +1,7 @@
 #![allow(clippy::single_match)]
 #![warn(unused_must_use)]
 use bun_collections::VecExt;
-use bun_core::{self, err};
+use bun_core;
 
 use crate::lexer as js_lexer;
 use crate::p::P;
@@ -20,7 +20,7 @@ use crate::typescript;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
 use js_ast::expr::EFlags;
 
-type Result<T> = core::result::Result<T, bun_core::Error>;
+type Result<T> = crate::CrateResult<T>;
 
 // The 25+ per-token `t_*` helpers are private; only `parse_stmt` is surfaced.
 
@@ -68,7 +68,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt> {
         if !Self::IS_TYPESCRIPT_ENABLED {
             p.lexer.unexpected()?;
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
         p.parse_typescript_enum_stmt(loc, opts)
     }
@@ -124,7 +124,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // notimpl();
 
         p.lexer.unexpected()?;
-        Err(err!("SyntaxError"))
+        Err(crate::Error::SyntaxError)
     }
 
     #[inline(never)]
@@ -356,7 +356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.range(),
                             b"Multiple default clauses are not allowed",
                         );
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
 
                     found_default = true;
@@ -611,7 +611,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         r,
                         b"\"let\" must be wrapped in parentheses to be used as an expression here",
                     );
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 if is_for_await && !p.lexer.is_contextual_keyword(b"of") {
@@ -619,7 +619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.lexer.expected_string(b"\"of\"")?;
                     } else {
                         p.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
                 }
 
@@ -749,7 +749,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 },
                 b"Unexpected newline after \"throw\"",
             );
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
         let expr = p.parse_expr(Level::Lowest)?;
         p.lexer.expect_or_insert_semicolon()?;
@@ -803,7 +803,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.esm_export_keyword = p.lexer.range();
         } else if !opts.is_namespace_scope {
             p.lexer.unexpected()?;
-            return Err(err!("SyntaxError"));
+            return Err(crate::Error::SyntaxError);
         }
         p.lexer.next()?;
 
@@ -838,13 +838,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.lexer.unexpected()?;
-                Err(err!("SyntaxError"))
+                Err(crate::Error::SyntaxError)
             }
 
             T::TEnum => {
                 if !Self::IS_TYPESCRIPT_ENABLED {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 opts.is_export = true;
@@ -858,7 +858,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 if Self::IS_TYPESCRIPT_ENABLED {
-                    if opts.is_typescript_declare && p.lexer.is_contextual_keyword(b"as") {
+                    if p.lexer.is_contextual_keyword(b"as") {
                         // "export as namespace ns;"
                         p.lexer.next()?;
                         p.lexer.expect_contextual_keyword(b"namespace")?;
@@ -899,7 +899,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         type_range.end(),
                                         format_args!("Unexpected newline after \"type\""),
                                     );
-                                    return Err(err!("SyntaxError"));
+                                    return Err(crate::Error::SyntaxError);
                                 }
                                 let mut skipper = ParseStatementOptions {
                                     is_module_scope: opts.is_module_scope,
@@ -932,7 +932,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 p.lexer.unexpected()?;
-                Err(err!("SyntaxError"))
+                Err(crate::Error::SyntaxError)
             }
 
             T::TDefault => {
@@ -940,7 +940,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 let default_loc = p.lexer.loc();
@@ -1064,7 +1064,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         bstr::BStr::new(p.source.text_for_range(r))
                                     ),
                                 );
-                                return Err(err!("SyntaxError"));
+                                return Err(crate::Error::SyntaxError);
                             }
                         }
 
@@ -1161,7 +1161,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 p.lexer.next()?;
@@ -1243,7 +1243,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 let export_clause = p.parse_export_clause()?;
@@ -1345,11 +1345,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Ok(p.s(S::ExportEquals { value }, loc));
                 }
                 p.lexer.unexpected()?;
-                Err(err!("SyntaxError"))
+                Err(crate::Error::SyntaxError)
             }
             _ => {
                 p.lexer.unexpected()?;
-                Err(err!("SyntaxError"))
+                Err(crate::Error::SyntaxError)
             }
         }
     }
@@ -1399,7 +1399,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
                 was_originally_bare_import = true;
             }
@@ -1409,14 +1409,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 p.lexer.next()?;
                 p.lexer.expect_contextual_keyword(b"as")?;
                 stmt = S::Import {
                     namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
-                    star_name_loc: Some(p.lexer.loc()),
+                    star_name_loc: p.lexer.loc(),
                     import_record_index: u32::MAX,
                     ..Default::default()
                 };
@@ -1429,7 +1429,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                 {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
                 let import_clause = p.parse_import_clause()?;
                 if Self::IS_TYPESCRIPT_ENABLED {
@@ -1457,7 +1457,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "import foo = bar"
                 if !opts.is_module_scope && !opts.is_namespace_scope {
                     p.lexer.unexpected()?;
-                    return Err(err!("SyntaxError"));
+                    return Err(crate::Error::SyntaxError);
                 }
 
                 let mut default_name = p.lexer.identifier;
@@ -1467,7 +1467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     import_record_index: u32::MAX,
                     default_name: Some(LocRef {
                         loc: p.lexer.loc(),
-                        ref_: Some(p.store_name_in_ref(default_name)?),
+                        ref_: p.store_name_in_ref(default_name)?,
                     }),
                     ..Default::default()
                 };
@@ -1496,13 +1496,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         && (!opts.is_namespace_scope || !opts.is_typescript_declare)
                     {
                         p.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
                     p.lexer.next()?;
                     p.lexer.expect_contextual_keyword(b"as")?;
                     stmt = S::Import {
                         namespace_ref: p.store_name_in_ref(p.lexer.identifier)?,
-                        star_name_loc: Some(p.lexer.loc()),
+                        star_name_loc: p.lexer.loc(),
                         import_record_index: u32::MAX,
                         phase_defer: true,
                         ..Default::default()
@@ -1591,7 +1591,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.lexer.next()?;
                             p.lexer.expect_contextual_keyword(b"as")?;
                             stmt.namespace_ref = p.store_name_in_ref(p.lexer.identifier)?;
-                            stmt.star_name_loc = Some(p.lexer.loc());
+                            stmt.star_name_loc = p.lexer.loc();
                             p.lexer.expect(T::TIdentifier)?;
                         }
                         // "import defaultItem, {item1, item2} from 'path'"
@@ -1605,7 +1605,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         _ => {
                             p.lexer.unexpected()?;
-                            return Err(err!("SyntaxError"));
+                            return Err(crate::Error::SyntaxError);
                         }
                     }
                 }
@@ -1614,7 +1614,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             _ => {
                 p.lexer.unexpected()?;
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
         }
 
@@ -1645,7 +1645,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let _name = LocRef {
             loc: label_loc,
-            ref_: Some(label_ref),
+            ref_: label_ref,
         };
         let mut nested_opts = ParseStatementOptions::default();
 
@@ -1889,7 +1889,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if !self.stack_check.is_safe_to_recurse() {
             // Sentinel error; mapped to a "Maximum call stack size exceeded"
             // syntax error at the catch site in parse_entry.rs.
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
 
         let loc = self.lexer.loc();

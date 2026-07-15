@@ -173,6 +173,8 @@ impl Readable {
             Stdio::Capture(..) => panic!("TODO: implement capture support in Stdio readable"),
             // ReadableStream is handled separately
             Stdio::ReadableStream(..) => Readable::Ignore,
+            // Rejected at i < 3 in Stdio::extract(); stdout/stderr never see this.
+            Stdio::SocketFd => unreachable!("SocketFd at stdout/stderr"),
         }
     }
 

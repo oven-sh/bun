@@ -144,6 +144,12 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /**
+   * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
+   * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
+   * acquire atomic load per syscall, zero when compiled out.
+   */
+  socketFaultInjection: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -336,6 +342,7 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  socketFaultInjection?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -863,6 +870,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
+  // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
+  // release-asan, off everywhere else. The fuzz tests are most useful when
+  // memory errors are detectable, and the disarmed-hot-path cost (one acquire
+  // atomic load) is acceptable in asan builds but not in shipped release.
+  const socketFaultInjection = partial.socketFaultInjection ?? asan;
 
   // ─── Paths ───
   const cwd = findRepoRoot();
@@ -1125,6 +1137,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    socketFaultInjection,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1449,14 +1462,22 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.socketFaultInjection !== cfg.asan) {
+    features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
+  }
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
-  // Version pin overrides — show a short hash so you catch "forgot to
-  // revert my WebKit test branch" before the build goes weird.
-  if (cfg.webkitVersion !== versionDefaults.webkitVersion)
-    features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
+  // Version pin overrides — show an identifying value so you catch "forgot
+  // to revert my WebKit test branch" before the build goes weird. Strip the
+  // autobuild- prefix so preview tags show their sha instead of the prefix.
+  if (cfg.webkitVersion !== versionDefaults.webkitVersion) {
+    const v = cfg.webkitVersion.startsWith("autobuild-")
+      ? cfg.webkitVersion.slice("autobuild-".length)
+      : cfg.webkitVersion;
+    features.push(`webkit-version:${/^[0-9a-f]{40}$/.test(v) ? v.slice(0, 10) : v}`);
+  }
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

@@ -98,11 +98,6 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    // blocked_on: generics::CssHash for PropertyId — `#[derive(CssHash)]` /
-    // `implement_hash` need every field type to provide `.hash(&mut Wyhash)`.
-    // `PropertyId` only impls `core::hash::Hash` today. TODO(refactor): add
-    // `impl CssHash for PropertyId` then swap to `#[derive(CssHash)]`.
-
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         // Hand-expanded because `#[derive(CssHash)]` would require
         // `PropertyId: CssHash` (it only provides `core::hash::Hash`).
@@ -199,11 +194,14 @@ impl SupportsCondition {
             }
             SupportsCondition::Selector(sel) => {
                 dest.write_str(b"selector(")?;
-                dest.write_str(sel)?;
+                // Raw parser-input slice: may span newlines. `write_bytes`
+                // tracks line/col across them; `write_str` would assert.
+                dest.write_bytes(sel)?;
                 dest.write_char(b')')?;
             }
             SupportsCondition::Unknown(unk) => {
-                dest.write_str(unk)?;
+                // Raw parser-input slice (see above).
+                dest.write_bytes(unk)?;
             }
         }
         Ok(())
@@ -235,7 +233,8 @@ impl SupportsCondition {
             |d, _flag| {
                 d.serialize_name(name)?;
                 d.delim(b':', false)?;
-                d.write_str(value)
+                // Raw parser-input slice: may span newlines.
+                d.write_bytes(value)
             },
         )?;
 

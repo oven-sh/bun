@@ -14,7 +14,7 @@ use bun_ast::{Ref, Symbol};
 use bun_collections::hive_array::Fallback as HiveArrayFallback;
 use bun_collections::{HashMap, StringHashMap, VecExt};
 use bun_core::Output;
-use bun_core::{MutableString, immutable as strings};
+use bun_core::{MutableString, strings};
 use bun_options_types::Format;
 use enum_map::EnumMap;
 
@@ -386,7 +386,7 @@ impl MinifyRenamer {
         if let Some(i) = symbol.nested_scope_slot() {
             let slot = &mut self.slots[ns][i as usize];
             slot.count += count;
-            if symbol.must_start_with_capital_letter_for_jsx {
+            if symbol.must_start_with_capital_letter_for_jsx() {
                 slot.needs_capital_for_jsx = true;
             }
             return Ok(());
@@ -408,7 +408,7 @@ impl MinifyRenamer {
             let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
             // Reshaped for borrowck — capture symbol fields before mut-borrowing slots
             let ns = symbol.slot_namespace();
-            let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx;
+            let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx();
             let slots = &mut self.slots[ns];
 
             let gpe = self.top_level_symbol_to_slot.get_or_put(stable.ref_)?;
@@ -433,7 +433,7 @@ impl MinifyRenamer {
     pub fn assign_names_by_frequency(
         &mut self,
         name_minifier: &js_ast::NameMinifier,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let mut name_buf: Vec<u8> = Vec::with_capacity(64);
 
         let mut sorted: Vec<SlotAndCount> = Vec::new();
@@ -870,8 +870,8 @@ pub enum UnusedName {
 
 /// Fast-path for `MutableString::ensure_valid_identifier`: returns `true` iff
 /// `s` is a non-empty ASCII identifier (`[A-Za-z_$][A-Za-z0-9_$]*`). This is
-/// the exact condition under which `MutableString::ensure_valid_identifier`
-/// returns the input unchanged (modulo the strict-mode-reserved-word remap,
+/// a sufficient condition for `MutableString::ensure_valid_identifier` to
+/// return the input unchanged (modulo the strict-mode-reserved-word remap,
 /// handled by the caller). That function currently always allocates
 /// a `Box<[u8]>` even on the borrow path, so hoisting
 /// this check into the renamer keeps zero-alloc behaviour for the
@@ -993,10 +993,10 @@ impl NumberScope {
         //
         // `name` may still equal `input_name` bytewise even when `normalized`
         // is true: `ensure_valid_identifier` returns the input bytes unchanged
-        // for an identifier whose first codepoint is a non-ASCII ID_Start
-        // (e.g. `é`, `π`), since only `is_simple_ascii_identifier` is
-        // ASCII-restricted. The hot ASCII path skips the byte compare via
-        // `!normalized`; the rare non-ASCII path falls back to it.
+        // for any already-valid identifier (e.g. `Café`, `π`), since only
+        // `is_simple_ascii_identifier` is ASCII-restricted. The hot ASCII path
+        // skips the byte compare via `!normalized`; the rare non-ASCII path
+        // falls back to it.
         if !collided && (!normalized || strings::eql_long(name, input_name, true)) {
             // `input_name` is `Symbol::original_name.slice()` — an AST-arena
             // slice that outlives the renamer (see [`NameKey`] doc). No copy.
@@ -1098,7 +1098,7 @@ impl ExportRenamer {
         self.arena.alloc_slice_copy(input)
     }
 
-    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, bun_core::Error> {
+    pub fn next_minified_name(&mut self) -> Result<Vec<u8>, crate::Error> {
         let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
         self.count += 1;
         Ok(name)
@@ -1165,7 +1165,7 @@ pub fn compute_reserved_names_for_scope(
 ) {
     for member in scope.members.values() {
         let symbol: &Symbol = symbols.get_const(member.ref_).unwrap();
-        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
+        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)
@@ -1175,7 +1175,7 @@ pub fn compute_reserved_names_for_scope(
 
     for ref_ in scope.generated.slice() {
         let symbol: &Symbol = symbols.get_const(*ref_).unwrap();
-        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed {
+        if symbol.kind == symbol::Kind::Unbound || symbol.must_not_be_renamed() {
             // SAFETY: `original_name` is an AST-arena slice.
             names
                 .put(symbol.original_name.slice(), 1)

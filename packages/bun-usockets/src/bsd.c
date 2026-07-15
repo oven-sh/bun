@@ -21,6 +21,7 @@
 
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -789,6 +790,10 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
     LIBUS_SOCKET_DESCRIPTOR accepted_fd;
 
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_ACCEPT, fd, injected, unused)) return LIBUS_SOCKET_ERROR;
+    (void)injected; (void)unused;
+
     while (1) {
         addr->len = sizeof(addr->mem);
 
@@ -842,6 +847,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 }
 
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
+    ssize_t injected = 0;
+    if (US_FAULT_CHECK(US_FAULT_RECV, fd, injected, length)) return injected;
     while (1) {
         ssize_t ret = recv(fd, buf, length, flags);
 
@@ -866,6 +873,9 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
 
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_RECVMSG, fd, injected, unused)) return injected;
+    (void)unused;
     while (1) {
         ssize_t ret = recvmsg(fd, msg, flags);
 
@@ -882,6 +892,9 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 #include <sys/uio.h>
 
 ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
+    (void)unused;
     /* POSIX writev fails with EINVAL above IOV_MAX (1024 on Linux/macOS); cap and
      * let the caller's partial-write handling carry the remainder. */
     if (count > 1024) {
@@ -897,6 +910,9 @@ ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int
 }
 
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
+    (void)unused;
     struct iovec chunks[2];
 
     chunks[0].iov_base = (char *)header;
@@ -938,6 +954,8 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 #endif
 
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
+    ssize_t injected = 0;
+    if (US_FAULT_CHECK(US_FAULT_SEND, fd, injected, length)) return injected;
     while (1) {
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
 
@@ -969,6 +987,9 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
 
 #if !defined(_WIN32)
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return injected;
+    (void)unused;
     while (1) {
         ssize_t rc = sendmsg(fd, msg, flags);
 
@@ -986,6 +1007,18 @@ int bsd_would_block() {
     return WSAGetLastError() == WSAEWOULDBLOCK;
 #else
     return errno == EWOULDBLOCK;// || errno == EAGAIN;
+#endif
+}
+
+/* Transient kernel resource exhaustion from send(): the connection is still
+ * healthy and a later retry can succeed. Kept distinct from bsd_would_block()
+ * so recv() callers that use that to mean EOF-vs-error do not start spinning
+ * on ENOBUFS. */
+int bsd_send_is_transient_error() {
+#ifdef _WIN32
+    return WSAGetLastError() == WSAENOBUFS;
+#else
+    return errno == ENOBUFS || errno == ENOMEM;
 #endif
 }
 
@@ -1241,7 +1274,8 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
                 return LIBUS_SOCKET_ERROR;
             }
 
-            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
+            // `path` is a ptr+len pair (not NUL-terminated), so bound the basename copy with %.*s.
+            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%.*s", socket_dir_fd, (int)(path_len - dirname_len), path + dirname_len);
             if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
                 close(socket_dir_fd);
                 errno = ENAMETOOLONG;
@@ -1609,6 +1643,9 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
 static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_CONNECT, fd, injected, unused)) return errno;
+    (void)injected; (void)unused;
 #ifdef _WIN32
     while (1) {
         if (connect(fd, (struct sockaddr *)addr, namelen) == 0) {
@@ -1698,6 +1735,14 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
      * `localAddress`/`localPort` connect options). A failure here - typically
      * EADDRINUSE or EADDRNOTAVAIL - fails the connect with that errno. */
     if (local_addr) {
+#ifndef _WIN32
+        /* Match libuv's uv__tcp_bind: set SO_REUSEADDR so binding the local
+         * port succeeds when earlier connections on that port are still in
+         * TIME_WAIT. Not set on Windows, where SO_REUSEADDR would allow
+         * stealing a port that is actively in use (see libuv win/tcp.c). */
+        int on = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#endif
         socklen_t local_len = local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
         if (bind(fd, (struct sockaddr *) local_addr, local_len)) {
 #ifdef _WIN32

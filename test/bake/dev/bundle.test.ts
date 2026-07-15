@@ -814,3 +814,54 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
     await c.expectMessage("got: ALPHA BETA");
   },
 });
+
+devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { x, y, deepValue } from 'loop-lib';
+      import { keep } from 'loop-lib/w.js';
+      import { other } from 'loop-lib/g.js';
+      console.log('result: ' + typeof x + ' ' + y + ' ' + keep + ' ' + deepValue + ' ' + other);
+    `,
+    "node_modules/loop-lib/package.json": JSON.stringify({
+      name: "loop-lib",
+      version: "1.0.0",
+      main: "./index.js",
+      sideEffects: false,
+    }),
+    "node_modules/loop-lib/index.js": `
+      export * from './t.js';
+    `,
+    "node_modules/loop-lib/t.js": `
+      export { x } from './w.js';
+      export * from './r.js';
+      export * from './g.js';
+    `,
+    "node_modules/loop-lib/w.js": `
+      import * as ns from './t.js';
+      export { ns as x };
+      export { keep } from './keep.js';
+    `,
+    "node_modules/loop-lib/keep.js": `
+      export const keep = "KEEP";
+    `,
+    "node_modules/loop-lib/r.js": `
+      export const y = "Y";
+    `,
+    "node_modules/loop-lib/g.js": `
+      export { deepValue } from './deep.js';
+      export { other } from './other.js';
+    `,
+    "node_modules/loop-lib/deep.js": `
+      export const deepValue = "DEEP";
+    `,
+    "node_modules/loop-lib/other.js": `
+      export const other = "OTHER";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("result: object Y KEEP DEEP OTHER");
+  },
+});

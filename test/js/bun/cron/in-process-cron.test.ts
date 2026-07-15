@@ -121,15 +121,43 @@ describe("Bun.cron (in-process)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("ignores jest fake timers (calendar-anchored to real time)", () => {
+  test("honors jest fake timers", () => {
     jest.useFakeTimers();
     try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      const firedAt: number[] = [];
+      using job = Bun.cron("* * * * *", () => void firedAt.push(Date.now()));
+
+      jest.advanceTimersByTime(59_999);
+      expect(firedAt).toEqual([]);
+
+      jest.advanceTimersByTime(1);
+      expect(firedAt).toEqual([new Date("2026-01-01T12:01:00.000Z").getTime()]);
+
+      // Re-arms for the next minute; never double-fires at the same boundary
+      jest.advanceTimersByTime(60_000);
+      expect(firedAt).toEqual([
+        new Date("2026-01-01T12:01:00.000Z").getTime(),
+        new Date("2026-01-01T12:02:00.000Z").getTime(),
+      ]);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test("stop() under fake timers prevents further fires", () => {
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
       let fires = 0;
-      using job = Bun.cron("* * * * *", () => void fires++);
-      jest.runAllTimers();
+      const job = Bun.cron("* * * * *", () => void fires++);
+
+      jest.advanceTimersByTime(60_000);
+      expect(fires).toBe(1);
+
+      job.stop();
       jest.advanceTimersByTime(120_000);
-      jest.runAllTimers();
-      expect(fires).toBe(0);
+      expect(fires).toBe(1);
     } finally {
       jest.useRealTimers();
     }

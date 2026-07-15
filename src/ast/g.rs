@@ -280,7 +280,7 @@ pub struct Fn {
     // This was originally nullable, but doing so I believe caused a miscompilation
     // Specifically, the body was always null.
     pub body: FnBody,
-    pub arguments_ref: Option<Ref>,
+    pub arguments_ref: Ref,
 
     pub flags: flags::FunctionSet,
 
@@ -297,7 +297,7 @@ impl Default for Fn {
                 loc: crate::Loc::EMPTY,
                 stmts: StmtNodeList::EMPTY,
             },
-            arguments_ref: None,
+            arguments_ref: Ref::NONE,
             flags: flags::FUNCTION_NONE,
             return_ts_metadata: TypeScript::Metadata::MNone,
         }

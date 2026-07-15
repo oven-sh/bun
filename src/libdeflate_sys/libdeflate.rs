@@ -1,5 +1,6 @@
 use core::ffi::{c_int, c_uint, c_void};
 use core::mem::MaybeUninit;
+use core::ptr::NonNull;
 use std::sync::Once;
 
 #[repr(C)]
@@ -19,8 +20,15 @@ impl Default for Options {
     }
 }
 
+/// Valid `compression_level` range for `libdeflate_alloc_compressor`. Values
+/// outside this range make the allocator return NULL (indistinguishable from OOM),
+/// so callers must range-check first.
+pub const MIN_COMPRESSION_LEVEL: c_int = 0;
+pub const MAX_COMPRESSION_LEVEL: c_int = 12;
+
 unsafe extern "C" {
-    // Allocation: scalar arg, no preconditions; returns null on OOM.
+    // Allocation: scalar arg, no preconditions; returns null on OOM or
+    // compression_level outside MIN..=MAX_COMPRESSION_LEVEL.
     pub(crate) safe fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
     // NOT safe: `Options` carries caller-supplied `malloc_func`/`free_func`
     // callbacks that libdeflate will invoke and write through. A bogus callback
@@ -245,6 +253,47 @@ impl Compressor {
     }
 }
 
+/// Owned RAII libdeflate compressor. Frees on drop.
+///
+/// `#[repr(transparent)]` over `NonNull` so `Option<OwnedCompressor>` has the
+/// same layout as `*mut Compressor` (all-zero = `None`).
+#[repr(transparent)]
+pub struct OwnedCompressor(NonNull<Compressor>);
+
+impl OwnedCompressor {
+    /// Allocate a compressor at `level` ([`MIN_COMPRESSION_LEVEL`]..=[`MAX_COMPRESSION_LEVEL`]).
+    /// Returns `None` on OOM or if `level` is out of range.
+    #[inline]
+    pub fn new(level: c_int) -> Option<Self> {
+        NonNull::new(Compressor::alloc(level)).map(Self)
+    }
+}
+
+impl core::ops::Deref for OwnedCompressor {
+    type Target = Compressor;
+    #[inline]
+    fn deref(&self) -> &Compressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for OwnedCompressor {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Compressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for OwnedCompressor {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: allocated by `libdeflate_alloc_compressor`; freed exactly once here.
+        unsafe { libdeflate_free_compressor(self.0.as_ptr()) }
+    }
+}
+
 bun_opaque::opaque_ffi! {
     /// Opaque libdeflate decompressor handle. `UnsafeCell` makes the type `!Freeze`.
     pub struct Decompressor;
@@ -445,6 +494,46 @@ impl Decompressor {
             let new_cap = out.capacity().max(1) * 2;
             out.reserve(new_cap.saturating_sub(out.len()));
         }
+    }
+}
+
+/// Owned RAII libdeflate decompressor. Frees on drop.
+///
+/// `#[repr(transparent)]` over `NonNull` so `Option<OwnedDecompressor>` has the
+/// same layout as `*mut Decompressor` (all-zero = `None`).
+#[repr(transparent)]
+pub struct OwnedDecompressor(NonNull<Decompressor>);
+
+impl OwnedDecompressor {
+    /// Allocate a decompressor. Returns `None` on OOM.
+    #[inline]
+    pub fn new() -> Option<Self> {
+        NonNull::new(Decompressor::alloc()).map(Self)
+    }
+}
+
+impl core::ops::Deref for OwnedDecompressor {
+    type Target = Decompressor;
+    #[inline]
+    fn deref(&self) -> &Decompressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for OwnedDecompressor {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Decompressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for OwnedDecompressor {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: allocated by `libdeflate_alloc_decompressor`; freed exactly once here.
+        unsafe { libdeflate_free_decompressor(self.0.as_ptr()) }
     }
 }
 

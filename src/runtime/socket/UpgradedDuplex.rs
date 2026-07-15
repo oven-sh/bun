@@ -322,7 +322,7 @@ impl UpgradedDuplex {
         &mut self,
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
             is_client,
@@ -350,7 +350,7 @@ impl UpgradedDuplex {
         &mut self,
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
@@ -502,7 +502,21 @@ impl UpgradedDuplex {
         // clear the timer
         self.set_timeout(0);
 
-        self.wrapper = None; // Drop runs SSLWrapper teardown
+        // Neuter in place rather than `self.wrapper = None`: `teardown()` can
+        // run re-entrantly from `on_close` while a `SSLWrapper::handle_traffic`
+        // frame is still on the stack with a `*mut Self` into the `Some`
+        // payload. Assigning `None` to the `Option` runs `Drop` (fine -
+        // `deinit()` nulls `ssl`/`ctx`) but then memmoves a fresh
+        // `Option::None` value over the slot, whose payload bytes are stack
+        // garbage - the in-flight frame's `Self::r(this).ssl` then reads junk
+        // and `flush_pending_events` UAFs into BoringSSL. `deinit()` alone
+        // leaves `ssl = None` / `closed_notified = true` readable so those
+        // guards work; the `Option` is dropped for real when the parent
+        // `DuplexUpgradeContext` frees on the next tick. See WindowsNamedPipe's
+        // WRAPPER_BUSY for the sibling pattern.
+        if let Some(wrapper) = self.wrapper.as_mut() {
+            wrapper.deinit();
+        }
 
         self.origin.deinit();
         if let Some(callback) = self.on_data_callback.get() {

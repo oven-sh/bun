@@ -59,6 +59,13 @@ pub enum Stdio {
     ArrayBuffer(jsc::array_buffer::ArrayBufferStrong),
     Memfd(Fd),
     Pipe,
+    /// Like `Pipe` at indices >= 3, but the parent end of the socketpair is
+    /// stored as `ExtraPipe::UnownedFd` so `Subprocess::finalize_streams`
+    /// never closes it; the caller reads the fd from `.stdio[i]` and is
+    /// responsible for closing it. Used by `node:child_process` which wraps
+    /// extra `"pipe"` slots in `net.connect({fd})` (usockets then owns the
+    /// fd). Only valid at indices >= 3.
+    SocketFd,
     Ipc,
     ReadableStream(webcore::ReadableStream),
 }
@@ -107,10 +114,9 @@ impl Stdio {
         }
     }
 
-    pub fn can_use_memfd(&self, is_sync: bool, has_max_buffer: bool) -> bool {
+    pub fn can_use_memfd(&self) -> bool {
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let _ = (is_sync, has_max_buffer);
             return false;
         }
 
@@ -118,7 +124,8 @@ impl Stdio {
         match self {
             Self::Blob(blob) => !blob.needs_to_read_file(),
             Self::Memfd(_) | Self::ArrayBuffer(_) => true,
-            Self::Pipe => is_sync && !has_max_buffer,
+            // `Self::Pipe` is never memfd: a memfd has no EOF signal, so a
+            // grandchild still writing after the child exits would be lost.
             _ => false,
         }
     }
@@ -281,6 +288,12 @@ impl Stdio {
             Self::Capture(_) | Self::Pipe | Self::ArrayBuffer(_) | Self::ReadableStream(_) => {
                 buffer()
             }
+            #[cfg(not(windows))]
+            Self::SocketFd => SpawnOptionsStdio::SocketFd,
+            // Windows extra-stdio is a libuv pipe handle (no raw-fd ownership
+            // to transfer), so `socket-fd` behaves identically to `pipe` there.
+            #[cfg(windows)]
+            Self::SocketFd => buffer(),
             Self::Ipc => ipc(),
             Self::Fd(fd) => SpawnOptionsStdio::Pipe(*fd),
             #[cfg(not(windows))]
@@ -417,6 +430,20 @@ impl Stdio {
                 *out_stdio = Stdio::Ignore;
             } else if str.eql_comptime(b"pipe") || str.eql_comptime(b"overlapped") {
                 *out_stdio = Stdio::Pipe;
+            } else if str.eql_comptime(b"socket-fd") {
+                if i < 3 {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "stdio: 'socket-fd' is only supported at indices >= 3"
+                    )));
+                }
+                if is_sync {
+                    // Bun.spawnSync's result has no .stdio, so the caller
+                    // could never receive the fd it's supposed to own.
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "stdio: 'socket-fd' cannot be used with spawnSync"
+                    )));
+                }
+                *out_stdio = Stdio::SocketFd;
             } else if str.eql_comptime(b"ipc") {
                 *out_stdio = Stdio::Ipc;
             } else {
@@ -608,7 +635,8 @@ impl Stdio {
             )));
         }
 
-        // Instead of writing an empty blob, lets just make it /dev/null
+        // Nothing to write: treat an empty blob the same as "ignore"
+        // (/dev/null at fds 0-2, left closed at extra slots).
         if blob.fast_size() == 0 {
             *self = Stdio::Ignore;
             return Ok(());

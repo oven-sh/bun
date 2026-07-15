@@ -19,7 +19,7 @@ const { isAnyArrayBuffer } = require("node:util/types");
 const eos = require("internal/streams/end-of-stream");
 const { kEosNodeSynchronousCallback } = eos;
 
-const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
+const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
 const ArrayPrototypeFilter = Array.prototype.filter;
 const ArrayPrototypeMap = Array.prototype.map;
@@ -47,7 +47,6 @@ function tryTransferToNativeReadable(stream, options) {
 class ReadableFromWeb extends Readable {
   #reader;
   #closed;
-  #pendingChunks;
   #stream;
 
   constructor(options, stream) {
@@ -58,31 +57,9 @@ class ReadableFromWeb extends Readable {
       encoding,
       signal,
     });
-    this.#pendingChunks = [];
     this.#reader = undefined;
     this.#stream = stream;
     this.#closed = false;
-  }
-
-  #drainPending() {
-    var pendingChunks = this.#pendingChunks,
-      pendingChunksI = 0,
-      pendingChunksCount = pendingChunks.length;
-
-    for (; pendingChunksI < pendingChunksCount; pendingChunksI++) {
-      const chunk = pendingChunks[pendingChunksI];
-      pendingChunks[pendingChunksI] = undefined;
-      if (!this.push(chunk, undefined)) {
-        this.#pendingChunks = pendingChunks.slice(pendingChunksI + 1);
-        return true;
-      }
-    }
-
-    if (pendingChunksCount > 0) {
-      this.#pendingChunks = [];
-    }
-
-    return false;
   }
 
   #handleDone(reader) {
@@ -90,74 +67,68 @@ class ReadableFromWeb extends Readable {
     this.#reader = undefined;
     this.#closed = true;
     this.push(null);
-    return;
   }
 
-  async _read() {
+  #handleError(reader, error) {
+    if (reader) {
+      this.#reader = undefined;
+      try {
+        reader.releaseLock();
+      } catch {}
+    }
+    this.#closed = true;
+    this.destroy(error);
+  }
+
+  // One reader.read() per _read(). readMany() would drain a start()-enqueued
+  // source to "closed" before the consumer can abort, and cancel() on a closed
+  // stream is a spec no-op, so the source's cancel hook would never run.
+  _read() {
     $debug("ReadableFromWeb _read()", this.__id);
-    var stream = this.#stream,
-      reader = this.#reader;
+    if (this.#closed) return;
+    var reader = this.#reader;
+    var stream = this.#stream;
     if (stream) {
       reader = this.#reader = stream.getReader();
       this.#stream = undefined;
-    } else if (this.#drainPending()) {
-      return;
     }
-
-    var deferredError: Error | undefined;
-    try {
-      do {
-        var done = false,
-          value;
-        const firstResult = reader.readMany();
-
-        if ($isPromise(firstResult)) {
-          ({ done, value } = await firstResult);
-
-          if (this.#closed) {
-            this.#pendingChunks.push(...value);
-            return;
-          }
-        } else {
-          ({ done, value } = firstResult);
-        }
-
-        if (done) {
+    PromisePrototypeThen.$call(
+      reader.read(),
+      chunk => {
+        if (this.#closed) return;
+        if (chunk.done) {
           this.#handleDone(reader);
-          return;
+        } else {
+          this.push(chunk.value);
         }
-
-        if (!this.push(value[0])) {
-          this.#pendingChunks = value.slice(1);
-          return;
-        }
-
-        for (let i = 1, count = value.length; i < count; i++) {
-          if (!this.push(value[i])) {
-            this.#pendingChunks = value.slice(i + 1);
-            return;
-          }
-        }
-      } while (!this.#closed);
-    } catch (e) {
-      deferredError = e as Error;
-    }
-
-    if (deferredError) throw deferredError;
+      },
+      error => this.#handleError(reader, error),
+    );
   }
 
   _destroy(error, callback) {
     if (!this.#closed) {
+      this.#closed = true;
       var reader = this.#reader;
       if (reader) {
         this.#reader = undefined;
-        reader.cancel(error).finally(() => {
-          this.#closed = true;
-          callback(error);
-        });
+        PromisePrototypeThen.$call(
+          reader.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
       }
-
-      return;
+      var stream = this.#stream;
+      if (stream) {
+        this.#stream = undefined;
+        PromisePrototypeThen.$call(
+          stream.cancel(error),
+          () => callback(error),
+          cancelError => callback(error ?? cancelError),
+        );
+        return;
+      }
     }
     try {
       callback(error);
@@ -293,8 +264,11 @@ function newWritableStreamFromStreamWritable(streamWritable, options = kEmptyObj
           if (!streamWritable.writableObjectMode && isAnyArrayBuffer(chunk)) {
             chunk = new Uint8Array(chunk);
           }
-          if (streamWritable.writableNeedDrain || !streamWritable.write(chunk)) {
+          const needDrainBefore = streamWritable.writableNeedDrain;
+          if (needDrainBefore || !streamWritable.write(chunk)) {
             backpressurePromise = PromiseWithResolvers();
+            // write() may set writableNeedDrain; the post-write value is
+            // what decides whether we resolve immediately.
             if (!streamWritable.writableNeedDrain) {
               backpressurePromise.resolve();
             }
@@ -493,11 +467,12 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     throw $ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamReadable);
   }
   validateObject(options, "options");
-  if (options.type !== undefined) {
-    validateOneOf(options.type, "options.type", ["bytes", undefined]);
+  const optionsType = options.type;
+  if (optionsType !== undefined) {
+    validateOneOf(optionsType, "options.type", ["bytes", undefined]);
   }
 
-  const isBYOB = options.type === "bytes";
+  const isBYOB = optionsType === "bytes";
   let controller;
   let wasCanceled = false;
   let strategy;
@@ -635,10 +610,11 @@ function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
     type: options.readableType,
   };
 
-  if (options.readableType == null && options.type != null) {
+  let optionsType;
+  if (options.readableType == null && (optionsType = options.type) != null) {
     // 'options.type' is a deprecated alias for 'options.readableType'
     emitDEP0201();
-    readableOptions.type = options.type;
+    readableOptions.type = optionsType;
   }
 
   if (isDestroyed(duplex)) {

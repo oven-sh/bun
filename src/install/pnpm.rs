@@ -140,16 +140,14 @@ pub enum MigratePnpmLockfileError {
 
 bun_core::oom_from_alloc!(MigratePnpmLockfileError);
 
-impl From<bun_core::Error> for MigratePnpmLockfileError {
-    fn from(e: bun_core::Error) -> Self {
+impl From<crate::Error> for MigratePnpmLockfileError {
+    fn from(e: crate::Error) -> Self {
         // Preserve the known error variants; only collapse genuinely-unknown
         // tags to InvalidPnpmLockfile.
-        if e == bun_core::err!(OutOfMemory) {
-            Self::OutOfMemory
-        } else if e == bun_core::err!(DependencyLoop) {
-            Self::DependencyLoop
-        } else {
-            Self::InvalidPnpmLockfile
+        match e {
+            crate::Error::Alloc(bun_alloc::AllocError) => Self::OutOfMemory,
+            crate::Error::DependencyLoop => Self::DependencyLoop,
+            _ => Self::InvalidPnpmLockfile,
         }
     }
 }
@@ -182,8 +180,6 @@ impl From<crate::lockfile_real::catalog_map::FromPnpmLockfileError> for MigrateP
         }
     }
 }
-
-bun_core::named_error_set!(MigratePnpmLockfileError);
 
 #[inline]
 fn as_string(expr: &Expr) -> Option<&'static [u8]> {
@@ -278,10 +274,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         'err: {
             match &lockfile_version_expr.data {
                 ExprData::ENumber(num) => {
-                    if num.value < 0.0 {
+                    if num.value() < 0.0 {
                         break 'err;
                     }
-                    break 'lockfile_version num.value;
+                    break 'lockfile_version num.value();
                 }
                 ExprData::EString(version_str) => {
                     let str = version_str.data.slice();
@@ -1146,6 +1142,10 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         }
     }
 
+    // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
+    // declares them, including `file:` folders, tarballs, and git packages.
+    crate::migration::clear_non_registry_platform_constraints(lockfile);
+
     lockfile.resolve(log)?;
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
@@ -1180,8 +1180,6 @@ pub(crate) enum ParseAppendDependenciesError {
 }
 
 bun_core::oom_from_alloc!(ParseAppendDependenciesError);
-
-bun_core::named_error_set!(ParseAppendDependenciesError);
 
 impl From<ParseAppendDependenciesError> for MigratePnpmLockfileError {
     fn from(e: ParseAppendDependenciesError) -> Self {
@@ -1800,10 +1798,10 @@ fn update_package_json_after_migration(
             };
 
             if let Some(packages_expr) = ws_root.get(b"packages") {
-                if let Some(packages) = packages_expr.as_array() {
+                if let Some(mut packages) = packages_expr.as_array() {
                     let mut paths: Vec<&'static [u8]> = Vec::new();
-                    for package_path in packages.array.items.slice() {
-                        if let Some(package_path_str) = as_string(package_path) {
+                    while let Some(package_path) = packages.next() {
+                        if let Some(package_path_str) = as_string(&package_path) {
                             // Intern (vs. the prior `Box<[u8]>`) so the
                             // `EString` nodes built from these paths below do
                             // not dangle once this function returns and the

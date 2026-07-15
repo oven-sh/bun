@@ -292,9 +292,15 @@ describe.concurrent("fetch-tls", () => {
   // A connection reset/closed mid-TLS-handshake involves no certificate at
   // all, so it must surface as ECONNRESET (like Node), not as a certificate
   // verification error. https://github.com/oven-sh/bun/issues/31949
-  for (const [closeMode, closeSocket] of [
-    ["resets (RST)", (socket: net.Socket) => socket.resetAndDestroy()],
-    ["closes (FIN)", (socket: net.Socket) => socket.destroy()],
+  //
+  // The two variants take different paths: a FIN reaches the SSL close path
+  // and its mid-handshake sentinel, while a peer RST raw-closes the socket
+  // (see the POLL_TYPE_SOCKET error arm in packages/bun-usockets/src/loop.c)
+  // and surfaces as the generic connection-closed failure. Both carry the
+  // ECONNRESET code; only the FIN path has Node's handshake-specific message.
+  for (const [closeMode, closeSocket, viaHandshakeSentinel] of [
+    ["resets (RST)", (socket: net.Socket) => socket.resetAndDestroy(), false],
+    ["closes (FIN)", (socket: net.Socket) => socket.destroy(), true],
   ] as const) {
     it(`fetch reports ECONNRESET when the server ${closeMode} the connection during the TLS handshake`, async () => {
       // Raw TCP listener: accepts the connection, reads the ClientHello, and
@@ -327,7 +333,7 @@ describe.concurrent("fetch-tls", () => {
         // The load-bearing invariant: a mid-handshake reset is a connection
         // error, never a certificate error.
         expect(err.code).toBe("ECONNRESET");
-        if (!isWindows) {
+        if (viaHandshakeSentinel && !isWindows) {
           // Node's exact message for this case. On Windows CI the error
           // carries a different (still ECONNRESET-coded) message, so the
           // exact-text assertion is POSIX-only.

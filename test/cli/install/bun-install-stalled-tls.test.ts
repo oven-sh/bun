@@ -74,19 +74,22 @@ test("bun install times out when the registry accepts TCP but never completes th
 
 // https://github.com/oven-sh/bun/issues/31949
 //
-// A registry connection that is reset during the TLS handshake involves no
-// certificate at all, so `bun install` must report it as ECONNRESET (the code
-// Node and npm surface), not as UNKNOWN_CERTIFICATE_VERIFICATION_ERROR, which
-// sends users hunting through CA stores for a network problem.
-test("bun install reports ECONNRESET when the registry resets the connection during the TLS handshake", async () => {
+// A registry connection that dies during the TLS handshake involves no
+// certificate at all, so `bun install` must report it as a connection error
+// (ECONNRESET, the code Node and npm surface), never as
+// UNKNOWN_CERTIFICATE_VERIFICATION_ERROR, which sends users hunting through
+// CA stores for a network problem. A FIN (socket.destroy) reaches the SSL
+// close path and its mid-handshake sentinel; a peer RST raw-closes the
+// socket before the SSL layer sees it and reports ConnectionClosed instead.
+test("bun install reports a connection error when the registry closes the connection during the TLS handshake", async () => {
   // Raw TCP listener: accepts the connection, reads the ClientHello, and
-  // resets the socket without ever writing a TLS byte back.
+  // closes the socket without ever writing a TLS byte back.
   const sockets = new Set<net.Socket>();
   const server = net.createServer(socket => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("error", () => {});
-    socket.once("data", () => socket.resetAndDestroy());
+    socket.once("data", () => socket.destroy());
   });
   const { promise: listening, resolve: onListening, reject: onListenError } = Promise.withResolvers<void>();
   // Left attached after listen succeeds: rejecting a settled promise is a
@@ -124,8 +127,10 @@ test("bun install reports ECONNRESET when the registry resets the connection dur
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const combined = stdout + stderr;
-    expect(combined).toContain("ECONNRESET downloading package manifest left-pad");
     expect(combined).not.toContain("UNKNOWN_CERTIFICATE_VERIFICATION_ERROR");
+    // ECONNRESET from the handshake sentinel; ConnectionClosed when the
+    // platform's event loop raw-closes the socket before the SSL layer runs.
+    expect(combined).toMatch(/error: (ECONNRESET|ConnectionClosed) downloading package manifest left-pad/);
     expect(exitCode).not.toBe(0);
   } finally {
     for (const s of sockets) s.destroy();

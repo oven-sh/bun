@@ -861,7 +861,10 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
-        threadName = jsString(vm, options.name);
+        // isolatedCopy: this JSString lives in the worker heap; it must own a
+        // worker-local impl so its GC deref never races m_options.name's
+        // (non-atomic) refcount on the parent thread.
+        threadName = jsString(vm, options.name.isolatedCopy());
     }
     if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());

@@ -213,13 +213,16 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
     for (size_t i = 0; i < argCount; ++i)
         argsVec.append(args[i]);
 
-    WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [argsVec = WTF::move(argsVec), protectedWrapper = Ref { wrapper }](WebCore::ScriptExecutionContext& ctx) mutable {
+    // Ref only once the context is found live (inside the map lock) and release via
+    // adoptRef in the task, so the last deref — destroying two JSC::Strong members —
+    // can only happen on the JS thread. On a dead/terminating context nothing is destroyed here.
+    WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [&wrapper] { wrapper.ref(); }, [argsVec = WTF::move(argsVec), wrapper = &wrapper](WebCore::ScriptExecutionContext& ctx) mutable {
+        auto protectedWrapper = adoptRef(*wrapper);
         auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
         JSC::MarkedArgumentBuffer arguments;
         for (size_t i = 0; i < argsVec.size(); ++i)
             arguments.appendWithCrashOnOverflow(JSC::JSValue::decode(argsVec[i]));
-        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments);
-    });
+        invokeFFICallback(globalObject, protectedWrapper->m_function.get(), arguments); });
 }
 
 extern "C" JSC::EncodedJSValue

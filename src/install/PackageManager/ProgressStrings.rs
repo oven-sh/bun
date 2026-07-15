@@ -20,9 +20,9 @@ impl ProgressStrings {
         ProgressStrings::DOWNLOAD_NO_EMOJI_
     )
     .as_bytes();
-    pub(crate) const DOWNLOAD_EMOJI: &'static str = "  🔍 ";
+    pub(crate) const DOWNLOAD_EMOJI: &'static str = "🔍 ";
 
-    pub(crate) const EXTRACT_EMOJI: &'static str = "  🚚 ";
+    pub(crate) const EXTRACT_EMOJI: &'static str = "🚚 ";
 
     pub(crate) const INSTALL_NO_EMOJI_: &'static str = "Installing";
     const INSTALL_NO_EMOJI: &'static [u8] =
@@ -32,13 +32,13 @@ impl ProgressStrings {
         ProgressStrings::INSTALL_NO_EMOJI_
     )
     .as_bytes();
-    pub(crate) const INSTALL_EMOJI: &'static str = "  📦 ";
+    pub(crate) const INSTALL_EMOJI: &'static str = "📦 ";
 
     pub(crate) const SAVE_NO_EMOJI_: &'static str = "Saving lockfile";
     const SAVE_NO_EMOJI: &'static [u8] = ProgressStrings::SAVE_NO_EMOJI_.as_bytes();
     const SAVE_WITH_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::SAVE_EMOJI, ProgressStrings::SAVE_NO_EMOJI_).as_bytes();
-    pub(crate) const SAVE_EMOJI: &'static str = "  🔒 ";
+    pub(crate) const SAVE_EMOJI: &'static str = "🔒 ";
 
     pub(crate) const SCRIPT_NO_EMOJI_: &'static str = "Running script";
     const SCRIPT_NO_EMOJI: &'static [u8] =
@@ -48,7 +48,7 @@ impl ProgressStrings {
         ProgressStrings::SCRIPT_NO_EMOJI_
     )
     .as_bytes();
-    pub(crate) const SCRIPT_EMOJI: &'static str = "  ⚙️  ";
+    pub(crate) const SCRIPT_EMOJI: &'static str = "⚙️  ";
 
     #[inline]
     pub(crate) fn download() -> &'static [u8] {

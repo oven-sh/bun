@@ -54,6 +54,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "bindgen_test.rs": "jsc/bindgen_test.rs",
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
+  "cron.rs": "runtime/api/cron.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
   "dependency.rs": "install/dependency.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",

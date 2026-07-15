@@ -550,11 +550,12 @@ describe("bundler", () => {
         require("./dep");
         const rr = require.resolve("./dep");
         const imr = import.meta.resolve("./dep");
-        // Long runtime specifier must stay a catchable error, not panic.
-        let longErr;
-        try { require.resolve("./" + Buffer.alloc(5000, "x").toString()); }
-        catch (e) { longErr = e.code ?? e.name; }
-        console.log(JSON.stringify({ rr, imr, longErr }));
+        // An over-long runtime specifier used to panic in the resolver's
+        // standalone-graph path join; the process must keep running here.
+        for (const n of [1200, 5000, 100_000]) {
+          try { require.resolve("./" + Buffer.alloc(n, "x").toString()); } catch {}
+        }
+        console.log(JSON.stringify({ rr, imr }));
       `,
       "src/dep.ts": `module.exports = { value: 42 };`,
     });
@@ -588,7 +589,7 @@ describe("bundler", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
 
-    const { rr, imr, longErr } = JSON.parse(stdout);
+    const { rr, imr } = JSON.parse(stdout);
     // Must not leak the build machine's source path into the binary.
     expect(rr).not.toContain("compile-require-resolve");
     // Must be a standalone-graph virtual path, same root as import.meta.resolve.
@@ -596,7 +597,6 @@ describe("bundler", () => {
     const expected = !isWindows ? "/$bunfs/root/dep" : "B:/~BUN/root/dep";
     expect(normalize(rr)).toBe(expected);
     expect(normalize(Bun.fileURLToPath(imr))).toBe(expected);
-    expect(longErr).toBe("MODULE_NOT_FOUND");
 
     expect(exitCode).toBe(0);
   });

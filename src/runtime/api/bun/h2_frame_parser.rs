@@ -1525,7 +1525,7 @@ pub struct Stream {
     header_block_size: usize,
     header_block_count: usize,
     // Header block fragments buffered across HEADERS + CONTINUATION until
-    // END_HEADERS arrives (RFC 9113 §4.3); capped at `max_header_list_size`.
+    // END_HEADERS arrives (RFC 9113 §4.3).
     pending_header_block: Vec<u8>,
     // Flags from the HEADERS frame that started `pending_header_block`;
     // CONTINUATION frames only carry END_HEADERS.
@@ -4559,12 +4559,18 @@ impl H2FrameParser {
             let payload = content.data();
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
-            if stream.pending_header_block.len() + payload.len()
-                > self.local_settings.get().max_header_list_size as usize
+            // Hard DoS bound on the compressed buffer only; buffer past the advertised
+            // max_header_list_size so decode_header_block can refuse the oversized block with a
+            // per-stream RST_STREAM while keeping the connection-scoped HPACK table in sync.
+            let cap = (self.local_settings.get().max_header_list_size as usize)
+                .max(65536)
+                .saturating_mul(2);
+            if stream
+                .pending_header_block
+                .len()
+                .saturating_add(payload.len())
+                > cap
             {
-                // Cap the buffered compressed block at max_header_list_size as a
-                // DoS bound; the decoded list size is checked separately in
-                // decode_header_block.
                 self.send_go_away(
                     frame.stream_identifier,
                     ErrorCode::ENHANCE_YOUR_CALM,
@@ -4739,19 +4745,6 @@ impl H2FrameParser {
                 // decoded and END_STREAM finalized in handle_continuation_frame so
                 // the JS event order stays onStreamHeaders -> onStreamEnd.
                 let fragment = &payload[offset..end];
-                if fragment.len() > self.local_settings.get().max_header_list_size as usize {
-                    // Cap the buffered compressed block at max_header_list_size
-                    // as a DoS bound; the decoded list size is checked separately
-                    // in decode_header_block.
-                    self.send_go_away(
-                        frame.stream_identifier,
-                        ErrorCode::ENHANCE_YOUR_CALM,
-                        b"ENHANCE_YOUR_CALM",
-                        self.last_stream_id.get(),
-                        true,
-                    );
-                    return Ok(end_);
-                }
                 stream.pending_header_block.extend_from_slice(fragment);
                 stream.pending_header_flags = frame.flags;
                 self.expecting_continuation.set(frame.stream_identifier);

@@ -1498,7 +1498,7 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           }
         });
 
-        it("rejects a header block whose compressed size exceeds maxHeaderListSize", async () => {
+        it("rejects a header block whose compressed size exceeds the hard DoS cap", async () => {
           const { promise: waitToWrite, resolve: allowWrite } = Promise.withResolvers();
           const { promise: serverListening, resolve: serverResolve } = Promise.withResolvers();
           const server = net.createServer(async socket => {
@@ -1507,12 +1507,12 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             socket.write(settings.data);
             await waitToWrite;
 
-            // 5 x 16384 = 81920 compressed bytes > the default 65535
-            // maxHeaderListSize; the connection must be torn down before the
-            // block is ever decoded.
+            // 9 x 16384 = 147456 compressed bytes > the 2x max_header_list_size
+            // hard cap (131072 with default settings); the connection is torn
+            // down without decoding the block (RFC 9113 §10.5.1).
             const chunk = Buffer.alloc(16384, 0x41);
             socket.write(Buffer.concat([new http2utils.HeadersFrame(1, chunk, 0, /* EOH */ false, false).data]));
-            for (let i = 0; i < 4; i++) {
+            for (let i = 0; i < 8; i++) {
               // raw CONTINUATION frame without END_HEADERS
               socket.write(Buffer.concat([new http2utils.Frame(chunk.byteLength, 9, 0, 1).data, chunk]));
             }
@@ -1897,7 +1897,7 @@ it(
       });
     });
   },
-  15_000 * ASAN_MULTIPLIER,
+  20_000 * ASAN_MULTIPLIER,
 );
 
 it("http2.createServer validates input options", () => {

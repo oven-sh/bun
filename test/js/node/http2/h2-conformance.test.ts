@@ -420,6 +420,115 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
+// RFC 9113 §10.5.1: a request whose header list exceeds SETTINGS_MAX_HEADER_LIST_SIZE is a
+// per-stream error, not a connection error, and must not kill the server process. Spawned as a
+// subprocess because the bug was an uncatchable 'error' on a stream user code never received.
+describe.concurrent("header list size limit (RFC 9113 §10.5.1)", () => {
+  for (const [label, headerCount, expectProbe, expectRst1, expectSessionError] of [
+    // ~72 KiB of well-formed headers: over the default 65535 limit, under the hard DoS cap.
+    // Stream 1 is RST_STREAM(ENHANCE_YOUR_CALM); the connection survives and serves stream 3.
+    ["RST_STREAMs an oversized header list and keeps the connection alive", 24, true, true, false],
+    // ~150 KiB: past the hard DoS cap. Connection is torn down (GOAWAY ENHANCE_YOUR_CALM) with a
+    // catchable session error; the process must still survive.
+    ["GOAWAYs a header block past the hard cap without crashing", 50, false, false, true],
+  ] as const) {
+    test(`server ${label}`, async () => {
+      const fixture = `
+        const http2 = require("node:http2");
+        const net = require("node:net");
+        const srv = http2.createServer();
+        const events = [];
+        srv.on("error", e => events.push("server-error:" + e.code));
+        srv.on("sessionError", e => events.push("sessionError:" + e.code));
+        srv.on("session", s => s.on("error", e => events.push("session-error:" + e.code)));
+        srv.on("stream", (st, h) => {
+          st.on("error", e => events.push("stream-error:" + e.code));
+          events.push("REQ:" + h[":path"]);
+          st.respond({ ":status": 200 });
+          st.end("k");
+        });
+        const fr = (t, f, sid, pl) => { const b = Buffer.alloc(9 + pl.length); b.writeUIntBE(pl.length, 0, 3); b[3] = t; b[4] = f; b.writeUInt32BE(sid, 5); pl.copy(b, 9); return b; };
+        const hint = (head, p, v) => { const m = (1 << p) - 1; if (v < m) return Buffer.from([head | v]); const o = [head | m]; v -= m; while (v >= 128) { o.push((v & 0x7f) | 0x80); v >>= 7; } o.push(v); return Buffer.from(o); };
+        const hstr = s => { const b = Buffer.from(s); return Buffer.concat([hint(0, 7, b.length), b]); };
+        const lit = (n, v) => Buffer.concat([Buffer.from([0x00]), hstr(n), hstr(v)]);
+        const block = (path, extra) => Buffer.concat([Buffer.from([0x82, 0x86]), lit(":path", path), lit(":authority", "h"), ...extra.map(([k, v]) => lit(k, v))]);
+        srv.listen(0, "127.0.0.1", () => {
+          const port = srv.address().port;
+          const big = block("/big", Array.from({ length: ${headerCount} }, (_, i) => ["x-" + i, Buffer.alloc(3000, "Q").toString()]));
+          const frames = [];
+          for (let o = 0; o < big.length; o += 16000) {
+            const last = o + 16000 >= big.length;
+            frames.push(fr(o === 0 ? 1 : 9, (last ? 4 : 0) | (o === 0 ? 1 : 0), 1, big.subarray(o, o + 16000)));
+          }
+          const sock = net.connect(port, "127.0.0.1", () => {
+            sock.write(Buffer.concat([Buffer.from("PRI * HTTP/2.0\\r\\n\\r\\nSM\\r\\n\\r\\n", "binary"), fr(4, 0, 0, Buffer.alloc(0)), ...frames]));
+          });
+          sock.on("error", () => {});
+          let raw = Buffer.alloc(0);
+          let probed = false;
+          let done = false;
+          const scan = () => {
+            let p = 0, probeOk = false, goaway = -1, rst1 = -1, verdict = false;
+            while (p + 9 <= raw.length) {
+              const l = raw.readUIntBE(p, 3), t = raw[p + 3], sid = raw.readUInt32BE(p + 5) & 0x7fffffff;
+              if (p + 9 + l > raw.length) break;
+              if (t === 1 && sid === 3) probeOk = true;
+              if (t === 7) { goaway = raw.readUInt32BE(p + 13); verdict = true; }
+              if (t === 3 && sid === 1) { rst1 = raw.readUInt32BE(p + 9); verdict = true; }
+              p += 9 + l;
+            }
+            return { probeOk, goaway, rst1, verdict };
+          };
+          const finish = () => {
+            if (done) return;
+            done = true;
+            const { probeOk, goaway, rst1 } = scan();
+            console.log(JSON.stringify({ events, probeOk, goaway, rst1 }));
+            process.exit(0);
+          };
+          sock.on("data", d => {
+            raw = Buffer.concat([raw, d]);
+            const s = scan();
+            // Send the probe only after the server's verdict on stream 1.
+            if (!probed && s.verdict) {
+              probed = true;
+              try { sock.write(fr(1, 5, 3, block("/probe", []))); } catch {}
+            }
+            // Done once the probe is answered, or once a GOAWAY arrived (connection is over).
+            if (probed && (s.probeOk || s.goaway !== -1)) finish();
+          });
+          sock.on("close", finish);
+        });
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        env: bunEnv,
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("ERR_HTTP2_STREAM_ERROR");
+      const out = JSON.parse(stdout.trim());
+      if (expectRst1) {
+        expect(out.rst1).toBe(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM);
+      }
+      if (expectProbe) {
+        expect(out.events).toContain("REQ:/probe");
+      } else {
+        expect(out.events).not.toContain("REQ:/big");
+      }
+      if (expectSessionError) {
+        expect(out.goaway).toBe(http2.constants.NGHTTP2_ENHANCE_YOUR_CALM);
+        expect(out.events).toContain("sessionError:ERR_HTTP2_SESSION_ERROR");
+      } else {
+        expect(out.goaway).toBe(-1);
+        expect(out.events).not.toContain("sessionError:ERR_HTTP2_SESSION_ERROR");
+      }
+      expect(exitCode).toBe(0);
+    });
+  }
+});
+
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
 // client and asserts the client's wire behavior (push stream states, SETTINGS ack ordering).
 

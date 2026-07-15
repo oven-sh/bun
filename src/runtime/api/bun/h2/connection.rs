@@ -824,14 +824,13 @@ impl Connection {
     /// RFC 9113 §6.10 CONTINUATION: append the fragment; complete the block on END_HEADERS.
     fn handle_continuation(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
         // dispatch() already enforced that we are assembling this exact stream.
-        // Cap the reassembled block at the header-list limit (floored so tiny custom settings
-        // don't reject normal blocks): HPACK output is never smaller than its input, so a
-        // compressed block already past max_header_list_size can only decode past it too —
-        // tearing down here is safe for every legitimate block and bounds memory against
-        // CONTINUATION floods. node itself never errors on this (nghttp2 tolerates far more,
-        // verified on node v26.3.0) — this is deliberate hardening, covered by the
-        // maxHeaderListSize test in node-http2.test.js.
-        let cap = (self.local_settings.max_header_list_size as usize).max(65536);
+        // Buffer past max_header_list_size so finish_header_block can refuse an oversized block
+        // with a per-stream RST_STREAM while keeping the connection-scoped HPACK table in sync
+        // (§4.3, §10.5.1); only past the hard DoS cap is the connection torn down. Node/nghttp2
+        // was observed to GOAWAY at roughly this point (~144 KiB with default settings).
+        let cap = (self.local_settings.max_header_list_size as usize)
+            .max(65536)
+            .saturating_mul(2);
         if self.header_block.len().saturating_add(payload.len()) > cap {
             self.send_go_away(sink, ErrorCode::EnhanceYourCalm, b"header block too large");
             return true;

@@ -28,6 +28,7 @@
 #include "Worker.h"
 
 #include "BunClientData.h"
+#include <JavaScriptCore/HeapObserver.h>
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -96,8 +97,91 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Set / read the native WebWorker's `requested_terminate`. `worker` is the
+// Rust WebWorker*. Purely atomic: safe from any thread, including JSC's
+// heap-collector thread. The heap-limit observer must use these.
+void WebWorker__setRequestedTerminate(void* worker);
+bool WebWorker__hasRequestedTerminate(void* worker);
+
+// requested_terminate for the CURRENT thread's worker. Mutator-thread only:
+// reads Bun's per-thread VM, which JSC-internal threads do not have. Used
+// by node:vm's checkForTermination, which runs inside a script evaluation.
+bool WebWorker__currentWorkerHasRequestedTerminate();
+
+// The WebCore::Worker that owns the current thread's VM, or null on the main thread.
+WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
+
+// node:worker_threads resourceLimits heap cap. JSC has no per-VM hard limit,
+// so this checks the post-collection live size after every Full collection
+// and terminates the worker via VMTraps on breach. Deliberately not
+// JSC::Watchdog: node:vm's `timeout` owns that single per-VM slot.
+//
+// THREADING: JSC runs didGarbageCollect on whichever thread holds the GC
+// conn, including its dedicated heap-collector thread, where Bun's
+// per-thread VM is not installed. Every operation below must be safe there:
+// atomics through `m_nativeWorker` (captured race-free at install time,
+// never a thread-local), VMTraps, and a size_t that this same thread's
+// Heap::runEndPhase computed a few lines before notifying observers.
+class WorkerHeapLimitObserver final : public JSC::HeapObserver {
+    WTF_MAKE_TZONE_ALLOCATED(WorkerHeapLimitObserver);
+
+public:
+    WorkerHeapLimitObserver(Worker& worker, JSC::VM& vm, void* nativeWorker, size_t limitBytes)
+        : m_worker(worker)
+        , m_vm(vm)
+        , m_nativeWorker(nativeWorker)
+        , m_limitBytes(limitBytes)
+    {
+    }
+
+private:
+    void willGarbageCollect() final {}
+
+    void didGarbageCollect(JSC::CollectionScope scope) final
+    {
+        // Only a Full collection proves the live set exceeds the cap; an
+        // Eden collection leaves the old generation unswept.
+        if (scope != JSC::CollectionScope::Full)
+            return;
+        // Disarmed for teardown's final Full collection, which still sees
+        // the whole global graph and must not relabel a finished worker.
+        if (m_worker.heapLimitObserverDisarmed())
+            return;
+        // Already terminating (terminate(), process.exit(), a previous OOM,
+        // teardown). Never cleared, unlike the JSC termination request,
+        // which WebWorker::shutdown() clears before running VM exit work.
+        if (WebWorker__hasRequestedTerminate(m_nativeWorker))
+            return;
+        if (m_vm.heap.sizeAfterLastFullCollection() <= m_limitBytes)
+            return;
+        m_worker.setTerminatedDueToOOM();
+        // Flip the native requested_terminate so spin() exits through
+        // shutdown() (exit code 1) instead of routing the
+        // TerminationException through the unhandled-rejection handler.
+        WebWorker__setRequestedTerminate(m_nativeWorker);
+        m_vm.notifyNeedTermination();
+    }
+
+    Worker& m_worker;
+    JSC::VM& m_vm;
+    void* const m_nativeWorker;
+    const size_t m_limitBytes;
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(WorkerHeapLimitObserver);
+
+void Worker::installHeapLimitObserver(JSC::VM& vm, void* nativeWorker)
+{
+    size_t limit = heapLimitBytes();
+    if (!limit)
+        return;
+    ASSERT(!m_heapLimitObserver);
+    m_heapLimitObserver = makeUnique<WorkerHeapLimitObserver>(*this, vm, nativeWorker, limit);
+    vm.heap.addObserver(m_heapLimitObserver.get());
+}
 
 Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     : EventTargetWithInlineData()
@@ -576,6 +660,9 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
 
 bool Worker::dispatchExit(int32_t exitCode)
 {
+    // Node reports exit code 1 for ERR_WORKER_OUT_OF_MEMORY.
+    if (m_terminatedDueToOOM.load())
+        exitCode = 1;
     // Runs on the worker thread after its JSC VM has been torn down. Post the
     // close event to the parent; that task additionally releases parent_poll_ref
     // (parent-thread-only).
@@ -602,7 +689,7 @@ bool Worker::dispatchExit(int32_t exitCode)
     return ScriptExecutionContext::postTaskTo(
         m_parentContextId,
         [this] { this->deref(); },
-        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
+        [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext& context) {
             // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
             // handlers observe threadId == -1 and isOnline() == false while
             // postMessage() (gated only on Closed) still accepts and drops the
@@ -623,6 +710,19 @@ bool Worker::dispatchExit(int32_t exitCode)
             if (auto* ctx = protectedThis->scriptExecutionContext())
                 protectedThis->rejectAllCrossVMRequests(ctx->globalObject());
 
+            if (protectedThis->m_terminatedDueToOOM.load() && protectedThis->hasEventListeners(eventNames().errorEvent)) {
+                auto* globalObject = context.globalObject();
+                ErrorEvent::Init init;
+                // Leave init.message empty so worker_threads.ts #onError emits
+                // init.error (which carries .code) instead of wrapping.
+                init.error = Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_OUT_OF_MEMORY,
+                    "Worker terminated due to reaching memory limit: JS heap out of memory"_s);
+                // Bypass the m_terminateRequested gate in Worker::dispatchEvent so the
+                // error reaches the listener even if terminate() raced the OOM.
+                auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
+                protectedThis->EventTargetWithInlineData::dispatchEvent(event);
+            }
+
             if (protectedThis->hasEventListeners(eventNames().closeEvent)) {
                 auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
                 protectedThis->EventTargetWithInlineData::dispatchEvent(event);
@@ -639,6 +739,14 @@ bool Worker::dispatchExit(int32_t exitCode)
 
 // ---- extern "C" shims (called from native code) ------------------------------
 
+// From WebWorker::start_vm(), after the JSC VM exists and before any JS
+// runs. `nativeWorker` is the Rust WebWorker*, passed from the Rust side so
+// it is captured race-free (impl_ is assigned later, on the parent thread).
+extern "C" void WebWorker__installHeapLimitObserver(Worker* worker, Zig::GlobalObject* globalObject, void* nativeWorker)
+{
+    worker->installHeapLimitObserver(JSC::getVM(globalObject), nativeWorker);
+}
+
 extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -647,6 +755,12 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     // can never run (e.g. notifyPeerClosed posted during the final collectNow).
     if (auto* ctx = globalObject->scriptExecutionContext())
         ctx->markTerminating();
+
+    // No heap-limit decisions past this point: the Full collection below
+    // still sees the whole global graph (conservatively rooted from the
+    // caller's stack), regardless of why the worker is shutting down.
+    if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
+        worker->disarmHeapLimitObserver();
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -742,7 +856,19 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     }
 }
 
-extern "C" WebCore::Worker* WebWorker__getParentWorker(void* bunVM);
+// The single builder of Node's resourceLimits shape, used by both the
+// worker-side export below and the parent-side getter in JSWorker.cpp,
+// each fed by the one WorkerOptions::resourceLimits the constructor parsed.
+JSObject* createResourceLimitsObject(JSGlobalObject* globalObject, const WorkerResourceLimits& limits)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* obj = constructEmptyObject(globalObject, globalObject->objectPrototype(), 4);
+    obj->putDirect(vm, Identifier::fromString(vm, "maxYoungGenerationSizeMb"_s), jsNumber(limits.maxYoungGenerationSizeMb));
+    obj->putDirect(vm, Identifier::fromString(vm, "maxOldGenerationSizeMb"_s), jsNumber(limits.maxOldGenerationSizeMb));
+    obj->putDirect(vm, Identifier::fromString(vm, "codeRangeSizeMb"_s), jsNumber(limits.codeRangeSizeMb));
+    obj->putDirect(vm, Identifier::fromString(vm, "stackSizeMb"_s), jsNumber(limits.stackSizeMb));
+    return obj;
+}
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -829,6 +955,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     JSValue threadId = jsNumber(0);
     JSValue threadName = jsEmptyString(vm);
     JSMap* environmentData = nullptr;
+    JSObject* resourceLimits = nullptr;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
         auto& options = worker->options();
@@ -865,6 +992,12 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         // worker-local impl so its GC deref never races m_options.name's
         // (non-atomic) refcount on the parent thread.
         threadName = jsString(vm, options.name.isolatedCopy());
+        resourceLimits = createResourceLimitsObject(globalObject, options.resourceLimits);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    if (!resourceLimits) {
+        resourceLimits = constructEmptyObject(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
     }
     if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
@@ -877,7 +1010,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM()))
         isNodeWorker = worker->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 11);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 12);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -890,6 +1023,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 8, JSFunction::create(vm, globalObject, 1, "markAsUncloneable"_s, jsFunctionMarkAsUncloneable, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 9, JSFunction::create(vm, globalObject, 1, "setEntryEvaluatedHook"_s, jsFunctionSetEntryEvaluatedHook, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
+    array->putDirectIndex(globalObject, 11, resourceLimits);
     return array;
 }
 

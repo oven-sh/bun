@@ -281,9 +281,32 @@ void NodeVMScript::destroy(JSCell* cell)
     static_cast<NodeVMScript*>(cell)->NodeVMScript::~NodeVMScript();
 }
 
+// See src/jsc/web_worker.rs.
+extern "C" bool WebWorker__currentWorkerHasRequestedTerminate();
+
+// A worker that has been asked to terminate (worker.terminate() from the
+// parent, process.exit() inside the worker, a resourceLimits heap-limit
+// breach, or process-exit teardown) interrupts a running vm.Script or
+// SourceTextModule exactly like `timeout` does, but that termination belongs
+// to the worker, not the script. When it does, leave the termination request
+// armed and propagate the TerminationException so the worker's event loop
+// unwinds and shuts down, instead of asserting or converting it into an
+// ERR_SCRIPT_EXECUTION_* error. Returns true iff the caller must bail with
+// the (already pending) exception. Also declared in NodeVMModule.cpp.
+bool propagateWorkerTermination(JSC::VM& vm, JSC::ThrowScope& scope)
+{
+    if (!WebWorker__currentWorkerHasRequestedTerminate())
+        return false;
+    if (!scope.exception())
+        vm.throwTerminationException();
+    return true;
+}
+
 static bool checkForTermination(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMScript* script, std::optional<double> timeout)
 {
     if (vm.hasTerminationRequest()) {
+        if (propagateWorkerTermination(vm, scope))
+            return true;
         vm.drainMicrotasksForGlobalObject(globalObject);
         // The termination may have fired inside an afterEvaluate microtask
         // checkpoint, leaving the termination exception pending; clear it so

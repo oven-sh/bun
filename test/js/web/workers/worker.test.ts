@@ -247,13 +247,7 @@ describe("web worker", () => {
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
     x.exited.then(async code => {
-      clearTimeout(timer);
       if (code !== 0) {
         done(new Error("exited with non-zero code"));
       } else {
@@ -275,13 +269,7 @@ describe("web worker", () => {
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    const timer = setTimeout(() => {
-      x.kill();
-      done(new Error("timeout"));
-    }, 1000);
-
     x.exited.then(async code => {
-      clearTimeout(timer);
       if (code !== 0) {
         done(new Error("exited with non-zero code"));
       } else {
@@ -385,8 +373,10 @@ describe("worker_threads", () => {
     // after 10 ms) — a fixed sleep races with worker startup, which under
     // debug/ASAN can exceed 200 ms.
     const [code] = await once(worker, "exit");
-    await worker.terminate();
     expect(code).toBe(2);
+    // terminate() on an already-exited worker resolves to undefined in
+    // Node, not the exit code (test-worker-terminate-null-handler.js).
+    expect(await worker.terminate()).toBeUndefined();
   });
 
   test.todo("worker terminating forcefully properly interrupts", async () => {

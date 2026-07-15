@@ -47,6 +47,7 @@ class JSPromise;
 namespace WebCore {
 
 class ScriptExecutionContext;
+class WorkerHeapLimitObserver;
 struct StructuredSerializeOptions;
 struct WorkerOptions;
 
@@ -128,6 +129,18 @@ public:
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
     ScriptExecutionContextIdentifier clientIdentifier() const { return m_clientIdentifier; }
     WorkerOptions& options() { return m_options; }
+    size_t heapLimitBytes() const { return m_options.resourceLimits.heapLimitBytes(); }
+    void setTerminatedDueToOOM() { m_terminatedDueToOOM.store(true); }
+    bool terminatedDueToOOM() const { return m_terminatedDueToOOM.load(); }
+    // Registers the resourceLimits heap-limit observer on the worker VM's
+    // Heap (no-op without a limit). Called from start_vm(); never removed:
+    // the Heap dies in WebWorker__teardownJSCVM, before ~Worker runs.
+    void installHeapLimitObserver(JSC::VM&, void* nativeWorker);
+    // WebWorker__teardownJSCVM disarms before its final Full collection,
+    // which still sees the whole global graph (conservatively rooted from
+    // shutdown()'s stack) and must not relabel a finished worker as an OOM.
+    void disarmHeapLimitObserver() { m_heapLimitDisarmed.store(true, std::memory_order_release); }
+    bool heapLimitObserverDisarmed() const { return m_heapLimitDisarmed.load(std::memory_order_acquire); }
 
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
@@ -193,6 +206,14 @@ private:
 
     std::atomic<State> m_state { State::Pending };
     std::atomic<bool> m_terminateRequested { false };
+    std::atomic<bool> m_terminatedDueToOOM { false };
+    // See disarmHeapLimitObserver().
+    std::atomic<bool> m_heapLimitDisarmed { false };
+
+    // resourceLimits heap-cap observer, registered on the worker thread and
+    // destroyed by ~Worker (parent thread). Never removeObserver'd: the Heap
+    // and its observer list die in WebWorker__teardownJSCVM, before ~Worker.
+    std::unique_ptr<WorkerHeapLimitObserver> m_heapLimitObserver;
 
     // Stable for the process lifetime; used with ScriptExecutionContext::
     // postTaskTo() so the worker thread never dereferences the parent context
@@ -209,6 +230,8 @@ private:
 };
 
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+// Defined in Worker.cpp; also used by the worker.resourceLimits getter in JSWorker.cpp.
+JSC::JSObject* createResourceLimitsObject(JSC::JSGlobalObject*, const WorkerResourceLimits&);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 

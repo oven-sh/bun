@@ -1228,6 +1228,43 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     expect(output).toContain("hello");
   });
 
+  // An inline terminal must not keep the event loop alive after its subprocess
+  // exits: the reader poll is closed and the writer unref'd in on_process_exit,
+  // so a script that never calls terminal.close() still exits. Regression for
+  // #33882, which deferred the reader's EOF to a later poll tick.
+  test("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const events = [];
+          const child = Bun.spawn([process.execPath, "-e", "console.log('hi')"], {
+            env: process.env,
+            terminal: {
+              data: (_t, d) => events.push("data:" + Buffer.from(d).toString().includes("hi")),
+              exit: (_t, code) => events.push("exit:" + code),
+            },
+          });
+          await child.exited;
+          events.push("exited");
+          process.stdout.write(JSON.stringify(events));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The terminal exit callback fires once with code 0 (clean EOF), before
+    // proc.exited resolves, and the outer process exits on its own.
+    expect({ events: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      events: ["data:true", "exit:0", "exited"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/33187
   // Not `test.concurrent`: spawns run concurrently inside the body; the serial
   // `Bun.spawn` loop must be the only contention to reproduce the race.

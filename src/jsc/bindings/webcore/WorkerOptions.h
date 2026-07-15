@@ -28,8 +28,7 @@ struct WorkerOptions {
     // Blob URL.
     bool evalMode { false };
     // node:worker_threads `trackUnmanagedFds`: auto-close fs.open/openSync fds
-    // still open at worker exit. Default matches Node.js (true); worker_threads.ts
-    // normalizes the JS option before we read it.
+    // still open at worker exit. Default matches Node.js (true).
     bool trackUnmanagedFds { true };
     Kind kind { Kind::Web };
     // Serialized array containing [workerData, environmentData]

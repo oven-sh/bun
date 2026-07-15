@@ -6,10 +6,10 @@ use bun_core as bstr;
 
 /// Runtime flag set passed to [`JSPropertyIterator::init`].
 ///
-/// `Default` is `own_properties_only = true`,
-/// `observable = true`, `only_non_index_properties = false`.
+/// `Default` is `own_properties_only = true`, `observable = true`,
+/// `only_non_index_properties = false`, `include_symbols = true`.
 // Runtime flags (not const generics) because the branches gate per-property work, not a
-// hot inner loop, and the monomorphization fan-out would be 32 instantiations. Profile
+// hot inner loop, and the monomorphization fan-out would be 2^N instantiations. Profile
 // if hot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct JSPropertyIteratorOptions {
@@ -50,7 +50,7 @@ impl Default for JSPropertyIteratorOptions {
     }
 }
 
-/// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining three options
+/// Two-field shorthand of [`JSPropertyIteratorOptions`]; the remaining options
 /// take the default values via the `From` conversion.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct PropertyIteratorOptions {

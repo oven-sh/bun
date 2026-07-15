@@ -817,7 +817,7 @@ impl<'a> TablePrinter<'a> {
         // Set entries always go to the "Values" column as a whole, even when
         // the entry is an object (Node.js routes Set/SetIterator through a
         // dedicated setlike branch that never explodes per-property columns).
-        if self.jstype.is_set() {
+        if self.jstype.is_set() || self.jstype == jsc::JSType::SetIterator {
             let cell = self.format_cell::<ENABLE_ANSI_COLORS>(cell_text, row_value)?;
             self.values_col_width = Some(self.values_col_width.unwrap_or(1).max(cell.width));
             row.values_cell = Some(cell);

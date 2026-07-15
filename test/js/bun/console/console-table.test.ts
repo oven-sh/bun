@@ -206,6 +206,14 @@ describe("console.table", () => {
       );
     });
 
+    test("SetIterator of objects renders a single Values column", () => {
+      const out = Bun.inspect.table(new Set([1, { a: 2 }]).values());
+      expect(columnNames(out)).toEqual(["Values"]);
+      expect(out).toBe(
+        `┌───┬──────────┐\n│   │ Values   │\n├───┼──────────┤\n│ 0 │ 1        │\n│ 1 │ { a: 2 } │\n└───┴──────────┘\n`,
+      );
+    });
+
     test("multi-row column union puts integer-like keys first", () => {
       expect(columnNames(Bun.inspect.table([{ b: 1 }, { a: 2, "7": 3 }]))).toEqual(["7", "b", "a"]);
       expect(

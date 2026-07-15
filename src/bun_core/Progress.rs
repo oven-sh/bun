@@ -606,37 +606,33 @@ impl Progress {
                     maybe_node = (*maybe_node).recently_updated_child.load(Ordering::Acquire);
                 }
                 let current_item = completed_items + 1;
+                let mut had_counter = false;
 
                 if need_ellipse {
                     self.buf_write(&mut end, format_args!("... "));
                 }
                 need_ellipse = false;
                 if !name.is_empty() || eti > 0 {
-                    if !name.is_empty() {
-                        self.buf_write(&mut end, format_args!("{}", crate::fmt::s(name)));
-                        need_ellipse = true;
-                    }
                     if eti > 0 {
-                        if need_ellipse {
-                            self.buf_write(&mut end, format_args!(" "));
-                        }
+                        had_counter = true;
                         match unit {
-                            Unit::None => self
-                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
+                            Unit::None => self.buf_write(
+                                &mut end,
+                                format_args!("[{}/{}] ", current_item, eti)
+                            ),
                             Unit::Files => self.buf_write(
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
                             // Raw byte counts are printed until an IEC-units
                             // (KiB/MiB) formatting helper lands.
-                            Unit::Bytes => self
-                                .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
+                            Unit::Bytes => self.buf_write(&
+                                mut end,
+                                format_args!("[{}/{}] ", current_item, eti)
+                            ),
                         }
-                        need_ellipse = false;
                     } else if completed_items != 0 {
-                        if need_ellipse {
-                            self.buf_write(&mut end, format_args!(" "));
-                        }
+                        had_counter = true;
                         match unit {
                             Unit::None => {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
@@ -649,7 +645,10 @@ impl Progress {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
                             }
                         }
-                        need_ellipse = false;
+                    }
+                    if !name.is_empty() {
+                        self.buf_write(&mut end, format_args!("{}", crate::fmt::s(name)));
+                        need_ellipse = !had_counter;
                     }
                 }
             }

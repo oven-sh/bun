@@ -28,7 +28,7 @@ describe("Worker destruction", () => {
           bunExe(),
           "-e",
           `
-            const { Worker, isMainThread } = require("worker_threads");
+            const { Worker } = require("worker_threads");
             const assert = require("assert");
             const w = new Worker(
               'process.on("exit", () => {' +
@@ -56,6 +56,5 @@ describe("Worker destruction", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
     },
-    30_000,
   );
 });

@@ -791,6 +791,18 @@ impl NodeHTTPResponse {
             }
         }
 
+        // `node:http` validates every header value in JS before it builds the
+        // flat name/value array, but a `Headers` object reaches the serializer
+        // unvalidated, and it writes field-values the same way.
+        if let Some(headers) = jsc::FetchHeaders::cast(headers_object_value) {
+            // SAFETY: `cast` returns a live `*mut FetchHeaders` owned by the JS cell.
+            let headers = bun_opaque::opaque_deref(headers.as_ptr().cast_const());
+            if let Some(name) = headers.find_invalid_value_header_name() {
+                return Err(global_object
+                    .throw_value(jsc::invalid_header_value_error(global_object, &name)));
+            }
+        }
+
         'do_it: {
             if status_message_bytes.is_empty() {
                 if let Some(status_message) =

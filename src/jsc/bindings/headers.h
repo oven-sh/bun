@@ -92,6 +92,7 @@ CPP_DECL void WebCore__FetchHeaders__deref(WebCore::FetchHeaders* arg0);
 CPP_DECL void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* arg0, unsigned char arg1, ZigString* arg2);
 CPP_DECL bool WebCore__FetchHeaders__fastHas_(WebCore::FetchHeaders* arg0, unsigned char arg1);
 CPP_DECL void WebCore__FetchHeaders__fastRemove_(WebCore::FetchHeaders* arg0, unsigned char arg1);
+CPP_DECL void WebCore__FetchHeaders__findInvalidValueHeaderName(WebCore::FetchHeaders* arg0, BunString* arg1);
 CPP_DECL void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* arg0, const ZigString* arg1, ZigString* arg2, JSC::JSGlobalObject* arg3);
 CPP_DECL bool WebCore__FetchHeaders__has(WebCore::FetchHeaders* arg0, const ZigString* arg1, JSC::JSGlobalObject* arg2);
 CPP_DECL bool WebCore__FetchHeaders__isEmpty(WebCore::FetchHeaders* arg0);

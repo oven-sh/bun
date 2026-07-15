@@ -163,6 +163,14 @@ impl StaticRoute {
                 )));
             }
 
+            if let Some(name) = response
+                .get_init_headers()
+                .and_then(FetchHeaders::find_invalid_value_header_name)
+            {
+                return Err(global_this
+                    .throw_value(bun_jsc::invalid_header_value_error(global_this, &name)));
+            }
+
             // The user may want to pass in the same Response object multiple endpoints
             // Let's let them do that.
             let body_value = response.get_body_value();

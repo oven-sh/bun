@@ -1989,6 +1989,29 @@ describe("HTTP Server Security Tests - Advanced", () => {
       expect(response).toInclude("200 Everything Is Fine");
       expect(response).toInclude("ok");
     });
+
+    // `setHeader`/`writeHead` validate header values in JS, but the native handle
+    // underneath also writes field-values straight out of a `Headers` object, which
+    // the Fetch spec lets hold C0 controls and DEL. It has to refuse them too.
+    test("rejects a control character in a Headers value passed to the native writeHead()", async () => {
+      const { promise: errorPromise, resolve: resolveError } = Promise.withResolvers<Error>();
+      server.on("request", (req, res) => {
+        const handle = res[Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "handle")!];
+        try {
+          handle.writeHead(200, "OK", new Headers({ "set-cookie": "k=a\x01b" }));
+        } catch (e: any) {
+          resolveError(e);
+        }
+        res.end("safe");
+      });
+
+      const response = (await sendRequest("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")) as string;
+      const err = await errorPromise;
+      expect((err as any).code).toBe("ERR_INVALID_CHAR");
+      expect(err.message).toBe('Invalid character in header content ["set-cookie"]');
+      expect(response).not.toInclude("set-cookie");
+      expect(response).toInclude("safe");
+    });
   });
 
   test("Server should not crash in clientError is emitted when calling destroy", async () => {

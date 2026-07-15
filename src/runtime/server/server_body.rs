@@ -628,6 +628,10 @@ impl AnyRoute {
         headers: Option<&FetchHeaders>,
         path: &mut Node::PathOrFileDescriptor,
     ) -> JsResult<AnyRoute> {
+        if let Some(name) = headers.and_then(FetchHeaders::find_invalid_value_header_name) {
+            return Err(global.throw_value(jsc::invalid_header_value_error(global, &name)));
+        }
+
         // The file/static route doesn't ref it.
         let blob = <Blob as BlobExt>::find_or_create_file_from_path(path, global, false);
 
@@ -1836,6 +1840,12 @@ where
                             return Err(JsError::Thrown);
                         }
 
+                        if let Some(name) = fetch_headers_to_use.find_invalid_value_header_name() {
+                            return Err(
+                                global.throw_value(jsc::invalid_header_value_error(global, &name))
+                            );
+                        }
+
                         if let Some(protocol) =
                             fetch_headers_to_use.fast_get(HTTPHeaderName::SecWebSocketProtocol)
                         {
@@ -2053,6 +2063,11 @@ where
 
                     // S008: `FetchHeaders` is an `opaque_ffi!` ZST — safe deref.
                     let fh = bun_opaque::opaque_deref_mut(fh);
+                    if let Some(name) = fh.find_invalid_value_header_name() {
+                        return Err(
+                            global.throw_value(jsc::invalid_header_value_error(global, &name))
+                        );
+                    }
                     if let Some(p) = fh.fast_get(HTTPHeaderName::SecWebSocketProtocol) {
                         _sec_websocket_protocol_owned = p.to_slice_clone();
                         sec_websocket_protocol =
@@ -2069,6 +2084,23 @@ where
                 if global.has_exception() {
                     return Err(JsError::Thrown);
                 }
+            }
+        }
+
+        // uWS echoes these two into the 101 response through its upgrade
+        // arguments rather than the header map, so `to_uws_response` never sees
+        // them. They can come from `options.headers`, from a `request.headers`
+        // the handler mutated, or from the client's own request, and every one
+        // of those reaches the wire verbatim.
+        for (name, value) in [
+            ("sec-websocket-protocol", sec_websocket_protocol.to_slice()),
+            (
+                "sec-websocket-extensions",
+                sec_websocket_extensions.to_slice(),
+            ),
+        ] {
+            if !jsc::is_valid_header_value(value.slice()) {
+                return Err(global.throw_value(jsc::invalid_header_value_error(global, name)));
             }
         }
 

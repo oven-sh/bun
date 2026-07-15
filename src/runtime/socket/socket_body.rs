@@ -1235,13 +1235,35 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         self.update_flags(|f| f.set(Flags::IS_ACTIVE, active));
-        // IS_PIPE is stamped at construction (client Unix connect / accepted
-        // pipe listener) and never toggles, so add/remove always pair.
+        // Routing keys off IS_PIPE, so a reconnect that changes address family
+        // must go through `set_pipe_flag` to keep add/remove paired.
         match (active, flags.contains(Flags::IS_PIPE)) {
             (true, false) => crate::jsc_hooks::active_resources_add_tcp_socket(),
             (false, false) => crate::jsc_hooks::active_resources_remove_tcp_socket(),
             (true, true) => crate::jsc_hooks::active_resources_add_pipe(),
             (false, true) => crate::jsc_hooks::active_resources_remove_pipe(),
+        }
+    }
+
+    /// Restamp `IS_PIPE` when a socket is reused for a reconnect.
+    ///
+    /// `set_active_flag` routes the `ActiveResources` add/remove off the
+    /// *current* `IS_PIPE`, so flipping the flag while `IS_ACTIVE` is still set
+    /// (a reconnect to a different address family from inside `onClose`, where
+    /// `detach_for_reconnect` early-returns because the socket is already
+    /// `DETACHED`) would make teardown decrement the bucket the socket was
+    /// never counted in. Move the outstanding count across instead.
+    pub(crate) fn set_pipe_flag(&self, is_pipe: bool) {
+        let flags = self.flags.get();
+        if flags.contains(Flags::IS_PIPE) == is_pipe {
+            return;
+        }
+        if flags.contains(Flags::IS_ACTIVE) {
+            self.set_active_flag(false);
+            self.update_flags(|f| f.set(Flags::IS_PIPE, is_pipe));
+            self.set_active_flag(true);
+        } else {
+            self.update_flags(|f| f.set(Flags::IS_PIPE, is_pipe));
         }
     }
 
@@ -3585,10 +3607,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             local_binding: JsCell::new(None),
             protos: JsCell::new(None),
             server_name: JsCell::new(None),
-            // is_active so the chained `raw.onClose` → `markInactive` path
-            // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
-            // alive. active_connections=1 was already on raw_handlers from
-            // `this`.
+            // No poll_ref — `tls` keeps the loop alive. active_connections=1
+            // was already on raw_handlers from `this`. The active flag is armed
+            // below via `set_active_flag(true)`.
             flags: Cell::new(
                 Flags::BYPASS_TLS | Flags::OWNED_PROTOS | (this.flags.get() & Flags::IS_PIPE),
             ),

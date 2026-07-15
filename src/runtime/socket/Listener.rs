@@ -1158,12 +1158,10 @@ impl Listener {
                         // when sockets are reused for reconnection (common with MongoDB driver)
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
-                        let mut pf = prev.flags.get();
-                        if pf.contains(SocketFlags::OWNED_PROTOS) {
+                        if prev.flags.get().contains(SocketFlags::OWNED_PROTOS) {
                             prev.protos.set(None);
                         }
-                        pf.insert(SocketFlags::IS_PIPE);
-                        prev.flags.set(pf);
+                        prev.set_pipe_flag(true);
                         prev.protos
                             .set(ssl_taken.as_mut().and_then(|s| s.take_protos()));
                         prev.server_name
@@ -1254,7 +1252,7 @@ impl Listener {
                         // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
                         prev.local_binding.set(local_binding.clone());
-                        prev.flags.set(prev.flags.get() | SocketFlags::IS_PIPE);
+                        prev.set_pipe_flag(true);
                         debug_assert!(prev.protos.get().is_none());
                         debug_assert!(prev.server_name.get().is_none());
                         prev
@@ -1543,18 +1541,18 @@ fn connect_finish<const IS_SSL: bool>(
     {
         let mut f = socket_ref.flags.get();
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
-        // IS_PIPE is stamped once at connect time so `set_active_flag`'s
-        // add/remove routing pairs even if `connection` is later cleared.
-        f.set(
-            SocketFlags::IS_PIPE,
-            socket_ref
-                .connection
-                .get()
-                .as_ref()
-                .is_some_and(|c| c.is_pipe()),
-        );
         socket_ref.flags.set(f);
     }
+    // IS_PIPE is stamped at connect time so `set_active_flag`'s add/remove
+    // routing pairs even if `connection` is later cleared. Go through
+    // `set_pipe_flag` so a reconnect that changes address family while the
+    // socket is still active moves its count instead of unpairing it.
+    let is_pipe = socket_ref
+        .connection
+        .get()
+        .as_ref()
+        .is_some_and(|c| c.is_pipe());
+    socket_ref.set_pipe_flag(is_pipe);
     // Note: `do_connect` reads `self.connection` directly so no second
     // borrow is needed here.
     if socket_ref.do_connect().is_err() {

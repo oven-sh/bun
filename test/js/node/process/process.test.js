@@ -1970,9 +1970,13 @@ it("process.finalization exit listener is appended, not prepended", async () => 
     cmd: [
       bunExe(),
       "-e",
+      // register() holds the target only weakly, so anchor it on globalThis:
+      // an unreferenced literal can be collected before `exit` fires, which
+      // drops the finalization callback and fakes an ordering regression.
       `const order = [];
+       globalThis.__target = {};
        process.on("exit", () => order.push("user"));
-       process.finalization.register({}, () => order.push("finalization"));
+       process.finalization.register(globalThis.__target, () => order.push("finalization"));
        process.on("exit", () => console.log(JSON.stringify(order)));`,
     ],
     env: bunEnv,

@@ -790,8 +790,17 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
     }
 
-    syncWindowsEnv(store, String(uid), nullptr);
-    store->remove(String(uid));
+    // Mirror JSEnvironmentVariableMap::deleteProperty: put() applies the TZ
+    // side effect via applySharedEnvSideEffects, so delete has to undo it or
+    // existing Date instances keep the deleted zone's offset.
+    String key(uid);
+    if (SharedEnvStore::normalizeKey(key) == "TZ"_s) {
+        WTF::setTimeZoneOverride(String());
+        resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
+    }
+
+    syncWindowsEnv(store, key, nullptr);
+    store->remove(key);
     // Also drop any own property the Base fallback installed (accessor descriptors).
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }

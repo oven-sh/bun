@@ -518,6 +518,7 @@ describe("bundler", () => {
         });
         await runAsync("Bun.file.write", () => Bun.file(newPath).write("x"));
         await runAsync("Bun.file.unlink", () => Bun.file(newPath).unlink());
+        await runAsync("Bun.write-bare", () => Bun.write(bare, "x"));
 
         // Embedded reads must keep working.
         results["readFileSync"] = fs.readFileSync(embedded, "utf8");
@@ -569,6 +570,7 @@ describe("bundler", () => {
         "Bun.file.writer": "EROFS",
         "Bun.file.write": "EROFS",
         "Bun.file.unlink": "EROFS",
+        "Bun.write-bare": "EROFS",
         "readFileSync": "EMBEDDED-BYTES",
         "statSync.size": 14,
         "existsSync": true,

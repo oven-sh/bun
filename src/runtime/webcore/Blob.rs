@@ -5085,7 +5085,7 @@ pub fn write_file_internal(
             _ => None,
         };
         if let Some(p) = dest_path {
-            if bun_standalone_graph::is_bun_standalone_file_path(p) {
+            if bun_standalone_graph::is_reserved_standalone_path(p) {
                 let err = bun_sys::Error {
                     errno: bun_sys::E::EROFS as _,
                     syscall: bun_sys::Tag::open,
@@ -5388,7 +5388,7 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
     if let store::Data::File(f) = &store.data {
         if let PathOrFileDescriptor::Path(p) = &f.pathlike {
             if bun_standalone_graph::Graph::get().is_some()
-                && bun_standalone_graph::is_bun_standalone_file_path(p.slice())
+                && bun_standalone_graph::is_reserved_standalone_path(p.slice())
             {
                 let err = bun_sys::Error {
                     errno: bun_sys::E::EROFS as _,

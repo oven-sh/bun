@@ -1097,6 +1097,20 @@ describe("structuredClone of a SharedArrayBuffer", () => {
     expect(clone[0]).toBe(9);
   });
 
+  // A SharedArrayBuffer and a genuinely transferred ArrayBuffer in one graph: the
+  // transfer lookup runs immediately before the SharedArrayBuffer sharing gate, so
+  // this exercises both branches on adjacent objects in one serialization.
+  test("a SharedArrayBuffer and a transferred ArrayBuffer in the same graph", () => {
+    const sab = new SharedArrayBuffer(4);
+    const ab = new ArrayBuffer(4);
+    const clone = structuredClone({ sab, ab }, { transfer: [ab] });
+    expect(clone.sab).toBeInstanceOf(SharedArrayBuffer);
+    expect(clone.ab).toBeInstanceOf(ArrayBuffer);
+    expect(ab.byteLength).toBe(0);
+    new Uint8Array(sab)[0] = 9;
+    expect(new Uint8Array(clone.sab)[0]).toBe(9);
+  });
+
   // bun:jsc serialize (which node:v8 serialize wraps) produces self-contained bytes,
   // so the Data Block cannot travel: a SharedArrayBuffer becomes a byte copy. This is
   // the pre-existing contract: bun:jsc serialize itself returns a SharedArrayBuffer,
@@ -1212,6 +1226,11 @@ describe("structuredClone of WebAssembly objects", () => {
 
   test("non-shared WebAssembly.Memory still rejects", () => {
     expect(thrownName(() => structuredClone(new WebAssembly.Memory({ initial: 1 })))).toBe("DataCloneError");
+  });
+
+  test("WebAssembly.Instance still rejects", () => {
+    const instance = new WebAssembly.Instance(new WebAssembly.Module(emptyModuleBytes));
+    expect(thrownName(() => structuredClone(instance))).toBe("DataCloneError");
   });
 
   test("serialize() to bytes rejects WebAssembly.Module and shared Memory", () => {

@@ -2,6 +2,7 @@
 // mess with timers, producing unreliable results. You must manually test this
 // in Node.
 import { expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 const isBun = !!process.versions.bun;
 
 it("process.nextTick", async () => {
@@ -1035,4 +1036,35 @@ it("process.nextTick and AsyncLocalStorage.enterWith don't conflict", async () =
 
   expect(call1).toBe(true);
   expect(call2).toBe(true);
+});
+
+// The nextTick queue is a ring of fixed-size buffers. Node fills each buffer
+// with `undefined` up front so that `shift()` never reads a never-written slot
+// through the prototype chain; without that fill, `Array.prototype[n] = x`
+// becomes a phantom tick (whose `.callback` is undefined) and the mismatched
+// bottom/top indices then hang the drain loop forever. 1 and 2000 pin both
+// ends of the 2048-slot buffer; the chain queues exactly n ticks so the
+// terminating read lands on slot n. The mutation is a process global, so each
+// case runs in its own subprocess.
+// Regressing this hangs the child, so an uncaughtException listener converts
+// the symptom into a fast nonzero exit.
+it.each([1, 2000])("a numeric index %i on Array.prototype does not corrupt the nextTick queue", async index => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const index = ${index};
+       Array.prototype[index] = 99;
+       process.on("uncaughtException", e => { console.log("UNCAUGHT " + e); process.exit(1); });
+       let ran = 0;
+       const chain = () => { if (++ran < index) process.nextTick(chain); };
+       process.nextTick(chain);
+       setTimeout(() => console.log("ran " + ran), 0);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: `ran ${index}`, stderr: "", exitCode: 0 });
 });

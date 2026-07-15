@@ -770,8 +770,7 @@ pub fn upload_stream(
         credentials.deref();
         return Ok(bun_jsc::JSPromise::rejected_promise(
             global_this,
-            bun_core::String::static_("ReadableStream is locked")
-                .to_error_instance(global_this),
+            bun_core::String::static_("ReadableStream is locked").to_error_instance(global_this),
         )
         .to_js());
     }

@@ -71,7 +71,13 @@ test("Bun.write(s3file, response) with a locked or disturbed body rejects instea
   await expect(Bun.write(client.file("k"), locked)).rejects.toThrow("ReadableStream is locked");
 
   // A disturbed body is rejected one layer earlier, synchronously.
-  const disturbed = new Response(new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(1)); } }));
+  const disturbed = new Response(
+    new ReadableStream({
+      pull(c) {
+        c.enqueue(new Uint8Array(1));
+      },
+    }),
+  );
   await disturbed.body!.getReader().read();
   expect(() => Bun.write(client.file("k"), disturbed)).toThrow("ReadableStream has already been used");
 });

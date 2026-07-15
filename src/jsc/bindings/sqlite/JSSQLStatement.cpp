@@ -1499,7 +1499,10 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
             break;
 
         if (!sql.stmt) {
-            // this happens for an empty statement
+            // Empty statement. Stop if sqlite3_prepare_v3 made no progress
+            // (e.g. an embedded NUL byte), otherwise we'd loop forever.
+            if (tail == sqlStringHead)
+                break;
             sqlStringHead = tail;
             continue;
         }

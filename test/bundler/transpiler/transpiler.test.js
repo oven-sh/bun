@@ -599,8 +599,10 @@ describe("Bun.Transpiler", () => {
       err("async function f() { enum x { y = await 1 } }", '"await" can only be used inside an "async" function');
       err("enum x { y = await 1 }", '"await" can only be used inside an "async" function');
       err("enum x { y = this }", 'Cannot use "this" here');
+      err("enum x { y = () => this }", 'Cannot use "this" here');
       err("class C { m() { enum x { y = this } } }", 'Cannot use "this" here');
       err("declare enum x { y = await 1 }", '"await" can only be used inside an "async" function');
+      err("declare enum x { y = this }", 'Cannot use "this" here');
 
       // A nested function establishes its own context, so these remain valid.
       exp(
@@ -610,6 +612,10 @@ describe("Bun.Transpiler", () => {
       exp(
         "async function f() { enum x { y = (async () => await 1)() } }",
         'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
+      );
+      exp(
+        "enum x { y = (function() { return this })() }",
+        'var x;\n((x) => {\n  x[x["y"] = function() {\n    return this;\n  }()] = "y";\n})(x ||= {})',
       );
     });
 
@@ -622,7 +628,10 @@ describe("Bun.Transpiler", () => {
       err("namespace x { return 1; }", "A return statement cannot be used here");
       err("namespace x { return; }", "A return statement cannot be used here");
       err("namespace x { const y: string = this; }", 'Cannot use "this" here');
+      err("namespace x { export const y = () => this; }", 'Cannot use "this" here');
       err("namespace x.y { return 1; }", "A return statement cannot be used here");
+      err("module x { return 1; }", "A return statement cannot be used here");
+      err("declare namespace x { export const y = this; }", 'Cannot use "this" here');
       err("namespace x { for await (const y of []); }", 'Cannot use "await" outside an async function');
 
       // The namespace body lowers into a non-async arrow, where "await" is a
@@ -636,6 +645,15 @@ describe("Bun.Transpiler", () => {
       exp(
         "namespace x { export const y = async () => await 1; }",
         "var x;\n((x) => {\n  x.y = async () => await 1;\n})(x ||= {})",
+      );
+      // Class methods and fields introduce their own "this" binding.
+      exp(
+        "namespace x { export class C { m() { return this } } }",
+        "var x;\n((x) => {\n\n  class C {\n    m() {\n      return this;\n    }\n  }\n  x.C = C;\n})(x ||= {})",
+      );
+      exp(
+        "namespace x { export class C { f = this } }",
+        "var x;\n((x) => {\n\n  class C {\n    f = this;\n  }\n  x.C = C;\n})(x ||= {})",
       );
     });
 

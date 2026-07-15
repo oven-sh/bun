@@ -402,6 +402,35 @@ it("reload() works", () => {
   expect(router.match("/posts")!.name).toBe("/posts");
 });
 
+it("reload() does not re-intern directory paths into DirnameStore on every bust+reread", () => {
+  const { dirnameStoreAppendCount } = require("bun:internal-for-testing") as {
+    dirnameStoreAppendCount: () => number;
+  };
+  const files: Record<string, string> = { "pages/sub/nested.tsx": "export default 1;\n" };
+  for (let i = 0; i < 20; i++) files[`pages/p${i}.tsx`] = "export default 1;\n";
+  using dir = tempDir("fsr-reload-dirname-intern", files);
+
+  const router = new Bun.FileSystemRouter({
+    dir: path.join(String(dir), "pages"),
+    style: "nextjs",
+    fileExtensions: [".tsx"],
+  });
+  // First reload primes the intern cache for the bust+reread paths.
+  router.reload();
+  const before = dirnameStoreAppendCount();
+  for (let i = 0; i < 50; i++) router.reload();
+  const delta = dirnameStoreAppendCount() - before;
+  // Without the fix each reload re-appended identical bytes into the never-freed
+  // store: `dir_info_cached_miss` re-interned safe_path + DirEntry.dir per dir
+  // (6 per reload here) and `Route::parse` re-interned public_path/abs_path/
+  // basename per route (63 per reload here), so 50 reloads grew the store by
+  // ~3450 slots and eventually overflowed it with `AllocError`.
+  expect({ delta, match: router.match("/sub/nested")?.filePath.endsWith("nested.tsx") }).toEqual({
+    delta: 0,
+    match: true,
+  });
+});
+
 it("reload() works with new dirs/files", () => {
   const { dir } = make(["posts.tsx"]);
 

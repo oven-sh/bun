@@ -3509,7 +3509,7 @@ impl<'a> Resolver<'a> {
                     unsafe { &*existing }.dir
                 } else {
                     Fs::file_system::DirnameStore::instance()
-                        .append_slice(dir_path)
+                        .intern_slice(dir_path)
                         .expect("unreachable")
                 },
                 self.generation,
@@ -4517,9 +4517,9 @@ impl<'a> Resolver<'a> {
                     let input = &path[..input_path_len];
                     if input[input.len() - 1] != SEP {
                         let parts: [&[u8]; 2] = [input, SEP_STR.as_bytes()];
-                        _safe_path = Some(self.fs_ref().dirname_store.append_parts(&parts)?);
+                        _safe_path = Some(self.fs_ref().dirname_store.intern_parts(&parts)?);
                     } else {
-                        _safe_path = Some(self.fs_ref().dirname_store.append_slice(input)?);
+                        _safe_path = Some(self.fs_ref().dirname_store.intern_slice(input)?);
                     }
                 }
 
@@ -4578,7 +4578,7 @@ impl<'a> Resolver<'a> {
                         unsafe { &*existing }.dir
                     } else {
                         Fs::file_system::DirnameStore::instance()
-                            .append_slice(dir_path)
+                            .intern_slice(dir_path)
                             .expect("unreachable")
                     },
                     self.generation,

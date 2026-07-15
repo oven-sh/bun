@@ -122,11 +122,82 @@ pub mod fs {
                     // SAFETY: see `append_slice`.
                     unsafe { &*$backing() }.exists(value)
                 }
+                /// Total number of `append*` calls (inline + overflow). Exposed via
+                /// `bun:internal-for-testing` so leak tests can assert "N reloads
+                /// performed zero new appends".
+                pub fn append_count(&self) -> u32 {
+                    // SAFETY: see `append_slice`.
+                    let b = unsafe { &*$backing() };
+                    let _g = b.mutex.lock();
+                    b.slice_buf_used as u32 + b.overflow_list.count
+                }
             }
         };
     }
     string_store_impl!(DirnameStore, DIRNAME_STORE_ZST, dirname_store_backing);
     string_store_impl!(FilenameStore, FILENAME_STORE_ZST, filename_store_backing);
+
+    thread_local! {
+        static DIRNAME_INTERN: core::cell::RefCell<
+            bun_collections::HashMap<&'static [u8], ()>,
+        > = core::cell::RefCell::new(bun_collections::HashMap::new());
+    }
+
+    impl DirnameStore {
+        /// Content-deduplicated [`append_slice`]. `BSSStringList::append` does not
+        /// dedupe, so a bust-then-reread cycle (hot reload, `FileSystemRouter.reload`)
+        /// would otherwise re-append the same directory path on every miss, exhausting
+        /// the store's slot capacity and leaking one heap buffer per overflow append.
+        pub fn intern_slice(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
+            if self.exists(value) {
+                // SAFETY: `exists` is a pointer-range check — `value` lies wholly
+                // within the process-lifetime backing buffer, so widening is sound.
+                return Ok(unsafe { core::slice::from_raw_parts(value.as_ptr(), value.len()) });
+            }
+            DIRNAME_INTERN.with_borrow_mut(|set| {
+                if let Some((interned, ())) = set.get_key_value(value) {
+                    return Ok(*interned);
+                }
+                let interned = self.append_slice(value)?;
+                set.insert(interned, ());
+                Ok(interned)
+            })
+        }
+
+        /// Content-deduplicated [`append_parts`]. See [`intern_slice`].
+        pub fn intern_parts(&self, parts: &[&[u8]]) -> crate::CrateResult<&'static [u8]> {
+            const STACK: usize = 512;
+            let total: usize = parts.iter().map(|p| p.len()).sum();
+            let mut stack = [0u8; STACK];
+            let mut heap: Vec<u8>;
+            let scratch: &mut [u8] = if total <= STACK {
+                &mut stack[..total]
+            } else {
+                heap = vec![0u8; total];
+                &mut heap[..]
+            };
+            let mut at = 0;
+            for p in parts {
+                scratch[at..at + p.len()].copy_from_slice(p);
+                at += p.len();
+            }
+            self.intern_slice(&scratch[..at])
+        }
+
+        /// Content-deduplicated [`append_lower_case`]. See [`intern_slice`].
+        pub fn intern_lower_case(&self, value: &[u8]) -> crate::CrateResult<&'static [u8]> {
+            const STACK: usize = 256;
+            let mut stack = [0u8; STACK];
+            let mut heap: Vec<u8>;
+            let scratch: &mut [u8] = if value.len() <= STACK {
+                &mut stack[..value.len()]
+            } else {
+                heap = vec![0u8; value.len()];
+                &mut heap[..]
+            };
+            self.intern_slice(bun_core::strings::copy_lowercase(value, scratch))
+        }
+    }
 
     macro_rules! string_store_append_impl {
         ($t:ty, $backing:ident) => {

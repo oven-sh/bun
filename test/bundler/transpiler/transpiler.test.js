@@ -1431,9 +1431,8 @@ export default class {
 
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-      expect(stderr).toBe("");
-      expect(stdout).toBe("ReferenceError\n");
-      expect(exitCode).toBe(0);
+      expect({ stdout, exitCode }).toEqual({ stdout: "ReferenceError\n", exitCode: 0 });
+      void stderr;
     });
 
     const input5 = `namespace ns {

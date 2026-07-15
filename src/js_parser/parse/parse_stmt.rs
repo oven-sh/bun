@@ -1090,6 +1090,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && is_identifier
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                     && name == b"abstract"
+                    && !p.lexer.has_newline_before
                     && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
                     let mut stmt_opts = ParseStatementOptions {
@@ -1765,17 +1766,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
                 // "interface Foo {}"
-                let mut stmt_opts = ParseStatementOptions {
-                    is_module_scope: opts.is_module_scope,
-                    ..Default::default()
-                };
+                // "export default interface Foo {}"
+                // "export default interface \n Foo {}"
+                if !p.lexer.has_newline_before || opts.is_name_optional {
+                    let mut stmt_opts = ParseStatementOptions {
+                        is_module_scope: opts.is_module_scope,
+                        ..Default::default()
+                    };
 
-                p.skip_type_script_interface_stmt(&mut stmt_opts)?;
-                return Ok(Some(p.s(S::TypeScript {}, loc)));
+                    p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                    return Ok(Some(p.s(S::TypeScript {}, loc)));
+                }
+                // "interface \n Foo {}"
+                // "export interface \n Foo {}"
+                if opts.is_export {
+                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    p.log()
+                        .add_range_error(Some(p.source), r, b"Unexpected \"interface\"");
+                    return Err(crate::Error::SyntaxError);
+                }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
-                if p.lexer.token == T::TClass || opts.ts_decorators.is_some() {
+                if !p.lexer.has_newline_before
+                    && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
+                {
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
+                }
+                if opts.ts_decorators.is_some() {
+                    p.lexer.expected(T::TClass)?;
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
@@ -1791,6 +1809,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
+                if p.lexer.has_newline_before {
+                    if opts.ts_decorators.is_some() {
+                        p.lexer.expected(T::TClass)?;
+                    }
+                    return Ok(None);
+                }
                 opts.lexical_decl = LexicalDecl::AllowAll;
                 opts.is_typescript_declare = true;
 

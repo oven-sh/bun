@@ -1,7 +1,8 @@
 import { gc } from "bun";
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
-import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
+import { channel, Channel, hasSubscribers, subscribe, tracingChannel, unsubscribe } from "node:diagnostics_channel";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -343,6 +344,147 @@ describe("TracingChannel", () => {
   // Port tests from:
   // https://github.com/search?q=repo%3Anodejs%2Fnode+test-diagnostics-channel+AND+%2Ftracing%2F&type=code
   test.todo("TODO");
+
+  test("hasSubscribers reflects sub-channel state", () => {
+    const tc = tracingChannel("tracing-channel-hasSubscribers-test");
+    expect(tc.hasSubscribers).toBeFalse();
+
+    const fn = () => {};
+    tc.asyncEnd.subscribe(fn);
+    expect(tc.hasSubscribers).toBeTrue();
+    tc.asyncEnd.unsubscribe(fn);
+    expect(tc.hasSubscribers).toBeFalse();
+
+    tc.error.subscribe(fn);
+    expect(tc.hasSubscribers).toBeTrue();
+    tc.error.unsubscribe(fn);
+    expect(tc.hasSubscribers).toBeFalse();
+  });
+});
+
+describe.concurrent("module tracing channels", () => {
+  const moduleTracingFixture = `
+    import dc from "node:diagnostics_channel";
+    import { createRequire } from "node:module";
+    import path from "node:path";
+
+    const NAMES = [
+      "tracing:module.require:start", "tracing:module.require:end", "tracing:module.require:error",
+      "tracing:module.import:start", "tracing:module.import:end",
+      "tracing:module.import:asyncStart", "tracing:module.import:asyncEnd", "tracing:module.import:error",
+    ];
+    const events = [];
+    for (const name of NAMES) {
+      dc.subscribe(name, (ctx) => {
+        events.push({
+          name,
+          id: ctx.id,
+          parentFilename: ctx.parentFilename ? path.basename(ctx.parentFilename) : ctx.parentFilename,
+          url: ctx.url ? path.basename(ctx.url) : ctx.url,
+          parentURL: ctx.parentURL ? path.basename(new URL(ctx.parentURL).pathname) : ctx.parentURL,
+          hasResult: "result" in ctx,
+          hasError: "error" in ctx,
+        });
+      });
+    }
+
+    const req = createRequire(import.meta.url);
+    req("./a.cjs");
+    try { req("./missing.cjs"); } catch {}
+    await import("./b.mjs");
+    try { await import("./missing.mjs"); } catch {}
+
+    process.stdout.write(JSON.stringify(events));
+  `;
+
+  test("tracing:module.require publishes on every require()", async () => {
+    using dir = tempDir("dc-module-require", {
+      "entry.mjs": moduleTracingFixture,
+      "a.cjs": "module.exports = 1;\n",
+      "b.mjs": "export default 2;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const events = JSON.parse(stdout).filter((e: any) => e.name.startsWith("tracing:module.require:"));
+    expect(events).toEqual([
+      { name: "tracing:module.require:start", id: "./a.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: false },
+      { name: "tracing:module.require:end", id: "./a.cjs", parentFilename: "entry.mjs", hasResult: true, hasError: false },
+      { name: "tracing:module.require:start", id: "./missing.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: false },
+      { name: "tracing:module.require:error", id: "./missing.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: true },
+      { name: "tracing:module.require:end", id: "./missing.cjs", parentFilename: "entry.mjs", hasResult: false, hasError: true },
+    ]);
+  });
+
+  test("tracing:module.import publishes on every dynamic import()", async () => {
+    using dir = tempDir("dc-module-import", {
+      "entry.mjs": moduleTracingFixture,
+      "a.cjs": "module.exports = 1;\n",
+      "b.mjs": "export default 2;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const events = JSON.parse(stdout).filter((e: any) => e.name.startsWith("tracing:module.import:"));
+    expect(events).toEqual([
+      { name: "tracing:module.import:start", url: "b.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
+      { name: "tracing:module.import:end", url: "b.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
+      { name: "tracing:module.import:asyncStart", url: "b.mjs", parentURL: "entry.mjs", hasResult: true, hasError: false },
+      { name: "tracing:module.import:asyncEnd", url: "b.mjs", parentURL: "entry.mjs", hasResult: true, hasError: false },
+      { name: "tracing:module.import:start", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
+      { name: "tracing:module.import:end", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: false },
+      { name: "tracing:module.import:error", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: true },
+      { name: "tracing:module.import:asyncStart", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: true },
+      { name: "tracing:module.import:asyncEnd", url: "missing.mjs", parentURL: "entry.mjs", hasResult: false, hasError: true },
+    ]);
+  });
+
+  test("tracing:module.require result matches require() return value", async () => {
+    using dir = tempDir("dc-module-require-result", {
+      "entry.cjs": `
+        const dc = require("node:diagnostics_channel");
+        let captured;
+        dc.subscribe("tracing:module.require:end", (ctx) => { captured = ctx; });
+        const result = require("./a.cjs");
+        process.stdout.write(JSON.stringify({ same: captured.result === result, result }));
+      `,
+      "a.cjs": "module.exports = { marker: 'hello' };\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual({ same: true, result: { marker: "hello" } });
+  });
+
+  test("require() still works when nothing is subscribed", async () => {
+    using dir = tempDir("dc-module-no-sub", {
+      "entry.cjs": `process.stdout.write(String(require("./a.cjs")));`,
+      "a.cjs": "module.exports = 42;\n",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "42", stderr: "", exitCode: 0 });
+  });
 });
 
 const mocks = new Map();

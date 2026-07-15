@@ -58,10 +58,16 @@ class WeakRefMap extends SafeMap {
   }
 }
 
+let enableModuleTracing: (() => void) | undefined;
+
 function markActive(channel) {
   ObjectSetPrototypeOf.$call(null, channel, ActiveChannel.prototype);
   channel._subscribers = [];
   channel._stores = new SafeMap();
+  // Notify the native dynamic-import hook that it now needs to publish.
+  if (typeof channel.name === "string" && channel.name.startsWith("tracing:module.")) {
+    (enableModuleTracing ??= $newCppFunction("NodeDiagnosticsChannel.cpp", "jsEnableModuleTracingSubscribers", 0))();
+  }
 }
 
 function maybeMarkInactive(channel) {
@@ -279,6 +285,16 @@ class TracingChannel {
     } else {
       throw $ERR_INVALID_ARG_TYPE("nameOrChannels", ["string, object, or Channel"], nameOrChannels);
     }
+  }
+
+  get hasSubscribers() {
+    return (
+      this.start.hasSubscribers ||
+      this.end.hasSubscribers ||
+      this.asyncStart.hasSubscribers ||
+      this.asyncEnd.hasSubscribers ||
+      this.error.hasSubscribers
+    );
   }
 
   subscribe(handlers) {

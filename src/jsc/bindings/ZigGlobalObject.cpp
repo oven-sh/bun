@@ -2275,6 +2275,18 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSC::JSFunction::create(init.vm, init.owner, wasmStreamingConsumeStreamCodeGenerator(init.vm), init.owner));
         });
 
+    m_traceDynamicImportFunction.initLater(
+        [](const Initializer<JSFunction>& init) {
+            auto scope = DECLARE_THROW_SCOPE(init.vm);
+            JSValue mod = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::InternalModuleTracing);
+            RETURN_IF_EXCEPTION(scope, );
+            RELEASE_ASSERT(mod.isObject());
+            auto prop = mod.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "traceDynamicImport"_s));
+            RETURN_IF_EXCEPTION(scope, );
+            ASSERT(prop);
+            init.set(uncheckedDowncast<JSFunction>(prop));
+        });
+
     m_nativeMicrotaskTrampoline.initLater(
         [](const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, functionNativeMicrotaskTrampoline, ImplementationVisibility::Private));
@@ -3511,6 +3523,39 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     }
 }
 
+static JSC::JSPromise* traceDynamicImport(Zig::GlobalObject* globalObject, JSC::JSPromise* promise, JSC::JSString* moduleNameValue, const SourceOrigin& sourceOrigin)
+{
+    if (!promise) [[unlikely]]
+        return promise;
+
+    VM& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* tracer = globalObject->traceDynamicImportFunction();
+    if (scope.exception()) [[unlikely]] {
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    }
+    if (!tracer) [[unlikely]]
+        return promise;
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(promise);
+    args.append(moduleNameValue);
+    auto& sourceURL = sourceOrigin.url();
+    args.append(sourceURL.isEmpty() ? JSC::jsUndefined() : JSC::jsString(vm, sourceURL.string()));
+    ASSERT(!args.hasOverflowed());
+
+    auto callData = JSC::getCallData(tracer);
+    auto result = JSC::profiledCall(globalObject, JSC::ProfilingReason::API, tracer, callData, JSC::jsUndefined(), args);
+    if (scope.exception()) [[unlikely]] {
+        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    }
+
+    if (result.inherits<JSC::JSPromise>())
+        return static_cast<JSC::JSPromise*>(result.asCell());
+    return promise;
+}
+
 JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalObject,
     JSModuleLoader*,
     JSString* moduleNameValue,
@@ -3523,6 +3568,8 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const bool needsTracing = globalObject->hasModuleTracingSubscribers;
 
     {
         JSC::JSPromise* result = NodeVM::importModule(globalObject, moduleNameValue, parameters, sourceOrigin);
@@ -3562,7 +3609,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
 
             auto result = JSC::importModule(globalObject, resolvedIdentifier, JSC::Identifier(), parameters, nullptr, /* deferred */ false, referrerAsyncOrder);
             if (scope.exception()) [[unlikely]] {
-                return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+                result = JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+            }
+            if (needsTracing) [[unlikely]] {
+                RELEASE_AND_RETURN(scope, traceDynamicImport(globalObject, result, moduleNameValue, sourceOrigin));
             }
             return result;
         }
@@ -3601,7 +3651,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
             moduleNameZ.deref();
             sourceOriginZ.deref();
 
-            return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+            auto* rejected = JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+            if (needsTracing) [[unlikely]] {
+                RELEASE_AND_RETURN(scope, traceDynamicImport(globalObject, rejected, moduleNameValue, sourceOrigin));
+            }
+            return rejected;
         }
 
         if (queryString.isEmpty()) {
@@ -3622,7 +3676,11 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     auto result = JSC::importModule(globalObject, resolvedIdentifier,
         JSC::Identifier(), WTF::move(parameters), nullptr, /* deferred */ false, referrerAsyncOrder);
     if (scope.exception()) [[unlikely]] {
-        return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+        result = JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
+    }
+
+    if (needsTracing) [[unlikely]] {
+        RELEASE_AND_RETURN(scope, traceDynamicImport(globalObject, result, moduleNameValue, sourceOrigin));
     }
 
     ASSERT(result);

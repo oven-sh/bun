@@ -1435,6 +1435,31 @@ export default class {
       void stderr;
     });
 
+    // https://github.com/evanw/esbuild/commit/108484982c8f1d74bd87ce172ae02a6ffe8ddce3
+    it("same-named enums in separate block scopes do not merge at runtime", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `{
+            enum a { b = 1 }
+          }
+          {
+            enum a { c = 2 }
+            console.log(JSON.stringify({ c: a.c, two: a[2], b: a.b, one: a[1] }));
+          }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, exitCode }).toEqual({ stdout: '{"c":2,"two":"c"}\n', exitCode: 0 });
+      void stderr;
+    });
+
     const input5 = `namespace ns {
   export class ns {}
 }`;

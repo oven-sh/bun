@@ -105,7 +105,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Skip TypeScript type arguments after the identifier (e.g., @foo<T>)
         if Self::IS_TYPESCRIPT_ENABLED {
-            let _ = p.skip_type_script_type_arguments::<false>()?;
+            let _ = p.skip_type_script_type_arguments::<false, false>()?;
         }
 
         // DecoratorMemberExpression: Identifier (.Identifier)*
@@ -144,7 +144,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Skip TypeScript type arguments after member access (e.g., @foo.bar<T>)
             if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments::<false>()?;
+                let _ = p.skip_type_script_type_arguments::<false, false>()?;
             }
         }
 

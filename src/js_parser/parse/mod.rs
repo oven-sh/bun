@@ -155,7 +155,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // does and it probably doesn't have that high of a performance overhead
             // because "extends" clauses aren't that frequent, so it should be ok.
             if Self::IS_TYPESCRIPT_ENABLED {
-                let _ = p.skip_type_script_type_arguments::<false>()?; // isInsideJSXElement
+                let _ = p.skip_type_script_type_arguments::<false, false>()?; // isInsideJSXElement
             }
         }
 

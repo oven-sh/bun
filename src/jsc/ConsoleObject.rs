@@ -2445,12 +2445,72 @@ pub mod formatter {
     #[derive(Copy, Clone, Eq, PartialEq)]
     enum PercentTag {
         S,      // s
-        I,      // i or d
+        D,      // d
+        I,      // i
         F,      // f
         O,      // o (lowercase)
         UpperO, // O
         C,      // c
         J,      // j
+    }
+
+    /// `parseFloat(str)` prefix semantics for `%f`: trim leading ASCII
+    /// whitespace, accept an optional sign, `Infinity`, or a decimal literal
+    /// prefix; trailing junk is ignored.
+    fn parse_js_float_prefix(bytes: &[u8]) -> f64 {
+        let mut s = bytes;
+        while let [b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c, rest @ ..] = s {
+            s = rest;
+        }
+        let after_sign = match s {
+            [b'-', rest @ ..] | [b'+', rest @ ..] => rest,
+            _ => s,
+        };
+        if after_sign.starts_with(b"Infinity") {
+            return if s.first() == Some(&b'-') {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            };
+        }
+        bun_core::fmt::parse_double(s).unwrap_or(f64::NAN)
+    }
+
+    /// `parseInt(str)` prefix semantics for `%i` (no explicit radix): trim
+    /// leading ASCII whitespace, optional sign, `0x`/`0X` selects radix 16,
+    /// parse the longest digit prefix. `None` when no digit was consumed.
+    fn parse_js_int_prefix(bytes: &[u8]) -> Option<f64> {
+        let mut s = bytes;
+        while let [b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c, rest @ ..] = s {
+            s = rest;
+        }
+        let mut neg = false;
+        if let [c @ (b'-' | b'+'), rest @ ..] = s {
+            neg = *c == b'-';
+            s = rest;
+        }
+        let radix: u32 = if let [b'0', b'x' | b'X', rest @ ..] = s {
+            s = rest;
+            16
+        } else {
+            10
+        };
+        let mut val: f64 = 0.0;
+        let mut any = false;
+        for &c in s {
+            let d = match c {
+                b'0'..=b'9' if u32::from(c - b'0') < radix => u32::from(c - b'0'),
+                b'a'..=b'f' if radix == 16 => u32::from(c - b'a') + 10,
+                b'A'..=b'F' if radix == 16 => u32::from(c - b'A') + 10,
+                _ => break,
+            };
+            val = val * f64::from(radix) + f64::from(d);
+            any = true;
+        }
+        if !any {
+            return None;
+        }
+        Some(if neg { -val } else { val })
     }
 
     impl<'a> Formatter<'a> {
@@ -2494,7 +2554,8 @@ pub mod formatter {
                             b'f' => PercentTag::F,
                             b'o' => PercentTag::O,
                             b'O' => PercentTag::UpperO,
-                            b'd' | b'i' => PercentTag::I,
+                            b'd' => PercentTag::D,
+                            b'i' => PercentTag::I,
                             b'c' => PercentTag::C,
                             b'j' => PercentTag::J,
                             b'%' => {
@@ -2535,22 +2596,33 @@ pub mod formatter {
                         const MIN_BEFORE_E_NOTATION: f64 = 0.000001;
                         match token {
                             PercentTag::S => {
-                                self.print_as::<ENABLE_ANSI_COLORS>(
-                                    Tag::String,
-                                    writer_,
-                                    next_value,
-                                    next_value.js_type(),
-                                )?;
-                                writer = WrappedWriter {
-                                    ctx: writer_,
-                                    failed: false,
-                                    estimated_line_length: &mut self.estimated_line_length,
-                                };
+                                if next_value.is_big_int() {
+                                    let zstr = next_value.get_zig_string(global)?;
+                                    let out = zstr.slice();
+                                    writer.add_for_new_line(out.len() + 1);
+                                    writer.write_all(out);
+                                    writer.write_all(b"n");
+                                } else if next_value.is_symbol() {
+                                    let desc = next_value.get_description(global);
+                                    writer.add_for_new_line("Symbol()".len() + desc.len);
+                                    writer.print(format_args!("Symbol({desc})"));
+                                } else {
+                                    self.print_as::<ENABLE_ANSI_COLORS>(
+                                        Tag::String,
+                                        writer_,
+                                        next_value,
+                                        next_value.js_type(),
+                                    )?;
+                                    writer = WrappedWriter {
+                                        ctx: writer_,
+                                        failed: false,
+                                        estimated_line_length: &mut self.estimated_line_length,
+                                    };
+                                }
                             }
-                            PercentTag::I => {
-                                // 1. If Type(current) is Symbol, let converted be NaN
-                                // 2. Otherwise, let converted be the result of
-                                //    Call(%parseInt%, undefined, current, 10)
+                            PercentTag::D | PercentTag::I => {
+                                // Node: BigInt -> `${v}n`; Symbol -> NaN; otherwise
+                                // %d uses Number() and %i uses parseInt().
                                 let int: i64 = 'brk: {
                                     // This logic is convoluted because %parseInt%
                                     // will coerce the argument to a string first.
@@ -2562,8 +2634,29 @@ pub mod formatter {
                                     }
 
                                     'double_convert: {
-                                        if !(next_value.is_number() || !next_value.is_symbol()) {
+                                        if next_value.is_number() {
+                                            // fall through to the number path below
+                                        } else if next_value.is_big_int() {
+                                            let zstr = next_value.get_zig_string(global)?;
+                                            let out = zstr.slice();
+                                            writer.add_for_new_line(out.len() + 1);
+                                            writer.write_all(out);
+                                            writer.write_all(b"n");
+                                            i += 1;
+                                            continue 'outer;
+                                        } else if next_value.is_symbol() {
                                             break 'double_convert;
+                                        } else if token == PercentTag::I && next_value.is_string() {
+                                            let s = next_value.to_slice(global)?;
+                                            match parse_js_int_prefix(s.slice()) {
+                                                Some(n)
+                                                    if n.is_finite()
+                                                        && n.abs() < i64::MAX as f64 =>
+                                                {
+                                                    break 'brk n as i64;
+                                                }
+                                                _ => break 'double_convert,
+                                            }
                                         }
                                         let mut value = next_value.to_number(global)?;
 
@@ -2642,10 +2735,12 @@ pub mod formatter {
                                     if next_value.is_symbol() {
                                         break 'brk f64::NAN;
                                     }
-                                    // TODO: this is not perfectly emulating
-                                    // parseFloat, because spec says to convert the
-                                    // value to a string and then parse as a number,
-                                    // but we are just coercing a number.
+                                    if next_value.is_big_int() || next_value.is_string() {
+                                        let s = next_value.to_slice(global)?;
+                                        break 'brk parse_js_float_prefix(s.slice());
+                                    }
+                                    // Objects still go through ToNumber so
+                                    // `Symbol.toPrimitive`/`valueOf` are honored.
                                     break 'brk next_value.to_number(global)?;
                                 };
 

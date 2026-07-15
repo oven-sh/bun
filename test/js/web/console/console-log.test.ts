@@ -150,3 +150,54 @@ it("console.log with SharedArrayBuffer", () => {
   expect(Bun.inspect(new ArrayBuffer(3))).toBe("ArrayBuffer(3) [ 0, 0, 0 ]");
   expect(Bun.inspect(new SharedArrayBuffer(3))).toBe("SharedArrayBuffer(3) [ 0, 0, 0 ]");
 });
+
+it("console.log %d/%i/%f/%s with BigInt, Symbol, and parseInt/parseFloat semantics on strings", async () => {
+  const lines = [
+    // [format, value expr, expected]
+    [`"%d", 10n`, "10n"],
+    [`"%d", 9007199254740993n`, "9007199254740993n"],
+    [`"%d", -5n`, "-5n"],
+    [`"%i", 10n`, "10n"],
+    [`"%i", -5n`, "-5n"],
+    [`"%f", 10n`, "10"],
+    [`"%f", 9007199254740993n`, "9007199254740992"],
+    [`"%s", 10n`, "10n"],
+    [`"%s", -5n`, "-5n"],
+    [`"%s", Symbol("x")`, "Symbol(x)"],
+    [`"%s", Symbol()`, "Symbol()"],
+    [`"%i", "12.9px"`, "12"],
+    [`"%i", "  -12.9px"`, "-12"],
+    [`"%i", "0x10"`, "16"],
+    [`"%i", "abc"`, "NaN"],
+    [`"%i", ""`, "NaN"],
+    [`"%f", "1.5e1abc"`, "15"],
+    [`"%f", "  12.9px"`, "12.9"],
+    [`"%f", "Infinity"`, "Infinity"],
+    [`"%f", "-Infinityabc"`, "-Infinity"],
+    [`"%f", "abc"`, "NaN"],
+    [`"%f", ""`, "NaN"],
+    // %d on a string still uses Number() (NaN on trailing junk), like Node
+    [`"%d", "12.9px"`, "NaN"],
+    // Symbol is NaN for numeric specifiers
+    [`"%d", Symbol()`, "NaN"],
+    [`"%i", Symbol()`, "NaN"],
+    [`"%f", Symbol()`, "NaN"],
+    // subsequent output after a BigInt specifier is still emitted
+    [`"a%db", 1n`, "a1nb"],
+    [`"%d %s done", 1n, "ok"`, "1n ok done"],
+  ];
+  const src =
+    lines.map(([call]) => `try { console.log(${call}); } catch (e) { console.log("THREW " + e.name); }`).join("\n") +
+    "\nconsole.log('REACHED');";
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const expected = lines.map(([, out]) => out).join("\n") + "\nREACHED\n";
+  expect(stdout.replaceAll("\r\n", "\n")).toBe(expected);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

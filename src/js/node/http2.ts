@@ -376,7 +376,6 @@ const kReceivedGoaway = Symbol("receivedGoaway");
 const kGoawayCode = Symbol("goawayCode");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
-const kSocketTeardown = Symbol("socketTeardown");
 const kMaxStreams = 2 ** 32 - 1;
 const kMaxUint32 = 4294967295;
 const kMaxInt = 4294967295;
@@ -3159,6 +3158,9 @@ function emitConnectNT(self, socket) {
 function destroyWithInvalidSessionNT(stream) {
   if (!stream.destroyed) stream.destroy($ERR_HTTP2_INVALID_SESSION());
 }
+function destroyWithGoawaySessionNT(stream) {
+  if (!stream.destroyed) stream.destroy($ERR_HTTP2_GOAWAY_SESSION());
+}
 function destroyIfNotDestroyedNT(target) {
   if (!target.destroyed) target.destroy();
 }
@@ -4101,7 +4103,7 @@ function streamSocketClosed(stream: Http2Stream) {
   }
 }
 // A stream whose session was close()d before the socket finished connecting never reached the
-// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION (no $ERR intrinsic exists for this code).
+// peer; node destroys it with ERR_HTTP2_GOAWAY_SESSION.
 function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream) {
   if (typeof stream?.id === "number" && stream.id > lastStreamId) {
     streamRejectedByGoawaySession(stream);
@@ -4109,12 +4111,10 @@ function rejectStreamAboveGoawayLastId(lastStreamId: number, stream: Http2Stream
 }
 function streamRejectedByGoawaySession(stream: Http2Stream) {
   if (!stream.destroyed) {
-    const err = new Error("New streams cannot be created after receiving a GOAWAY");
-    err.code = "ERR_HTTP2_GOAWAY_SESSION";
     // nghttp2 closes unprocessed streams with REFUSED_STREAM, the signal clients (grpc) treat
     // as safely retryable on a fresh connection.
     stream.rstCode = constants.NGHTTP2_REFUSED_STREAM;
-    stream.destroy(err);
+    stream.destroy($ERR_HTTP2_GOAWAY_SESSION());
   }
 }
 class ClientHttp2Session extends Http2Session {
@@ -4388,8 +4388,8 @@ class ClientHttp2Session extends Http2Session {
       if (self.destroyed) return;
       self[kGoawayCode] = errorCode;
       // node: once a GOAWAY is received, new streams cannot be created on this session -
-      // request() throws ERR_HTTP2_GOAWAY_SESSION (clients like grpc rely on the throw to
-      // fail over to a fresh connection).
+      // request() returns a stream that errors with ERR_HTTP2_GOAWAY_SESSION (clients like
+      // grpc rely on that error class to fail over to a fresh connection).
       self[kReceivedGoaway] = true;
       self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       // node: streams the peer did not process (id above the GOAWAY's lastStreamId) are
@@ -4417,7 +4417,6 @@ class ClientHttp2Session extends Http2Session {
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self[kSocketTeardown] = true;
       self.destroy();
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {
@@ -4503,14 +4502,10 @@ class ClientHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
-    // Socket-driven teardown: node's destroyed flag flips asynchronously in this path, so a
-    // request() racing the teardown returns a stream that errors instead of throwing.
-    this[kSocketTeardown] = true;
     this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
-    this[kSocketTeardown] = true;
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
       this.destroy();
@@ -4900,30 +4895,19 @@ class ClientHttp2Session extends Http2Session {
     // throws before that point must not decrement.
     let connectionsCounted = false;
     try {
-      // node: a destroyed session reports INVALID_SESSION; a closed (GOAWAY) one reports
-      // GOAWAY_SESSION. When the destruction came from the socket
-      // tearing down (not an explicit destroy()), node's destroyed flag flips asynchronously -
-      // a racing request() must not throw, it returns a stream that errors.
+      // node: request() on a destroyed or closed session never throws. It returns a stream that
+      // is destroyed on the next tick with the matching error: ERR_HTTP2_INVALID_SESSION for a
+      // destroyed session, ERR_HTTP2_GOAWAY_SESSION for a closed one or after a received GOAWAY
+      // (verified node v26.3.0).
       if (this.destroyed) {
-        if (this[kSocketTeardown]) {
-          const req = new ClientHttp2Stream(undefined, this, headers);
-          process.nextTick(destroyWithInvalidSessionNT, req);
-          return req;
-        }
-        throw $ERR_HTTP2_INVALID_SESSION();
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        process.nextTick(destroyWithInvalidSessionNT, req);
+        return req;
       }
-      if (this[kReceivedGoaway]) {
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
-      }
-      if (this.closed) {
-        // node: a closed (close() called / GOAWAY pending) session reports
-        // ERR_HTTP2_GOAWAY_SESSION on the stream (verified node v26.3.0); the test
-        // contract accepts a synchronous throw of the same error.
-        const err = new Error("New streams cannot be created after receiving a GOAWAY");
-        err.code = "ERR_HTTP2_GOAWAY_SESSION";
-        throw err;
+      if (this.closed || this[kReceivedGoaway]) {
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        process.nextTick(destroyWithGoawaySessionNT, req);
+        return req;
       }
 
       if (this.sentTrailers) {

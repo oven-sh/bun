@@ -16,20 +16,48 @@
  */
 // clang-format off
 #pragma once
+
+#if defined(__SANITIZE_ADDRESS__)
+#define LIBUS_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define LIBUS_ASAN 1
+#endif
+#endif
+
+#if !defined(LIBUS_ASAN)
+#include "mimalloc.h"
+#ifndef us_calloc
+#define us_calloc mi_calloc
+#endif
+#ifndef us_malloc
+#define us_malloc mi_malloc
+#endif
+#ifndef us_realloc
+#define us_realloc mi_realloc
+#endif
+#ifndef us_free
+#define us_free mi_free
+#endif
+#ifndef us_strdup
+#define us_strdup mi_strdup
+#endif
+#else
 #ifndef us_calloc
 #define us_calloc calloc
 #endif
-
 #ifndef us_malloc
 #define us_malloc malloc
 #endif
-
 #ifndef us_realloc
 #define us_realloc realloc
 #endif
-
 #ifndef us_free
 #define us_free free
+#endif
+#ifndef us_strdup
+#define us_strdup strdup
+#endif
 #endif
 
 #ifndef LIBUSOCKETS_H

@@ -225,7 +225,11 @@ describe.skipIf(isWindows)("cluster", () => {
   // machine and SharedHandle teardown. A regression removing the double-close
   // guard would EBADF an IPC pipe and hang this fixture.
   test("multi-worker shared socket receives traffic then tears down cleanly", async () => {
-    expect([path.join(import.meta.dir, "dgram-cluster-shared-fd-fixture.ts")]).toRun();
+    // Assert the success line, not just exit 0: the fixture has bail-out paths
+    // that also exit 0, and toRun() only compares stdout when it is given.
+    expect([path.join(import.meta.dir, "dgram-cluster-shared-fd-fixture.ts")]).toRun(
+      "ok: all 4 workers adopted and released the shared descriptor\n",
+    );
   }, 40_000);
 });
 

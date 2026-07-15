@@ -163,13 +163,46 @@ const { normalizeRejectUnauthorized } = require("internal/tls");
 // callback as errnoException(status, 'write') and destroys the stream when no
 // callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
 function failWrite(self, negErrno, callback) {
-  const er = new ErrnoException(negErrno, "write");
+  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
+  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
+    // A raw WSA value the errno table cannot name (Windows delivers fatal
+    // send errors this way): shape it like SocketEmitEndNT shapes reads,
+    // keeping the original errno.
+    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
+    er.errno = negErrno;
+    er.syscall = "write";
+  }
   self._pendingData = null;
   self[kwriteCallback] = null;
   if (callback) {
+    // Node delivers a failed write to BOTH the write callback and the socket:
+    // onWriteComplete calls errorOrDestroy(self, ...) in addition to the
+    // chained callback (lib/internal/stream_base_commons.js), so 'error' and
+    // 'close' still fire even when every write had a callback. Only handing
+    // the error to a callback that ignores it left the socket alive forever
+    // (test-net-stream's server never observed its peer vanish).
     callback(er);
+    if (!self.destroyed && !self._hadError) {
+      // _hadError is the cross-path once-guard: the native error dispatch
+      // (SocketHandlers.error) can deliver the same failure, and node emits
+      // a socket error exactly once.
+      self._hadError = true;
+      self.destroy(er);
+    }
   } else if (!self.destroyed) {
-    self.destroy(er);
+    if (self.listenerCount("error") > 0) {
+      // The consumer can detach its listener between now and destroy()'s
+      // deferred 'error' emission - the same last-resort guard
+      // SocketEmitEndNT uses for read errors.
+      self.once("error", () => {});
+      self.destroy(er);
+    } else {
+      // No write callback and no 'error' listener: a failed flush on an
+      // orphaned socket (an h2 teardown racing the peer's reset - routine on
+      // Windows, where the reset completes the send first) is teardown noise.
+      // Same silent-close policy as SocketEmitEndNT's no-listener case.
+      self.destroy();
+    }
   }
 }
 function endNT(socket, callback, err) {
@@ -507,7 +540,10 @@ function SocketEmitEndNT(self, _err?) {
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
   const teardownNoise = self[kended] && self.writableFinished;
-  if (_err && !self.destroyed && !teardownNoise && self.listenerCount("error") > 0) {
+  // _hadError: the failure already reached JS through the error dispatch
+  // (native on_error / a fatal write); node emits a socket error exactly
+  // once, so the close that follows it is delivered plain.
+  if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
     // The consumer can detach its 'error' listener between this close
     // callback and destroy()'s deferred 'error' emission (a request that
     // finished just as the reset arrived); a last-resort no-op listener keeps
@@ -820,10 +856,14 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server?.emit("tlsClientError", verifyError, self);
-        // Node's onServerSocketSecure reads this field as truthy; the field is stored
-        // already-normalized, so `!== false` here just fails closed for undefined.
-        if (self._rejectUnauthorized !== false) {
+        if (self._rejectUnauthorized) {
+          // The connection is refused: report the verification result through
+          // tlsClientError before tearing down. When the connection is kept
+          // (rejectUnauthorized: false) it proceeds with authorized=false and
+          // no tlsClientError - Node's onServerSocketSecure never emits it
+          // there and test-tls-sni-option asserts mustNotCall on it for the
+          // authorized=false cases.
+          server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)
@@ -878,9 +918,28 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketHandlers.error(socket, error, true);
         return;
       }
+      SocketHandlers.error(socket, error, true);
+      this.server?.emit("clientError", error, data);
+      return;
     }
-    SocketHandlers.error(socket, error, true);
-    this.server?.emit("clientError", error, data);
+    // Plain TCP: the delegation above is a no-op (_hadError was just set and
+    // SocketHandlers.error's guard returns on it). On kqueue a fatal-flush
+    // from on_writable is the only place the errno is visible (the close it
+    // issues short-circuits the read dispatch at loop.c's
+    // us_socket_is_closed check), so swallowing it hung the server behind an
+    // un-failed pending write (test-net-stream on darwin). Shape it like
+    // Node's onWriteComplete: fail the pending write callback, then destroy
+    // with the error. destroy() owns the single 'error' emission via the
+    // stream's errorEmitted guard; callback(error) may have already
+    // destroyed, in which case this is a no-op.
+    const callback = data[kwriteCallback];
+    if (callback) {
+      data[kwriteCallback] = null;
+      callback(error);
+    }
+    if (!data.destroyed) {
+      data.destroy(error);
+    }
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);

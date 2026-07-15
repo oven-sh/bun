@@ -1813,7 +1813,10 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
-  int uws_res_state(int ssl, uws_res_r res)
+  /* Returns the whole flags word: it no longer fits in a byte (HttpResponseData
+   * carries the framing and node:http bits above bit 7), and Rust's State
+   * mirrors it as a u32. */
+  uint32_t uws_res_state(int ssl, uws_res_r res)
   {
     if (ssl)
     {

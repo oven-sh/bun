@@ -1,16 +1,30 @@
-# Documentation: http://trac.webkit.org/wiki/TestExpectations
 # Format: [modifier] test-name [[ expectations ]] [# comment]
+#
+# READ THIS BEFORE ADDING AN ENTRY.
+#
+# An entry does ONE thing: it removes the file from the run on every platform
+# the modifier matches. The runner parses the expectation kind (FAIL / SKIP /
+# CRASH / FLAKY / LEAK / TIMEOUT) but never reads it — see getRelevantTests in
+# scripts/runner.node.mjs. They are all the same thing, and there is no
+# "run it and expect failure" mode.
+#
+# So: quarantining ONE broken case here silently deletes the whole file's
+# coverage. If a single test is broken, skip THAT test in the file
+# (test.skip / test.skipIf(isASAN) / test.todo, with a comment naming the
+# failure) and do not add an entry here. Reserve this file for a file that
+# cannot be run at all — it hangs, crashes the runner, or trips LeakSanitizer.
+#
+# Entries match by SUBSTRING, so a path prefix quarantines an entire family.
+# A stale entry is invisible: the file simply never runs and nobody finds out.
 
 # Tests that are broken
-test/cli/create/create-jsx.test.ts [ FAIL ] # false > react spa (no tailwind) > build
-test/cli/install/bunx.test.ts [ FAIL ] # should handle package that requires node 24: @angular/cli@latest needs a newer Node.js than Bun reports (24.3.0), unskip after the Node.js version bump
 [ WINDOWS-AARCH64 ] test/js/node/test/parallel/test-repl-close.js [ FAIL ] # EPIPE on stdin.write to closed child process
-test/bundler/native-plugin.test.ts [ FAIL ] # prints name when plugin crashes
-test/cli/run/run-crash-handler.test.ts [ FAIL ] # automatic crash reporter > segfault should report
 
-# Exposed by the bun -e/--eval fix that stopped swallowing uncaught exceptions (see PR #31826):
-# the spawned child needs process.binding('inspector'), which is not implemented
-test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
+# The whole file's beforeAll builds a napi addon with node-gyp, and the Windows
+# agents have no ClangCL toolset ("MSB8020: The build tools for ClangCL cannot
+# be found"), so nothing in the file can run there. Remove once the agent image
+# ships ClangCL. Runs everywhere else.
+[ WINDOWS ] test/bundler/native-plugin.test.ts [ SKIP ] # node-gyp needs a ClangCL toolset the Windows agents do not have
 
 # Verbatim node v26.3.0 test asserting a FinalizationRegistry callback fires
 # within ONE globalThis.gc() + ONE setImmediate after the connect callback's
@@ -26,7 +40,6 @@ test/js/node/test/parallel/test-inspector-enabled.js [ FAIL ]
 # linux-x64-musl matrix only; still runs everywhere else (build 63145:
 # alpine 3.23 x64 + x64-baseline only).
 [ LINUX-X64-MUSL ] test/js/node/test/parallel/test-tls-connect-memleak.js [ FLAKY ] # JSC FinalizationRegistry callback delivery vs setImmediate timing on musl x64
-[ LINUX-X64-MUSL ] test/js/node/test/parallel/test-net-connect-memleak.js [ FLAKY ] # same FinalizationRegistry-vs-setImmediate timing as its tls sibling above; fleet-wide since 2026-06-28 (oven-sh/bun#33044)
 
 # Vendored node v26.3.0 stream tests blocked on missing native subsystems (see PR #31826)
 test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/binding + js_stream (net.Socket({handle}) libuv compat layer)
@@ -46,12 +59,6 @@ test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs interna
 # Tests that are flaky
 test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 
-# Tests skipped due to different log/line outputs
-[ ASAN ] test/js/bun/util/reportError.test.ts [ SKIP ] # log line mismatch
-[ ASAN ] test/js/node/child_process/child_process.test.ts [ SKIP ] # Unexpected identifier "WARNING"
-[ ASAN ] test/js/bun/shell/bunshell.test.ts [ SKIP ] # bunshell > quiet > basic
-[ ASAN ] test/bundler/cli.test.ts [ SKIP ] # debug logs
-
 # Tests failed due to ASAN: attempting free on address which was not malloc()-ed
 [ ASAN ] test/js/node/worker_threads/worker_threads.test.ts [ CRASH ] # After: threadId module and worker property is consistent
 [ ASAN ] test/js/node/worker_threads/worker_destruction.test.ts [ CRASH ] # After: bun closes cleanly when Bun.connect is used in a Worker that is terminating
@@ -66,7 +73,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # Tests failed due to ASAN: use-after-poison
 [ ASAN ] test/js/node/test/parallel/test-worker-unref-from-message-during-exit.js [ CRASH ]
 [ ASAN ] test/napi/napi.test.ts [ CRASH ] # can throw an exception from an async_complete_callback
-[ ASAN ] test/js/node/http/node-http-uaf.test.ts [ CRASH ] # should not crash on abort (node-http-uaf-fixture.ts)
 [ ASAN ] test/js/node/test/parallel/test-fs-watch.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-watch-recursive-watch-file.js [ CRASH ]
 [ ASAN ] test/js/node/test/parallel/test-fs-promises-watch.js [ CRASH ]
@@ -85,9 +91,7 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/js/node/url/pathToFileURL.test.ts [ LEAK ] # pathToFileURL doesn't leak memory
 [ ASAN ] test/js/node/fs/abort-signal-leak-read-write-file.test.ts [ LEAK ] # should not leak memory with already aborted signals
 [ ASAN ] test/js/web/streams/streams-leak.test.ts [ LEAK ] # Absolute memory usage remains relatively constant when reading and writing to a pipe
-[ ASAN ] test/js/web/fetch/fetch-leak.test.ts [ LEAK ]
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
-[ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
 
 # Windows-only gaps in named-pipe / socket teardown for ported Node net tests
@@ -95,9 +99,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # RST delivery surfacing as ECONNRESET, and EADDRINUSE on a second listen on
 # the same pipe path.
 [ WINDOWS ] test/js/node/test/parallel/test-net-pingpong.js [ FAIL ] # named-pipe half-close (FIN) handling
-[ WINDOWS ] test/js/node/test/parallel/test-net-socket-reset-send.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-after-destroy.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-net-connect-reset-until-connected.js [ FAIL ] # reset not surfaced as ECONNRESET on Windows
 [ WINDOWS ] test/js/node/test/parallel/test-net-pipe-connect-errors.js [ FAIL ] # named-pipe connect errors are not mapped to ENOENT/EACCES on Windows yet
 [ WINDOWS ] test/js/node/test/parallel/test-net-server-listen-path.js [ FAIL ] # EADDRINUSE not reported for a second listen on the same pipe path
 
@@ -107,7 +108,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # readable side on Windows, so the accepted connection never ends and
 # server.close() (via `await using`) waits forever. The assertion itself passes;
 # only the teardown hangs. Passes on Linux and macOS.
-[ WINDOWS ] test/js/bun/test/parallel/test-http-should-not-emit-or-throw-error-when-writing-after-socket.end.ts [ FAIL ] # half-close + client RST not surfaced on Windows; server.close() waits forever
 
 # The 10 MB socket write in this test is an order of magnitude slower under
 # AddressSanitizer and exceeds the per-test timeout; it passes on regular builds.
@@ -125,13 +125,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # only hold on the distributing model. Passes on macOS, Windows and FreeBSD.
 [ LINUX ] test/js/node/test/sequential/test-net-listen-shared-ports.js [ FAIL ] # SO_REUSEPORT shared-listener semantics on Linux
 
-# The fetch/h2 client teardown on Windows surfaces read ECONNRESET (WSAECONNRESET)
-# between tests when the pooled connection is dropped without a FIN; every test in
-# the file passes, the stray teardown error makes the run exit 1. Tracked as a
-# known follow-up in the PR description; quarantined here until the Windows
-# teardown path is reworked.
-[ WINDOWS ] test/js/web/fetch/fetch-http2-client.test.ts [ FAIL ] # pooled-h2 teardown surfaces WSAECONNRESET between tests
-
 # Pre-existing on main (flagged [pre-existing] by ci:errors, e.g. build 61989 on
 # darwin-14-aarch64 and build 62204 on darwin-26-aarch64, both at the
 # `expect(e.name).toBe("TimeoutError")` assertions). The two connect-race cases
@@ -148,94 +141,6 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
 
-# node:http2 tests ported together with the HTTP/2 engine overhaul that do not pass yet
-# (remaining compatibility work: ALPN/h1-fallback, tunnelling, perf_hooks entries, stream
-# write semantics, async_hooks integration, node-internal-module dependencies). Burn these
-# down as the corresponding features land.
-test/js/node/test/parallel/test-http2-allow-http1-upgrade-ws.js [ FAIL ] # uses undici.EnvHttpProxyAgent as the WebSocket {dispatcher} option (undici-specific) and common/websocket-server.js (not vendored)
-test/js/node/test/parallel/test-http2-binding.js [ FAIL ] # asserts the shape of internalBinding('http2') (Node's nghttp2 binding); no Bun equivalent
-test/js/node/test/parallel/test-http2-client-onconnect-errors.js [ FAIL ] # monkey-patches internalBinding('http2').Http2Session prototype to inject nghttp2 error returns; no Bun equivalent
-test/js/node/test/parallel/test-http2-debug.js [ FAIL ] # spawns test-http2-ping.js with NODE_DEBUG=http2; blocked on the same async_hooks gap and on NODE_DEBUG=http2 output
-test/js/node/test/parallel/test-http2-info-headers-errors.js [ FAIL ] # monkey-patches internalBinding('http2').Http2Stream prototype to inject nghttp2 error returns; no Bun equivalent
-test/js/node/test/parallel/test-http2-options-max-headers-exceeds-nghttp2.js [ FAIL ] # server surfaces oversized inbound header list as a stream COMPRESSION_ERROR; nghttp2 terminates the session (NGHTTP2_ERR_HEADER_COMP -> GOAWAY 9) so the client expects ERR_HTTP2_SESSION_ERROR
-test/js/node/test/parallel/test-http2-padding-aligned.js [ FAIL ] # asserts exact frame counts under PADDING_STRATEGY_ALIGNED via socket-level byte counting; Bun's framing differs (no nghttp2 padding callback)
-test/js/node/test/parallel/test-http2-perf_hooks.js [ FAIL ] # PerformanceObserver({type:'http2'}) — Bun does not emit perf_hooks 'http2' entries yet
-test/js/node/test/parallel/test-http2-ping.js [ FAIL ] # AsyncResource('HTTP2PING') hooks not surfaced — Bun's async_hooks.createHook() does not yet observe AsyncResource lifecycle
-test/js/node/test/parallel/test-http2-respond-nghttperrors.js [ FAIL ] # monkey-patches internalBinding('http2').Http2Stream prototype to inject nghttp2 error returns; no Bun equivalent
-test/js/node/test/parallel/test-http2-respond-with-fd-errors.js [ FAIL ] # monkey-patches internalBinding('http2').Http2Stream prototype to inject nghttp2 error returns; no Bun equivalent
-test/js/node/test/parallel/test-http2-server-push-stream-errors.js [ FAIL ] # monkey-patches internalBinding('http2').Http2Stream prototype to inject nghttp2 error returns; no Bun equivalent
-test/js/node/test/parallel/test-http2-socket-proxy.js [ FAIL ] # asserts util.inspect(session[kTimeout]) shows _idlePrev/_idleNext: [TimersList] — Node-internal timer linked list, no Bun equivalent
-test/js/node/test/parallel/test-http2-util-headers-list.js [ FAIL ] # exercises internal/http2/util.buildNgHeaderString against internalBinding('http2').constants — Node-internal nghttp2 binding, no Bun equivalent
-test/js/node/test/parallel/test-http2-util-update-options-buffer.js [ FAIL ] # writes to internalBinding('http2').optionsBuffer (Node's nghttp2 options Uint32Array); no Bun equivalent
-test/js/node/test/parallel/test-http2-autoselect-protocol.js [ SKIP ] # http.Server.emit('connection', net.Socket) with a generic socket — Bun's http server uses Bun.serve, not the JS-side llhttp connectionListener
-test/js/node/test/parallel/test-http2-pack-end-stream-flag.js [ SKIP ] # PerformanceObserver({type:'http2'}) entries with framesReceived counts — Bun does not emit perf_hooks 'http2' entries yet
-
-# AddressSanitizer findings under investigation on the HTTP/2 inbound path
-[ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js [ SKIP ] # ASan report under investigation
-[ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-error.js [ SKIP ] # ASan report under investigation
-[ ASAN ] test/js/node/test/parallel/test-http2-client-unescaped-path.js [ SKIP ] # ASan report under investigation
-[ ASAN ] test/js/node/test/parallel/test-http2-buffersize.js [ SKIP ] # ASan report under investigation
-
-# The bun-specific http2 integration suites are being reconciled with the rewritten
-# (node-faithful) HTTP/2 engine: several of their expectations pin legacy-parser behaviors
-# that contradict node's (e.g. 'ping' events for PING ACKs, connection-error codes for
-# wrong-size frames that RFC 9113 defines as stream errors). Tracked for reconciliation;
-# the ported node parallel suite covers the node-faithful contract.
-test/js/node/http2/node-http2.test.js [ FAIL ] # legacy-parser expectations under reconciliation
-test/js/node/http2/h2-conformance.test.ts [ FAIL ] # under reconciliation with the rewritten engine (CONTINUATION flood + RST rate-limit cases)
-test/js/node/http2/node-http2-invalid-padding.test.ts [ FAIL ] # legacy-parser expectations under reconciliation
-[ ASAN ] test/js/third_party/grpc-js/test-server.test.ts [ SKIP ] # connect-race socket lifetime report under investigation
-[ WINDOWS ] test/js/third_party/grpc-js/test-server.test.ts [ FAIL ] # http2 teardown gap on Windows
-
-# Platform-specific http2 failures pending the socket-layer fixes (connect-race lifetime on
-# Linux/ASan, teardown gaps on Windows). Enumerated from CI so coverage stays on for everything else.
-[ LINUX ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-close-error.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-diagnostics-channel-http2-client-stream-error.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-allow-http1.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-allow-http1.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-byteswritten-server.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-byteswritten-server.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-client-port-80.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-client-unescaped-path.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-invalidheaderfield.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-invalidheaderfields-client.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-options-max-headers-block-length.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-server-shutdown-options-errors.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-server-shutdown-options-errors.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-server-unknown-protocol.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ WINDOWS ] test/js/node/test/parallel/test-http2-server-unknown-protocol.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-[ LINUX ] test/js/node/test/parallel/test-http2-single-headers-validation.js [ FAIL ] # connect-race / teardown gap, see socket-layer investigation
-
-# Windows-only http2 failures from the v26.3.0 sync (build 63328): the flood/limit tests time
-# out on the slower Windows runners and shutdown ordering still races there.
-[ WINDOWS ] test/js/node/test/parallel/test-http2-server-sessionerror.js [ FAIL ] # 'sessionError' mustCall not reached before process exit on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-http2-server-shutdown-redundant.js [ FAIL ] # client socket surfaces ECONNRESET during redundant shutdown on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-http2-pipe.js [ FAIL ] # piping a file into the request stream does not complete on Windows (server 'stream' handler mustCall never runs); passes on POSIX
-[ WINDOWS ] test/js/node/test/sequential/test-http2-timeout-large-write-file.js [ FAIL ] # session timeout fires mid respondWithFD transfer on Windows (write-progress suppression ineffective there); passes on POSIX
-[ WINDOWS ] test/js/node/test/parallel/test-http2-too-many-settings.js [ FAIL ] # server 'listening' mustCall misses under Windows runner load
-[ WINDOWS ] test/js/node/test/parallel/test-http2-reset-flood.js [ FAIL ] # flood test times out on slow Windows runners
-[ WINDOWS ] test/js/node/test/parallel/test-http2-max-invalid-frames.js [ FAIL ] # times out on slow Windows runners
-[ WINDOWS ] test/js/node/test/sequential/test-http2-ping-flood.js [ FAIL ] # obq_ack_pending was reset per receive() (fixed — may pass now); settings-flood (9B/frame) passed while ping-flood (17B/frame) failed, pointing at recv-chunk-size, not runner speed
-
-# The connect-race socket-lifetime report can surface in any http2 test on the ASan pipeline;
-# skip the family there until the socket-layer fix lands (prefix entries — the runner matches by substring).
-[ ASAN ] test/js/node/test/parallel/test-http2 [ SKIP ] # socket-layer connect-race lifetime under investigation
-[ ASAN ] test/js/node/test/parallel/test-diagnostics-channel-http2 [ SKIP ] # socket-layer connect-race lifetime under investigation
-[ ASAN ] test/js/node/http2/ [ SKIP ] # socket-layer connect-race lifetime under investigation
-
-# v26.3.0-verbatim deviations (test content is byte-identical to node v26.3.0):
-# requires internal/test/binding (nghttp2 prototype monkey-patching)
-test/js/node/test/parallel/test-http2-respond-errors.js [ FAIL ] # monkey-patches internalBinding('http2').Http2Stream prototype to inject nghttp2 error returns; no Bun equivalent
-# multi-localhost (127.0.0.2) binding not supported on Windows
-[ WINDOWS ] test/js/node/test/parallel/test-http2-connect-options.js [ FAIL ]
 
 # node:http servers cannot listen on Windows named pipes yet (ENOENT from
 # uv_pipe bind), so common.PIPE-based http tests cannot run there.
-[ WINDOWS ] test/js/node/test/parallel/test-http-unix-socket-keep-alive.js [ FAIL ] # named-pipe listen unsupported
-[ WINDOWS ] test/js/node/test/parallel/test-http-unix-socket.js [ FAIL ] # named-pipe listen unsupported
-[ WINDOWS ] test/js/node/test/parallel/test-http-client-pipe-end.js [ FAIL ] # named-pipe listen unsupported
-[ WINDOWS ] test/js/node/test/parallel/test-http-client-with-create-connection.js [ FAIL ] # named-pipe listen unsupported
-[ WINDOWS ] test/js/node/test/parallel/test-http-client-response-domain.js [ FAIL ] # named-pipe listen unsupported
-[ WINDOWS ] test/js/node/test/parallel/test-http-client-abort-unix-socket.js [ FAIL ] # named-pipe listen unsupported
-[ WINDOWS ] test/js/node/test/parallel/test-http-client-abort-keep-alive-queued-unix-socket.js [ FAIL ] # named-pipe listen unsupported
-[ WINDOWS ] test/js/node/test/parallel/test-https-unix-socket-self-signed.js [ FAIL ] # named-pipe listen unsupported

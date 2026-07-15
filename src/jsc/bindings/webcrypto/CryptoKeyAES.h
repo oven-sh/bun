@@ -41,9 +41,9 @@ struct JsonWebKey;
 
 class CryptoKeyAES final : public CryptoKey {
 public:
-    static const int s_length128 = 128;
-    static const int s_length192 = 192;
-    static const int s_length256 = 256;
+    static constexpr int s_length128 = 128;
+    static constexpr int s_length192 = 192;
+    static constexpr int s_length256 = 256;
 
     static Ref<CryptoKeyAES> create(CryptoAlgorithmIdentifier algorithm, const Vector<uint8_t>& key, bool extractable, CryptoKeyUsageBitmap usage)
     {

@@ -169,8 +169,20 @@ namespace uWS {
         return state == STATE_IS_TRAILER_OVERFLOW;
     }
 
+    /* Distinct error sentinel: the CRLF that must follow a chunk's data was not
+     * there. llhttp reports that as HPE_STRICT "Expected LF after chunk data",
+     * separately from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE), so
+     * the two have to be told apart. isParsingInvalidChunkedEncoding() still
+     * matches, so every existing caller keeps rejecting the message. */
+    constexpr uint64_t STATE_IS_CHUNK_TERMINATOR_ERROR = ~STATE_WAITING_FOR_LF;
+
+    inline bool isChunkTerminatorError(uint64_t state) {
+        return state == STATE_IS_CHUNK_TERMINATOR_ERROR;
+    }
+
     inline bool isParsingInvalidChunkedEncoding(uint64_t state) {
-        return state == STATE_IS_ERROR || state == STATE_IS_TRAILER_OVERFLOW;
+        return state == STATE_IS_ERROR || state == STATE_IS_TRAILER_OVERFLOW ||
+               state == STATE_IS_CHUNK_TERMINATOR_ERROR;
     }
 
     /* node:http compat: parser state for "consuming the trailer section after the
@@ -327,14 +339,14 @@ namespace uWS {
                     case 2:
                         // remaining >= 2: validate both \r and \n
                         if (data[remaining - 2] != '\r' || data[remaining - 1] != '\n') {
-                            state = STATE_IS_ERROR;
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                             return std::nullopt;
                         }
                         break;
                     case 1:
                         // remaining == 1: only \n left to validate
                         if (data[0] != '\n') {
-                            state = STATE_IS_ERROR;
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                             return std::nullopt;
                         }
                         break;
@@ -360,11 +372,11 @@ namespace uWS {
                         // Validate terminator bytes being consumed
                         size_t terminatorBytesConsumed = len - maximalAppEmit;
                         if (terminatorBytesConsumed >= 1 && data[maximalAppEmit] != '\r') {
-                            state = STATE_IS_ERROR;
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                             return std::nullopt;
                         }
                         if (terminatorBytesConsumed >= 2 && data[maximalAppEmit + 1] != '\n') {
-                            state = STATE_IS_ERROR;
+                            state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                             return std::nullopt;
                         }
                     } else {
@@ -373,17 +385,17 @@ namespace uWS {
                 } else if (size == 2) {
                     // Only terminator bytes remain, validate what we have
                     if (len >= 1 && data[0] != '\r') {
-                        state = STATE_IS_ERROR;
+                        state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                         return std::nullopt;
                     }
                     if (len >= 2 && data[1] != '\n') {
-                        state = STATE_IS_ERROR;
+                        state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                         return std::nullopt;
                     }
                 } else if (size == 1) {
                     // Only \n remains
                     if (data[0] != '\n') {
-                        state = STATE_IS_ERROR;
+                        state = STATE_IS_CHUNK_TERMINATOR_ERROR;
                         return std::nullopt;
                     }
                 }

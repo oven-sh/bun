@@ -152,7 +152,7 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
         id: Task::Id,
         name: &[u8],
         resolution: &Resolution,
-        err: bun_core::Error,
+        err: crate::Error,
         url: &[u8],
     ) {
         ctx.on_package_download_error(id, name, resolution, err, url);
@@ -169,7 +169,7 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
 
 struct Wait<'a, 'b> {
     installer: &'a mut store::Installer<'b>,
-    err: Option<bun_core::Error>,
+    err: Option<crate::Error>,
 }
 
 impl<'a, 'b> Wait<'a, 'b> {
@@ -2416,8 +2416,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     return Err(AllocError);
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     // error.InvalidURL
@@ -2466,8 +2475,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     Output::err(
@@ -2510,8 +2528,17 @@ pub(crate) fn install_isolated_packages(
                                 patch_info.name_and_version_hash(),
                             ) {
                                 Ok(()) => {}
-                                Err(e) if e == bun_core::err!(OutOfMemory) => {
+                                Err(e) if e == crate::Error::Alloc(bun_alloc::AllocError) => {
                                     bun_core::out_of_memory()
+                                }
+                                Err(crate::network_task::ForTarballError::AlreadyFailed) => {
+                                    // .monotonic is okay because an error means the task isn't
+                                    // running on another thread.
+                                    entry_steps[entry_id.get() as usize]
+                                        .store(installer::Step::Done as u32, Ordering::Relaxed);
+                                    installer
+                                        .on_task_complete(entry_id, installer::CompleteState::Fail);
+                                    continue;
                                 }
                                 Err(err) => {
                                     Output::err(

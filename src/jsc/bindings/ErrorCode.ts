@@ -280,6 +280,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_WORKER_INIT_FAILED", Error],
   ["ERR_WORKER_NOT_RUNNING", Error],
   ["ERR_WORKER_UNSUPPORTED_OPERATION", TypeError],
+  ["ERR_WORKER_PATH", TypeError],
   ["ERR_ZLIB_INITIALIZATION_FAILED", Error],
   ["MODULE_NOT_FOUND", Error],
   ["ERR_INTERNAL_ASSERTION", Error],
@@ -335,12 +336,14 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_NOT_ALLOWED", Error],
   ["ERR_SECRETS_AUTH_FAILED", Error],
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
+  ["ERR_WORKER_MESSAGING_ERRORED", Error],
+  ["ERR_WORKER_MESSAGING_FAILED", Error],
+  ["ERR_WORKER_MESSAGING_SAME_THREAD", Error],
+  ["ERR_WORKER_MESSAGING_TIMEOUT", Error],
   ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
   ["ERR_POSTGRES_CONNECTION_REFUSED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_REFUSED", Error, "MySQLError"],
-  // Appended (not alphabetical): discriminants are index-aligned with the
-  // checked-in Rust mirror (src/jsc/ErrorCode.rs) — only ever append here.
   ["ERR_HTTP2_GOAWAY_SESSION", Error],
   ["ERR_TLS_ALPN_CALLBACK_INVALID_RESULT", TypeError],
   ["ERR_PROXY_TUNNEL", Error],
@@ -350,5 +353,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
   ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
   ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
+  // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
+  // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
+  ["HPE_STRICT", Error],
 ];
 export default errors;

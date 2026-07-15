@@ -30,7 +30,7 @@ enum HttpError {
 
 
 /* Anonymized pages */
-static const std::string_view httpErrorResponses[] = {
+inline constexpr std::string_view httpErrorResponses[] = {
     "", /* Zeroth place is no error so don't use it */
     "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n",
     "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n",

@@ -11,6 +11,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
@@ -1074,6 +1075,13 @@ impl Handlers {
         self.global_object
     }
 
+    /// A zero/empty arg means a value failed to materialize (e.g. a header
+    /// materializer bailed); skip the callback rather than passing it to JS.
+    /// The pending-termination-exception guard lives in `run_callback`.
+    fn should_skip_dispatch(&self, data: &[JSValue]) -> bool {
+        data.contains(&JSValue::ZERO)
+    }
+
     pub(crate) fn call_event_handler(
         &self,
         event: JSH2FrameParser::Gc,
@@ -1084,6 +1092,12 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else {
             return false;
         };
+        // A zero/empty arg means a value failed to materialize (e.g. the VM is
+        // terminating); skip the callback rather than passing it to JS, which
+        // asserts/crashes in Bun__JSValue__call.
+        if self.should_skip_dispatch(data) {
+            return false;
+        }
         self.vm
             .event_loop_ref()
             .run_callback(callback, &self.global(), context, data);
@@ -1092,6 +1106,9 @@ impl Handlers {
 
     pub(crate) fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
         if !callback.is_callable() {
+            return false;
+        }
+        if self.should_skip_dispatch(data) {
             return false;
         }
         self.vm
@@ -1109,6 +1126,9 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else {
             return JSValue::ZERO;
         };
+        if self.should_skip_dispatch(data) {
+            return JSValue::ZERO;
+        }
         self.vm.event_loop_ref().run_callback_with_result(
             callback,
             &self.global(),
@@ -1259,7 +1279,13 @@ thread_local! {
     // Reused iovec scratch for the vectored flush.
     static BATCH_IOVECS: RefCell<Vec<bun_uws_sys::UsIoVec>> = const { RefCell::new(Vec::new()) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
-    static POOL: RefCell<Option<Box<H2FrameParserHiveAllocator>>> = const { RefCell::new(None) };
+    // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
+    // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
+    // on any leaked parser would touch freed JSC/uws state. Skip slot
+    // teardown (a leaked parser is a bug anyway) while still freeing the
+    // pool allocation itself.
+    static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
+        const { RefCell::new(None) };
     static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
 }
 
@@ -1277,6 +1303,24 @@ struct DispatchGuard<'a>(&'a Cell<u32>);
 impl Drop for DispatchGuard<'_> {
     fn drop(&mut self) {
         self.0.set(self.0.get() - 1);
+    }
+}
+
+/// The `+1` a native frame holds on the parser while it runs code that can free it (an inbound
+/// dispatch, a write that re-enters JS). Live guards are counted in
+/// `H2FrameParser::native_keepalives` so `finalize` can release the ones whose frame will never
+/// return — see `release_refs_stranded_by_exit`.
+struct Keepalive<'a>(&'a H2FrameParser);
+
+impl Drop for Keepalive<'_> {
+    fn drop(&mut self) {
+        let parser = self.0;
+        debug_assert!(parser.native_keepalives.get() > 0);
+        // Decrement first: this `deref()` can be the last one and free `parser`.
+        parser
+            .native_keepalives
+            .set(parser.native_keepalives.get() - 1);
+        parser.deref();
     }
 }
 
@@ -1418,7 +1462,13 @@ pub struct H2FrameParser {
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
     has_nonnative_backpressure: Cell<bool>,
+    /// A native write returned a terminal result (socket closed, shut down, or the kernel
+    /// rejected the send). Latched once; the deferred tick closes the transport.
+    transport_write_fatal: Cell<bool>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+    /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
+    /// Read only by `release_refs_stranded_by_exit()`.
+    native_keepalives: Cell<u32>,
 
     auto_flusher: JsCell<AutoFlusher>,
     padding_strategy: Cell<PaddingStrategy>,
@@ -1468,6 +1518,14 @@ impl H2FrameParser {
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
+    }
+
+    /// Hold a `+1` for the extent of a native frame that can re-enter JS (and therefore free the
+    /// parser). Counted, so `finalize` can release it if `process.exit()` strands the frame.
+    fn keepalive(&self) -> Keepalive<'_> {
+        self.ref_();
+        self.native_keepalives.set(self.native_keepalives.get() + 1);
+        Keepalive(self)
     }
 
     pub(crate) fn ref_(&self) {
@@ -2290,7 +2348,7 @@ impl H2FrameParser {
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> crate::Result<usize> {
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
         // Note: materializing `&mut [u8]` over uninitialized capacity is UB and
@@ -2316,12 +2374,12 @@ impl H2FrameParser {
         }
     }
 
-    pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
+    pub(crate) fn decode(&self, src_buffer: &[u8]) -> crate::Result<HeaderValue> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(bun_core::Error::from);
+                return hpack.decode(src_buffer).map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToDecode"))
+            Err(crate::Error::UnableToDecode)
         })
     }
 
@@ -2332,15 +2390,15 @@ impl H2FrameParser {
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> crate::Result<usize> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
                 // lets make sure the name is lowercase
                 return hpack
                     .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(bun_core::Error::from);
+                    .map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToEncode"))
+            Err(crate::Error::UnableToEncode)
         })
     }
 
@@ -2949,6 +3007,9 @@ impl H2FrameParser {
                 &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
             );
             let written: u32 = if result < 0 {
+                if Self::is_transport_fatal_write_result(result) {
+                    self.note_transport_write_fatal();
+                }
                 0
             } else {
                 u32::try_from(result).expect("int cast")
@@ -2988,6 +3049,9 @@ impl H2FrameParser {
                     &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
                 );
                 let written: u32 = if result < 0 {
+                    if Self::is_transport_fatal_write_result(result) {
+                        self.note_transport_write_fatal();
+                    }
                     0
                 } else {
                     u32::try_from(result).expect("int cast")
@@ -3015,6 +3079,9 @@ impl H2FrameParser {
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
                 let written: u32 = if result < 0 {
+                    if Self::is_transport_fatal_write_result(result) {
+                        self.note_transport_write_fatal();
+                    }
                     0
                 } else {
                     u32::try_from(result).expect("int cast")
@@ -3043,6 +3110,9 @@ impl H2FrameParser {
         }
         let result: i32 = socket.write_maybe_corked(bytes);
         let written: u32 = if result < 0 {
+            if Self::is_transport_fatal_write_result(result) {
+                self.note_transport_write_fatal();
+            }
             0
         } else {
             u32::try_from(result).expect("int cast")
@@ -3089,12 +3159,8 @@ impl H2FrameParser {
 
     pub(crate) fn flush(&self) -> usize {
         bun_output::scoped_log!(H2FrameParser, "flush");
-        // Keep `self` alive across the
-        // re-entrant JS calls below. ScopedRef stores a raw pointer so it does
-        // not borrow `self`.
-        // SAFETY: `self` is live; all mutation goes through `Cell`/`JsCell`
-        // (UnsafeCell-backed), so the `*mut` cast is signature-only.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        // Keep `self` alive across the re-entrant JS calls below.
+        let _keepalive = self.keepalive();
 
         let mut written = self.uncork();
         written += match self.native_socket.get() {
@@ -3148,8 +3214,8 @@ impl H2FrameParser {
     }
 
     pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
-        self.ref_();
-        let result = match self.native_socket.get() {
+        let _keepalive = self.keepalive();
+        match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 self._generic_write(socket.get(), bytes)
             }
@@ -3162,7 +3228,6 @@ impl H2FrameParser {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
                     global.vm().deprecated_report_extra_memory(bytes.len());
-                    self.deref();
                     return false;
                 }
                 // fallback to onWrite non-native callback
@@ -3202,12 +3267,9 @@ impl H2FrameParser {
                         true
                     }
                 };
-                self.deref();
                 return r;
             }
-        };
-        self.deref();
-        result
+        }
     }
 
     fn has_backpressure(&self) -> bool {
@@ -3287,10 +3349,90 @@ impl H2FrameParser {
         self.deref();
     }
 
+    /// A `write_maybe_corked` in `_generic_write`/`_generic_flush` returned a fatal
+    /// errno (< -1: the kernel rejected the send - peer gone). No retry can succeed,
+    /// and when the failure is only visible on the write side (a peer reset the read
+    /// path has not observed yet - routine on Windows, where the RST completes the
+    /// send first), nothing else ever closes the socket: the parser would re-buffer
+    /// and wait forever for a drain (observed as the http2 flood tests hanging on the
+    /// Windows CI agents). -1 (socket closed/shut down/not writable yet) is NOT
+    /// latched: those are routine during setup and teardown and the close path that
+    /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
+    /// close the transport - the failing write can be deep inside frame emission, so
+    /// the close must not run under the caller's stack.
+    /// Errno classification lives in `us_socket_write_check_error` (socket.c):
+    /// would-block/transient errnos re-arm writable and are never reported
+    /// here, known peer-gone errnos are reported immediately, and every other
+    /// errno gets a bounded retry window through the same rearm machinery
+    /// before it is reported (this is what keeps macOS's racy EPROTOTYPE from
+    /// killing healthy sessions). So any `result < -1` that reaches this
+    /// function is a send failure the socket layer has already decided cannot
+    /// succeed - re-buffering it would wait forever for a writable event that
+    /// the socket layer deliberately stopped polling for (observed as an h2
+    /// session that never writes again and never errors). Windows fatal codes
+    /// arrive as raw negated WSA values and mean the same thing.
+    fn is_transport_fatal_write_result(result: i32) -> bool {
+        result < -1
+    }
+
+    fn note_transport_write_fatal(&self) {
+        if !self.transport_write_fatal.get() {
+            self.transport_write_fatal.set(true);
+            self.register_auto_flush();
+        }
+    }
+
+    /// Runs from the deferred tick (never under a write): closes the native socket so the
+    /// normal socket-close teardown runs (native callback detach, JS 'close', session
+    /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
+    /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
+    /// the session saw neither 'error' nor 'close' and callers waiting on the failure
+    /// hung (grpc-js against a refused server). Not-yet-established sockets are left
+    /// alone entirely - the connect-error path owns their failure delivery, and closing
+    /// a semi-connected socket runs no terminal callback (stranding its refs, see the
+    /// close host_fn in socket_body).
+    fn close_transport_after_fatal_write(&self) {
+        match self.native_socket.get() {
+            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
+                Self::close_socket_for_dead_transport::<true>(socket.get());
+            }
+            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
+                Self::close_socket_for_dead_transport::<false>(socket.get());
+            }
+            BunSocket::None => {}
+        }
+    }
+
+    fn close_socket_for_dead_transport<const SSL: bool>(socket: &crate::socket::NewSocket<SSL>) {
+        let handler = socket.socket.get();
+        if !handler.is_established() {
+            return;
+        }
+        handler.close(bun_uws::CloseCode::Normal);
+    }
+
     pub(crate) fn on_auto_flush(&self) -> bool {
-        self.ref_();
+        let _keepalive = self.keepalive();
+        if self.transport_write_fatal.get() {
+            // Returning `false` makes DeferredTaskQueue::run remove the entry
+            // itself, so only the registration's flag and ref are released here
+            // - never a re-entrant map mutation from inside run(). The flag is
+            // cleared before the close so the teardown paths the close re-enters
+            // (detach -> unregister_auto_flush) see an unregistered flusher and
+            // early-return instead of removing a map entry run() still owns.
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            // An empty write buffer here means a later write in the same flush()
+            // cycle already drained the bytes the failing send left behind (racy
+            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
+            if self.has_backpressure() {
+                self.close_transport_after_fatal_write();
+            } else {
+                self.transport_write_fatal.set(false);
+            }
+            return false;
+        }
         let _ = self.flush();
-        self.deref();
         // we will unregister ourselves when the buffer is empty
         true
     }
@@ -5149,6 +5291,12 @@ impl H2FrameParser {
         };
 
         let global = self.handlers.get().global();
+        // A prior frame's callback can drain microtasks that tear the worker
+        // down (worker.terminate()); skip rather than calling JS with the
+        // termination exception pending. Same guard as read_bytes().
+        if global.has_exception() {
+            return Some(stream);
+        }
         // The `*mut Stream` above stays live across this call into JS.
         let _dispatch = self.enter_dispatch();
         match callback.call(
@@ -5215,6 +5363,14 @@ impl H2FrameParser {
     }
 
     fn read_bytes(&self, bytes: &[u8]) -> JsResult<usize> {
+        // read() loops this per frame. A prior frame's callback can drain
+        // microtasks that tear the worker down (worker.terminate()), leaving a
+        // pending (termination) exception; dispatching further frames then calls
+        // JS with that exception pending (assertNoException) or with torn-down
+        // values. Stop consuming once an exception is pending.
+        if self.handlers.get().global().has_exception() {
+            return Ok(bytes.len());
+        }
         bun_output::scoped_log!(H2FrameParser, "read {}", bytes.len());
         if self.is_server.get() && self.preface_received_len.get() < 24 {
             // Handle Server Preface
@@ -6177,7 +6333,7 @@ impl bun_io::Write for DirectWriterStruct {
         if self.writer.write(data) {
             Ok(())
         } else {
-            Err(bun_core::err!("SocketClosed"))
+            Err(bun_core::Error::WriteFailed)
         }
     }
 }
@@ -7214,7 +7370,7 @@ impl H2FrameParser {
 
         let stream_id = stream.id;
         let mut enqueued = false;
-        self.ref_();
+        let _keepalive = self.keepalive();
 
         let can_close = close && !stream.wait_for_trailers;
         if payload.is_empty() {
@@ -7440,7 +7596,6 @@ impl H2FrameParser {
                 }
             }
         }
-        self.deref();
         (settled_state, callback_deferred)
     }
 
@@ -7531,12 +7686,9 @@ impl H2FrameParser {
     }
 
     /// validate header name and convert to lowecase if needed
-    fn to_valid_header_name<'a>(
-        in_: &'a [u8],
-        out: &'a mut [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if in_.len() > 4096 {
-            return Err(bun_core::err!("InvalidHeaderName"));
+            return Err(crate::Error::InvalidHeaderName);
         }
         debug_assert!(out.len() >= in_.len());
         let mut in_slice = in_;
@@ -7575,11 +7727,11 @@ impl H2FrameParser {
                     b':' => {
                         // only allow pseudoheaders at the beginning
                         if i != 0 || any {
-                            return Err(bun_core::err!("InvalidHeaderName"));
+                            return Err(crate::Error::InvalidHeaderName);
                         }
                         continue;
                     }
-                    _ => return Err(bun_core::err!("InvalidHeaderName")),
+                    _ => return Err(crate::Error::InvalidHeaderName),
                 }
             }
 
@@ -7737,7 +7889,7 @@ impl H2FrameParser {
                     never_index,
                 ) {
                     Ok(_) => Ok(None),
-                    Err(err) if err == bun_core::err!("OutOfMemory") => {
+                    Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
                         Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
                     Err(_) => {
@@ -8710,7 +8862,7 @@ impl H2FrameParser {
                         value,
                         never_index,
                     ) {
-                        if err == bun_core::err!("OutOfMemory") {
+                        if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
@@ -8897,7 +9049,7 @@ impl H2FrameParser {
                             value,
                             never_index,
                         ) {
-                            if err == bun_core::err!("OutOfMemory") {
+                            if matches!(err, crate::Error::Alloc(_)) {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
@@ -8987,7 +9139,7 @@ impl H2FrameParser {
                         value,
                         never_index,
                     ) {
-                        if err == bun_core::err!("OutOfMemory") {
+                        if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
@@ -9460,10 +9612,9 @@ impl H2FrameParser {
 
     pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
-        self.ref_();
+        let _keepalive = self.keepalive();
         // Engine-driven inbound: all reads flow through the rewritten connection engine.
         self.rewrite_read(data);
-        self.deref();
         Ok(())
     }
 
@@ -9599,6 +9750,7 @@ impl H2FrameParser {
 
         let init = H2FrameParser {
             ref_count: bun_ptr::RefCount::init(),
+            native_keepalives: Cell::new(0),
             handlers: JsCell::new(handlers),
             global_this: GlobalRef::from(global_object),
             strong_this: JsCell::new(JsRef::empty()),
@@ -9650,6 +9802,7 @@ impl H2FrameParser {
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
+            transport_write_fatal: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),
@@ -9664,8 +9817,16 @@ impl H2FrameParser {
                 let pool = pool.get_or_insert_with(|| {
                     // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
                     // initialized allocation; `from_raw` reclaims that exact
-                    // pointer back into an owning `Box`.
-                    unsafe { Box::from_raw(H2FrameParserHiveAllocator::new_boxed().as_ptr()) }
+                    // pointer back into an owning `Box`. `ManuallyDrop<T>` is
+                    // `repr(transparent)` over `T`, so the pointer cast is a
+                    // layout no-op.
+                    unsafe {
+                        Box::from_raw(
+                            H2FrameParserHiveAllocator::new_boxed()
+                                .as_ptr()
+                                .cast::<ManuallyDrop<H2FrameParserHiveAllocator>>(),
+                        )
+                    }
                 });
                 pool.get_init(init).as_ptr()
             })
@@ -9871,6 +10032,34 @@ impl H2FrameParser {
         self.hpack.set(None);
     }
 
+    /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so
+    /// every `+1` taken by a frame that was still on the stack when JS called it — an inbound
+    /// dispatch (`on_native_read`), a write that re-entered JS (`_write`, `send_data`) — is never
+    /// released, and neither is the cork slot's ref nor the queued auto-flush task's. `deinit()`
+    /// therefore never runs and the parser leaks everything it owns (LeakSanitizer sees the
+    /// refcount's own debug map, the HPACK handle, the read/write buffers).
+    ///
+    /// Called from `finalize` only while the VM is shutting down: the event loop is dead, no JS
+    /// (and no stranded frame) can run again, so releasing those refs cannot make anything
+    /// observe a freed parser. The socket's `+1` (`attach_native_callback`) is deliberately left
+    /// alone — it has a live owner that releases it in `NewSocket::finalize`.
+    fn release_refs_stranded_by_exit(&self) {
+        // The cork slot holds a raw `*mut H2FrameParser` in a thread-local. `uncork()` would
+        // `_write()` the corked bytes, which re-enters JS on a non-native socket; the process is
+        // exiting, so drop them and just release the slot's ref.
+        if CORKED_H2.with(|c| c.get()) == Some(self.as_ctx_ptr()) {
+            CORKED_H2.with(|c| c.set(None));
+            CORK_OFFSET.with(|c| c.set(0));
+            self.deref();
+        }
+        // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        self.unregister_auto_flush();
+        let stranded = self.native_keepalives.replace(0);
+        for _ in 0..stranded {
+            self.deref();
+        }
+    }
+
     fn deinit(&self) {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
@@ -9921,9 +10110,9 @@ impl H2FrameParser {
         // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         bun_ptr::finalize_js_box(self, |this| {
             this.strong_this.set(JsRef::empty());
-            // process.exit() never unwinds, so a stack-rooted ref can strand and deinit()
-            // never runs; free streams here. The map is emptied so deinit() won't double-free.
             if VirtualMachine::get().is_shutting_down() {
+                // Free the streams first: `free_resources` releases the refs their signals hold.
+                // The map is emptied so a later deinit() won't double-free.
                 let streams = this.streams.replace(BunHashMap::default());
                 for (_, item) in streams.iter() {
                     let stream = *item;
@@ -9934,6 +10123,9 @@ impl H2FrameParser {
                     }
                 }
                 drop(streams);
+                // Then the refs of frames/tasks that will never run again, so the trailing
+                // deref below can actually reach zero and run deinit().
+                this.release_refs_stranded_by_exit();
             }
         });
     }

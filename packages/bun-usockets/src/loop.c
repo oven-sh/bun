@@ -72,16 +72,16 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
 
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
 
-static long long us_internal_monotonic_ns(void) {
+uint64_t us_internal_monotonic_ns(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (long long) ts.tv_sec * 1000000000LL + (long long) ts.tv_nsec;
+    return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
 }
 
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
-        loop->data.sweep_next_tick_ns = us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
+        loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
         Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
 }
@@ -97,7 +97,9 @@ long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
     if (loop->data.sweep_next_tick_ns < 0) {
         return -1;
     }
-    long long diff = loop->data.sweep_next_tick_ns - us_internal_monotonic_ns();
+    /* Its own reading, deliberately: this bounds the poll so the sweep is not
+     * starved, and a caller's older reading would round the deadline up. */
+    long long diff = loop->data.sweep_next_tick_ns - (long long) us_internal_monotonic_ns();
     return diff > 0 ? diff : 0;
 }
 
@@ -105,7 +107,7 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     if (loop->data.sweep_next_tick_ns < 0) {
         return;
     }
-    long long now = us_internal_monotonic_ns();
+    long long now = (long long) us_internal_monotonic_ns();
     if (now < loop->data.sweep_next_tick_ns) {
         return;
     }
@@ -385,6 +387,30 @@ void us_internal_free_closed_sockets(struct us_loop_t *loop) {
 #ifdef LIBUS_USE_LIBUV
 void sweep_timer_cb(struct us_internal_callback_t *cb) {
     us_internal_timer_sweep(cb->loop);
+    /* Escalate paused sockets whose peer FIN was deferred behind buffered
+     * data and whose peer has since reset (poll_cb consumed the only
+     * DISCONNECT report on the FIN; AFD has no event left to deliver the
+     * abort to a read-less poll). Zero cost unless such sockets exist;
+     * closing unlinks the socket, so restart the walk after each close. */
+    while (cb->loop->data.fin_deferred_count > 0) {
+        struct us_socket_t *victim = 0;
+        for (struct us_socket_group_t *g = cb->loop->data.head; g && !victim; g = g->next) {
+            for (struct us_socket_t *s = g->head_sockets; s; s = s->next) {
+                if (s->fin_deferred && !s->flags.is_closed
+                    && (us_socket_get_error(s) != 0
+                        || us_internal_libuv_peer_reset_probe(us_poll_fd(&s->p)))) {
+                    victim = s;
+                    break;
+                }
+            }
+        }
+        if (!victim) {
+            break;
+        }
+        victim->fin_deferred = 0;
+        cb->loop->data.fin_deferred_count--;
+        us_internal_socket_close_raw(victim, LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET, 0);
+    }
 }
 #endif
 
@@ -505,6 +531,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->flags.is_ipc = 0;
                         s->flags.is_closed = 0;
                         s->flags.adopted = 0;
+                        s->flags.last_write_failed = 0;
+                        s->unclassified_send_failures = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);

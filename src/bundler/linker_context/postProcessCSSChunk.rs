@@ -13,7 +13,7 @@ pub fn post_process_css_chunk(
     ctx: GenerateChunkCtx,
     worker: &mut thread_pool::Worker,
     chunk: &mut Chunk,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let c = ctx.c();
     // Avoid FRU `..Default::default()` — StringJoiner impls Drop (E0509).
     let mut j = StringJoiner::default();

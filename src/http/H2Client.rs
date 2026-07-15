@@ -90,7 +90,7 @@ pub(crate) mod bridge {
             self.retry_from_h2();
         }
         #[inline]
-        pub fn h2_fail(&mut self, err: bun_core::Error) {
+        pub fn h2_fail(&mut self, err: crate::Error) {
             self.fail_from_h2(err);
         }
         #[inline]
@@ -114,7 +114,7 @@ pub(crate) mod bridge {
             &mut self,
             buf: &[u8],
             is_only_buffer: bool,
-        ) -> Result<bool, bun_core::Error> {
+        ) -> crate::Result<bool> {
             self.handle_response_body(buf, is_only_buffer)
         }
         #[inline]

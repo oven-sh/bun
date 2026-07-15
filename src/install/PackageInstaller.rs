@@ -176,7 +176,7 @@ impl NodeModulesFolder {
         &self,
         root_node_modules_dir: &Dir,
         file_path: &ZStr,
-    ) -> Result<bun_sys::file::ReadToEndResult, bun_core::Error> {
+    ) -> crate::Result<bun_sys::file::ReadToEndResult> {
         let file = self.open_file(root_node_modules_dir, file_path)?;
         let res = file.read_to_end_small();
         let _ = file.close(); // close error is non-actionable
@@ -193,7 +193,7 @@ impl NodeModulesFolder {
         &self,
         root_node_modules_dir: &Dir,
         file_path: &ZStr,
-    ) -> Result<bun_sys::File, bun_core::Error> {
+    ) -> crate::Result<bun_sys::File> {
         if self.path.len() + file_path.len() * 2 < MAX_PATH_BYTES {
             // If we do not run the risk of ENAMETOOLONG, then let's just avoid opening the extra directories altogether.
             match self.open_file_without_opening_directories(root_node_modules_dir, file_path) {
@@ -205,7 +205,7 @@ impl NodeModulesFolder {
                     | bun_sys::Errno::ENAMETOOLONG => {
                         // Use fallback
                     }
-                    _ => return Err(e.to_zig_err()),
+                    _ => return Err(e.to_zig_err().into()),
                 },
                 Ok(file) => return Ok(file),
             }
@@ -213,10 +213,10 @@ impl NodeModulesFolder {
 
         let dir = self.open_dir(root_node_modules_dir)?;
         let res = dir.open_file(file_path, bun_sys::O::RDONLY, 0);
-        res.map_err(|e| e.to_zig_err())
+        res.map_err(|e| e.to_zig_err().into())
     }
 
-    pub(crate) fn open_dir(&self, root: &Dir) -> Result<Dir, bun_core::Error> {
+    pub(crate) fn open_dir(&self, root: &Dir) -> crate::Result<Dir> {
         #[cfg(unix)]
         {
             // Copy into a NUL-terminated PathBuffer.
@@ -224,7 +224,7 @@ impl NodeModulesFolder {
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
             return root
                 .open_at_with(path_z.as_bytes(), 0)
-                .map_err(|e| e.to_zig_err());
+                .map_err(|e| e.to_zig_err().into());
         }
 
         #[cfg(not(unix))]
@@ -244,7 +244,7 @@ impl NodeModulesFolder {
         }
     }
 
-    pub(crate) fn make_and_open_dir(&mut self, root: &Dir) -> Result<Dir, bun_core::Error> {
+    pub(crate) fn make_and_open_dir(&mut self, root: &Dir) -> crate::Result<Dir> {
         let out = 'brk: {
             #[cfg(unix)]
             {
@@ -315,7 +315,7 @@ pub(crate) enum LazyPackageDestinationDir<'a> {
 
 impl<'a> LazyPackageDestinationDir<'a> {
     #[allow(dead_code)]
-    pub(crate) fn get_dir(&mut self) -> Result<Fd, bun_core::Error> {
+    pub(crate) fn get_dir(&mut self) -> crate::Result<Fd> {
         match self {
             LazyPackageDestinationDir::Dir(fd) => Ok(*fd),
             LazyPackageDestinationDir::Owned(dir) => Ok(dir.fd()),
@@ -1553,6 +1553,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::LocalTarball => {
@@ -1579,6 +1585,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     resolution::Tag::Npm => {
@@ -1611,6 +1623,12 @@ impl<'a> PackageInstaller<'a> {
                             Err(ForTarballError::InvalidURL) => {
                                 self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
                             }
+                            Err(ForTarballError::AlreadyFailed) => self
+                                .increment_tree_install_count(
+                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    self.current_tree_id,
+                                    log_level,
+                                ),
                         }
                     }
                     _ => {
@@ -1754,7 +1772,7 @@ impl<'a> PackageInstaller<'a> {
                             Ok(d) => d,
                             Err(err) => {
                                 break 'result package_install::InstallResult::fail(
-                                    err,
+                                    err.into(),
                                     package_install::Step::OpeningCacheDir,
                                     None,
                                 );
@@ -1776,9 +1794,11 @@ impl<'a> PackageInstaller<'a> {
                         // npm packages can declare `file:` paths missing from the published
                         // tarball (e.g. excluded by `files`); nothing to link is not a failure.
                         if let package_install::InstallResult::Failure(f) = &result {
-                            if f.err == bun_core::err!("ENOENT")
-                                || f.err == bun_core::err!("FileNotFound")
-                            {
+                            if matches!(
+                                f.err,
+                                crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                                    | crate::Error::FileNotFound
+                            ) {
                                 break 'result package_install::InstallResult::Success;
                             }
                         }
@@ -1976,7 +1996,7 @@ impl<'a> PackageInstaller<'a> {
                         log_level,
                     );
 
-                    if cause.err == bun_core::err!("DanglingSymlink") {
+                    if cause.err == crate::Error::DanglingSymlink {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: <b>{}<r> \"link:{}\" not found (try running 'bun link' in the intended package's folder)<r>",
                             cause.err.name(),
@@ -1992,7 +2012,11 @@ impl<'a> PackageInstaller<'a> {
                             bstr::BStr::new(alias.slice(string_buf!())),
                         );
                         self.summary.fail += 1;
-                    } else if cause.err == bun_core::err!("AccessDenied") {
+                    } else if matches!(
+                        cause.err,
+                        crate::Error::Sys(bun_errno::SystemErrno::EACCES)
+                            | crate::Error::AccessDenied
+                    ) {
                         // there are two states this can happen
                         // - Access Denied because node_modules/ is unwritable
                         // - Access Denied because this specific package is unwritable

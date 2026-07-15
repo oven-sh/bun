@@ -460,7 +460,7 @@ pub mod BunInfo {
 
     /// `_transpiler` is an unused witness; expressions allocate from the
     /// global expr `Store` used by `Expr::init`.
-    pub fn generate<B>(_transpiler: B) -> Result<Expr, bun_core::Error> {
+    pub fn generate<B>(_transpiler: B) -> Result<Expr, crate::Error> {
         let info = BunInfo {
             bun_version: Global::package_json_version.as_bytes(),
             platform: generate_platform::for_os(),
@@ -1648,7 +1648,7 @@ where
         path: &[u8],
         route: super::AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.config.append_static_route(path, route, method)
     }
 
@@ -2196,9 +2196,9 @@ where
         // server cannot become one through reload(). listen() already sized every
         // future connection's socket ext block for this server's kind
         // (HttpResponseData vs the bigger NodeHttpResponseData) and set_routes
-        // would flip the context's usingNodeHttpCompat flag under those
-        // already-sized allocations, so the node request path would construct and
-        // index past them.
+        // would swap the context onto the node:http handler instantiation under
+        // those already-sized allocations, so the node request path would
+        // construct and index past them.
         if self.config.on_node_http_request.is_some()
             && self.config.on_node_http_request.as_ref().map(Strong::get)
                 != new_config.on_node_http_request.as_ref().map(Strong::get)
@@ -2268,7 +2268,7 @@ where
         }
     }
 
-    pub fn reload_static_routes(&mut self) -> Result<bool, bun_core::Error> {
+    pub fn reload_static_routes(&mut self) -> Result<bool, crate::Error> {
         if self.app.is_none() {
             // Static routes will get cleaned up when the server is stopped
             return Ok(false);

@@ -453,7 +453,7 @@ impl PackageJSON {
         ) {
             Ok(e) => e,
             Err(err) => {
-                if err != bun_core::err!("IsDir") {
+                if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
                     r_log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -1445,7 +1445,7 @@ impl<'a> Package<'a> {
     /// `count` → `allocate` → `clone` Builder dance the resolver does at the
     /// auto-install pending sites, exposed as the `esm.copy`
     /// helper that `PendingResolution::init` expects.
-    pub fn copy(self) -> Result<(PackageExternal, Vec<u8>), bun_core::Error> {
+    pub fn copy(self) -> crate::CrateResult<(PackageExternal, Vec<u8>)> {
         let mut builder = Semver::semver_string::Builder::default();
         self.count(&mut builder);
         builder.allocate()?;

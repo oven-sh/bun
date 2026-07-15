@@ -1363,6 +1363,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         nhr.maybe_stop_reading_body(unsafe { &mut *vm }, this_value);
                     }
                 }
+                if nhr_flags.contains(NhrFlags::TUNNELED) {
+                    // Raw 'upgrade'/'connect' handoff: the exchange left HTTP, so
+                    // release the pending-request accounting now - a half-open
+                    // tunnel never closes, which stranded `pending_requests`.
+                    nhr.mark_request_as_done_if_necessary();
+                }
             } else if nhr_flags.contains(NhrFlags::IS_REQUEST_PENDING) {
                 // The socket was adopted by the WebSocket context inside the
                 // handler; `raw_response` is gone and no further uws abort/end
@@ -1539,7 +1545,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
             return;
         };
-        self.unref();
+        if abrupt || (self.pending_requests == 0 && !self.has_active_web_sockets()) {
+            self.unref();
+        }
+        // A graceful stop with work in flight keeps the ref (deinit_if_we_can
+        // unrefs when the drain completes): on Windows uv_run skips I/O with
+        // zero ref'd handles, so unrefing here wedged server.close() teardown.
 
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
@@ -2053,6 +2064,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             websocket.global_object =
                 bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
+            websocket.handler.server = Some(any_server);
             websocket
                 .handler
                 .flags
@@ -3517,6 +3529,10 @@ impl AnyServer {
         any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
     }
 
+    pub fn deinit_if_we_can(&mut self) {
+        any_server_dispatch_mut!(self, |s| s.deinit_if_we_can())
+    }
+
     pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
         any_server_dispatch!(self, |s| s.dev_server.as_deref())
     }
@@ -3634,11 +3650,11 @@ impl AnyServer {
         path: &[u8],
         route: AnyRoute,
         method: server_config::MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         any_server_dispatch_mut!(self, |s| s.config.append_static_route(path, route, method))
     }
 
-    pub fn reload_static_routes(&self) -> Result<bool, bun_core::Error> {
+    pub fn reload_static_routes(&self) -> Result<bool, crate::Error> {
         any_server_dispatch_mut!(self, |s| s.reload_static_routes())
     }
 

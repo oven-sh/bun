@@ -60,7 +60,7 @@ struct HttpResponseData;
 
 
     /* We require at least this much post padding */
-    static const unsigned int MINIMUM_HTTP_POST_PADDING = 32;
+    inline constexpr unsigned int MINIMUM_HTTP_POST_PADDING = 32;
 
     /* Monotonic millisecond clock used for the node:http headers/request
      * timeout tracking (HttpResponseData::lastMessageStartMs). Kept separate
@@ -98,6 +98,10 @@ struct HttpResponseData;
         /* A captured trailer section exceeded the max-header-size limit
          * (Node/llhttp reports HPE_HEADER_OVERFLOW → 431). */
         HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE = 15,
+        /* The CRLF that must follow a chunk's data was missing or malformed.
+         * llhttp reports this as HPE_STRICT "Expected LF after chunk data",
+         * distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE). */
+        HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED = 16,
     };
 
 
@@ -460,7 +464,7 @@ struct HttpResponseData;
          * request message. */
         bool hasBufferedPartialRequestHeaders() const {
             for (char c : fallback) {
-                if (c != '\r' && c != '\n') {
+                if (!isNewline((unsigned char) c)) {
                     return true;
                 }
             }
@@ -518,9 +522,10 @@ struct HttpResponseData;
                 char *valueStart = p;
                 while (true) {
                     p = tryConsumeFieldValue(p);
-                    if (p[0] == '\t') { p++; continue; }
+                    const unsigned char stopByte = (unsigned char) p[0];
+                    if (stopByte == '\t') { p++; continue; }
                     /* Same lenient-header-value acceptance as getHeaders. */
-                    if (useInsecureHTTPParser && *(unsigned char *)p != '\0' && *(unsigned char *)p != '\r' && *(unsigned char *)p != '\n') { p++; continue; }
+                    if (useInsecureHTTPParser && stopByte != '\0' && !isNewline(stopByte)) { p++; continue; }
                     break;
                 }
                 if (p + 1 >= end || p[0] != '\r' || p[1] != '\n') {
@@ -697,6 +702,12 @@ struct HttpResponseData;
         /* RFC 9110 Section 5.5: optional whitespace (OWS) is SP or HTAB */
         static inline bool isHTTPHeaderValueWhitespace(unsigned char c) {
             return c == ' ' || c == '\t';
+        }
+
+        /* A line terminator byte. Line endings are CRLF, but llhttp tolerates a
+         * bare CR or LF in the places that call this, so they are tested together. */
+        static inline bool isNewline(const unsigned char c) {
+            return c == '\r' || c == '\n';
         }
 
         static inline int isHTTPorHTTPSPrefixForProxies(char *data, char *end) {
@@ -978,10 +989,17 @@ struct HttpResponseData;
                 /* The goal of this call is to find next "\r\n", or any invalid field value chars, fast */
                 while (true) {
                     postPaddedBuffer = tryConsumeFieldValue(postPaddedBuffer);
+                    const unsigned char stopByte = (unsigned char) postPaddedBuffer[0];
                     /* If this is not CR then we caught some stinky invalid char on the way */
-                    if (postPaddedBuffer[0] != '\r') {
+                    if (stopByte != '\r') {
                         /* If TAB then keep searching */
-                        if (postPaddedBuffer[0] == '\t') {
+                        if (stopByte == '\t') {
+                            postPaddedBuffer++;
+                            continue;
+                        }
+                        /* node:http insecureHTTPParser (llhttp lenient headers): control
+                         * bytes other than NUL/CR/LF are accepted in field values. */
+                        if (useInsecureHTTPParser && stopByte != '\0' && !isNewline(stopByte)) {
                             postPaddedBuffer++;
                             continue;
                         }
@@ -1079,15 +1097,21 @@ struct HttpResponseData;
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an
              * idle keep-alive connection must not be treated as a bad request.
              * llhttp's s_start state loops on '\r' and '\n' independently, so a
-             * leading bare LF (or bare CR) is also tolerated. */
-            if (data[0] == '\r' || data[0] == '\n') [[unlikely]] {
-                while (length && (data[0] == '\r' || data[0] == '\n')) {
-                    data += 1;
-                    length -= 1;
-                    consumedTotal += 1;
-                }
-                if (length == 0) {
-                    break;
+             * leading bare LF (or bare CR) is also tolerated. Node-compat only:
+             * Bun.serve keeps rejecting a request that does not start with the
+             * request-line, so this leniency is not a Bun-native default. */
+            if constexpr (IsNodeHttp) {
+                if (isNewline((unsigned char) data[0])) [[unlikely]] {
+                    /* The enclosing loop only runs while length is non-zero, so the
+                     * first byte is known to be one; re-test only after advancing. */
+                    do {
+                        data += 1;
+                        length -= 1;
+                        consumedTotal += 1;
+                    } while (length && isNewline((unsigned char) data[0]));
+                    if (length == 0) {
+                        break;
+                    }
                 }
             }
             auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, useInsecureHTTPParser, maxHeaderSize);
@@ -1280,6 +1304,9 @@ struct HttpResponseData;
                         if (isTrailerOverflow(remainingStreamingBytes)) {
                             return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
                         }
+                        if (isChunkTerminatorError(remainingStreamingBytes)) {
+                            return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED);
+                        }
                         return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                     }
                     unsigned int consumed = (length - (unsigned int) dataToConsume.length());
@@ -1354,6 +1381,9 @@ public:
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
                     if (isTrailerOverflow(remainingStreamingBytes)) {
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
+                    }
+                    if (isChunkTerminatorError(remainingStreamingBytes)) {
+                        return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED);
                     }
                     return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                 }
@@ -1434,6 +1464,9 @@ public:
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
                             if (isTrailerOverflow(remainingStreamingBytes)) {
                                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_TRAILER_FIELDS_TOO_LARGE);
+                            }
+                            if (isChunkTerminatorError(remainingStreamingBytes)) {
+                                return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_CHUNK_TERMINATOR_EXPECTED);
                             }
                             return HttpParserResult::error(HTTP_ERROR_400_BAD_REQUEST, HTTP_PARSER_ERROR_INVALID_CHUNKED_ENCODING);
                         }

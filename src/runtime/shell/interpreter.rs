@@ -444,16 +444,16 @@ impl Interpreter {
         jsstrings_to_escape: &'a mut [bun_core::String],
         out_parser: &mut Option<bun_shell_parser::Parser<'a>>,
         out_lex_result: &mut Option<bun_shell_parser::LexResult<'a>>,
-    ) -> Result<bun_shell_parser::ast::Script<'a>, bun_core::Error> {
+    ) -> crate::Result<bun_shell_parser::ast::Script<'a>> {
         use crate::shell::shell_body::{LexerAscii, LexerUnicode, ParseError, Parser};
         let jsobjs_len = jsobjs.len() as u32;
         let lex_result = if bun_core::is_all_ascii(src) {
             let mut lexer = LexerAscii::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(|e| bun_core::err!(from e))?;
+            lexer.lex().map_err(crate::Error::from)?;
             lexer.get_result()
         } else {
             let mut lexer = LexerUnicode::new(arena, src, jsstrings_to_escape, jsobjs_len);
-            lexer.lex().map_err(|e| bun_core::err!(from e))?;
+            lexer.lex().map_err(crate::Error::from)?;
             lexer.get_result()
         };
         if !lex_result.errors.is_empty() {
@@ -471,7 +471,7 @@ impl Interpreter {
             unsafe { core::slice::from_raw_parts_mut(ptr, len) }
         };
         *out_parser = Some(Parser::new(arena, lex_result, jsobjs_raw)?);
-        out_parser.as_mut().unwrap().parse()
+        Ok(out_parser.as_mut().unwrap().parse()?)
     }
 
     /// Builds the root `ShellExecEnv` (export env from the event loop's
@@ -666,7 +666,7 @@ impl Interpreter {
         mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
         path: &[u8],
         src: &[u8],
-    ) -> Result<ExitCode, bun_core::Error> {
+    ) -> crate::Result<ExitCode> {
         Self::init_and_run_impl(ctx, mini, bun_paths::basename(path), src, None, false)
     }
 
@@ -684,7 +684,7 @@ impl Interpreter {
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
-    ) -> Result<ExitCode, bun_core::Error> {
+    ) -> crate::Result<ExitCode> {
         Self::init_and_run_impl(ctx, mini, path_for_errors, src, cwd, true)
     }
 
@@ -699,7 +699,7 @@ impl Interpreter {
         src: &[u8],
         cwd: Option<&[u8]>,
         from_source: bool,
-    ) -> Result<ExitCode, bun_core::Error> {
+    ) -> crate::Result<ExitCode> {
         if from_source {
             bun_analytics::features::standalone_shell.fetch_add(1, Ordering::Relaxed);
         }

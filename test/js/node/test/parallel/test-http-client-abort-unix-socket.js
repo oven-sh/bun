@@ -1,5 +1,7 @@
 'use strict';
 const common = require('../common');
+if (common.isWindows)
+  common.skip('Bun does not support listening on a Windows named pipe yet');
 const http = require('http');
 
 const server = http.createServer(common.mustNotCall());

@@ -175,15 +175,13 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         workspace_pkg_id: PackageID,
     ) -> crate::Result<Expr> {
-        let workspace_path: Box<[u8]> = {
+        let workspace_path: &[u8] = {
             let string_buf = manager.lockfile.buffers.string_bytes.as_slice();
             let workspace_resolution =
                 manager.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
             match workspace_resolution.tag {
-                resolution::Tag::Workspace => {
-                    Box::from(workspace_resolution.workspace().slice(string_buf))
-                }
-                resolution::Tag::Root => Box::default(),
+                resolution::Tag::Workspace => workspace_resolution.workspace().slice(string_buf),
+                resolution::Tag::Root => b"",
                 _ => unreachable!("interactive update only scans workspace packages"),
             }
         };
@@ -192,7 +190,7 @@ impl UpdateInteractiveCommand {
         let root_dir = FileSystem::get().top_level_dir;
         let mut path_buf = PathBuffer::uninit();
         let package_json_path =
-            Self::build_package_json_path(root_dir, &workspace_path, &mut path_buf);
+            Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
         let log = manager.log_mut();
         match manager.workspace_package_json_cache.get_with_path(

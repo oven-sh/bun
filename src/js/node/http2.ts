@@ -412,6 +412,8 @@ function emitSessionCloseNT(self: Http2Session) {
   if (self.listenerCount("close") > 0) {
     runInFrame(self[bunHTTP2AsyncContextFrame], self.emit, self, "close");
   }
+  // Last use of the frame: drop it so a retained session stops pinning the store.
+  self[bunHTTP2AsyncContextFrame] = undefined;
 }
 function emitErrorNT(self: any, error: any, destroy: boolean) {
   if (destroy) {
@@ -2394,6 +2396,9 @@ class Http2Stream extends Duplex {
       err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
 
     this[bunHTTP2Session] = null;
+    // Drop the captured frame too, so a retained stream stops pinning the
+    // store; 'close' is emitted from a tick that already captured it.
+    this[bunHTTP2AsyncContextFrame] = undefined;
     // This notifies the session that this stream has been destroyed and
     // gives the session the opportunity to clean itself up. The session
     // will destroy if it has been closed and there are no other open or

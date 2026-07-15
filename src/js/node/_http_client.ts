@@ -969,6 +969,10 @@ ClientRequest.prototype.onSocket = function onSocket(socket, err) {
   // to be set so we set it here too.
   if (socket && !err) {
     socket._httpMessage = this;
+    // Capture the frame here, not just in tickOnSocket: onSocket runs in the
+    // request's context, and an error in the window before onSocketNT would
+    // otherwise run socketErrorListener with no frame and clear the context.
+    this[kClientAsyncContext] = $getInternalField($asyncContext, 0);
     socket.on("error", socketErrorListener);
   }
   process.nextTick(onSocketNT, this, socket, err);

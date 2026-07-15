@@ -729,6 +729,39 @@ describe("async context passes through", () => {
       await new Promise(r => server.close(r));
     }
   });
+  // An error in the window between onSocket() and onSocketNT() must still see
+  // the request's context: the socket listeners are frame-wrapped, and an
+  // unset frame would clear it. Verified against Node v26.3.0.
+  test("http: a socket error before onSocketNT keeps the request's context", async () => {
+    const http = require("http");
+    const net = require("net");
+    const s = new AsyncLocalStorage<string>();
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+
+    const agent = new http.Agent();
+    agent.createConnection = function () {
+      const sock = new net.Socket();
+      const on = sock.on.bind(sock);
+      sock.on = function (ev, fn) {
+        const r = on(ev, fn);
+        // Enqueued during onSocket()'s own socket.on("error") registration, so
+        // it fires before onSocket()'s process.nextTick(onSocketNT, ...).
+        if (ev === "error") process.nextTick(() => sock.emit("error", new Error("boom")));
+        return r;
+      };
+      return sock;
+    };
+
+    s.run("X", () => {
+      const req = http.request({ host: "127.0.0.1", port: 1, agent });
+      req.on("error", () => resolve(String(s.getStore())));
+      req.on("response", () => reject(new Error("unexpected response")));
+      req.end();
+    });
+
+    expect(await promise).toBe("X");
+  });
+
   test("http agent reuse: req 'error'/'close' see the reused request's context", async () => {
     const http = require("http");
     const net = require("net");
@@ -818,6 +851,44 @@ describe("async context passes through", () => {
       await new Promise(r => server.close(r));
     }
   });
+  // http2 counterpart of the http1 cleanup above: a stream/session retained
+  // past its terminal event must not pin the store.
+  test("http2 clears its captured async-context frame on stream and session close", async () => {
+    const server = http2.createServer((_req, res) => res.end("ok"));
+    await new Promise<void>(r => server.listen(0, r));
+    const port = (server.address() as import("net").AddressInfo).port;
+    const s = new AsyncLocalStorage<object>();
+    let stream: any, client: any;
+    try {
+      await s.run(
+        { marker: true },
+        () =>
+          new Promise<void>((resolve, reject) => {
+            client = http2.connect(`http://127.0.0.1:${port}`);
+            client.on("error", reject);
+            stream = client.request({ ":path": "/" });
+            stream.on("error", reject);
+            stream.resume();
+            stream.on("close", () => resolve());
+            stream.end();
+          }),
+      );
+      const frameSym = Object.getOwnPropertySymbols(stream).find(
+        sym => sym.description === "::bunhttp2asynccontextframe::",
+      );
+      expect(frameSym).toBeDefined();
+      expect(stream[frameSym!]).toBeUndefined();
+
+      const closed = new Promise<void>(r => client.on("close", () => r()));
+      client.close();
+      await closed;
+      expect(client[frameSym!]).toBeUndefined();
+    } finally {
+      if (client && !client.destroyed) client.destroy();
+      await new Promise(r => server.close(r));
+    }
+  });
+
   test("Bun.build plugin", async () => {
     const s = new AsyncLocalStorage<string>();
     let a = undefined;

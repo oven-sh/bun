@@ -1615,13 +1615,16 @@ pub mod fs {
         }
 
         /// [`entries_at`](Self::entries_at) for call sites that already hold
-        /// `entries_mutex` (the mutex is non-recursive). Currently that is only
-        /// `dir_info_uncached` when reached from `dir_info_cached_miss`.
+        /// `entries_mutex` (the mutex is non-recursive).
         pub fn entries_at_locked(
             &mut self,
             index: bun_alloc::IndexType,
             generation: Generation,
         ) -> Option<&mut EntriesOption> {
+            debug_assert!(
+                self.entries_mutex.is_held_by_current_thread(),
+                "entries_at_locked: caller must hold entries_mutex",
+            );
             // erase to raw immediately so re-borrowing `&mut self` for
             // `open_dir`/`readdir`/`read_directory_error` doesn't conflict.
             // `entries_mutex` held (by `entries_at` or the caller); sole `&mut` to this slot.

@@ -2439,7 +2439,9 @@ for (let withOverridenBufferWrite of [false, true]) {
           expect(h3.lastIndexOf(n, 0, enc)).toBe(0);
           expect(h3.lastIndexOf(n, -4, enc)).toBe(-1);
           expect(h3.indexOf(n, -3, enc)).toBe(0);
+          expect(h3.indexOf(n, -2, enc)).toBe(-1);
           expect(h3.indexOf(n, -1, enc)).toBe(-1);
+          expect(h3.indexOf(n, 1, enc)).toBe(-1);
         }
 
         // Even-length haystack is unchanged.

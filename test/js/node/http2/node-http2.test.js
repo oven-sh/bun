@@ -3186,3 +3186,149 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+// Starts a bun h2c server that responds 200 with the request path as the body. Returned via a
+// disposable so `using` tears it down after the assertions.
+async function echoPathServer() {
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    stream.respond({ ":status": 200, "content-type": "text/plain" });
+    stream.end(headers[":path"]);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  server[Symbol.dispose] = () => server.close();
+  return server;
+}
+
+// Runs `steps` (each `[path, options?]`) sequentially on one session against `server` and
+// resolves with their `{ status, body, rstCode }` results. Any session-level failure (the
+// poisoned-HPACK / malformed-frame symptom is a server GOAWAY that surfaces as an
+// ERR_HTTP2_SESSION_ERROR) rejects the step that is in flight instead of hanging it.
+async function h2RequestSequence(server, connectOptions, steps) {
+  const client = http2.connect(`http://localhost:${server.address().port}`, connectOptions);
+  try {
+    const sessionFailure = new Promise((_, reject) => {
+      client.on("error", reject);
+      client.on("goaway", (code, lastStreamID) => {
+        if (code !== http2.constants.NGHTTP2_NO_ERROR) {
+          reject(new Error(`unexpected GOAWAY code=${code} lastStreamID=${lastStreamID}`));
+        }
+      });
+    });
+    sessionFailure.catch(() => {}); // only observed through the races below
+
+    const results = [];
+    for (const [path, options] of steps) {
+      results.push(
+        await Promise.race([
+          sessionFailure,
+          new Promise((resolve, reject) => {
+            const req =
+              options === undefined ? client.request({ ":path": path }) : client.request({ ":path": path }, options);
+            let body = "";
+            let status;
+            req.setEncoding("utf8");
+            req.on("response", headers => (status = headers[":status"]));
+            req.on("data", chunk => (body += chunk));
+            req.on("error", reject);
+            req.on("close", () => resolve({ status, body, rstCode: req.rstCode }));
+            req.end();
+          }),
+        ]),
+      );
+    }
+    return results;
+  } finally {
+    client.close();
+  }
+}
+
+// request() priority options must be validated BEFORE the header block is fed to the session's
+// shared HPACK encoder: a post-encode rejection leaves the encoder's dynamic table ahead of the
+// peer (the frame is never sent), killing the NEXT request with GOAWAY(COMPRESSION_ERROR).
+it("request() priority options are accepted and never desync the session's HPACK encoder", async () => {
+  using server = await echoPathServer();
+  // Every option shape here is accepted by node. The trailing plain request is the real
+  // assertion: it proves none of the optioned requests left the encoder mid-block.
+  const results = await h2RequestSequence(server, undefined, [
+    ["/parent-0", { parent: 0 }],
+    ["/weight-0", { weight: 0 }],
+    ["/weight-256", { weight: 256 }],
+    ["/exclusive", { exclusive: true }],
+    ["/node-defaults", { parent: 0, weight: 16, exclusive: false }],
+    ["/plain"],
+  ]);
+  expect(results).toEqual([
+    { status: 200, body: "/parent-0", rstCode: 0 },
+    { status: 200, body: "/weight-0", rstCode: 0 },
+    { status: 200, body: "/weight-256", rstCode: 0 },
+    { status: 200, body: "/exclusive", rstCode: 0 },
+    { status: 200, body: "/node-defaults", rstCode: 0 },
+    { status: 200, body: "/plain", rstCode: 0 },
+  ]);
+});
+
+// RFC 7540 section 6.2: when a HEADERS frame carries both PADDED and PRIORITY, the Pad Length
+// octet is the FIRST payload byte, before the priority fields. Emitting priority first makes the
+// peer read the high byte of the stream dependency as the pad length, misalign the header block,
+// and tear the whole connection down.
+it("HEADERS carrying both PADDED and PRIORITY puts Pad Length before the priority fields", async () => {
+  for (const paddingStrategy of [http2.constants.PADDING_STRATEGY_MAX, http2.constants.PADDING_STRATEGY_ALIGNED]) {
+    using server = await echoPathServer();
+    const results = await h2RequestSequence(server, { paddingStrategy }, [
+      ["/padded-priority", { exclusive: true }],
+      ["/plain"],
+    ]);
+    expect({ paddingStrategy, results }).toEqual({
+      paddingStrategy,
+      results: [
+        { status: 200, body: "/padded-priority", rstCode: 0 },
+        { status: 200, body: "/plain", rstCode: 0 },
+      ],
+    });
+  }
+});
+
+// An abort that fires from user JS running inside the header encode (a header value's toString)
+// must be handled after the HEADERS frame is written, like an abort arriving on the next tick.
+// Attaching the already-aborted signal fired its listener synchronously, which wrote RST_STREAM
+// for a stream the peer had never seen; that is a connection error that killed the session.
+it("a signal aborted from a header value's toString during request() does not poison the session", async () => {
+  using server = await echoPathServer();
+  const client = http2.connect(`http://localhost:${server.address().port}`);
+  try {
+    const sessionErrors = [];
+    client.on("error", err => sessionErrors.push(err));
+
+    const controller = new AbortController();
+    const abortError = await new Promise((resolve, reject) => {
+      const req = client.request(
+        { ":path": "/abort-mid-encode", "x-abort": { toString: () => (controller.abort(), "v") } },
+        { signal: controller.signal },
+      );
+      req.resume();
+      req.on("error", resolve);
+      req.on("close", () => reject(new Error("stream closed without the expected abort error")));
+      req.end();
+    });
+    expect(abortError.name).toBe("AbortError");
+    expect(controller.signal.aborted).toBe(true);
+
+    // The real assertion: the session is still usable after the mid-encode abort.
+    const plain = await new Promise((resolve, reject) => {
+      const req = client.request({ ":path": "/plain" });
+      let body = "";
+      let status;
+      req.setEncoding("utf8");
+      req.on("response", headers => (status = headers[":status"]));
+      req.on("data", chunk => (body += chunk));
+      req.on("error", reject);
+      req.on("close", () => resolve({ status, body }));
+      req.end();
+    });
+    expect(plain).toEqual({ status: 200, body: "/plain" });
+    expect(sessionErrors).toEqual([]);
+  } finally {
+    client.close();
+  }
+});

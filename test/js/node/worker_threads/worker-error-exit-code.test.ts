@@ -35,10 +35,10 @@ describe.concurrent("exit code when a worker dies from an error", () => {
   });
 
   test("synchronous throw exits 1", async () => {
-    await run(
-      `require("node:worker_threads").parentPort.on("message", () => { throw new Error("task-throw"); });`,
-      { err: "Error: task-throw", code: 1 },
-    );
+    await run(`require("node:worker_threads").parentPort.on("message", () => { throw new Error("task-throw"); });`, {
+      err: "Error: task-throw",
+      code: 1,
+    });
   });
 
   test("unhandled rejection runs the worker's process.on('exit') with code 1", async () => {

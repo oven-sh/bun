@@ -350,14 +350,26 @@ fn standalone_module_graph_get() -> Option<*mut bun_standalone_graph::Graph> {
     bun_standalone_graph::Graph::get()
 }
 
+/// True for any path at or under the reserved virtual root, including the
+/// bare prefix with no trailing separator (e.g. `path.dirname(import.meta.dir)`).
+#[inline]
+fn is_reserved_standalone_path(path: &[u8]) -> bool {
+    #[cfg(windows)]
+    let path = without_nt_prefix(path);
+    bun_standalone_graph::is_bun_standalone_file_path(path)
+        || path == &bun_standalone_graph::BASE_PATH.as_bytes()[..bun_standalone_graph::BASE_PATH.len() - 1]
+        || (cfg!(windows)
+            && path
+                == &bun_standalone_graph::BASE_PUBLIC_PATH.as_bytes()
+                    [..bun_standalone_graph::BASE_PUBLIC_PATH.len() - 1])
+}
+
 /// Inside a standalone executable, the `/$bunfs/` (POSIX) / `B:\~BUN\`
 /// (Windows) prefix is a reserved virtual root. Writes must not fall through
 /// to the real filesystem and create a literal `/$bunfs/` tree on disk.
 #[inline]
 fn reject_standalone_write(path: &[u8], syscall: sys::Tag) -> Maybe<()> {
-    if standalone_module_graph_get().is_some()
-        && bun_standalone_graph::is_bun_standalone_file_path(path)
-    {
+    if standalone_module_graph_get().is_some() && is_reserved_standalone_path(path) {
         return Err(sys::Error {
             errno: E::EROFS as _,
             syscall,
@@ -7151,6 +7163,17 @@ impl NodeFS {
         let path_is_path = matches!(args.path, PathOrFileDescriptor::Path(_));
         let fd_maybe_windows: FD = match &args.path {
             PathOrFileDescriptor::Path(p) => {
+                let flags = args.flag.as_int();
+                if flags
+                    & (sys::O::WRONLY
+                        | sys::O::RDWR
+                        | sys::O::CREAT
+                        | sys::O::APPEND
+                        | sys::O::TRUNC)
+                    != 0
+                {
+                    reject_standalone_write(p.slice(), sys::Tag::open)?;
+                }
                 let path = p.slice_z(&mut self.sync_error_buf);
 
                 if let Some(graph) = standalone_module_graph_get() {

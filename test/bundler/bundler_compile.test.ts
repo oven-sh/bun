@@ -458,9 +458,11 @@ describe("bundler", () => {
         import embedded from "./a.txt" with { type: "file" };
         import fs from "node:fs";
         import fsp from "node:fs/promises";
+        import path from "node:path";
 
         const vroot = import.meta.dir;
         const newPath = vroot + "/new.txt";
+        const bare = path.dirname(vroot);
 
         const results: Record<string, unknown> = {};
         const run = (name: string, fn: () => unknown) => {
@@ -493,6 +495,10 @@ describe("bundler", () => {
         run("chownSync", () => fs.chownSync(embedded, 0, 0));
         run("utimesSync", () => fs.utimesSync(embedded, 0, 0));
         run("copyFileSync-dest", () => fs.copyFileSync(process.execPath, newPath));
+        run("readFileSync-w+", () => fs.readFileSync(newPath, { flag: "w+" }));
+        run("readFileSync-a+", () => fs.readFileSync(newPath, { flag: "a+" }));
+        run("mkdirSync-bare", () => fs.mkdirSync(bare));
+        run("rmSync-bare", () => fs.rmSync(bare, { recursive: true, force: true }));
 
         // Representative async variants.
         await runAsync("writeFile", () => fsp.writeFile(newPath, "x"));
@@ -548,6 +554,10 @@ describe("bundler", () => {
         "chownSync": "EROFS",
         "utimesSync": "EROFS",
         "copyFileSync-dest": "EROFS",
+        "readFileSync-w+": "EROFS",
+        "readFileSync-a+": "EROFS",
+        "mkdirSync-bare": "EROFS",
+        "rmSync-bare": "EROFS",
         "writeFile": "EROFS",
         "mkdir": "EROFS",
         "unlink": "EROFS",

@@ -546,9 +546,6 @@ impl HttpThread {
                     });
 
                     return Err(match err {
-                        // A CRL the caller explicitly provided gets its own
-                        // error; the CA-class failures keep their historical
-                        // generic mapping.
                         InitError::InvalidCRL => crate::Error::InvalidCRL,
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA

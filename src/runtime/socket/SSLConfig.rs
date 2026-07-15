@@ -203,9 +203,6 @@ impl SSLConfigFromJs for SSLConfig {
             || result.cert.is_some()
             || result.key.is_some()
             || result.crl.is_some()
-            // The remaining secure-context options the converter carries must
-            // also force a per-request SSL_CTX, or fetch()/WebSocket would
-            // silently drop them when no ca/cert/key is given.
             || result.secure_options != 0
             || result.ssl_min_version != 0
             || result.ssl_max_version != 0

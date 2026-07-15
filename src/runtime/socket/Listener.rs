@@ -82,11 +82,9 @@ pub struct Listener {
     /// listener. `group.ext` = `*Listener`, so the dispatch handler recovers us
     /// from the socket without a context-ext lookup.
     pub group: JsCell<uws::SocketGroup>,
-    /// `SSL_CTX*` for accepted sockets. One owned ref, released in `do_stop`
-    /// (the listen socket up_ref'd its own in `us_internal_init_listen_socket`,
-    /// and `SSL_new()` per-accept takes another), so accepted sockets outlive a
-    /// stopped listener safely. `deinit` releases it for a Listener that never
-    /// reached `do_stop`.
+    /// `SSL_CTX*` for accepted sockets. One owned ref; `SSL_CTX_free` on close.
+    /// `SSL_new()` per-accept takes its own ref, so accepted sockets outlive a
+    /// stopped listener safely.
     pub secure_ctx: Cell<Option<NonNull<boring_sys::SSL_CTX>>>,
     pub ssl: bool,
     pub protos: Option<Box<[u8]>>,
@@ -796,12 +794,6 @@ impl Listener {
             ListenerType::None => {}
         }
 
-        // Release the listener's SSL_CTX ref now rather than waiting for the GC
-        // to finalize this object: the JS `Server` can stay reachable long past
-        // close(), and at exit it never finalizes at all, which is what LSan
-        // reported. Every other holder owns its own ref — the listen socket
-        // up_ref'd in `us_internal_init_listen_socket`, and each accepted
-        // socket's `SSL_new()` up_refs again — so nothing here can dangle.
         if let Some(ctx) = this.secure_ctx.take() {
             // SAFETY: FFI — releases the one ref `listen()` took from the cache.
             unsafe { boring_sys::SSL_CTX_free(ctx.as_ptr()) };

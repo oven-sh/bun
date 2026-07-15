@@ -141,22 +141,10 @@ static int noPasswordCallback(char*, int, int, void*)
     return 0;
 }
 
-// Node wraps its cert parsing in ClearErrorOnReturn so a failure never leaves
-// the thread-local queue dirty for the next OpenSSL caller. Every exception
-// path below returns through this.
 struct ClearErrorOnReturn {
     ~ClearErrorOnReturn() { ERR_clear_error(); }
 };
 
-// Parse `certs` the way Node's ArrayOfStringsToX509s does: read *every* PEM
-// certificate out of each element (one element is routinely a concatenated
-// bundle), skip elements holding no certificate at all, and fail the whole
-// call on a block that starts but does not decode. Returns the certificates
-// re-encoded as canonical PEM, de-duplicated, in input order.
-//
-// This lives in native code because OpenSSL's notion of where a certificate
-// begins is the only correct one, and because it is a single pass over each
-// bundle rather than a regex split plus an X509 parse per block.
 JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -176,8 +164,6 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
         JSValue element = certs->getIndex(globalObject, i);
         RETURN_IF_EXCEPTION(scope, {});
 
-        // node:tls has already rejected anything that is neither a string nor
-        // an ArrayBufferView, so only those two shapes reach here.
         WTF::CString utf8;
         const void* data = nullptr;
         size_t size = 0;
@@ -235,8 +221,6 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
             auto pem = WTF::String::fromUTF8(std::span { outData, static_cast<size_t>(outLen) });
             BIO_free(out);
 
-            // Node's root store is an X509Set, so identical certificates
-            // collapse. Canonical PEM makes that a string comparison here.
             if (seen.add(pem).isNewEntry) {
                 results.append(JSC::jsString(vm, pem));
                 if (results.hasOverflowed()) {
@@ -248,18 +232,8 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
         }
         BIO_free(bio);
 
-        // Running out of certificates leaves PEM_R_NO_START_LINE on the error
-        // queue; that is the loop's normal exit, not a failure. Anything else
-        // means a block began and then failed to decode.
         unsigned long err = ERR_peek_last_error();
         if (err != 0 && !(ERR_GET_LIB(err) == ERR_LIB_PEM && ERR_GET_REASON(err) == PEM_R_NO_START_LINE)) {
-            // Node's error::Decorate names the error `ERR_OSSL_<LIB>_<REASON>`,
-            // where LIB is the ERR_LIB_* macro name (not ERR_lib_error_string,
-            // which reads "PEM routines") and REASON is the reason string
-            // uppercased with spaces turned into underscores. A bad end line is
-            // therefore ERR_OSSL_PEM_BAD_END_LINE, and an undecodable body is
-            // ERR_OSSL_PEM_ASN.1_ENCODING_ROUTINES under BoringSSL, which
-            // test-tls-set-default-ca-certificates-recovery.js pins.
             const char* reason = ERR_reason_error_string(err);
             char buffer[256];
             ERR_error_string_n(err, buffer, sizeof(buffer));
@@ -295,9 +269,6 @@ JSC_DEFINE_HOST_FUNCTION(parseCACertificates, (JSC::JSGlobalObject * globalObjec
                 case ERR_LIB_DH:
                     return "DH"_s;
                 default:
-                    // Node's table names every ERR_LIB_*; the ones above are the
-                    // only libraries X509/PEM parsing can surface. Fall back to a
-                    // bare ERR_OSSL_<REASON> rather than invent a segment.
                     return {};
                 }
             }();

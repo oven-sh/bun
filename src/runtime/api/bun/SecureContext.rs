@@ -41,11 +41,7 @@ pub struct SecureContext {
     /// Approximate cert/key/CA byte length plus the BoringSSL `SSL_CTX` floor
     /// (~50 KB), so the GC can account for the off-heap allocation.
     pub extra_memory: usize,
-    /// Whether `ctx` is a digest-interned `SSL_CTX*` that other consumers may
-    /// also hold. Set for every path through `intern`/`create_with_digest`;
-    /// only `create_private` builds an exclusively-owned context. Prototype
-    /// mutators (`add_ca_cert`) refuse to touch a shared context so a stray
-    /// user-reachable interned handle can never poison the cache.
+    /// True when `ctx` is a digest-interned `SSL_CTX*` shared with other consumers.
     pub shared: bool,
 }
 

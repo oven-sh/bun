@@ -419,9 +419,6 @@ pub(super) fn set_max_send_fragment(
         return Err(global.throw(format_args!("Expected size to be a number")));
     }
     let size = args.ptr[0].coerce_to_int64(global)?;
-    // OpenSSL rejects a size outside [512, SSL3_RT_MAX_PLAIN_LENGTH] by
-    // returning 0, which Node surfaces as `false`. BoringSSL clamps into that
-    // range and always returns 1, so the rejection has to happen here.
     if !(512..=16384).contains(&size) {
         return Ok(JSValue::FALSE);
     }
@@ -457,9 +454,6 @@ pub(super) fn get_peer_certificate(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::UNDEFINED);
     };
-    // `this.is_server()` reflects the handlers' mode, which stays client-mode
-    // for a socket adopted by `upgradeTLS` (the STARTTLS wrap); the SSL knows
-    // which side of the handshake it actually ran.
     let is_server_ssl = ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0;
 
     if abbreviated {
@@ -1021,8 +1015,6 @@ pub(super) fn get_ephemeral_key_info(
     let Some(ssl_ptr) = this.socket.get().ssl() else {
         return Ok(JSValue::NULL);
     };
-    // Only available for clients. The SSL knows its own handshake side (the
-    // handlers' mode stays client-mode for `upgradeTLS`-adopted servers).
     if ffi::SSL_is_server(boringssl::SSL::opaque_ref(ssl_ptr)) != 0 {
         return Ok(JSValue::NULL);
     }

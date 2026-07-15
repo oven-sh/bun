@@ -152,30 +152,18 @@ const kSNIError = Symbol("kSNIError");
 const kALPNError = Symbol("kALPNError");
 const kPerfHooksNetConnectContext = Symbol("kPerfHooksNetConnectContext");
 const khandshakeTimer = Symbol("khandshakeTimer");
-// Node reports a server-owned socket through 'tlsClientError' at most once
-// (kErrorEmitted in lib/internal/tls/wrap.js#L1234-L1257).
 const kerrorEmitted = Symbol("kerrorEmitted");
 const kUserUnrefed = Symbol("kUserUnrefed");
 // Set when pause() dropped the handle's hold on the loop, so the read paths
 // only restore a hold they actually removed - re-refing a handle that never
 // held the loop (a wrapped duplex with no fd) would pin the process.
 const kPausedUnref = Symbol("kPausedUnref");
-// onread mode: the delivery closure, the undelivered rest of a chunk whose
-// callback returned false (Node's equivalent bytes wait in the kernel until
-// readStart), and the flag that keeps its redelivery to one tick.
 const kOnreadDeliver = Symbol("kOnreadDeliver");
 const kOnreadTail = Symbol("kOnreadTail");
 const kOnreadDraining = Symbol("kOnreadDraining");
-// The buffer the callback writes into, and a clean EOF held behind a tail the
-// callback has not taken yet.
 const kOnreadBuffer = Symbol("kOnreadBuffer");
 const kOnreadPendingEnd = Symbol("kOnreadPendingEnd");
-// Set when read()/_read() scheduled the tail drain: Node restarts a paused
-// onread socket from read(), but not from a resume() a pause() then overtook.
 const kOnreadReadRequested = Symbol("kOnreadReadRequested");
-// Shared pause marker for a fully-consumed slice: a zero-length view of the
-// received chunk would pin its whole ArrayBuffer for as long as the socket
-// stays paused.
 const kOnreadEmptyTail = Buffer.alloc(0);
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
@@ -436,8 +424,6 @@ const SocketHandlers: SocketHandler = {
     // (authorized) is false purely because of the native hostname verdict,
     // which arrives with no error object.
     self._secureEstablished = true;
-    // Record the peer-certificate verification result so the Node-compatible
-    // socket.ssl.verifyError() accessor can report it.
     self[kVerifyError] = verifyError ?? null;
 
     self.emit("secure", self);
@@ -491,14 +477,9 @@ function finishSocketEnd(self) {
   self[kended] = true;
   if (!self.allowHalfOpen) self.write = writeAfterFIN;
   self.push(null);
-  // Duplex.read, not Socket.read: this only nudges the readable into emitting
-  // 'end'; restarting the kernel flow here would redeliver a paused onread
-  // tail that the callback has not asked for yet.
   Duplex.prototype.read.$call(self, 0);
 }
 
-// Node's readStop leaves the bytes an onread callback declined - and the FIN
-// behind them - unread in the kernel, so hold the clean EOF until they drain.
 function deferEndForOnreadTail(self) {
   if (self[kOnreadTail] === undefined || self.destroyed) return false;
   self[kOnreadPendingEnd] = true;
@@ -571,15 +552,7 @@ function SocketEmitEndNT(self, _err?) {
     }
     self[kended] = true;
     self.push(null);
-    // Like Node's onStreamRead EOF path: trigger 'end' (and the
-    // allowHalfOpen=false write-side teardown it drives) even when nothing is
-    // reading the socket — accepted sockets are no longer force-resumed into
-    // flowing mode.
     self.read(0);
-    // Bytes nobody consumes keep 'end' from firing, and Node then leaves the
-    // socket open forever so server.close() never drains. Bun deliberately
-    // diverges: finish the FIN teardown when the connection callback never
-    // engaged the readable side (deferred, so a late attach still counts).
     if (!self.allowHalfOpen && !self[kReaderInterest]) {
       setImmediate(destroyAbandonedNT, self);
     }
@@ -837,10 +810,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       }
       self[kerrorEmitted] = true;
       self.emit("_tlsError", err);
-      // error before handshake on a server-owned socket is only reported via
-      // 'tlsClientError'; a standalone `new tls.TLSSocket(socket, { isServer:
-      // true })` has no server, and Node delivers the failure as an 'error'
-      // event on the socket itself (control is already released to the user).
       if (server) server.emit("tlsClientError", err, self);
       else self.emit("error", err);
       self._hadError = true;
@@ -852,9 +821,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._secureEstablished = !!success;
     self.servername = socket.getServername();
     self.alpnProtocol = socket.alpnProtocol;
-    // socket.ssl.verifyError() reports the peer-verification result on servers
-    // too (Node's own server path reads the same TLSWrap.verifyError()):
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1216-L1218
     self[kVerifyError] = verifyError ?? null;
     // The native verifier reports a non-OK code when there is no peer certificate,
     // which is the normal case for plain TLS servers.
@@ -862,12 +828,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        // Node only surfaces the verification failure to the server when it
-        // rejects the connection; an accepting server (rejectUnauthorized:
-        // false) just exposes authorized/authorizationError on the socket.
         if (self._rejectUnauthorized) {
-          // Same once-only latch as every other server-side report, so a native
-          // error racing the destroy below cannot emit a second tlsClientError.
           self[kerrorEmitted] = true;
           server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
@@ -881,8 +842,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         self.authorized = true;
       }
     }
-    // pauseOnConnect sockets must already be paused when the
-    // 'secureConnection' listener observes them, like Node.
     const pauseOnConnect = server && (server.pauseOnConnect ?? server[bunSocketServerOptions]?.pauseOnConnect);
     if (pauseOnConnect) {
       self.pause();
@@ -944,9 +903,6 @@ const ServerHandlers: SocketHandler<NetSocket> = {
   binaryType: "buffer",
 } as const;
 
-// Node only disables peer verification for a literal `false`; any other
-// value - null/0/'' included - keeps it on:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1781
 function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
   if (typeof rejectUnauthorized !== "undefined") {
     self._rejectUnauthorized = rejectUnauthorized !== false;
@@ -956,9 +912,6 @@ function applyRejectUnauthorized(self, tls, rejectUnauthorized) {
   }
 }
 
-// Node's per-connection handshake timeout: after server._handshakeTimeout ms
-// the server emits 'tlsClientError' (ERR_TLS_HANDSHAKE_TIMEOUT); the listener
-// owns the socket (Node never destroys it here: wrap.js#L1052-L1058).
 function armHandshakeTimeout(server, socket) {
   const handshakeTimeout = server._handshakeTimeout;
   if (!(handshakeTimeout > 0)) return;
@@ -1004,9 +957,6 @@ function onconnection(err, clientHandle) {
   }) as NetSocket | TLSSocket;
   _socket.isServer = true;
   _socket._requestCert = requestCert;
-  // Only a literal `false` in the raw user options disables verification
-  // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1368);
-  // when it is absent, fall back to the server's normalized value.
   _socket._rejectUnauthorized = rejectUnauthorized != null ? rejectUnauthorized !== false : self._rejectUnauthorized;
 
   _socket[kAttach](clientHandle.localPort, clientHandle);
@@ -1060,10 +1010,6 @@ function onconnection(err, clientHandle) {
   _socket.server = self;
   _socket._server = self;
 
-  // A TLS server's handshake is driven by the native read path; pausing the
-  // raw handle before the handshake would stall the ClientHello forever. The
-  // decrypted stream is paused after the handshake instead (see
-  // ServerHandlers.handshake).
   if (pauseOnConnect && !isTLS) {
     _socket.pause();
   }
@@ -1077,17 +1023,9 @@ function onconnection(err, clientHandle) {
   if (isTLS) armHandshakeTimeout(self, _socket);
 
   self.emit("connection", _socket);
-  // Start pulling from the kernel without switching the stream into flowing
-  // mode: bytes that arrive before the user attaches a 'data' listener (or
-  // wraps the socket, e.g. in a delayed TLSSocket attach) must accumulate in
-  // the readable buffer like Node, not be emitted into the void.
   if (!pauseOnConnect && !isTLS) {
     _socket.read(0);
   }
-  // Record whether the connection callback engaged the readable side at all
-  // (a 'readable'/'data' listener — including a once() — or an explicit
-  // pause()/resume() leaves readableFlowing non-null). If it did, the EOF
-  // path's abandoned-socket teardown must not run: a delayed read may follow.
   if (_socket.readableFlowing !== null || _socket.listenerCount("data") > 0 || _socket.listenerCount("readable") > 0) {
     _socket[kReaderInterest] = true;
   }
@@ -1262,8 +1200,6 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // (authorized) is false purely because of the native hostname verdict,
     // which arrives with no error object.
     self._secureEstablished = true;
-    // Record the peer-certificate verification result so the Node-compatible
-    // socket.ssl.verifyError() accessor can report it.
     self[kVerifyError] = verifyError ?? null;
 
     self.emit("secure", self);
@@ -1574,57 +1510,34 @@ function Socket(options?) {
     if (typeof onread.callback !== "function") {
       throw new TypeError("onread.callback must be a function");
     }
-    // Node only engages onread when the buffer is a Uint8Array or a factory;
-    // anything else leaves the socket an ordinary 'data' stream:
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L462-L465
     if (!isUint8Array(onread.buffer) && typeof onread.buffer !== "function") onread = null;
   }
   if (onread) {
-    // Node's onread writes each chunk into the user-provided buffer (a static
-    // Buffer or a function returning one) and invokes the callback with that
-    // exact buffer. uSockets shares one 512KB recv_buf across all sockets, so
-    // kernel reads cannot be sized to the user buffer the way libuv's
-    // UseUserBuffer does; larger native reads are delivered in slices, which
-    // means a factory sees more calls than Node's one-per-uv_read_cb.
     const onreadBuffer = onread.buffer;
     const onreadCallback = onread.callback;
     const onreadBufferIsFn = typeof onreadBuffer === "function";
     const self = this;
     this[kOnreadTail] = undefined;
     this[kOnreadDraining] = false;
-    // Node's kBuffer: the factory's result once it yields a Uint8Array, and the
-    // literal `true` until then (lib/net.js#L465, initSocketHandle#L332-L342).
     this[kOnreadBuffer] = onreadBufferIsFn ? true : onreadBuffer;
     this[kOnreadDeliver] = function deliver(buffer) {
       try {
         let offset = 0;
         const total = buffer.length;
         while (offset < total) {
-          // Node adopts the factory's result only when it is a Uint8Array and
-          // otherwise keeps the previous one - which is `true` until the first
-          // valid buffer (stream_base_commons.js#L177-L185).
           if (onreadBufferIsFn) {
             const next = onreadBuffer();
             if (isUint8Array(next)) self[kOnreadBuffer] = next;
           }
           const dest = self[kOnreadBuffer];
           if (dest === true) {
-            // No buffer to copy into: Node hands the callback the raw `true`
-            // and the bytes of that read are dropped - but a `false` return
-            // must still readStop until resume(), like the sliced branch.
             if (onreadCallback(total - offset, true) === false) {
               self[kOnreadTail] = kOnreadEmptyTail;
               self._handle?.pause?.();
             }
             return;
           }
-          // A zero-length buffer makes libuv report ENOBUFS for the read,
-          // and Node destroys the socket with that error - it never loops:
-          // https://github.com/nodejs/node/blob/v26.3.0/deps/uv/src/unix/stream.c#L1051-L1052
           if (dest.length === 0) {
-            // Shaped like Node's errnoException(UV_ENOBUFS, "read") the way
-            // the ECONNRESET paths above do: the uv binding's UV_ENOBUFS is
-            // not libuv's Windows code, so the name cannot be derived from it.
             const err = new Error("read ENOBUFS") as Error & { code?: string; errno?: number; syscall?: string };
             err.code = "ENOBUFS";
             err.errno = UV_ENOBUFS;
@@ -1635,10 +1548,6 @@ function Socket(options?) {
           const n = Math.min(dest.length, total - offset);
           dest.set(buffer.subarray(offset, offset + n));
           if (onreadCallback(n, dest) === false) {
-            // Node's readStop keeps the socket paused after every `false`
-            // until resume() (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L176-L198),
-            // so keep the rest even when empty: it is the pause marker
-            // drainOnreadTail() checks before resuming the kernel flow.
             const rest = buffer.subarray(offset + n);
             self[kOnreadTail] = rest.length !== 0 ? rest : kOnreadEmptyTail;
             self._handle?.pause?.();
@@ -1647,10 +1556,6 @@ function Socket(options?) {
           offset += n;
         }
       } catch (e) {
-        // Fail closed like the ENOBUFS branch: a callback that threw mid-chunk
-        // has undelivered bytes behind it, and letting the next native read
-        // through would hand the user a stream with a silent gap. (Node has no
-        // catch at all here - the throw is an uncaughtException.)
         self.destroy(e);
       }
     };
@@ -1663,9 +1568,6 @@ function Socket(options?) {
         self._unrefTimer();
         const tail = self[kOnreadTail];
         if (tail !== undefined) {
-          // Data raced the native pause: after the callback returned false
-          // nothing may be delivered until resume() (Node's readStop), so
-          // queue it behind the bytes the callback has not consumed yet.
           self[kOnreadTail] = Buffer.concat([tail, buffer]);
           return;
         }
@@ -2088,7 +1990,6 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("close");
   if (this._handle) {
     $debug("close handle");
-    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L880
     const isException = err ? true : false;
     // `bytesRead` and `kBytesWritten` should be accessible after `.destroy()`
     // this[kBytesRead] = this._handle.bytesRead;
@@ -2126,10 +2027,6 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     process.nextTick(emitCloseNT, this, err ? true : false);
   }
 
-  // _server, not server: only natively accepted sockets are counted. Node's
-  // tlsConnectionListener sets `.server` alone, so a STARTTLS wrap handed to
-  // server.emit('connection') never had an increment to undo:
-  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L912-L918
   const server = this._server;
   if (server) {
     $debug("has server");
@@ -2184,13 +2081,8 @@ Object.defineProperty(Socket.prototype, "pending", {
   },
 });
 
-// Redelivers the slices an onread callback declined (returned false) before
-// the kernel flow is allowed to resume; never re-enters the callback
-// synchronously from resume()/read(). Returns true while a tail is pending.
 function drainOnreadTail(self, fromRead?) {
   if (self[kOnreadTail] === undefined) return false;
-  // read() restarts a paused onread socket: Node's read() calls tryReadStart
-  // on the handle regardless of the stream's flowing state (lib/net.js:779-789).
   if (fromRead) self[kOnreadReadRequested] = true;
   if (!self[kOnreadDraining]) {
     self[kOnreadDraining] = true;
@@ -2205,15 +2097,10 @@ function drainOnreadTailNT(socket) {
   socket[kOnreadReadRequested] = false;
   const tail = socket[kOnreadTail];
   if (tail === undefined || socket.destroyed) return;
-  // A pause() between resume() and this tick (or from inside the callback)
-  // must win: Node's level-triggered _handle.reading leaves the handle
-  // stopped after resume()→pause() (lib/net.js:817-835). read() overrides it.
   if (!fromRead && socket.isPaused()) return;
   socket[kOnreadTail] = undefined;
   socket[kOnreadDeliver](tail);
   if (socket[kOnreadTail] !== undefined || socket.destroyed) return;
-  // Fully consumed: release the EOF the peer already sent, then let the
-  // kernel flow resume.
   if (socket[kOnreadPendingEnd]) {
     socket[kOnreadPendingEnd] = false;
     finishSocketEnd(socket);
@@ -2281,15 +2168,7 @@ Socket.prototype[Symbol.for("::bunUpgradeServerTLS::")] = function (connection, 
     return;
   }
   this[kupgraded] = connection;
-  // Adopt the fd one tick later: feeding bytes that already arrived (e.g. the
-  // ClientHello, or junk) inside the constructor would deliver handshake
-  // results before the caller had a chance to attach 'error'/'secure'
-  // listeners — Node reads the wrapped stream asynchronously, so its handshake
-  // outcomes are never observable during construction.
   process.nextTick(() => {
-    // The wrap can never get a handle once the underlying socket is gone;
-    // Node's synchronous adoption propagates that teardown, so destroying
-    // here keeps the TLSSocket from never emitting 'close'.
     if (this.destroyed || connection.destroyed) {
       this.destroy();
       return;
@@ -4047,8 +3926,6 @@ function _setSimultaneousAccepts() {
   }
 }
 
-// The tls.Server STARTTLS wrap (a socket handed in via emit("connection"))
-// arms the same timeout as a native accept.
 Server.prototype[kArmHandshakeTimeout] = function (socket) {
   armHandshakeTimeout(this, socket);
 };

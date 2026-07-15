@@ -32,11 +32,9 @@ pub struct SSLConfig {
     pub key: CStrSlice,
     pub cert: CStrSlice,
     pub ca: CStrSlice,
-    /// PEM-encoded CRLs added to the context's certificate store (enables CRL checking).
     pub crl: CStrSlice,
 
     pub secure_options: u32,
-    /// Session timeout in seconds applied via SSL_CTX_set_timeout; 0 = library default.
     pub session_timeout: i32,
     pub allow_partial_trust_chain: bool,
     pub sigalgs: CStrPtr,

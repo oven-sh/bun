@@ -265,7 +265,7 @@ private:
         ((AsyncSocket<SSL> *) s)->cork();
 
         /* Mark that we are inside the parser now */
-        httpContextData->flags.isParsingHttp = true;
+        httpResponseData->isParsingHttp = true;
         httpResponseData->isIdle = false;
 
         // clients need to know the cursor after http parse, not servers!
@@ -297,23 +297,21 @@ private:
                 return nullptr;
             }
 
-            /* Mark pending request and emit it */
+            /* Mark pending request and reset the rest of the per-response
+             * state; a stale bit from the previous keep-alive response (e.g.
+             * HTTP_NO_BODY_STATUS) must not leak into this one. */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 
 
-            /* Mark this response as connectionClose if ancient or connection: close */
-            if (httpRequest->isAncient() || httpRequest->getHeader("connection").length() == 5) {
+            /* The parser latched this before dispatching the request: the
+             * request is HTTP/1.0 or carries a "close" connection option. */
+            if (httpResponseData->sawConnectionClose) {
                 httpResponseData->state |= HttpResponseData<SSL>::HTTP_CONNECTION_CLOSE;
             }
 
-            httpResponseData->fromAncientRequest = httpRequest->isAncient();
-
-            /* Per-request framing flags; writeHead only ever sets them, so a
-             * stale true from a previous 204/304 (or close-delimited) response
-             * on this keep-alive socket would strip the next response's body
-             * framing. */
-            httpResponseData->noBodyStatus = false;
-            httpResponseData->closeDelimited = false;
+            if (httpRequest->isAncient()) {
+                httpResponseData->state |= HttpResponseData<SSL>::HTTP_FROM_ANCIENT_REQUEST;
+            }
 
             /* Select the router based on SNI (only possible for SSL) */
             auto *selectedRouter = &httpContextData->router;
@@ -410,8 +408,6 @@ private:
 
         auto httpErrorStatusCode = result.httpErrorStatusCode();
 
-        /* Mark that we are no longer parsing Http */
-        httpContextData->flags.isParsingHttp = false;
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             if(httpContextData->onClientError) {
@@ -427,6 +423,9 @@ private:
         auto returnedData = result.returnedData;
         /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
         if (returnedData != nullptr) {
+            /* Only non-null here: an upgraded socket's HttpResponseData was
+             * destroyed (and the socket possibly reallocated) by upgrade(). */
+            httpResponseData->isParsingHttp = false;
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
 

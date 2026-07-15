@@ -1294,7 +1294,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
-            let success = res.try_end(buf, self.end_len, false);
+            let success = res.try_end(buf, self.end_len, res.should_close_connection());
             if success {
                 self.has_backpressure = false;
                 self.handle_wrote(self.end_len);
@@ -1318,7 +1318,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // holds the on_writable registration and forwards the drain to
         // `on_writable()` below.
         if self.requested_end {
-            res.end(buf, false);
+            res.end(buf, res.should_close_connection());
             self.has_backpressure = false;
         } else {
             self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
@@ -1369,7 +1369,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         if self.requested_end && !res.state().is_http_write_called() {
             self.handle_first_write_if_necessary();
             let end_len = self.end_len;
-            let success = res.try_end(&self.buffer[base..], end_len, false);
+            let success = res.try_end(&self.buffer[base..], end_len, res.should_close_connection());
             if success {
                 self.has_backpressure = false;
                 self.handle_wrote(end_len);
@@ -1390,7 +1390,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         let buf_len = self.buffer.len().saturating_sub(base);
         // See `send_without_auto_flusher`.
         if self.requested_end {
-            res.end(&self.buffer[base..], false);
+            res.end(&self.buffer[base..], res.should_close_connection());
             self.has_backpressure = false;
         } else {
             self.has_backpressure = matches!(
@@ -1845,7 +1845,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             }
         } else {
             if let Some(res) = self.any_res() {
-                res.end(b"", false);
+                res.end(b"", res.should_close_connection());
             }
         }
 
@@ -1980,7 +1980,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
             if let Some(res) = self.any_res() {
                 // is actually fine to call this if the socket is closed because of flushNoWait, the free will be defered by usockets
-                res.end_stream(false);
+                res.end_stream(res.should_close_connection());
             }
         }
 

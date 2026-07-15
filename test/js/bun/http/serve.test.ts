@@ -19,6 +19,7 @@ import { join, resolve } from "path";
 // import app_jsx from "./app.jsx";
 import { heapStats } from "bun:jsc";
 import { spawn } from "child_process";
+import { createServer as createNodeHttpServer } from "node:http";
 import net from "node:net";
 import { networkInterfaces } from "node:os";
 import { tmpdir } from "os";
@@ -3004,6 +3005,339 @@ server.listen(0, "127.0.0.1", () => {
   // already torn the connection down. It must never reach the request listener.
   expect(stdout.trim()).toBe('{"seen":["/first","/after"],"after":200}');
   expect(exitCode).toBe(0);
+});
+
+// RFC 9112 9.6: the server must close after the final response to a request
+// carrying the "close" connection option, must not process anything pipelined
+// behind it, and should send a "close" connection option back.
+describe("Connection: close request header", () => {
+  /* Connects, writes `payload`, and reads until the server FINs or `step(raw,
+   * sock)` returns true (the client then half-closes first); `serverClosed` is
+   * true only when the server FIN'd before the client did. */
+  function exchange(
+    port: number,
+    payload: string,
+    step: (raw: string, sock: ReturnType<typeof net.connect>) => boolean = () => false,
+  ): Promise<{ raw: string; serverClosed: boolean }> {
+    const { promise, resolve, reject } = Promise.withResolvers<{ raw: string; serverClosed: boolean }>();
+    const chunks: Buffer[] = [];
+    let serverClosed = false;
+    let weClosed = false;
+    const sock = net.connect(port, "127.0.0.1", () => sock.write(payload));
+    const raw = () => Buffer.concat(chunks).toString("latin1");
+    sock.on("data", d => {
+      chunks.push(d);
+      if (!weClosed && step(raw(), sock)) {
+        weClosed = true;
+        sock.end();
+      }
+    });
+    sock.on("end", () => {
+      if (!weClosed) serverClosed = true;
+    });
+    sock.on("error", reject);
+    sock.on("close", () => resolve({ raw: raw(), serverClosed }));
+    return promise;
+  }
+
+  const hasCloseHeader = (raw: string) => /\r\nconnection: close\r\n/i.test(raw);
+  const A = "GET /a HTTP/1.1\r\nHost: x\r\n";
+  const B = "GET /b HTTP/1.1\r\nHost: x\r\n\r\n";
+
+  function echoServer() {
+    return serve({ port: 0, fetch: req => new Response("saw " + new URL(req.url).pathname) });
+  }
+
+  it.each(["close", "Close", "CLOSE", "close, foo", "foo, close"])(
+    "Connection: %s closes after the response and discards the pipelined request",
+    async value => {
+      using server = echoServer();
+      const { raw, serverClosed } = await exchange(
+        server.port,
+        `${A}Connection: ${value}\r\n\r\n${B}`,
+        // Only the server may end this connection; if /b is ever served the
+        // assertions below fail instead of the test hanging.
+        r => r.includes("saw /b"),
+      );
+      expect({
+        servedA: raw.includes("saw /a"),
+        servedB: raw.includes("saw /b"),
+        closeHeader: hasCloseHeader(raw),
+        serverClosed,
+      }).toEqual({ servedA: true, servedB: false, closeHeader: true, serverClosed: true });
+    },
+  );
+
+  // Negative contract: without a "close" option the connection stays reusable.
+  // "nope!" guards against the old any-5-byte-value match; "closed"/"notclose"
+  // guard against prefix/substring matching of the token.
+  it.each(["", "keep-alive", "nope!", "closed", "notclose"])(
+    "Connection %p keeps the connection reusable",
+    async value => {
+      using server = echoServer();
+      let sentSecond = false;
+      const { raw, serverClosed } = await exchange(
+        server.port,
+        `${A}${value === "" ? "" : `Connection: ${value}\r\n`}\r\n`,
+        (r, sock) => {
+          // Once the first response is complete, prove the connection is still
+          // usable by issuing a second request on it.
+          if (!sentSecond && r.includes("saw /a")) {
+            sentSecond = true;
+            sock.write(B);
+            return false;
+          }
+          return r.includes("saw /b");
+        },
+      );
+      expect({
+        servedA: raw.includes("saw /a"),
+        servedB: raw.includes("saw /b"),
+        closeHeader: hasCloseHeader(raw),
+        serverClosed,
+      }).toEqual({ servedA: true, servedB: true, closeHeader: false, serverClosed: false });
+    },
+  );
+
+  it("delivers the body of a close-flagged POST and discards the bytes pipelined after it", async () => {
+    const seen: string[] = [];
+    using server = serve({
+      port: 0,
+      async fetch(req) {
+        const pathname = new URL(req.url).pathname;
+        seen.push(req.method + " " + pathname);
+        // Read the body so the test asserts it was consumed, not discarded
+        // along with the pipelined bytes that follow it.
+        seen.push(await req.text());
+        return new Response("saw " + pathname);
+      },
+    });
+    const { raw, serverClosed } = await exchange(
+      server.port,
+      `POST /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\n\r\nhello${B}`,
+      r => r.includes("saw /b"),
+    );
+    expect({ seen, closeHeader: hasCloseHeader(raw), serverClosed }).toEqual({
+      seen: ["POST /a", "hello"],
+      closeHeader: true,
+      serverClosed: true,
+    });
+  });
+
+  // An async handler leaves the response pending while the parser still holds
+  // the pipelined bytes; those must be discarded, not parsed (the old guard
+  // hard-closed the socket and lost the first response).
+  it("discards the pipelined request when the close-flagged response is asynchronous", async () => {
+    const seen: string[] = [];
+    using server = serve({
+      port: 0,
+      async fetch(req) {
+        seen.push(new URL(req.url).pathname);
+        await Bun.sleep(0);
+        return new Response("saw " + new URL(req.url).pathname);
+      },
+    });
+    const { raw, serverClosed } = await exchange(server.port, `${A}Connection: close\r\n\r\n${B}`, r =>
+      r.includes("saw /b"),
+    );
+    expect({
+      seen,
+      servedA: raw.includes("saw /a"),
+      closeHeader: hasCloseHeader(raw),
+      serverClosed,
+    }).toEqual({ seen: ["/a"], servedA: true, closeHeader: true, serverClosed: true });
+  });
+
+  // The defer-while-parsing gate is per socket, not per server: /a's close
+  // continuation here is drained from inside /b's onData (a different socket),
+  // which must not stop /a from closing.
+  it("closes when the async close-flagged response resolves inside another socket's handler", async () => {
+    const { promise: aIsPending, resolve: markAPending } = Promise.withResolvers<void>();
+    const { promise: gated, resolve: openGate } = Promise.withResolvers<void>();
+    using server = serve({
+      port: 0,
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/a") {
+          markAPending();
+          await gated;
+          return new Response("saw /a");
+        }
+        openGate();
+        return new Response("saw /b");
+      },
+    });
+    const a = exchange(server.port, `${A}Connection: close\r\n\r\n`);
+    // Only send /b (a second connection) once /a's handler is suspended on the
+    // gate, so /b's synchronous handler is what resolves it.
+    await aIsPending;
+    const b = exchange(server.port, B, r => r.includes("saw /b"));
+    const [ra] = await Promise.all([a, b]);
+    expect({
+      servedA: ra.raw.includes("saw /a"),
+      closeHeader: hasCloseHeader(ra.raw),
+      serverClosed: ra.serverClosed,
+    }).toEqual({ servedA: true, closeHeader: true, serverClosed: true });
+  });
+
+  // A ReadableStream body goes through the HTTPServerWritable sink, which
+  // must thread the close flag through so the header is sent too.
+  it("sends Connection: close on a streamed Response body", async () => {
+    using server = serve({
+      port: 0,
+      async fetch(req) {
+        const pathname = new URL(req.url).pathname;
+        await Bun.sleep(0);
+        return new Response(
+          new ReadableStream({
+            start(c) {
+              c.enqueue("saw " + pathname);
+              c.close();
+            },
+          }),
+        );
+      },
+    });
+    const { raw, serverClosed } = await exchange(server.port, `${A}Connection: close\r\n\r\n${B}`, r =>
+      r.includes("saw /b"),
+    );
+    expect({
+      servedA: raw.includes("saw /a"),
+      servedB: raw.includes("saw /b"),
+      closeHeader: hasCloseHeader(raw),
+      serverClosed,
+    }).toEqual({ servedA: true, servedB: false, closeHeader: true, serverClosed: true });
+  });
+
+  // The built-in 404 (no matching route, no fetch handler) is its own end
+  // call site and must also thread the close flag through.
+  it("sends Connection: close on the default 404 response", async () => {
+    using server = serve({ port: 0, routes: { "/only": new Response("only") } });
+    // There is no fetch handler, so a dispatched /b would also 404 with an
+    // empty body. Count status lines to observe it rather than its body.
+    const { raw, serverClosed } = await exchange(
+      server.port,
+      `GET /nope HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n${B}`,
+      r => (r.match(/HTTP\/1\.1 /g)?.length ?? 0) > 1,
+    );
+    expect({
+      status404: raw.startsWith("HTTP/1.1 404"),
+      responses: raw.match(/HTTP\/1\.1 /g)?.length ?? 0,
+      closeHeader: hasCloseHeader(raw),
+      serverClosed,
+    }).toEqual({ status404: true, responses: 1, closeHeader: true, serverClosed: true });
+  });
+
+  // A Connection header the Response already carries suppresses the automatic
+  // one: exactly one Connection line on the wire, whichever side wrote it.
+  it("does not duplicate a user-written Connection header", async () => {
+    using server = serve({
+      port: 0,
+      fetch: () => new Response("saw /a", { headers: { "Connection": "close" } }),
+    });
+    const { raw, serverClosed } = await exchange(
+      server.port,
+      `${A}Connection: close\r\n\r\n${B}`,
+      r => (r.match(/HTTP\/1\.1 /g)?.length ?? 0) > 1,
+    );
+    expect({
+      connectionHeaderLines: (raw.match(/\r\nconnection:/gi) ?? []).length,
+      closeHeader: hasCloseHeader(raw),
+      responses: raw.match(/HTTP\/1\.1 /g)?.length ?? 0,
+      serverClosed,
+    }).toEqual({ connectionHeaderLines: 1, closeHeader: true, responses: 1, serverClosed: true });
+  });
+
+  // HEAD responses go through the separate end-without-body path.
+  it("closes after a HEAD response to a close-flagged request", async () => {
+    const seen: string[] = [];
+    using server = serve({
+      port: 0,
+      fetch(req) {
+        seen.push(req.method + " " + new URL(req.url).pathname);
+        return new Response("saw " + new URL(req.url).pathname);
+      },
+    });
+    const { raw, serverClosed } = await exchange(
+      server.port,
+      `HEAD /a HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n${B}`,
+      r => r.includes("saw /b"),
+    );
+    expect({
+      seen,
+      responses: raw.match(/HTTP\/1\.1 /g)?.length ?? 0,
+      closeHeader: hasCloseHeader(raw),
+      serverClosed,
+    }).toEqual({ seen: ["HEAD /a"], responses: 1, closeHeader: true, serverClosed: true });
+  });
+
+  // node:http writes its own "Connection: close" from JS; the runtime must
+  // not append a second one.
+  it("node:http sends exactly one Connection: close header", async () => {
+    const nodeServer = createNodeHttpServer((req, res) => res.end("hi"));
+    await new Promise<void>(resolve => nodeServer.listen(0, "127.0.0.1", resolve));
+    try {
+      const { raw, serverClosed } = await exchange(
+        (nodeServer.address() as { port: number }).port,
+        `${A}Connection: close\r\n\r\n${B}`,
+        r => (r.match(/HTTP\/1\.1 /g)?.length ?? 0) > 1,
+      );
+      expect({
+        connectionHeaders: raw.match(/\r\nconnection: [^\r]*\r\n/gi),
+        responses: raw.match(/HTTP\/1\.1 /g)?.length ?? 0,
+        serverClosed,
+      }).toEqual({ connectionHeaders: ["\r\nConnection: close\r\n"], responses: 1, serverClosed: true });
+    } finally {
+      await new Promise<void>(resolve => nodeServer.close(() => resolve()));
+    }
+  });
+
+  // An HTMLBundle route queues the first request while its bundle builds and
+  // resumes it from the completion task: outside any onData frame and uncorked,
+  // so uws_res_end_without_body must perform the close itself.
+  it("closes after an async, uncorked end (HTMLBundle build failure)", async () => {
+    using dir = tempDir("serve-close-htmlbundle", {
+      "index.html": `<!doctype html><html><head><script type="module" src="./app.ts"></script></head><body>hi</body></html>`,
+      "app.ts": `this is a syntax error {{{ ]]]`,
+      "server.fixture.ts": `
+        import index from "./index.html";
+        const server = Bun.serve({
+          port: 0,
+          // Keep uWS's ~10s default idle timeout from masking a missing close.
+          idleTimeout: 60,
+          development: false,
+          routes: { "/": index },
+          fetch: () => new Response("fallback"),
+        });
+        console.log(server.port);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "server.fixture.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Drain stderr concurrently; it carries the (expected) bundle build errors.
+    const stderrText = proc.stderr.text();
+    let portLine = "";
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stdout) {
+      portLine += decoder.decode(chunk);
+      if (portLine.includes("\n")) break;
+    }
+    const port = Number(portLine.trim());
+    if (!(port > 0)) throw new Error(`fixture printed no port: ${JSON.stringify(portLine)}\n${await stderrText}`);
+    const { raw, serverClosed } = await exchange(
+      port,
+      `GET / HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\nConnection: close\r\n\r\n`,
+    );
+    expect({ status: raw.split("\r\n")[0], closeHeader: hasCloseHeader(raw), serverClosed }).toEqual({
+      status: "HTTP/1.1 500 Build Failed",
+      closeHeader: true,
+      serverClosed: true,
+    });
+  });
 });
 
 it("only serves /bun:info to loopback clients in development mode", async () => {

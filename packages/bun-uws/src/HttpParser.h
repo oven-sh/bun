@@ -237,6 +237,44 @@ namespace uWS
             return std::string_view(nullptr, 0);
         }
 
+        /* Token scanner for Connection headers, including comma-separated
+         * values such as "keep-alive, TE"; compares OWS-trimmed tokens
+         * case-insensitively like llhttp. */
+        bool hasConnectionToken(std::string_view token)
+        {
+            if (!bf.mightHave("connection")) {
+                return false;
+            }
+            for (Header *h = headers; (++h)->key.length();) {
+                if (h->key.length() != 10 || strncasecmp(h->key.data(), "connection", 10)) {
+                    continue;
+                }
+                const auto value = h->value;
+                size_t pos = 0;
+                while (pos < value.length()) {
+                    while (pos < value.length() && (value[pos] == ' ' || value[pos] == '\t')) {
+                        pos++;
+                    }
+                    size_t tokenStart = pos;
+                    while (pos < value.length() && value[pos] != ',') {
+                        pos++;
+                    }
+                    size_t tokenEnd = pos;
+                    while (tokenEnd > tokenStart && (value[tokenEnd - 1] == ' ' || value[tokenEnd - 1] == '\t')) {
+                        tokenEnd--;
+                    }
+                    if (tokenEnd - tokenStart == token.length()
+                        && !strncasecmp(value.data() + tokenStart, token.data(), token.length())) {
+                        return true;
+                    }
+                    if (pos < value.length() && value[pos] == ',') {
+                        pos++;
+                    }
+                }
+            }
+            return false;
+        }
+
         struct TransferEncoding {
             bool has: 1 = false;
             bool chunked: 1 = false;
@@ -413,6 +451,10 @@ namespace uWS
 
     struct HttpParser
     {
+    public:
+        /* Latches the final request for RFC 9112 9.6 so bytes after
+         * Connection: close or HTTP/1.0 are discarded, not pipelined. */
+        bool sawConnectionClose = false;
 
     private:
         std::string fallback;
@@ -868,6 +910,14 @@ namespace uWS
         data[length + 1] = 'a'; /* Anything that is not \n, to trigger "invalid request" */
         req->ancientHttp = false;
         for (;length;) {
+            /* RFC 9112 9.6: a previously parsed request on this connection
+             * carried a "close" connection option, so it was the final request.
+             * Discard anything received after it instead of dispatching it. */
+            if (sawConnectionClose) {
+                consumedTotal += length;
+                break;
+            }
+
             auto result = getHeaders(data, data + length, req->headers, reserved, req->ancientHttp, isConnectRequest, useStrictMethodValidation, maxHeaderSize);
             if(result.isError()) {
                 return result;
@@ -892,6 +942,13 @@ namespace uWS
             for (HttpRequest::Header *h = req->headers; (++h)->key.length(); ) {
                 req->bf.add(h->key);
             }
+
+            /* Latch RFC 9112 9.6's final request before the handler so
+             * async responses still prevent later pipelined dispatch. */
+            if (req->ancientHttp || req->hasConnectionToken("close")) {
+                sawConnectionClose = true;
+            }
+
             /* Break if no host header (but we can have empty string which is different from nullptr).
              * Upgrade and CONNECT requests are exempt: Node.js dispatches them through the
              * 'upgrade'/'connect' events before its Host requirement is enforced. */

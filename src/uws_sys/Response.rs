@@ -964,11 +964,11 @@ impl From<*mut H3Response> for AnyResponse {
 pub(crate) type H3Response = crate::h3::Response;
 
 bitflags::bitflags! {
-    /// Non-exhaustive bitset — values may carry
-    /// unnamed bit combinations.
+    /// Non-exhaustive mirror of `HttpResponseData::state` (a `uint16_t`):
+    /// values may carry unnamed bit combinations.
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
-    pub struct State: u8 {
+    pub struct State: u16 {
         const HTTP_STATUS_CALLED               = 1;
         const HTTP_WRITE_CALLED                = 2;
         const HTTP_END_CALLED                  = 4;

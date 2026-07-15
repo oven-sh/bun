@@ -79,8 +79,9 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
 
         return ret;
     }
-    /* Bits of status */
-    enum  : uint8_t {
+    /* Bits of status. HttpContext's request handler resets `state` wholesale
+     * at the start of every request, so only per-response facts live here. */
+    enum  : uint16_t {
         HTTP_STATUS_CALLED = 1, // used
         HTTP_WRITE_CALLED = 2, // used
         HTTP_END_CALLED = 4, // used
@@ -89,6 +90,19 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_WROTE_CONTENT_LENGTH_HEADER = 32, // used
         HTTP_WROTE_DATE_HEADER = 64, // used
         HTTP_WROTE_TRANSFER_ENCODING_HEADER = 128, // used
+        /* The request was HTTP/1.0 (no chunked transfer coding). */
+        HTTP_FROM_ANCIENT_REQUEST = 256,
+        /* No body framing at all: no Content-Length, no chunked encoding, no
+         * terminating chunk. writeStatus() sets it for 1xx and 204 (RFC 9110
+         * 8.6); node:http additionally sets it for 304. */
+        HTTP_NO_BODY_STATUS = 512,
+        /* The body is delimited by connection close: written raw with no
+         * Content-Length and no chunked framing, then closed. Used by
+         * node:http when the user removed the framing headers. */
+        HTTP_CLOSE_DELIMITED = 1024,
+        /* The application already wrote a Connection header (e.g. node:http's
+         * own "Connection: close"); suppresses the automatic one. */
+        HTTP_WROTE_CONNECTION_HEADER = 2048,
     };
 
     /* Shared context pointer for onAborted/onTimeout/onData */
@@ -114,18 +128,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     unsigned int received_bytes_per_timeout = 0;
 
     /* Current state (content-length sent, status sent, write called, etc */
-    uint8_t state = 0;
+    uint16_t state = 0;
     uint8_t idleTimeout = 10; // default HTTP_TIMEOUT 10 seconds
-    bool fromAncientRequest = false;
+    /* Not a `state` bit: it is per connection, not per response, and
+     * consumePostPadded() takes it by reference (HttpContext::onData) so
+     * upgradeToTunnelMode()'s write reaches the in-flight parse. */
     bool isConnectRequest = false;
-    /* When set, the response carries no body framing at all: no Content-Length,
-     * no chunked encoding, no terminating chunk. writeStatus() sets it for 1xx
-     * and 204 (RFC 9110 8.6); node:http additionally sets it for 304. */
-    bool noBodyStatus = false;
-    /* The response body is delimited by connection close: write it raw with
-     * no Content-Length and no chunked framing, then close. Used by node:http
-     * when the user removed the framing headers. */
-    bool closeDelimited = false;
+    /* Not a `state` bit: it brackets one onData call, which can span several
+     * pipelined requests; set/cleared by onData around the parser. */
+    bool isParsingHttp = false;
 
 #ifdef UWS_WITH_PROXY
     ProxyParser proxyParser;

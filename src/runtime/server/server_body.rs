@@ -2784,7 +2784,7 @@ where
         resp.write_header(b"Cache-Control", b"public, max-age=3600");
         resp.write_header_int(b"Age", 0);
         let buffer = writer.ctx.written();
-        resp.end(buffer, false);
+        resp.end(buffer, resp.should_close_connection());
         self.pending_requests -= 1;
     }
 
@@ -3480,7 +3480,7 @@ where
         resp.write_status(b"404 Not Found");
 
         // Rely on browser default page for now.
-        resp.end(b"", false);
+        resp.end(b"", resp.should_close_connection());
     }
 
     pub fn on_client_error_callback(

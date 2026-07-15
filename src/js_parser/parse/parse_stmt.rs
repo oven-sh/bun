@@ -924,7 +924,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export declare class Foo {}"
                                 opts.is_export = true;
                                 opts.lexical_decl = LexicalDecl::AllowAll;
-                                opts.is_typescript_declare = true;
                                 return p.parse_stmt(opts);
                             }
                         }
@@ -1790,8 +1789,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
                 // "interface \n Foo {}"
                 // "export interface \n Foo {}"
-                // "declare interface \n Foo {}"
-                if opts.is_export || opts.is_typescript_declare {
+                if opts.is_export {
                     let r = js_lexer::range_of_identifier(p.source, loc);
                     p.log()
                         .add_range_error(Some(p.source), r, b"Unexpected \"interface\"");
@@ -1804,7 +1802,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 {
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
                 }
-                if opts.ts_decorators.is_some() || opts.is_typescript_declare {
+                if opts.ts_decorators.is_some() {
                     let r = js_lexer::range_of_identifier(p.source, loc);
                     p.log()
                         .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
@@ -1825,7 +1823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
                 if p.lexer.has_newline_before {
-                    if opts.ts_decorators.is_some() || opts.is_typescript_declare {
+                    if opts.ts_decorators.is_some() {
                         let r = js_lexer::range_of_identifier(p.source, loc);
                         p.log()
                             .add_range_error(Some(p.source), r, b"Unexpected \"declare\"");
@@ -1859,8 +1857,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // "declare const x: any"
+                let after_declare_range = p.lexer.range();
                 let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
+                // Anything that we don't expect is a syntax error ("declare foo",
+                // "declare interface \n Foo {}", "declare type \n Foo = number").
+                // esbuild rewinds its lexer and calls `Unexpected()` here; we
+                // point at the token range captured before recursing instead.
+                if !matches!(
+                    &stmt.data,
+                    js_ast::StmtData::STypeScript(_)
+                        | js_ast::StmtData::SLocal(_)
+                        | js_ast::StmtData::SEmpty(_)
+                ) {
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        after_declare_range,
+                        format_args!(
+                            "Unexpected {}",
+                            bun_core::fmt::quote(p.source.text_for_range(after_declare_range))
+                        ),
+                    );
+                    return Err(crate::Error::SyntaxError);
+                }
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
                 } else {

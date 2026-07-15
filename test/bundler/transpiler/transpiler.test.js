@@ -228,15 +228,33 @@ describe("Bun.Transpiler", () => {
       // "get"/"set" without the generator star still bind to the next key across a newline.
       exp("class A { get\n x() { return 1 } }", "class A {\n  get x() {\n    return 1;\n  }\n}");
 
-      // "declare <keyword>" with a newline cannot fall through to SExpr because that would
-      // leave the remainder as live runtime code. Match esbuild and reject instead.
+      // "declare X" where X is not a valid ambient declaration is rejected, so a
+      // newline-split keyword cannot leave the remainder as live runtime code.
       err("declare interface\nFoo\n{ sideEffect() }", 'Unexpected "interface"');
       err("declare abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("declare type\nFoo = number", 'Unexpected "type"');
+      err("declare namespace\nFoo { sideEffect() }", 'Unexpected "namespace"');
+      err("declare module\nFoo { sideEffect() }", 'Unexpected "module"');
+      err("declare declare\nlet x = 1", 'Unexpected "declare"');
+      err("declare foo", 'Unexpected "foo"');
       err("export declare interface\nFoo {}", 'Unexpected "interface"');
       err("export declare abstract\nclass Foo {}", 'Unexpected "abstract"');
-      err("declare declare\nlet x = 1", 'Unexpected "declare"');
-      // "export abstract \n class" falls through silently like esbuild (export is discarded).
+      // All valid "declare X" forms still emit nothing.
+      exp("declare function f(): void", "");
+      exp("declare class C {}", "");
+      exp("declare enum E { A }", "");
+      exp("declare namespace N { let x: number }", "");
+      exp("declare abstract class C {}", "");
+      exp("export declare function f(): void", "");
+      exp("export declare const x: number", "");
+      // "export abstract \n class" and "export declare \n class" fall through silently like esbuild.
       exp("export abstract\nclass Foo {}\nnew Foo", "abstract;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("export declare\nclass Foo {}\nnew Foo", "declare;\n\nclass Foo {\n}\nnew Foo;\n");
+      // Inside an ambient body the flag is propagated for body semantics, but the whole
+      // block is erased regardless, so newline-split keywords in the body are harmless.
+      exp("declare namespace N { abstract\nclass Foo {} }", "");
+      exp("declare namespace N { declare\nlet x: number }", "");
+      exp("declare global { abstract\nclass Foo {} }\nexport {}", "export {};\n");
 
       // Decorators before "declare"/"abstract" with a newline must still demand a class.
       err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Unexpected "declare"');

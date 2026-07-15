@@ -388,25 +388,12 @@ console.table([{ a: 4 }]);`,
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const box = (indent: string, vals: number[]) =>
-    [
-      "┌───┬───┐",
-      "│   │ a │",
-      "├───┼───┤",
-      ...vals.map((v, i) => `│ ${i} │ ${v} │`),
-      "└───┴───┘",
-    ]
+    ["┌───┬───┐", "│   │ a │", "├───┼───┤", ...vals.map((v, i) => `│ ${i} │ ${v} │`), "└───┴───┘"]
       .map(l => indent + l + "\n")
       .join("");
 
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout:
-      box("", [0]) +
-      "G1\n" +
-      "  marker\n" +
-      box("  ", [1, 2]) +
-      "  G2\n" +
-      box("    ", [3]) +
-      box("", [4]),
+    stdout: box("", [0]) + "G1\n" + "  marker\n" + box("  ", [1, 2]) + "  G2\n" + box("    ", [3]) + box("", [4]),
     stderr: "",
     exitCode: 0,
   });

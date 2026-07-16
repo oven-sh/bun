@@ -169,6 +169,8 @@ function hasObserver(type) {
   return (observerCounts.get(type) ?? 0) > 0;
 }
 
+let createPerformanceNodeEntry;
+
 function startPerf(target, key, context) {
   context.startTime = performance.now();
   target[key] = context;
@@ -181,16 +183,16 @@ function stopPerf(target, key, context) {
   }
   target[key] = undefined;
   const startTime = ctx.startTime;
-  const entry = {
-    name: ctx.name,
-    entryType: ctx.type,
+  createPerformanceNodeEntry ??= require("internal/perf_hooks/performance_entry").createPerformanceNodeEntry;
+  const entry = createPerformanceNodeEntry(
+    ctx.name,
+    ctx.type,
     startTime,
-    duration: performance.now() - startTime,
+    performance.now() - startTime,
     // Node.js merges the detail recorded at startPerf() with the detail
     // passed to stopPerf() (e.g. http entries carry both req and res).
-    detail:
-      ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined,
-  };
+    ctx.detail !== undefined || context?.detail !== undefined ? { ...ctx.detail, ...context?.detail } : undefined,
+  );
   for (const observer of kObservers) {
     observer.bufferEntry(entry);
   }

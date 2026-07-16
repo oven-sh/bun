@@ -1,0 +1,36 @@
+CRYPTO_gcm128_init_aes_key selects the stitched VAES AES-GCM implementations
+(gcm_x86_vaes_avx2/avx512) based only on the VPCLMULQDQ/AVX ghash choice and
+CRYPTO_is_VAES_capable(), without checking that the AES key schedule was
+actually produced by aes_hw_set_encrypt_key. When OPENSSL_ia32cap masks
+AES-NI (bit 57, e.g. `~0x200000000000000`) but leaves VAES set,
+aes_ctr_set_key falls back to vpaes, whose key schedule is stored in a
+transformed basis. The VAES bulk assembly then runs against that vpaes-format
+schedule and silently produces wrong ciphertext (and decrypts garbage whose
+tag still verifies, since GHASH and EK0 come from the consistent vpaes block
+function). The aarch64 branches directly below already gate on |is_hwaes|;
+this adds the same gate to the two x86-64 VAES branches.
+
+Upstream BoringSSL main has the same bug as of 2026-02.
+See https://github.com/oven-sh/bun/issues/32126
+
+--- a/crypto/fipsmodule/aes/gcm.cc.inc
++++ b/crypto/fipsmodule/aes/gcm.cc.inc
+@@ -276,11 +276,16 @@ void bssl::CRYPTO_gcm128_init_aes_key(GCM128_KEY *gcm_key, const uint8_t *key,
+ 
+ #if !defined(OPENSSL_NO_ASM)
+ #if defined(OPENSSL_X86_64)
++  // The stitched AES-GCM implementations consume |gcm_key->aes| directly and
++  // expect the standard round-key layout produced by |aes_hw_set_encrypt_key|.
++  // Without |is_hwaes|, masking AES-NI but not VAES via OPENSSL_ia32cap made
++  // |aes_ctr_set_key| fall back to vpaes's transformed key schedule while the
++  // VAES bulk code still ran, silently producing wrong ciphertext.
+   if (gcm_key->ghash == gcm_ghash_vpclmulqdq_avx512 &&
+-      CRYPTO_is_VAES_capable()) {
++      CRYPTO_is_VAES_capable() && is_hwaes) {
+     gcm_key->impl = gcm_x86_vaes_avx512;
+   } else if (gcm_key->ghash == gcm_ghash_vpclmulqdq_avx2 &&
+-             CRYPTO_is_VAES_capable()) {
++             CRYPTO_is_VAES_capable() && is_hwaes) {
+     gcm_key->impl = gcm_x86_vaes_avx2;
+   } else if (gcm_key->ghash == gcm_ghash_avx && is_hwaes) {
+     gcm_key->impl = gcm_x86_aesni;

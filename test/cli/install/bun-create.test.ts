@@ -1,8 +1,11 @@
 import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { exists, stat } from "fs/promises";
-import { bunExe, bunEnv as env, tmpdirSync } from "harness";
+import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
+import * as nodetls from "node:tls";
+import { once } from "node:events";
 import { join } from "path";
+import { gzipSync } from "zlib";
 
 let x_dir: string;
 
@@ -81,6 +84,100 @@ it("should create selected template with @ prefix implicit `/create` with versio
   expect(err.split(/\r?\n/)).toContain(`error: GET https://registry.npmjs.org/@second-quick-start%2fcreate - 404`);
 
   await exited;
+});
+
+// The GitHub tarball endpoint can respond without Content-Length and without
+// Transfer-Encoding: chunked (close-delimited body). When such a body arrives
+// in more than one TCP packet the HTTP client reports intermediate progress,
+// and `AsyncHTTP::send_sync` (used by `bun create`, `bun upgrade`, `bun pm view`)
+// previously treated the first progress callback as the final result: it either
+// returned with an incomplete body or panicked on an `Option::unwrap()` of the
+// absent response metadata (observed in CI build 74166 during api.github.com
+// flapping).
+it("handles a close-delimited GitHub tarball body split across packets", async () => {
+  // Valid gzip of a single-member tar archive ("package.json" at depth 1 so
+  // extraction succeeds once the body is fully received).
+  const pkg = Buffer.from(
+    JSON.stringify({
+      name: "split-body-template",
+      "bun-create": { start: "bun run ok" },
+    }),
+  );
+  const tar = Buffer.alloc(512 + ((pkg.length + 511) & ~511) + 1024);
+  const header = tar.subarray(0, 512);
+  header.write("pkg/package.json");
+  header.write("0000644", 100);
+  header.write("0000000", 108);
+  header.write("0000000", 116);
+  header.write(pkg.length.toString(8).padStart(11, "0"), 124);
+  header.write("00000000000", 136);
+  header.write("        ", 148);
+  header.write("0", 156);
+  header.write("ustar\0", 257);
+  header.write("00", 263);
+  let sum = 0;
+  for (const b of header) sum += b;
+  header.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  pkg.copy(tar, 512);
+  const gz = gzipSync(tar);
+
+  // Raw TLS server so we control the exact HTTP framing: no Content-Length
+  // header, no chunked encoding, body ends when the socket closes.
+  const sockets = new Set<nodetls.TLSSocket>();
+  const server = nodetls.createServer({ cert: tls.cert, key: tls.key }, socket => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.on("close", () => sockets.delete(socket));
+    socket.once("data", () => {
+      socket.write(
+        "HTTP/1.1 200 OK\r\n" +
+          "content-type: application/x-gzip\r\n" +
+          "connection: close\r\n" +
+          "\r\n",
+      );
+      // First body packet.
+      socket.write(gz.subarray(0, Math.floor(gz.length / 2)));
+      // Second body packet on a later tick so it arrives as a separate TLS
+      // record and triggers a second on_data() in the HTTP client.
+      setImmediate(() => {
+        socket.write(gz.subarray(Math.floor(gz.length / 2)));
+        socket.end();
+      });
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const port = (server.address() as import("node:net").AddressInfo).port;
+
+  try {
+    await using proc = spawn({
+      cmd: [bunExe(), "create", "github.com/owner/split-body-template", "--no-install", "--no-git"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        GITHUB_API_DOMAIN: `127.0.0.1:${port}`,
+      },
+    });
+
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ out, err, exitCode, signalCode: proc.signalCode }).toEqual({
+      out: expect.stringContaining("Success! owner/split-body-template loaded into split-body-template"),
+      err: expect.not.stringContaining("error:"),
+      exitCode: 0,
+      signalCode: null,
+    });
+    expect(out).toContain("bun run ok");
+    expect(await Bun.file(join(x_dir, "split-body-template", "package.json")).json()).toEqual({
+      name: "split-body-template",
+    });
+  } finally {
+    for (const s of sockets) s.destroy();
+    await new Promise<void>(r => server.close(() => r()));
+  }
 });
 
 it("should create template from local folder", async () => {

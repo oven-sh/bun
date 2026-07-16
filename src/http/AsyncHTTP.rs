@@ -603,30 +603,45 @@ impl<'a> AsyncHTTP<'a> {
 // Note: `bun_threading::Channel` requires `T: Copy`, which
 // `HTTPClientResult` is not. `send_sync` is a one-shot blocking handoff, so a
 // Guarded<Option<T>>+Condvar is the exact semantics needed.
+#[derive(Default)]
+struct SingleHTTPChannelSlot {
+    result: Option<HTTPClientResult<'static>>,
+    // `to_result()` moves `cloned_metadata` out on the first progress
+    // callback; stash it so the terminal result (and the `Response` that
+    // borrows its `owned_buf`) can carry it back to `send_sync`.
+    metadata: Option<crate::HTTPResponseMetadata>,
+}
+
 pub struct SingleHTTPChannel {
-    slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
+    slot: bun_threading::Guarded<SingleHTTPChannelSlot>,
     cv: bun_threading::Condvar,
 }
 
 impl SingleHTTPChannel {
     pub fn init() -> SingleHTTPChannel {
         SingleHTTPChannel {
-            slot: bun_threading::Guarded::new(None),
+            slot: bun_threading::Guarded::new(SingleHTTPChannelSlot::default()),
             cv: bun_threading::Condvar::new(),
         }
     }
     pub fn reset(&mut self) {
-        *self.slot.lock() = None;
+        *self.slot.lock() = SingleHTTPChannelSlot::default();
     }
-    fn write_item(&self, item: HTTPClientResult<'static>) {
+    fn stash_metadata(&self, m: crate::HTTPResponseMetadata) {
+        self.slot.lock().metadata = Some(m);
+    }
+    fn write_item(&self, mut item: HTTPClientResult<'static>) {
         let mut g = self.slot.lock();
-        *g = Some(item);
+        if item.metadata.is_none() {
+            item.metadata = g.metadata.take();
+        }
+        g.result = Some(item);
         self.cv.notify_one();
     }
     fn read_item(&self) -> HTTPClientResult<'static> {
         let mut g = self.slot.lock();
         loop {
-            if let Some(item) = g.take() {
+            if let Some(item) = g.result.take() {
                 return item;
             }
             self.cv.wait_guarded(&mut g);
@@ -637,8 +652,20 @@ impl SingleHTTPChannel {
 fn send_sync_callback(
     this: *mut SingleHTTPChannel,
     async_http: *mut AsyncHTTP<'static>,
-    result: HTTPClientResult<'_>,
+    mut result: HTTPClientResult<'_>,
 ) {
+    // SAFETY: `this` is the heap `SingleHTTPChannel` allocated in `send_sync`
+    // and kept alive until `read_item` returns the terminal result below.
+    let channel = unsafe { &*this };
+    // A close-delimited body reports progress once per packet; stash the
+    // metadata (only present on the first such callback) and otherwise
+    // ignore intermediate progress so `send_sync` sees the full body.
+    if result.has_more {
+        if let Some(m) = result.metadata.take() {
+            channel.stash_metadata(m);
+        }
+        return;
+    }
     // SAFETY: `async_http` is the HTTP-thread copy (inside ThreadlocalAsyncHTTP)
     // and `real` was set to the caller's stack/heap AsyncHTTP before scheduling.
     let async_http = unsafe { &mut *async_http };
@@ -662,13 +689,9 @@ fn send_sync_callback(
             .store(async_http.state.load(Ordering::Relaxed), Ordering::Relaxed);
         real.response_buffer = async_http.response_buffer;
     }
-    // SAFETY: `this` is the leaked `SingleHTTPChannel` from `send_sync` and is
-    // alive for the process lifetime; `result` borrows the HTTP-thread copy's
-    // response buffer, which is the caller's buffer — outlives the read in
-    // `send_sync`.
-    unsafe {
-        (*this).write_item(result.detach_lifetime());
-    }
+    // SAFETY: `result.body` borrows the HTTP-thread copy's response buffer,
+    // which is the caller's buffer and outlives the read in `send_sync`.
+    channel.write_item(unsafe { result.detach_lifetime() });
 }
 
 impl<'a> AsyncHTTP<'a> {
@@ -686,22 +709,24 @@ impl<'a> AsyncHTTP<'a> {
         self.schedule(&mut batch);
         crate::HTTPThread::schedule(batch);
 
-        // `ctx` is a live heap allocation we own; the HTTP thread only touches
-        // it inside `send_sync_callback`, whose final action is `write_item`,
-        // so by the time `read_item` returns the callback has finished and no
-        // other reference remains. `read_item` takes `&self` (channel internals
-        // are interior-mutable), so a `ParentRef` shared deref is sufficient.
+        // `ctx` is a live heap allocation we own; `send_sync_callback` writes
+        // exactly once (on the terminal `!has_more` result), after which no
+        // reference to `ctx` remains on the HTTP thread.
         let result = bun_ptr::ParentRef::from(ctx).read_item();
-        // SAFETY: see above — sole owner, callback completed.
+        // SAFETY: see above — sole owner, terminal callback completed.
         drop(unsafe { bun_core::heap::take(ctx.as_ptr()) });
         if let Some(err) = result.fail {
             return Err(err);
         }
-        debug_assert!(result.metadata.is_some());
+        let Some(metadata) = result.metadata else {
+            // Terminal result with neither error nor response head; treat as a
+            // closed connection rather than panicking on network-driven state.
+            return Err(crate::Error::ConnectionClosed);
+        };
         // The returned `Response` borrows `metadata.owned_buf` (status text +
         // header slices); suppress Drop so the borrowed buffer outlives the
         // call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(result.metadata.unwrap());
+        let metadata = core::mem::ManuallyDrop::new(metadata);
         Ok(metadata.response)
     }
 

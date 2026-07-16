@@ -95,6 +95,31 @@ describe("Bun.wrapAnsi", () => {
       // "ab" is 2 chars, should fit in width 2
       expect(Bun.wrapAnsi(input, 2)).toBe(input);
     });
+
+    // SGR close codes (22-29, 49, 55) and unknown codes have no close mapping
+    // in ansi-styles' codes map, so npm wrap-ansi never re-emits them after a
+    // line break. Only open codes with a known close code are closed-then-reopened.
+    test.each([22, 23, 24, 25, 27, 28, 29, 49, 55, 39, 0, 200])(
+      "does not re-open SGR close/unknown code %p after line break",
+      code => {
+        expect(Bun.wrapAnsi(`\x1b[${code}mabc def`, 3)).toBe(`\x1b[${code}mabc\ndef`);
+      },
+    );
+
+    test.each([
+      [1, 22],
+      [4, 24],
+      [31, 39],
+      [42, 49],
+      [53, 55],
+      [100, 49],
+    ])("re-opens SGR open code %p after line break", (open, close) => {
+      expect(Bun.wrapAnsi(`\x1b[${open}mabc def`, 3)).toBe(`\x1b[${open}mabc\x1b[${close}m\n\x1b[${open}mdef`);
+    });
+
+    test("close code following an open code is not carried across line break", () => {
+      expect(Bun.wrapAnsi("\x1b[42mab\x1b[49mcd ef", 4)).toBe("\x1b[42mab\x1b[49mcd\nef");
+    });
   });
 
   describe("Unicode support", () => {

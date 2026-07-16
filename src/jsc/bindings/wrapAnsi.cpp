@@ -435,6 +435,8 @@ static std::optional<uint32_t> getCloseCode(uint32_t code)
         return 28;
     case 9:
         return 29;
+    case 53:
+        return 55;
     }
 
     if (code >= 30 && code <= 37)
@@ -511,8 +513,9 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
                 }
             }
         } else if (c == '\n') {
-            // Restore styles after newline
-            if (escapeCode) {
+            // Restore styles after newline (only open codes; close/unknown codes
+            // have no close mapping and are not re-emitted, matching npm wrap-ansi)
+            if (escapeCode && getCloseCode(*escapeCode)) {
                 result.append("\x1b["_s);
                 result.append(String::number(*escapeCode));
                 result.append('m');

@@ -16,7 +16,7 @@
 //   bun  differential/run.mjs --seed <S> --index <I> --capabilities '<hdr>'
 //
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 const dir = join(import.meta.dir, "differential");
@@ -43,9 +43,14 @@ test(`regex differential vs node (${count} cases, seed ${seed})`, async () => {
     return;
   }
 
-  const oracle = await run([nodeBin, runner, "--seed", String(seed), "--count", String(count)]);
+  // Results go through files, not stdout: the streams are large.
+  using tmp = tempDir("regex-diff", {});
+  const oracleFile = join(String(tmp), "oracle.jsonl");
+  const underFile = join(String(tmp), "under.jsonl");
+
+  const oracle = await run([nodeBin, runner, "--seed", String(seed), "--count", String(count), "--out", oracleFile]);
   expect(oracle.exitCode).toBe(0);
-  const oracleLines = oracle.stdout.trim().split("\n");
+  const oracleLines = (await Bun.file(oracleFile).text()).trim().split("\n");
   const header = oracleLines[0]; // pins the capability set the cases were generated for
 
   const under = await run([
@@ -57,9 +62,11 @@ test(`regex differential vs node (${count} cases, seed ${seed})`, async () => {
     String(count),
     "--capabilities",
     header,
+    "--out",
+    underFile,
   ]);
   expect(under.exitCode).toBe(0);
-  const underLines = under.stdout.trim().split("\n");
+  const underLines = (await Bun.file(underFile).text()).trim().split("\n");
 
   // Compare case-by-case for a precise, reproducible failure report.
   expect(underLines.length).toBe(oracleLines.length);

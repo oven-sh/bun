@@ -9,7 +9,7 @@
 // The engine under test defaults to `bun`; override with --bun /path/to/bun.
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -35,11 +35,12 @@ for (let seed = from; seed <= to; seed++) {
   let oracleOut;
   let underOut;
   try {
-    oracleOut = execFileSync(process.execPath, [runner, "--seed", String(seed), "--count", String(count)], {
+    const oracleFile = join(outDir, `oracle-${seed}.jsonl`);
+    execFileSync(process.execPath, [runner, "--seed", String(seed), "--count", String(count), "--out", oracleFile], {
       timeout: perSeedTimeoutMs,
-      maxBuffer: 512 * 1024 * 1024,
-      encoding: "utf8",
+      stdio: "ignore",
     });
+    oracleOut = readFileSync(oracleFile, "utf8");
   } catch (e) {
     record.status = "oracle-timeout-or-error";
     record.detail = String(e && e.message ? e.message : e).slice(0, 200);
@@ -68,6 +69,8 @@ for (let seed = from; seed <= to; seed++) {
   if (oracleOut === underOut) {
     console.log(`seed ${seed}: identical`);
     summary.seeds.push(record);
+    unlinkSync(join(outDir, `oracle-${seed}.jsonl`));
+    unlinkSync(join(outDir, `under-${seed}.jsonl`));
     continue;
   }
   const oLines = oracleOut.trim().split("\n");

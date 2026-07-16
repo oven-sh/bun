@@ -189,7 +189,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     return Err(crate::Error::SyntaxError);
                 }
 
-                let _ = p.skip_type_script_type_arguments::<false>()?;
+                let _ = p.skip_type_script_type_arguments::<false, false>()?;
                 if p.lexer.token != T::TOpenParen {
                     p.lexer.expected(T::TOpenParen)?;
                 }

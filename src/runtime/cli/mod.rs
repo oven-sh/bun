@@ -414,15 +414,15 @@ pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8
 #[allow(non_upper_case_globals)]
 /// `--redirect-warnings=<path>` — process warnings are appended to this file
 /// instead of stderr (Node's flag; NODE_REDIRECT_WARNINGS is handled by the
-/// C++ consumer as the fallback).
-pub(crate) static Bun__Node__RedirectWarnings: bun_threading::Guarded<Option<Box<[u8]>>> =
-    bun_threading::Guarded::new(None);
+/// C++ consumer as the fallback). Set once during CLI parse.
+pub(crate) static Bun__Node__RedirectWarnings: std::sync::OnceLock<Box<[u8]>> =
+    std::sync::OnceLock::new();
 
 #[allow(non_upper_case_globals)]
 /// `--disable-warning=<code-or-type>` (repeatable) — warnings whose `code`
-/// or `name` matches an entry are suppressed.
-pub(crate) static Bun__Node__DisabledWarnings: bun_threading::Guarded<Vec<Box<[u8]>>> =
-    bun_threading::Guarded::new(Vec::new());
+/// or `name` matches an entry are suppressed. Set once during CLI parse.
+pub(crate) static Bun__Node__DisabledWarnings: std::sync::OnceLock<Vec<Box<[u8]>>> =
+    std::sync::OnceLock::new();
 
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence

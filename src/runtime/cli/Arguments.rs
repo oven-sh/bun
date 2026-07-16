@@ -1319,15 +1319,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             Bun__Node__ProcessPendingDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(path) = args.option(b"--redirect-warnings") {
-            *cli::Bun__Node__RedirectWarnings.lock() = Some(path.into());
+            let _ = cli::Bun__Node__RedirectWarnings.set(path.into());
         }
         {
             let disabled = args.options(b"--disable-warning");
             if !disabled.is_empty() {
-                let mut guard = cli::Bun__Node__DisabledWarnings.lock();
-                for entry in disabled {
-                    guard.push(Box::from(*entry));
-                }
+                let _ = cli::Bun__Node__DisabledWarnings
+                    .set(disabled.iter().map(|e| Box::from(*e)).collect());
             }
         }
         if let Some(title) = args.option(b"--title") {

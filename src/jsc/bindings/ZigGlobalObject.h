@@ -69,6 +69,7 @@ struct node_module;
 #include <node_api.h>
 #include "BakeAdditionsToGlobalObject.h"
 #include "WriteBarrierList.h"
+#include "NativeModuleList.h"
 
 namespace Bun {
 class JSCommonJSExtensions;
@@ -440,6 +441,15 @@ public:
 
     using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
     using NapiModuleAndExports = std::array<WriteBarrier<Unknown>, 2>;
+    // Native synthetic modules (node:buffer, node:constants, ...) evaluate
+    // once per registry (ESM vs require); caching the default-export object
+    // here keeps require(id) === (await import(id)).default. Visited via
+    // FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
+    using NativeModuleDefaultsArray = std::array<WriteBarrier<JSObject>, NativeModuleDefaultSlotCount>;
+    WriteBarrier<JSObject>& nativeModuleDefaultObject(NativeModuleDefaultSlot slot)
+    {
+        return m_nativeModuleDefaults[static_cast<size_t>(slot)];
+    }
 
     // Macro for doing something with each member of GlobalObject that has to be visited by the
     // garbage collector. To use, define a macro taking three arguments (visibility, type, and
@@ -496,6 +506,7 @@ public:
                                                                                                              \
     /* WriteBarrier<Unknown> m_JSBunDebuggerValue; */                                                        \
     V(private, ThenablesArray, m_thenables)                                                                  \
+    V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
                                                                                                              \
     /* Error.prepareStackTrace */                                                                            \
     V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
@@ -679,18 +690,6 @@ public:
 public:
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
-
-    // Native synthetic modules (node:buffer, node:constants, ...) evaluate
-    // once per registry (ESM import vs require), but Node guarantees
-    // require(id) === (await import(id)).default === process.getBuiltinModule(id).
-    // Cache the default-export object per module key so every evaluation
-    // shares one instance. WriteBarrier (visited in visitChildrenImpl under
-    // the GC lock), NOT JSC::Strong: a Strong member would root an object
-    // that references this global, so the global itself could never be
-    // collected — `bun test --isolate` discards globals all the time.
-    // Mutate only while holding gcLock(); the GC thread iterates it.
-    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>> m_nativeModuleDefaultObjects WTF_GUARDED_BY_LOCK(m_gcLock);
-    WTF::HashMap<WTF::String, JSC::WriteBarrier<JSC::JSObject>>& nativeModuleDefaultObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_nativeModuleDefaultObjects; }
 
     // This is the result of dlopen()ing a napi module.
     // We will add it to the resulting napi value.

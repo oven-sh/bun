@@ -345,7 +345,7 @@ JSValue InternalModuleRegistry::createInternalModuleById(JSGlobalObject* globalO
         const urlString = "builtin://" + id.replace(/\.[mc]?[tj]s$/, "").replace(/[^a-zA-Z0-9]+/g, "/");
         const inner =
           n >= nativeStartIndex
-            ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]}, ${JSON.stringify(id)}_s);`
+            ? `return generateNativeModule(globalObject, vm, generateNativeModule_${nativeModuleEnums[id]});`
             : `INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, "${moduleName}"_s, ${fileBase}_s, InternalModuleRegistryConstants::${idToEnumName(id)}Code, "${urlString}"_s);`;
         return `case Field::${idToEnumName(id)}: {
       ${inner}

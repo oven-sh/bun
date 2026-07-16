@@ -72,8 +72,7 @@ pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
 /// `--redirect-warnings=<path>` value, if set. Returns false when unset.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
-    let guard = crate::cli::Bun__Node__RedirectWarnings.lock();
-    let Some(path) = guard.as_deref() else {
+    let Some(path) = crate::cli::Bun__Node__RedirectWarnings.get() else {
         return false;
     };
     // SAFETY: out is a valid out-param provided by the C++ caller.
@@ -91,9 +90,11 @@ pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
     lens: *mut usize,
     cap: usize,
 ) -> usize {
-    let guard = crate::cli::Bun__Node__DisabledWarnings.lock();
-    let n = guard.len().min(cap);
-    for (i, entry) in guard.iter().take(n).enumerate() {
+    let Some(disabled) = crate::cli::Bun__Node__DisabledWarnings.get() else {
+        return 0;
+    };
+    let n = disabled.len().min(cap);
+    for (i, entry) in disabled.iter().take(n).enumerate() {
         // SAFETY: caller provides `cap`-sized arrays; entries live for the
         // process (write-once at CLI parse, never freed).
         unsafe {
@@ -101,7 +102,7 @@ pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
             *lens.add(i) = entry.len();
         }
     }
-    guard.len()
+    disabled.len()
 }
 
 #[unsafe(no_mangle)]

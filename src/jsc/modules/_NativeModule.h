@@ -4,6 +4,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include "ZigGlobalObject.h"
+#include "NativeModuleList.h"
 
 
 // These modules are implemented in native code as a function which writes ESM
@@ -11,39 +12,18 @@
 // of these functions.
 
 // To add a new native module
-//   1. Add a new line to `BUN_FOREACH_NATIVE_MODULE`
+//   1. Add a new line to `BUN_FOREACH_NATIVE_MODULE` in NativeModuleList.h
 //   2. Add a case to `HardcodedModule` (src/resolve_builtins/HardcodedModule.rs) that resolves the import.
 //   3. Add a new file in this folder named after the module, camelcase and suffixed with Module,
 //      like "NodeBufferModule.h" or "BunJSCModule.h". It should call DEFINE_NATIVE_MODULE(name).
 //
 //      The native module function is called to create the module object:
-//      - INIT_NATIVE_MODULE(n) is called with the number of exports
+//      - INIT_NATIVE_MODULE(name, n) is called with the enum name and number of exports
 //      - put(id, jsvalue) adds an export
 //      - putNativeFn(id, nativefn) lets you quickly add from `JSC_DEFINE_HOST_FUNCTION`
 //      - NATIVE_MODULE_FINISH() do asserts and finalize everything.
 // If you decide to not use INIT_NATIVE_MODULE. make sure the first property
 // given is the default export
-
-#define BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
-    macro("bun:test"_s, BunTest) \
-    macro("bun:jsc"_s, BunJSC) \
-    macro("bun:app"_s, BunApp) \
-    macro("node:buffer"_s, NodeBuffer) \
-    macro("node:constants"_s, NodeConstants) \
-    macro("node:string_decoder"_s, NodeStringDecoder) \
-    macro("node:util/types"_s, NodeUtilTypes)  \
-    macro("utf-8-validate"_s, UTF8Validate) \
-    macro("abort-controller"_s, AbortControllerModule)
-
-#define BUN_FOREACH_ESM_NATIVE_MODULE(macro) \
-    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro) \
-    macro("node:module"_s, NodeModule)  \
-    macro("node:process"_s, NodeProcess) \
-    macro("bun"_s, BunObject)
-
-#define BUN_FOREACH_CJS_NATIVE_MODULE(macro) \
-    BUN_FOREACH_ESM_AND_CJS_NATIVE_MODULE(macro)
-
 
 #if ASSERT_ENABLED
 
@@ -78,22 +58,15 @@
       Vector<JSC::Identifier, 4> &exportNames,                                 \
       JSC::MarkedArgumentBuffer &exportValues)
 
-#define INIT_NATIVE_MODULE(numberOfExportNames)                                \
+#define INIT_NATIVE_MODULE(slot, numberOfExportNames)                          \
   Zig::GlobalObject *globalObject =                                            \
       static_cast<Zig::GlobalObject *>(lexicalGlobalObject);                   \
   JSC::VM &vm = globalObject->vm();                                            \
   /* Node guarantees require(id), import(id).default and                       \
      process.getBuiltinModule(id) are the same object; the generator runs      \
-     once per registry, so reuse one default object per module key. The        \
-     structural map mutation happens under the GC lock because the GC          \
-     thread iterates this map in visitChildrenImpl. */                         \
+     once per registry, so reuse one default object per module key. */         \
   auto &nativeModuleDefaultSlot =                                              \
-      ([&]() -> JSC::WriteBarrier<JSC::JSObject> & {                           \
-        WTF::Locker locker { globalObject->gcLock() };                         \
-        return globalObject->nativeModuleDefaultObjects()                      \
-            .add(moduleKey.string(), JSC::WriteBarrier<JSC::JSObject>())       \
-            .iterator->value;                                                  \
-      })();                                                                    \
+      globalObject->nativeModuleDefaultObject(Zig::NativeModuleDefaultSlot::slot); \
   [[maybe_unused]] const bool defaultObjectWasCached = !!nativeModuleDefaultSlot; \
   JSC::JSObject *defaultObject = defaultObjectWasCached                        \
       ? nativeModuleDefaultSlot.get()                                          \

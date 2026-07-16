@@ -157,7 +157,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGl
 
 DEFINE_NATIVE_MODULE(NodeBuffer)
 {
-    INIT_NATIVE_MODULE(12);
+    INIT_NATIVE_MODULE(NodeBuffer, 12);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     put(JSC::Identifier::fromString(vm, "Buffer"_s), globalObject->JSBufferConstructor());

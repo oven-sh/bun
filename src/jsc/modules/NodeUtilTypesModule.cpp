@@ -466,7 +466,7 @@ namespace Zig {
 // Hardcoded module "node:util/types"
 DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
 {
-    INIT_NATIVE_MODULE(44);
+    INIT_NATIVE_MODULE(NodeUtilTypes, 44);
 
     putNativeFn(Identifier::fromString(vm, "isExternal"_s), jsFunctionIsExternal);
     putNativeFn(Identifier::fromString(vm, "isDate"_s), jsFunctionIsDate);

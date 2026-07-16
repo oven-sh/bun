@@ -1013,8 +1013,8 @@ describe("async context passes through", () => {
              const sym = Object.getOwnPropertySymbols(client)
                .find(x => x.description === "::bunhttp2asynccontextframe::");
              console.log(sym === undefined ? "SYMBOL-MISSING" : client[sym] === undefined ? "CLEARED" : "PINNED");
+             // Drain rather than process.exit(), like the siblings.
              server.close();
-             process.exit(0);
            });
          });`,
       ],

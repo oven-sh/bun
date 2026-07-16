@@ -32,60 +32,54 @@ test.each([
   expect(exitCode).toBe(0);
 });
 
-test(
-  "bunfig.toml preload with relative path works from project root",
-  async () => {
-    using dir = tempDir("bun-issue-29308-root", {
-      "bunfig.toml": `preload = ["./preload.ts"]\n`,
-      "preload.ts": `console.log("preload script executed!");\n`,
-      "src/index.ts": `console.log("hello from root");\n`,
-    });
+test("bunfig.toml preload with relative path works from project root", async () => {
+  using dir = tempDir("bun-issue-29308-root", {
+    "bunfig.toml": `preload = ["./preload.ts"]\n`,
+    "preload.ts": `console.log("preload script executed!");\n`,
+    "src/index.ts": `console.log("hello from root");\n`,
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "src/index.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "src/index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("preload script executed!\nhello from root\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stdout).toBe("preload script executed!\nhello from root\n");
+  expect(exitCode).toBe(0);
+});
 
 // A --preload flag on the CLI must be merged with, not replaced by, preload
 // entries the ancestor bunfig.toml contributes. Before the append-fix in
 // loadPreload, the secondary loadConfig call from run_command.zig clobbered
 // CLI preloads when a parent bunfig.toml also had preload entries.
-test(
-  "CLI --preload is merged with ancestor bunfig.toml preload entries",
-  async () => {
-    using dir = tempDir("bun-issue-29308-merge", {
-      "bunfig.toml": `preload = ["./setup.ts"]\n`,
-      "setup.ts": `console.log("setup from bunfig");\n`,
-      "trace.ts": `console.log("trace from cli");\n`,
-      "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
-      "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
-    });
+test("CLI --preload is merged with ancestor bunfig.toml preload entries", async () => {
+  using dir = tempDir("bun-issue-29308-merge", {
+    "bunfig.toml": `preload = ["./setup.ts"]\n`,
+    "setup.ts": `console.log("setup from bunfig");\n`,
+    "trace.ts": `console.log("trace from cli");\n`,
+    "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
+    "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--preload", join(String(dir), "trace.ts"), "src/index.ts"],
-      env: bunEnv,
-      cwd: join(String(dir), "packages", "pkg1"),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--preload", join(String(dir), "trace.ts"), "src/index.ts"],
+    env: bunEnv,
+    cwd: join(String(dir), "packages", "pkg1"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Bunfig preloads run before CLI preloads, then the script.
-    expect(stdout).toBe("setup from bunfig\ntrace from cli\nhello from pkg1\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  // Bunfig preloads run before CLI preloads, then the script.
+  expect(stdout).toBe("setup from bunfig\ntrace from cli\nhello from pkg1\n");
+  expect(exitCode).toBe(0);
+});
 
 // The walk must not escape a nested project into an unrelated parent: a
 // directory with its own lockfile or .git is that project's root, and a
@@ -119,59 +113,53 @@ test.each([
 
 // A lockfile at the project root must not hide a bunfig.toml sitting next to
 // it: within one directory the bunfig check wins over the boundary check.
-test(
-  "bunfig.toml next to the lockfile at the project root still applies",
-  async () => {
-    using dir = tempDir("bun-issue-29308-root-lock", {
-      "bunfig.toml": `preload = ["./preload.ts"]\n`,
-      "preload.ts": `console.log("preload script executed!");\n`,
-      "bun.lock": "",
-      "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
-      "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
-    });
+test("bunfig.toml next to the lockfile at the project root still applies", async () => {
+  using dir = tempDir("bun-issue-29308-root-lock", {
+    "bunfig.toml": `preload = ["./preload.ts"]\n`,
+    "preload.ts": `console.log("preload script executed!");\n`,
+    "bun.lock": "",
+    "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
+    "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
+  });
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "src/index.ts"],
-      env: bunEnv,
-      cwd: join(String(dir), "packages", "pkg1"),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "src/index.ts"],
+    env: bunEnv,
+    cwd: join(String(dir), "packages", "pkg1"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
+  expect(exitCode).toBe(0);
+});
 
 // Guard against the ancestor walk stopping at a DIRECTORY named bunfig.toml.
 // Without the regular-file check, the walk would treat the directory as a hit
 // and the real bunfig.toml higher in the tree would be silently skipped.
-test(
-  "directory named bunfig.toml in an ancestor does not short-circuit the walk",
-  async () => {
-    using dir = tempDir("bun-issue-29308-dir-named-bunfig", {
-      "bunfig.toml": `preload = ["./preload.ts"]\n`,
-      "preload.ts": `console.log("preload script executed!");\n`,
-      "middle/packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
-    });
+test("directory named bunfig.toml in an ancestor does not short-circuit the walk", async () => {
+  using dir = tempDir("bun-issue-29308-dir-named-bunfig", {
+    "bunfig.toml": `preload = ["./preload.ts"]\n`,
+    "preload.ts": `console.log("preload script executed!");\n`,
+    "middle/packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
+  });
 
-    // Put a directory literally named `bunfig.toml` between cwd and the real one.
-    mkdirSync(join(String(dir), "middle", "bunfig.toml"), { recursive: true });
-    writeFileSync(join(String(dir), "middle", "bunfig.toml", "placeholder"), "");
+  // Put a directory literally named `bunfig.toml` between cwd and the real one.
+  mkdirSync(join(String(dir), "middle", "bunfig.toml"), { recursive: true });
+  writeFileSync(join(String(dir), "middle", "bunfig.toml", "placeholder"), "");
 
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "src/index.ts"],
-      env: bunEnv,
-      cwd: join(String(dir), "middle", "packages", "pkg1"),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "src/index.ts"],
+    env: bunEnv,
+    cwd: join(String(dir), "middle", "packages", "pkg1"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
-    expect(exitCode).toBe(0);
-  },
-);
+  expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
+  expect(exitCode).toBe(0);
+});

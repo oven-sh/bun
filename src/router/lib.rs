@@ -1026,24 +1026,14 @@ impl Route {
     ) -> Option<Route> {
         // NOTE: `entry` is a raw `*mut Entry`
         // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
+        // string) and a `&mut Entry` parameter would alias them. Reads and the
+        // `abs_path` fill go through `unsafe { &*entry }`.
         // SAFETY: caller passes an EntryStore-owned pointer valid for the
         // process lifetime; no other live `&mut` to it during this call.
-        // `abs_path` is a two-word slice that other threads (the bundler's
-        // resolver) fill under `Entry.mutex`; read it under the same lock so
-        // this thread can never observe a torn (ptr, len).
-        let entry_abs_path = {
-            let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
-            unsafe { &*entry }.abs_path()
-        };
-        let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
-            b""
-        } else {
-            entry_abs_path.as_bytes()
-        };
+        // `abs_path` is lazily filled under `Entry.mutex` in the `'fill` block
+        // below (see `Entry::abs_path_or_fill`); start empty and let that
+        // locked check populate it so the hot path takes the lock once.
+        let mut abs_path_str: &[u8] = b"";
 
         let base = &base_[0..base_.len() - extname.len()];
 
@@ -1160,18 +1150,11 @@ impl Route {
                 };
 
             'fill: {
-                if !abs_path_str.is_empty() {
-                    break 'fill;
-                }
                 // The reads of `cache().fd` and the `set_abs_path` write below
                 // rewrite the cached `Entry`; serialize them on the per-entry
                 // mutex (the same lock every other `Entry` rewrite path takes).
                 // SAFETY: see fn-level NOTE — read-only reborrow.
                 let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
-                // Re-check under the lock: the bundler's resolver may have
-                // filled `abs_path` between the initial locked read above and
-                // this acquire, in which case the open + get_fd_path + intern
-                // below would recompute an equivalent value.
                 let cached = unsafe { &*entry }.abs_path();
                 if !cached.is_empty() {
                     abs_path_str = cached.as_bytes();
@@ -1254,9 +1237,8 @@ impl Route {
                     .append(_abs)
                     .expect("unreachable");
 
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
+                // SAFETY: see fn-level NOTE — read-only reborrow; `Entry.mutex` held.
+                unsafe { &*entry }.set_abs_path(Interned::from_static(abs_path_str));
             }
 
             #[cfg(windows)]

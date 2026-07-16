@@ -1122,25 +1122,33 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("Ж", 1, 2, { ellipsis: ">>" })).toBe("");
     });
 
-    test("lazy-path degenerate (ellipsis wider than range) matches ASCII fast path", () => {
-      // Ellipsis wider than the requested range, on the lazy-cutEnd streaming
-      // path: neither ellipsis budget applies. If a cut occurs, return the
-      // bare ellipsis (parity with the ASCII fast path).
+    test("start-cut degenerate (ellipsis wider than range) matches ASCII fast path", () => {
+      // Ellipsis wider than the requested range and start is cut: neither
+      // ellipsis budget applies, but the degenerate fallback must still fire.
       const e = { ellipsis: ">>" };
-      // End-cut only.
-      expect(Bun.sliceAnsi("ЖЗИ", 0, 1, e)).toBe(">>");
-      expect(Bun.sliceAnsi("abc", 0, 1, e)).toBe(">>");
-      expect(Bun.sliceAnsi("ЖЗИ", 0, 2, e)).toBe(">>");
-      expect(Bun.sliceAnsi("abc", 0, 2, e)).toBe(">>");
-      // Both sides cut.
+      // Start cut, end also cut.
       expect(Bun.sliceAnsi("ЖЗИ", 1, 2, e)).toBe(">>");
       expect(Bun.sliceAnsi("abc", 1, 2, e)).toBe(">>");
-      // Start-cut only (no end cut: string ends at the range end).
+      // Start cut, end not cut (string ends at the range end).
       expect(Bun.sliceAnsi("ЖЗ", 1, 2, e)).toBe(">>");
       expect(Bun.sliceAnsi("ab", 1, 2, e)).toBe(">>");
       // No cut on either side: content returned, no ellipsis.
       expect(Bun.sliceAnsi("Ж", 0, 1, e)).toBe("Ж");
       expect(Bun.sliceAnsi("ЖЗ", 0, 2, e)).toBe("ЖЗ");
+    });
+
+    test("trailing zero-width content past end is not a cut", () => {
+      // A zero-width cluster (LF, CR, ZWSP) exactly at the end boundary must
+      // not trigger the degenerate-ellipsis fallback: nothing visible was cut.
+      const e = { ellipsis: ">>" };
+      expect(Bun.sliceAnsi("hi\n", 0, 2, e)).toBe("hi");
+      expect(Bun.sliceAnsi("ЖЗ\n", 0, 2, e)).toBe("ЖЗ");
+      expect(Bun.sliceAnsi("h\n", 0, 1, { ellipsis: "…" })).toBe("h");
+      expect(Bun.sliceAnsi("a\u200b", 0, 1, e)).toBe("a");
+      expect(Bun.sliceAnsi("a\n", -1, undefined, e)).toBe("a");
+      // Start-cut with a trailing newline still returns the ellipsis
+      // (the start cut is what makes it degenerate, not the end).
+      expect(Bun.sliceAnsi("ЖЗ\n", 1, 2, e)).toBe(">>");
     });
 
     test("no ellipsis when not cut", () => {

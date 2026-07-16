@@ -1200,22 +1200,14 @@ walkDone:;
         if (include) flushPending(/*filterCloseOnly=*/trailingPastEnd);
     }
 
-    // Lazy-path degenerate: a cut happened but neither ellipsis was budgeted
-    // (range too small for the ellipsis). Match the cutEndKnown fallback above
-    // and the ASCII fast path: return the bare ellipsis.
-    if (ellipsisWidth > 0 && !needStartEllipsis && !needEndEllipsis) {
-        bool startActuallyCut = cutStartForEllipsis && position > startBeforeBudget;
-        if (startActuallyCut || sawCutEnd)
-            return ellipsis.toString();
-    }
+    // Start-cut degenerate: start was cut and the original range had content,
+    // but the ellipsis left no room (budget pushed start past all content, or
+    // range too small to budget at all). Match the cutEndKnown/ASCII fallback.
+    if (ellipsisWidth > 0 && cutStartForEllipsis && position > startBeforeBudget
+        && (!include || (!needStartEllipsis && !needEndEllipsis)))
+        return ellipsis.toString();
 
-    if (!include) {
-        // Start-ellipsis budget pushed `start` past all content but the
-        // original range was non-empty: return the budgeted ellipsis.
-        if (ellipsisWidth > 0 && cutStartForEllipsis && position > startBeforeBudget)
-            return ellipsis.toString();
-        return emptyString();
-    }
+    if (!include) return emptyString();
 
     // Resolve lazy cutEnd: if we budgeted a spec zone and sawCutEnd → cut.
     // Otherwise (EOF reached without exceeding specEnd) → no cut, flush zone.

@@ -98,10 +98,9 @@ describe("Bun.wrapAnsi", () => {
   });
 
   describe("8-bit C1 CSI sequences", () => {
-    // \x9B is the single-byte C1 CSI introducer, equivalent to ESC [. Its
-    // parameter bytes must never be treated as wrappable visible text, and the
-    // SGR code it carries must be tracked for close/reopen at line boundaries
-    // the same as the ESC [ form (matching npm wrap-ansi).
+    // \x9B is the single-byte C1 CSI introducer (== ESC [). Its parameter bytes
+    // must not be treated as wrappable visible text, and the SGR code it carries
+    // must be tracked for close/reopen at line boundaries (matching npm wrap-ansi).
     test("hard wrap never inserts a newline inside a C1 CSI sequence", () => {
       const input = "\x9B31mabcdefghij\x9B39m";
       expect(Bun.wrapAnsi(input, 3, { hard: true })).toBe(

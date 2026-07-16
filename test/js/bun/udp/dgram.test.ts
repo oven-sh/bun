@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
-import { disableAggressiveGCScope } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isLinux } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -302,5 +302,119 @@ describe("bind()", () => {
     // The in-flight first bind must still complete normally.
     await listening;
     expect(onError).not.toHaveBeenCalled();
+  });
+});
+
+// An unconnected socket has no single peer, so node never reports ICMP errors
+// on one: sending to a peer that has gone away is a no-op, and nothing listens
+// for 'error'.
+describe("ICMP errors on an unconnected socket", () => {
+  test("a vanished peer does not emit 'error'", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const dgram = require("node:dgram");
+          // No 'error' listener, which is what node's contract allows.
+          const socket = dgram.createSocket("udp4");
+          socket.bind(0, "127.0.0.1", () => {
+            // Bind and close a probe to get a port nothing is listening on. It
+            // is bound after 'socket' so the kernel cannot hand it the same one.
+            const probe = dgram.createSocket("udp4");
+            probe.bind(0, "127.0.0.1", () => {
+              const deadPort = probe.address().port;
+              probe.close(() => {
+                let sent = 0;
+                const tick = () => {
+                  socket.send("ping", deadPort, "127.0.0.1");
+                  if (++sent === 20) {
+                    console.log("sent " + sent);
+                    socket.close();
+                    return;
+                  }
+                  setImmediate(tick);
+                };
+                tick();
+              });
+            });
+          });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("ECONNREFUSED");
+    expect(stdout.trim()).toBe("sent 20");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a vanished peer does not poison the next send()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "dgram-unconnected-icmp-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("ECONNREFUSED");
+    expect(JSON.parse(stdout)).toEqual({
+      sendErrors: [],
+      received: ["live-0", "live-1", "live-2", "live-3", "live-4"],
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // A connected socket records the ICMP error in the kernel's sk_err, which
+  // outlives the error queue that disconnecting purges. Stranding it there
+  // leaves the poll permanently in an error state.
+  test.skipIf(!isLinux)("disconnect() with a peer's ICMP error pending keeps the socket usable", async () => {
+    function bind(socket: ReturnType<typeof createSocket>): Promise<number> {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const onError = (err: Error) => reject(err);
+      socket.once("error", onError);
+      socket.bind(0, "127.0.0.1", () => {
+        socket.removeListener("error", onError);
+        resolve(socket.address().port);
+      });
+      return promise;
+    }
+
+    await using live = createSocket("udp4");
+    const livePort = await bind(live);
+
+    await using socket = createSocket("udp4");
+    await bind(socket);
+
+    // Bound last so the kernel cannot hand this port to one of the sockets above.
+    const probe = createSocket("udp4");
+    const deadPort = await bind(probe);
+    await new Promise<void>(resolve => probe.close(() => resolve()));
+
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers<void>();
+    socket.connect(deadPort, "127.0.0.1", onConnect);
+    await connected;
+
+    // The error belongs to the peer we were connected to, so node still reports
+    // it after disconnect(). What must not happen is the socket quietly closing.
+    const { promise: errored, resolve: onError } = Promise.withResolvers<NodeJS.ErrnoException>();
+    socket.once("error", onError);
+
+    // localhost answers this sendto() with ICMP port unreachable before it
+    // returns, so the error is already pending when disconnect() runs.
+    socket.send("dead");
+    socket.disconnect();
+    expect((await errored).code).toBe("ECONNREFUSED");
+
+    const { promise: received, resolve: onMessage } = Promise.withResolvers<string>();
+    live.once("message", msg => onMessage(msg.toString()));
+    const { promise: sent, resolve: onSent, reject: onSendError } = Promise.withResolvers<void>();
+    socket.send("alive", livePort, "127.0.0.1", err => (err ? onSendError(err) : onSent()));
+    await sent;
+    expect(await received).toBe("alive");
   });
 });

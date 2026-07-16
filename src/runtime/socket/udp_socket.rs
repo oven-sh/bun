@@ -86,12 +86,13 @@ extern "C" fn on_close(socket: *mut uws::udp::Socket) {
 }
 
 extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
-    // Only called on Linux via IP_RECVERR — loop.c guards the recv-on-error
-    // path with #if defined(__linux__) to preserve the pre-existing
-    // close-on-error behavior on kqueue/Windows (where an error event is a
-    // fatal socket condition, not a drainable error queue). Builds a
-    // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
-    // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
+    // Only called on Linux. loop.c surfaces the errno here when EPOLLERR fires:
+    // from the IP_RECVERR error queue (armed on connect in bsd_connect_udp_socket)
+    // or from SO_ERROR when that queue is already empty, e.g. right after a
+    // disconnect purged it. The recv-on-error path is guarded with
+    // #if defined(__linux__) to preserve the pre-existing close-on-error
+    // behavior on kqueue/Windows (where an error event is a fatal socket
+    // condition, not a drainable error queue).
     let this: &UDPSocket = UDPSocket::from_uws(socket);
     let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();

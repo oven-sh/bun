@@ -452,7 +452,7 @@ it.skipIf(!isWindows)("Bun.file(0).writer() on a TTY stdin does not close the sh
       rows: 24,
       data(_t, chunk) {
         output += decoder.decode(chunk, { stream: true });
-        if (output.includes("RESULT")) done.resolve();
+        if (output.includes("setRawErr=") || output.includes("not-a-tty")) done.resolve();
       },
       exit() {
         eof.resolve();

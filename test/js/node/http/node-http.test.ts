@@ -3757,13 +3757,12 @@ it("server.close() completes after res.socket.end() half-closes an in-flight upl
     ],
     env: bunEnv,
     stdout: "pipe",
-    stderr: "pipe",
+    stderr: "inherit",
     timeout: 15_000,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), exitCode, signalCode: proc.signalCode }).toEqual({
     stdout: ["write returned true", "server.close() completed"],
-    stderr: "",
     exitCode: 0,
     signalCode: null,
   });

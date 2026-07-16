@@ -1032,11 +1032,17 @@ impl Route {
         // `base_`/`extname` are no longer used.
         // SAFETY: caller passes an EntryStore-owned pointer valid for the
         // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
+        // `abs_path` is a two-word slice that other threads (the bundler's
+        // resolver) fill under `Entry.mutex`; read it under the same lock so
+        // this thread can never observe a torn (ptr, len).
+        let entry_abs_path = {
+            let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
+            unsafe { &*entry }.abs_path()
+        };
         let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
             b""
         } else {
-            entry_abs_path
+            entry_abs_path.as_bytes()
         };
 
         let base = &base_[0..base_.len() - extname.len()];

@@ -843,6 +843,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
       await Bun.build({ entrypoints, target: "bun", throw: false });
       let matches = 0;
       let buildsOk = true;
+      let pathsOk = true;
       for (let round = 0; round < 40; round++) {
         const builds = Array.from({ length: 4 }, () =>
           Bun.build({ entrypoints, target: "bun", throw: false }),
@@ -852,10 +853,17 @@ it("reload() while Bun.build() resolves the same directory", async () => {
           const m = router.match("/p7");
           if (m && m.filePath.endsWith("p7.tsx")) matches++;
         }
+        // Each route's abs-path is filled by both the router (under the
+        // per-entry mutex) and the bundler's resolver for the same fresh
+        // Entry after every bust+reread; a torn value surfaces as a
+        // filePath that isn't the absolute .tsx path.
+        for (const fp of Object.values(router.routes)) {
+          pathsOk &&= typeof fp === "string" && fp.startsWith(pagesDir) && fp.endsWith(".tsx");
+        }
         const results = await Promise.all(builds);
         buildsOk &&= results.every(r => r.success);
       }
-      console.log("matches", matches, "builds-ok", buildsOk);
+      console.log("matches", matches, "builds-ok", buildsOk, "paths-ok", pathsOk);
     `,
   };
   for (let i = 1; i <= 40; i++) {
@@ -877,7 +885,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
     signalCode: proc.signalCode,
-  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
+  }).toEqual({ stdout: "matches 2000 builds-ok true paths-ok true", stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
 it("loads routes from a directory already cached by Bun.build()", async () => {

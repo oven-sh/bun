@@ -593,7 +593,6 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     this._write = _write;
     return this._write(data, encoding, cb);
   }
-  const hasCallback = typeof cb === "function";
   try {
     if (fileSink === true) {
       fileSink = this[kWriteStreamFastPath] = Bun.file(this.path).writer();
@@ -610,12 +609,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
         },
         err => {
           if (cb) cb(err);
-          // If no callback was provided, emit the error on the stream
-          // This matches Node.js behavior where unhandled write errors
-          // are emitted as 'error' events on the stream
-          if (!hasCallback) {
-            this.destroy(err);
-          }
+          require("internal/streams/destroy").errorOrDestroy(this, err);
         },
       );
       return false;
@@ -625,10 +619,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     }
   } catch (e) {
     if (cb) process.nextTick(cb, e);
-    // If no callback was provided, emit the error on the stream
-    if (!hasCallback) {
-      this.destroy(e);
-    }
+    require("internal/streams/destroy").errorOrDestroy(this, e, true);
     return false;
   }
 }
@@ -639,10 +630,10 @@ const kWriteMonkeyPatchDefense = Symbol("!");
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (this[kWriteMonkeyPatchDefense]) return writablePrototypeWrite.$call(this, data, encoding, cb);
 
-  // After end() the Writable contract requires write() to fail with
-  // ERR_STREAM_WRITE_AFTER_END and not reach the sink.
+  // After end()/destroy() the Writable contract requires write() to fail with
+  // ERR_STREAM_WRITE_AFTER_END / ERR_STREAM_DESTROYED and not reach the sink.
   const state = this._writableState;
-  if (state !== undefined && state.ending) {
+  if (state !== undefined && (state.ending || state.destroyed)) {
     return writablePrototypeWrite.$call(this, data, encoding, cb);
   }
 
@@ -650,8 +641,7 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     cb = encoding;
     encoding = undefined;
   }
-  const hasCallback = typeof cb === "function";
-  if (!hasCallback) {
+  if (typeof cb !== "function") {
     cb = streamNoop;
   }
 
@@ -659,21 +649,20 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   if (fileSink && fileSink !== true) {
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
-      maybePromise
-        .then(() => {
+      // Two-arg then(): a throw from the fulfillment handler must not be
+      // mistaken for a write failure.
+      maybePromise.then(
+        () => {
           this.emit("drain"); // Emit drain event
           cb(null);
-        })
-        .catch(err => {
-          // Always call the callback with the error
+        },
+        err => {
           cb(err);
-          // If no callback was provided, emit the error on the stream
-          // This matches Node.js behavior where unhandled write errors
-          // are emitted as 'error' events on the stream
-          if (!hasCallback) {
-            this.destroy(err);
-          }
-        });
+          // Node.js onwriteError: callback AND destroy are both invoked; the
+          // callback is additive, not a replacement for the 'error' event.
+          require("internal/streams/destroy").errorOrDestroy(this, err);
+        },
+      );
       return false; // Indicate backpressure
     } else {
       cb(null);

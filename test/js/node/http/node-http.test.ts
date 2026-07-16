@@ -2994,6 +2994,8 @@ describe("malformed request line reaches 'connection' and 'clientError' with a w
   it.each([
     ["method token followed by CRLF", "BOGUS\r\n\r\n"],
     ["known method followed by CRLF", "GET\r\n\r\n"],
+    ["CONNECT followed by CRLF", "CONNECT\r\n\r\n"],
+    ["CONNECT-prefixed token followed by CRLF", "CONNECTX\r\n\r\n"],
     ["single method char followed by CRLF", "G\r\n\r\n"],
     ["single method char with full line", "G / HTTP/1.1\r\nHost: localhost\r\n\r\n"],
   ])("%s", async (_name, payload) => {

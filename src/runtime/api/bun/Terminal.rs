@@ -136,8 +136,8 @@ pub struct Terminal {
     rows: Cell<u16>,
 
     /// Terminal name (e.g., "xterm-256color"). Read-only after construction.
-    /// Held for Drop (owns the slice allocation); no getter currently exposes it.
-    _term_name: ZigStringSlice,
+    /// Exposed via `term_name()` so `Bun.spawn` can set `TERM=` in the child env.
+    term_name: ZigStringSlice,
 
     /// Event loop handle for callbacks. Read-only after construction.
     event_loop_handle: EventLoopHandle,
@@ -265,6 +265,12 @@ impl Options {
                 return Err(global_object.throw(format_args!(
                     "Terminal name too long (max {} characters)",
                     Self::MAX_TERM_NAME_LEN
+                )));
+            }
+            if slice.slice().contains(&0) {
+                drop(slice);
+                return Err(global_object.throw(format_args!(
+                    "Terminal name must not contain null bytes"
                 )));
             }
             options.term_name = slice;
@@ -449,7 +455,7 @@ impl Terminal {
             } else {
                 options.rows
             }),
-            _term_name: term_name,
+            term_name,
             event_loop_handle: EventLoopHandle::init(
                 global_object.bun_vm().as_mut().event_loop().cast(),
             ),
@@ -629,6 +635,13 @@ impl Terminal {
     #[allow(dead_code)]
     pub(crate) fn get_slave_fd(&self) -> Fd {
         self.slave_fd.get()
+    }
+
+    /// Terminal name (never empty; defaults to "xterm-256color"). `Bun.spawn`
+    /// injects this as `TERM=` into the child's env.
+    #[inline]
+    pub(crate) fn term_name(&self) -> &[u8] {
+        self.term_name.slice()
     }
 
     /// `flags.closed` — read by `Bun.spawn` arg validation.

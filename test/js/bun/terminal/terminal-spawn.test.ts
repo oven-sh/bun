@@ -189,6 +189,81 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(output).toContain("rows=45");
   });
 
+  describe("terminal.name sets child TERM", () => {
+    const printTerm = `process.stdout.write('CHILD_TERM=[' + (process.env.TERM ?? '<unset>') + ']')`;
+    const envNoTerm = { ...bunEnv, TERM: undefined };
+
+    async function collectTerm(opts: { env?: Record<string, string | undefined>; terminal: { name?: string } }) {
+      let output = "";
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", printTerm],
+        env: opts.env,
+        terminal: {
+          ...opts.terminal,
+          data(_t, chunk) {
+            output += new TextDecoder().decode(chunk);
+            if (output.includes("]")) resolve();
+          },
+        },
+      });
+      await promise;
+      await proc.exited;
+      proc.terminal?.close();
+      return output;
+    }
+
+    test("inline terminal name is applied when env omits TERM", async () => {
+      const out = await collectTerm({ env: envNoTerm, terminal: { name: "vt100" } });
+      expect(out).toContain("CHILD_TERM=[vt100]");
+    });
+
+    test("defaults to xterm-256color when name is omitted", async () => {
+      const out = await collectTerm({ env: envNoTerm, terminal: {} });
+      expect(out).toContain("CHILD_TERM=[xterm-256color]");
+    });
+
+    test("explicit env.TERM wins over terminal.name", async () => {
+      const out = await collectTerm({
+        env: { ...bunEnv, TERM: "user-set-term" },
+        terminal: { name: "vt100" },
+      });
+      expect(out).toContain("CHILD_TERM=[user-set-term]");
+    });
+
+    test("inherited parent TERM is overridden by terminal.name", async () => {
+      // No `env` option: child inherits the test runner's env (whatever TERM that
+      // is). terminal.name must replace it.
+      const out = await collectTerm({ terminal: { name: "vt100-bun-test" } });
+      expect(out).toContain("CHILD_TERM=[vt100-bun-test]");
+    });
+
+    test("existing Bun.Terminal name is applied", async () => {
+      let output = "";
+      const { promise, resolve } = Promise.withResolvers<void>();
+      const terminal = new Bun.Terminal({
+        name: "vt220",
+        data(_t, chunk) {
+          output += new TextDecoder().decode(chunk);
+          if (output.includes("]")) resolve();
+        },
+      });
+      const proc = Bun.spawn({
+        cmd: [bunExe(), "-e", printTerm],
+        env: envNoTerm,
+        terminal,
+      });
+      await promise;
+      await proc.exited;
+      terminal.close();
+      expect(output).toContain("CHILD_TERM=[vt220]");
+    });
+
+    test("name with null byte throws", () => {
+      expect(() => new Bun.Terminal({ name: "vt\x00100" })).toThrow("must not contain null bytes");
+    });
+  });
+
   test("exit callback fires after close", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     const terminal = new Bun.Terminal({

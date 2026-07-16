@@ -2114,16 +2114,14 @@ Socket.prototype.resume = function resume() {
 
 Socket.prototype.pause = function pause() {
   if (!this.destroyed) {
-    this._handle?.pause?.();
+    const handle = this._handle;
+    handle?.pause?.();
     // libuv only counts a stream handle as active - and therefore as keeping
     // the event loop alive - while it is reading. A paused socket lets the
     // process exit; resume() re-refs it unless the user explicitly unref'd.
-    this._handle?.unref?.();
-    // Only remember the unref when this handle can actually hold the loop: a
-    // TLS socket wrapped over a generic duplex has no fd, so re-refing it
-    // later would newly pin the process.
-    if (!this[kupgraded] || this[kupgraded] instanceof Socket) {
+    if (handle && hasNativeLoopHold(this)) {
       this[kPausedUnref] = true;
+      maybeUnrefIdle(this, handle);
     }
   }
   return Duplex.prototype.pause.$call(this);

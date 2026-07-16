@@ -2,6 +2,7 @@ import { Buffer, SlowBuffer, isAscii, isUtf8, kMaxLength } from "buffer";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, gc, isASAN, isDebug, nodeExe, withoutAggressiveGC } from "harness";
 import { createHash } from "node:crypto";
+import os from "node:os";
 import { join } from "node:path";
 import vm from "node:vm";
 
@@ -4530,3 +4531,62 @@ describe("Buffer.prototype.toString binary-to-text encodings", () => {
     });
   });
 });
+
+// MAX_LENGTH is 2**32 on 64-bit: a buffer of exactly that length must not
+// hit the uint32 truncation path that made toString()/write() see length 0.
+it.skipIf(os.totalmem() < 10 * 1024 ** 3)(
+  "Buffer of length exactly MAX_LENGTH (2**32) supports toString/write without uint32 wrap",
+  async () => {
+    const script = `
+      const assert = require("assert");
+      const N = 2 ** 32;
+      const b = Buffer.alloc(N);
+      assert.strictEqual(b.length, N);
+      b.set([0x71, 0x72, 0x73], N - 3);
+
+      const out = {};
+      for (const enc of ["latin1", "utf8", "hex", "base64", "ucs2"]) {
+        try { b.toString(enc); out["full_" + enc] = "no throw"; }
+        catch (e) { out["full_" + enc] = e.code; }
+      }
+      out.ranged_latin1 = b.toString("latin1", N - 4, N);
+      out.ranged_hex = b.toString("hex", N - 4, N);
+      out.ranged_utf8_start0 = b.toString("utf8", 0, 3);
+      out.write_ret = b.write("xyz", N - 3);
+      out.after_write = b.toString("latin1", N - 3, N);
+      out.write_enc_ret = b.write("ab", N - 2, "latin1");
+      out.after_write_enc = b.toString("latin1", N - 2, N);
+      out.write_full = b.write("hi");
+      try { b.write("x", N + 1); out.write_oob = "no throw"; }
+      catch (e) { out.write_oob = e.code; }
+      console.log(JSON.stringify(out));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify({
+        full_latin1: "ERR_STRING_TOO_LONG",
+        full_utf8: "ERR_STRING_TOO_LONG",
+        full_hex: "ERR_STRING_TOO_LONG",
+        full_base64: "ERR_STRING_TOO_LONG",
+        full_ucs2: "ERR_STRING_TOO_LONG",
+        ranged_latin1: "\x00qrs",
+        ranged_hex: "00717273",
+        ranged_utf8_start0: "\x00\x00\x00",
+        write_ret: 3,
+        after_write: "xyz",
+        write_enc_ret: 2,
+        after_write_enc: "ab",
+        write_full: 2,
+        write_oob: "ERR_OUT_OF_RANGE",
+      }),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);

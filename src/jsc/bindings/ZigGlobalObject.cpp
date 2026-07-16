@@ -3030,6 +3030,9 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
+    // `Object.prototype.toString.call(globalThis) === "[object global]"`, like Node.js.
+    putDirect(vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, "global"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | 0);
+
     // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
     putDirectAccessor(
         this,

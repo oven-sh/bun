@@ -256,7 +256,6 @@ describe("FormData", () => {
   });
 
   // WHATWG Body mixin: formData() package-data failure must reject with TypeError.
-  // The serve path previously rejected with a plain Error.
   it("malformed multipart body rejects with TypeError on every formData() path", async () => {
     const boundary = "BX9";
     const contentType = `multipart/form-data; boundary=${boundary}`;
@@ -284,6 +283,14 @@ describe("FormData", () => {
         throw new Error("Request.formData should have rejected");
       })
       .catch(e => (reqErr = e));
+
+    let blobErr: any;
+    await new Blob([bad], { type: contentType })
+      .formData()
+      .then(() => {
+        throw new Error("Blob.formData should have rejected");
+      })
+      .catch(e => (blobErr = e));
 
     let streamErr: any;
     await new Response(
@@ -330,11 +337,13 @@ describe("FormData", () => {
     expect({
       Response: classify(respErr),
       Request: classify(reqErr),
+      Blob: classify(blobErr),
       stream: classify(streamErr),
       serve: classify(serveErr),
     }).toEqual({
       Response: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
       Request: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
+      Blob: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
       stream: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
       serve: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
     });

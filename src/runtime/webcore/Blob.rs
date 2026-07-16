@@ -2968,7 +2968,14 @@ impl BlobExt for Blob {
         buf: *mut [u8],
     ) -> JSValue {
         let Some(encoder) = self.get_form_data_encoding() else {
-            return ZigString::init(b"Invalid encoding").to_error_instance(global);
+            return global
+                .err(
+                    jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+                    format_args!(
+                        "Can't decode form data from body because of incorrect MIME type/boundary"
+                    ),
+                )
+                .to_js();
         };
 
         // `crate::webcore::form_data::Encoding` re-exports
@@ -2979,9 +2986,12 @@ impl BlobExt for Blob {
         let buf = unsafe { &*buf };
         match crate::webcore::form_data::FormData::to_js(global, buf, &encoder.encoding) {
             Ok(v) => v,
-            Err(err) => {
-                global.create_error_instance(format_args!("FormData encoding failed: {err}"))
-            }
+            Err(err) => global
+                .err(
+                    jsc::ErrorCode::FORMDATA_PARSE_ERROR,
+                    format_args!("FormData parse error {}", err.name()),
+                )
+                .to_js(),
         }
     }
 

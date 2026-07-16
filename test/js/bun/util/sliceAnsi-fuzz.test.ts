@@ -443,7 +443,8 @@ function randomString(rng: () => number, minLen: number, maxLen: number): string
       // stripANSI consume to EOF, and this generator is meant to produce
       // inputs the three width models agree on.
       const c1 = 0x80 + Math.floor(rng() * 0x20);
-      const safe = c1 === 0x90 || c1 === 0x98 || c1 === 0x9b || c1 === 0x9d || c1 === 0x9e || c1 === 0x9f ? c1 - 0x10 : c1;
+      const safe =
+        c1 === 0x90 || c1 === 0x98 || c1 === 0x9b || c1 === 0x9d || c1 === 0x9e || c1 === 0x9f ? c1 - 0x10 : c1;
       pieces.push(String.fromCharCode(safe));
     } else {
       // Truecolor SGR

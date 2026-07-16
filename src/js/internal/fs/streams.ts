@@ -42,10 +42,9 @@ const kIoDone = Symbol("kIoDone");
 // Bun supports a fast path for `createWriteStream("path.txt")` where instead of
 // using `node:fs`, `Bun.file(...).writer()` is used instead.
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
-// The promise the sink handed back for the writes it is still buffering, if any,
-// and how many completion reports are still queued on it. The sink hands back the
-// same promise for every write it parks, so counting is the only way to know when
-// the last of them has reported.
+// The promise the sink handed back for writes it is still buffering, and how many
+// completion reports are still queued on it. The sink hands back the same promise
+// for every write it parks, so counting is the only way to know the last has reported.
 const kBackpressurePromise = Symbol("kBackpressurePromise");
 const kPendingReports = Symbol("kPendingReports");
 const kFs = Symbol("kFs");

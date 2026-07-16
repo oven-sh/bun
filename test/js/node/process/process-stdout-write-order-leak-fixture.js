@@ -8,12 +8,10 @@
 const fs = require("node:fs");
 const readline = require("node:readline");
 
-// The parked write's callback throws on success (.then, cb(null)) and again on the
-// error re-run (.catch, cb(err)). That second throw becomes an unhandled rejection,
-// which fires after the .catch body's finally has run or been skipped: the exact
-// point phase two needs to observe, with no wall-clock wait.
+// The parked write's callback throws inside the fulfillment handler's try/finally.
+// The finally runs the decrement, then the throw rejects the derived promise that
+// nothing consumes: that unhandled rejection is phase two's barrier, no wall clock.
 const settled = Promise.withResolvers();
-process.on("uncaughtException", () => {});
 process.on("unhandledRejection", () => settled.resolve());
 
 const readFd = fs.openSync(process.env.BUN_TEST_FIFO, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
@@ -52,7 +50,7 @@ let finished = false;
   if (!finished) setImmediate(pump);
 })();
 
-// Phase two runs once the parked write's promise has settled and its .catch has run.
+// Phase two runs once the parked write's promise reaction has run (and decremented).
 settled.promise
   .then(() => new Promise(resolve => setImmediate(resolve)))
   .then(() => {

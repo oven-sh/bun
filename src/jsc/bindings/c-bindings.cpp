@@ -340,16 +340,27 @@ extern "C" void on_before_reload_process_linux()
 // Lazily heap-allocated so it doesn't land in the .tls section on Windows
 // (PE has no TLS BSS; a static thread_local char[65536] ships as 64 KB of
 // zeros in bun.exe and is copied into every thread's TLS block at creation).
-// unique_ptr so the allocation is released when a Worker thread exits —
-// thread_local destructors run via __cxa_thread_atexit and are unaffected
-// by -fno-c++-static-destructors.
-static char* shared_header_buffer_get()
+static std::unique_ptr<char[]>& shared_header_buffer_slot()
 {
     static thread_local std::unique_ptr<char[]> buffer;
+    return buffer;
+}
+
+static char* shared_header_buffer_get()
+{
+    auto& buffer = shared_header_buffer_slot();
     if (!buffer) [[unlikely]] {
         buffer.reset(new char[LSHPACK_MAX_HEADER_SIZE]);
     }
     return buffer.get();
+}
+
+// A Worker returns out of shutdown() instead of calling pthread_exit, and the process can exit
+// before its TLS destructors run, so the worker releases this explicitly at teardown. The getter
+// re-allocates on demand.
+extern "C" void Bun__freeSharedHeaderBufferForThreadExit()
+{
+    shared_header_buffer_slot().reset();
 }
 
 extern "C" {

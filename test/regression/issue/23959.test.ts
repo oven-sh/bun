@@ -6,7 +6,7 @@
 // `--production` survived. React's production `jsx-dev-runtime` exports
 // `jsxDEV = undefined`, so the resulting bundle TypeErrors at first render.
 
-import { describe, test, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const entry = `const el = <div prop="1">x</div>;\nexport default el;\n`;
@@ -57,14 +57,17 @@ describe("bun build: tsconfig jsx vs NODE_ENV=production", () => {
     expect(stdout).not.toContain("jsxDEV");
   });
 
-  test.concurrent("tsconfig react-jsx + --define process.env.NODE_ENV=production uses production JSX runtime", async () => {
-    const { runtime, stdout } = await buildAndGetRuntime({
-      tsconfigJsx: "react-jsx",
-      extraArgs: ["--define", 'process.env.NODE_ENV="production"'],
-    });
-    expect(runtime).toBe("react/jsx-runtime");
-    expect(stdout).not.toContain("jsxDEV");
-  });
+  test.concurrent(
+    "tsconfig react-jsx + --define process.env.NODE_ENV=production uses production JSX runtime",
+    async () => {
+      const { runtime, stdout } = await buildAndGetRuntime({
+        tsconfigJsx: "react-jsx",
+        extraArgs: ["--define", 'process.env.NODE_ENV="production"'],
+      });
+      expect(runtime).toBe("react/jsx-runtime");
+      expect(stdout).not.toContain("jsxDEV");
+    },
+  );
 
   test.concurrent("tsconfig react-jsxdev + NODE_ENV=production env uses production JSX runtime", async () => {
     const { runtime } = await buildAndGetRuntime({

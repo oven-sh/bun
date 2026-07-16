@@ -1294,15 +1294,15 @@ describe.concurrent("unhandledRejection async context", () => {
   });
 
   // A throwing unhandledRejection listener halts iteration (subsequent listeners are
-  // skipped) and reaches uncaughtException, which Node's processPromiseRejections
-  // restores the previous frame for in a finally before that throw propagates. The
-  // strict-mode direct dispatch above is the only path where uncaughtException sees
-  // the promise's context.
+  // skipped) and reaches uncaughtException with the slot cleared — in Node too, even
+  // with a persistent top-level enterWith("Y"), so the observable semantic is
+  // "undefined", not "whatever the drain's ambient was". The strict-mode direct
+  // dispatch above is the only path where uncaughtException sees the promise's context.
   test.each([
     ["bun", bunExe()],
     ["node", nodeExe()],
   ])(
-    "a throwing unhandledRejection listener halts later listeners and reaches uncaughtException without the promise's context (%s)",
+    "a throwing unhandledRejection listener halts later listeners and reaches uncaughtException with the slot cleared (%s)",
     async (_name, exe) => {
       await using proc = Bun.spawn({
         cmd: [
@@ -1310,6 +1310,7 @@ describe.concurrent("unhandledRejection async context", () => {
           "-e",
           `const { AsyncLocalStorage } = require("node:async_hooks");
         const als = new AsyncLocalStorage();
+        als.enterWith("Y");
         const log = [];
         process.on("unhandledRejection", () => {
           log.push("first store=" + JSON.stringify(als.getStore() ?? null));
@@ -1323,6 +1324,7 @@ describe.concurrent("unhandledRejection async context", () => {
         });
         als.run(7, () => Promise.reject(new Error("e")));
         setImmediate(() => {
+          log.push("after store=" + JSON.stringify(als.getStore() ?? null));
           console.log(log.join(" | "));
           process.exit(0);
         });`,
@@ -1332,7 +1334,7 @@ describe.concurrent("unhandledRejection async context", () => {
       });
 
       const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stdout).toBe("first store=7 | uncaught store=null\n");
+      expect(stdout).toBe(`first store=7 | uncaught store=null | after store="Y"\n`);
       expect(exitCode).toBe(0);
     },
   );

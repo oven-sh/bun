@@ -806,7 +806,7 @@ class EventEmitterAsyncResource extends EventEmitter {
   }
 
   emit(...args) {
-    this.asyncResource.runInAsyncScope(() => super.emit(...args));
+    return this.asyncResource.runInAsyncScope(() => super.emit(...args));
   }
 
   emitDestroy() {

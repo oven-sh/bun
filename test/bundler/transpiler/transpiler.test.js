@@ -768,11 +768,11 @@ describe("Bun.Transpiler", () => {
       // A nested function establishes its own context, so these remain valid.
       exp(
         "function *f() { enum x { y = (function*() { yield 1 })() } }",
-        'function* f() {\n  var x;\n  ((x) => {\n    x[x["y"] = function* () {\n      yield 1;\n    }()] = "y";\n  })(x ||= {});\n}',
+        'function* f() {\n  let x;\n  ((x) => {\n    x[x["y"] = function* () {\n      yield 1;\n    }()] = "y";\n  })(x ||= {});\n}',
       );
       exp(
         "async function f() { enum x { y = (async () => await 1)() } }",
-        'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
+        'async function f() {\n  let x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
       );
       exp(
         "enum x { y = (function() { return this })() }",
@@ -782,15 +782,15 @@ describe("Bun.Transpiler", () => {
       // keep their yield/await/super permissions.
       exp(
         "function *f() { enum x { y = 1 } yield 1; }",
-        'function* f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  yield 1;\n}',
+        'function* f() {\n  let x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  yield 1;\n}',
       );
       exp(
         "async function f() { enum x { y = 1 } await 1; }",
-        'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  await 1;\n}',
+        'async function f() {\n  let x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  await 1;\n}',
       );
       exp(
         "class C extends B { m() { enum x { y = 1 } super.foo(); } }",
-        'class C extends B {\n  m() {\n    var x;\n    ((x) => {\n      x[x["y"] = 1] = "y";\n    })(x ||= {});\n    super.foo();\n  }\n}',
+        'class C extends B {\n  m() {\n    let x;\n    ((x) => {\n      x[x["y"] = 1] = "y";\n    })(x ||= {});\n    super.foo();\n  }\n}',
       );
     });
 
@@ -1503,6 +1503,42 @@ export default class {
   }
 }
       `.trim(),
+      );
+    });
+
+    it("identifier named async followed by as/satisfies is not an arrow function", () => {
+      // https://github.com/evanw/esbuild/issues/4027
+      // https://github.com/microsoft/TypeScript/pull/8444
+      ts.expectPrinted_("function f(async?) { g(async as boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async satisfies boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async in x) }", "function f(async) {\n  g(async in x);\n}");
+      ts.expectPrinted_("function f() { g(async as => boolean) }", "function f() {\n  g(async (as) => boolean);\n}");
+      ts.expectPrinted_(
+        "function f() { g(async satisfies => boolean) }",
+        "function f() {\n  g(async (satisfies) => boolean);\n}",
+      );
+      ts.expectPrinted_("let async = true; let x = async as boolean;", "let async = true;\nlet x = async;\n");
+      ts.expectPrinted_(
+        "let async = true; console.log(async satisfies boolean);",
+        "let async = true;\nconsole.log(async);\n",
+      );
+      ts.expectPrinted_("const async = 1; export default async as any;", "const async = 1;\nexport default async;\n");
+      ts.expectPrinted_("let f = async x => {}", "let f = async (x) => {}");
+      ts.expectParseError("function f(async) { g(async as) }", "Unexpected )");
+
+      // "for (async of" must stay rejected in TypeScript mode once the
+      // lookahead above stops the arrow commit; see the [lookahead != async of]
+      // restriction on the for-of grammar.
+      ts.expectParseError("for (async of [7]);", 'For loop initializers cannot start with "async of"');
+      ts.expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
+      ts.expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      ts.expectPrinted_("for (async as any of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async satisfies T of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async! of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async of => {};;);", "for (async (of) => {};; )\n  ;\n");
+      ts.expectPrinted_(
+        "async function f() { for await (async of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
       );
     });
 
@@ -2569,6 +2605,11 @@ console.log(<div {...obj} key="after" />);`),
 
       // The keyword spelling is a syntax error, which is why the parentheses matter
       expect(() => parsed("for (async of [7]);", false, false)).toThrow();
+      expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
+      expectPrinted_(
+        "async function f() { for await (async\nof [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
     });
 
     it("await", () => {

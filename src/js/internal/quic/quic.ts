@@ -1536,15 +1536,6 @@ async function consumeSyncSource(handle, stream, source) {
     } else {
       throw err;
     }
-  } finally {
-    // The early returns above skip the IteratorClose that `for await..of`
-    // performs for consumeAsyncSource, so a user generator's `finally` would
-    // never run. Route a throwing return() the same way the catch above does.
-    try {
-      iter.return?.();
-    } catch (err) {
-      if (!stream.destroyed) stream.destroy(err);
-    }
   }
 }
 
@@ -2475,9 +2466,7 @@ class QuicStream {
     inner.stats?.[kFinishClose]();
     inner.earlySnapshot = inner.state?.early;
     inner.state?.[kFinishClose]();
-    // A `quic.stream.closed` subscriber can re-enter and destroy this stream,
-    // clearing `inner.session` before this line runs.
-    inner.session?.[kRemoveStream](this);
+    inner.session[kRemoveStream](this);
     inner.writer?.fail(error);
     inner.reader ??= this.#handle?.getReader();
     inner.session = undefined;

@@ -614,12 +614,7 @@ function SocketEmitEndNT(self, _err?) {
     return;
   }
   if (!self[kended]) {
-    if (!self.allowHalfOpen) {
-      self.write = writeAfterFIN;
-    }
-    self[kended] = true;
-    self.push(null);
-    self.read(0);
+    finishSocketEnd(self);
     if (!self.allowHalfOpen && !self[kReaderInterest]) {
       setImmediate(destroyAbandonedNT, self);
     }

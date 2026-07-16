@@ -1190,16 +1190,20 @@ walkDone:;
     // with close-only filtering; we don't re-finalize.)
     if (!sawCutEnd) {
         if (hasPrev) position += gs.width();
-        // The final cluster may itself overflow specEnd (a wide cluster that
-        // started before specEnd with no following break to detect it in-walk).
-        if (!endUnbounded && position > specEnd) sawCutEnd = true;
-        // Trailing ANSI: if position >= end, it's post-cut → filter. Use the
-        // ORIGINAL end bound (specEnd includes the spec zone; for filtering,
-        // what matters is whether position exceeds the USER'S requested end,
-        // which is `specEnd` when no ellipsis budget, or `end + budget` when
-        // there is one — same thing).
-        bool trailingPastEnd = !endUnbounded && position >= specEnd;
-        if (include) flushPending(/*filterCloseOnly=*/trailingPastEnd);
+        if (ellipsisEndBudget > 0 && position > specEnd) {
+            // Final cluster overflowed specEnd with no following break to catch
+            // it in-walk. Pending ANSI at EOF sits after discarded spec-zone
+            // content; emitCloseCodes re-closes so the ellipsis inherits style.
+            sawCutEnd = true;
+        } else {
+            // Trailing ANSI: if position >= end, it's post-cut → filter. Use
+            // the ORIGINAL end bound (specEnd includes the spec zone; for
+            // filtering, what matters is whether position exceeds the USER'S
+            // requested end, which is `specEnd` when no ellipsis budget, or
+            // `end + budget` when there is one — same thing).
+            bool trailingPastEnd = !endUnbounded && position >= specEnd;
+            if (include) flushPending(/*filterCloseOnly=*/trailingPastEnd);
+        }
     }
 
     if (!include) return emptyString();

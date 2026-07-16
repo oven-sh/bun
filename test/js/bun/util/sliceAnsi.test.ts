@@ -1114,8 +1114,17 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("ab\u6F22\u6F22", 0, 5, { ellipsis: E })).toBe("ab\u6F22" + E);
       // Multi-column ellipsis budget.
       expect(Bun.sliceAnsi("abcd\u6F22", 0, 5, { ellipsis: ">>" })).toBe("abc>>");
-      // With active SGR: ellipsis inherits it, close is auto-emitted.
-      expect(Bun.sliceAnsi("\u001B[31mab\u6F22", 0, 3, { ellipsis: E })).toBe("\u001B[31mab" + E + "\u001B[39m");
+      // With active SGR: ellipsis inherits it via emitCloseCodes, including
+      // when the input carries its own explicit close after the wide char.
+      const red = "\u001B[31m", reset = "\u001B[39m";
+      expect(Bun.sliceAnsi(red + "ab\u6F22", 0, 3, { ellipsis: E })).toBe(red + "ab" + E + reset);
+      expect(Bun.sliceAnsi(red + "ab\u6F22" + reset, 0, 3, { ellipsis: E })).toBe(red + "ab" + E + reset);
+      // start > 0: start ellipsis budgeted first, same EOF overflow detection.
+      expect(Bun.sliceAnsi("xyab\u6F22", 2, 5, { ellipsis: E })).toBe(E + "b" + E);
+      expect(Bun.sliceAnsi("xyab\u6F22", 2, 6, { ellipsis: E })).toBe(E + "b\u6F22");
+      // 8-bit (LChar) instantiation: U+00A7 is width 2 under ambiguousIsNarrow:false.
+      expect(Bun.sliceAnsi("ab\u00A7", 0, 3, { ellipsis: ".", ambiguousIsNarrow: false })).toBe("ab.");
+      expect(Bun.sliceAnsi("ab\u00A7", 0, 4, { ellipsis: ".", ambiguousIsNarrow: false })).toBe("ab\u00A7");
       // Exact fit (total width == end) is not a cut.
       expect(Bun.sliceAnsi("ab\u6F22", 0, 4, { ellipsis: E })).toBe("ab\u6F22");
       expect(Bun.sliceAnsi("a\u6F22", 0, 3, { ellipsis: E })).toBe("a\u6F22");
@@ -1124,6 +1133,10 @@ describe("Bun.sliceAnsi", () => {
       // Equivalence with the paths that already got this right.
       expect(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E })).toBe(Bun.sliceAnsi("ab\u6F22", 0, -1, { ellipsis: E }));
       expect(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E })).toBe(Bun.sliceAnsi("ab\u6F22x", 0, 3, { ellipsis: E }));
+      expect(Bun.sliceAnsi("xyab\u6F22", 2, 5, { ellipsis: E })).toBe(Bun.sliceAnsi("xyab\u6F22", 2, -1, { ellipsis: E }));
+      expect(Bun.sliceAnsi(red + "ab\u6F22" + reset, 0, 3, { ellipsis: E })).toBe(
+        Bun.sliceAnsi(red + "ab\u6F22" + reset, 0, -1, { ellipsis: E }),
+      );
       expect(Bun.stringWidth(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E }))).toBe(3);
     });
 

@@ -126,6 +126,53 @@ describe("bun", () => {
       }
     });
   });
+  describe("--help", () => {
+    function help(cmd: string, env: Record<string, string | undefined>) {
+      const { stdout, exitCode } = spawnSync({
+        cmd: [bunExe(), cmd, "--help"],
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: undefined, ...env },
+      });
+      expect(exitCode).toBe(0);
+      return stdout.toString();
+    }
+    function line(out: string, flag: string) {
+      const l = out.split("\n").find(l => l.includes(flag));
+      expect(l).toBeDefined();
+      return l!;
+    }
+
+    for (const env of [{ NO_COLOR: "1" }, { FORCE_COLOR: "1" }]) {
+      const label = Object.keys(env)[0];
+      test(`keeps prose <placeholder>s in flag descriptions (${label})`, () => {
+        const testHelp = help("test", env);
+        expect(line(testHelp, "--rerun-each")).toContain("Re-run each test file <NUMBER> times");
+        expect(line(testHelp, "--bail")).toContain("after <NUMBER> failures");
+
+        const auditHelp = help("audit", env);
+        expect(line(auditHelp, "--audit-level")).toContain("equal to <level> (low, moderate, high, critical)");
+
+        const buildHelp = help("build", env);
+        expect(line(buildHelp, "--allow-unresolved")).toContain("Use '<empty>' for opaque specifiers");
+      });
+    }
+
+    test("still strips <d>/<r> colour markup from flag descriptions (NO_COLOR)", () => {
+      const runHelp = help("run", { NO_COLOR: "1" });
+      const tsconfig = line(runHelp, "--tsconfig-override");
+      expect(tsconfig).toContain("Default $cwd/tsconfig.json");
+      expect(tsconfig).not.toContain("<d>");
+      expect(tsconfig).not.toContain("<r>");
+    });
+
+    test("still resolves <d>/<r> colour markup in flag descriptions (FORCE_COLOR)", () => {
+      const runHelp = help("run", { FORCE_COLOR: "1" });
+      const tsconfig = line(runHelp, "--tsconfig-override");
+      expect(tsconfig).toContain("Default \x1b[2m$cwd\x1b[0m/tsconfig.json");
+      expect(tsconfig).not.toContain("<d>");
+      expect(tsconfig).not.toContain("<r>");
+    });
+  });
+
   describe("test command line arguments", () => {
     test("test --config, issue #4128", () => {
       const path = `${tmpdir()}/bunfig-${Date.now()}.toml`;

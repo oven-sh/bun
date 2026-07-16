@@ -2065,7 +2065,9 @@ pub fn pretty_fmt_args<A: FmtTuple>(
 /// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
 /// vs `bun_core_macros::rewrite` because the two intentionally diverge in the
 /// `{` arm (proc-macro rewrites specs `{s}`→`{}`; this side copies braces
-/// verbatim) and on unknown tags (proc-macro errors; this side emits `""`).
+/// verbatim) and on unknown tags (proc-macro errors; this side emits the tag
+/// verbatim so prose placeholders such as `<NUMBER>` in `--help` descriptions
+/// survive).
 pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
     let mut out = Vec::with_capacity(fmt.len() * 4);
     let mut i = 0usize;
@@ -2097,6 +2099,7 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                 }
             }
             b'<' => {
+                let tag_open = i;
                 i += 1;
                 let mut is_reset = i < fmt.len() && fmt[i] == b'/';
                 if is_reset {
@@ -2107,18 +2110,18 @@ pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     i += 1;
                 }
                 let color_name = &fmt[start..i];
-                let color_str: &str = 'picker: {
-                    if let Some(lit) = color_map::get(color_name) {
-                        break 'picker lit;
-                    } else if color_name == b"r" {
-                        is_reset = true;
-                        break 'picker "";
-                    } else {
-                        // Unknown tag: the `pretty_fmt!` proc-macro rejects
-                        // this at its call sites; this runtime path drops the
-                        // tag.
-                        break 'picker "";
-                    }
+                let color_str: &str = if let Some(lit) = color_map::get(color_name) {
+                    lit
+                } else if color_name == b"r" {
+                    is_reset = true;
+                    ""
+                } else {
+                    // Unknown tag: emit verbatim (including the closing `>` if
+                    // present) so prose placeholders like `<NUMBER>` survive.
+                    let end = if i < fmt.len() { i + 1 } else { i };
+                    out.extend_from_slice(&fmt[tag_open..end]);
+                    i = end;
+                    continue;
                 };
                 if is_enabled {
                     out.extend_from_slice(if is_reset {
@@ -3031,6 +3034,36 @@ mod pretty_fmt_tests {
         // mistaken for a tag.
         assert_eq!(pretty_fmt!("\\<folder\\>", true), "<folder>");
         assert_eq!(pretty_fmt!("\\<folder\\>", false), "<folder>");
+    }
+
+    #[test]
+    fn unknown_tags_pass_through_verbatim() {
+        // Prose placeholders in `--help` descriptions must not be stripped.
+        assert_eq!(
+            pretty_fmt_runtime(b"Re-run each test file <NUMBER> times", false),
+            b"Re-run each test file <NUMBER> times",
+        );
+        assert_eq!(
+            pretty_fmt_runtime(b"Re-run each test file <NUMBER> times", true),
+            b"Re-run each test file <NUMBER> times",
+        );
+        assert_eq!(
+            pretty_fmt_runtime(b"equal to <level> (low, moderate)", false),
+            b"equal to <level> (low, moderate)",
+        );
+        assert_eq!(
+            pretty_fmt_runtime(b"Use '<empty>' for opaque specifiers", true),
+            b"Use '<empty>' for opaque specifiers",
+        );
+        // Known markup in the same string is still resolved.
+        assert_eq!(
+            pretty_fmt_runtime(b"<d>default<r> after <NUMBER> runs", false),
+            b"default after <NUMBER> runs",
+        );
+        assert_eq!(
+            pretty_fmt_runtime(b"<d>default<r> after <NUMBER> runs", true),
+            b"\x1b[2mdefault\x1b[0m after <NUMBER> runs",
+        );
     }
 
     #[test]

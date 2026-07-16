@@ -304,6 +304,7 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                 }
             }
             b'<' => {
+                let tag_open = i;
                 i += 1;
                 let mut is_reset = i < fmt.len() && fmt[i] == b'/';
                 if is_reset {
@@ -320,12 +321,12 @@ fn pretty_rewrite(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
                     is_reset = true;
                     ""
                 } else {
-                    // Unknown tag: `pretty_fmt_runtime` (the path this replaces)
-                    // drops it silently. Match
-                    // the lenient runtime behaviour — a compile error would be
-                    // stricter than what shipped, and param specs don't carry
-                    // unknown tags anyway.
-                    ""
+                    // Unknown tag: emit verbatim so prose placeholders such as
+                    // `<NUMBER>` / `<level>` in param descriptions survive.
+                    let end = if i < fmt.len() { i + 1 } else { i };
+                    out.extend_from_slice(&fmt[tag_open..end]);
+                    i = end;
+                    continue;
                 };
                 if is_enabled {
                     out.extend_from_slice(if is_reset {

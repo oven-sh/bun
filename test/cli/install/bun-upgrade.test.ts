@@ -99,29 +99,39 @@ describe.concurrent(() => {
   });
 
   it("zero arguments, should succeed", async () => {
+    // On Windows, hold the temp dir open without FILE_SHARE_DELETE for the
+    // whole run to exercise EBUSY handling. The canary path hard-codes
+    // github.com, so this also doubles as the one live end-to-end check.
+    openTempDirWithoutSharingDelete();
     const cwd = tmpdirSync();
-    await using proc = spawn({
-      cmd: [bunExe(), "upgrade"],
-      cwd,
-      stdout: null,
-      stdin: "pipe",
-      stderr: "pipe",
-      env: {
-        ...env,
-        // Canary builds hard-code the github.com download URL and never
-        // consult GITHUB_API_DOMAIN, so point at a dead proxy to fail the
-        // download locally instead of depending on the live canary release.
-        HTTPS_PROXY: "http://127.0.0.1:1",
-        HTTP_PROXY: "http://127.0.0.1:1",
-      },
-    });
+    const execPath = join(cwd, basename(bunExe()));
+    await copyFile(bunExe(), execPath);
 
-    const err = await proc.stderr.text();
-    // Should not contain error message
-    expect(err.split(/\r?\n/)).not.toContain(
-      "error: This command updates Bun itself, and does not take package names.",
-    );
-    await proc.exited;
+    let stderr: string;
+    try {
+      await using proc = Bun.spawn({
+        cmd: [execPath, "upgrade"],
+        cwd,
+        stdout: null,
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      [stderr] = await Promise.all([proc.stderr.text(), proc.exited]);
+    } finally {
+      closeTempDirHandle();
+    }
+
+    expect(stderr).not.toContain("This command updates Bun itself, and does not take package names.");
+
+    // The canary release on github.com is periodically rebuilt by deleting the
+    // old assets and uploading new ones, leaving a short window where the
+    // asset 404s. That window is not a bug in `bun upgrade`.
+    if (stderr.includes("Canary builds are not available for this platform yet")) {
+      console.warn("bun upgrade: skipped live end-to-end assertions, canary asset 404'd (release re-upload window)");
+    } else {
+      expect(stderr).not.toContain("error:");
+    }
   });
 });
 
@@ -142,12 +152,14 @@ it("completes the download when the OS temp dir is held open without FILE_SHARE_
   }
 
   let apiHits = 0;
+  let downloadHits = 0;
   using server = Bun.serve({
     tls: tls,
     port: 0,
     async fetch(req) {
       const { pathname } = new URL(req.url);
       if (pathname.startsWith("/releases/")) {
+        downloadHits++;
         return new Response("this is not a real zip archive");
       }
       apiHits++;
@@ -187,6 +199,13 @@ it("completes the download when the OS temp dir is held open without FILE_SHARE_
         ...env,
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        // Clear ambient proxy configuration so the mock is reached directly.
+        HTTPS_PROXY: "",
+        HTTP_PROXY: "",
+        https_proxy: "",
+        http_proxy: "",
+        NO_PROXY: "",
+        no_proxy: "",
         ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
     });
@@ -196,9 +215,9 @@ it("completes the download when the OS temp dir is held open without FILE_SHARE_
     closeTempDirHandle();
   }
 
-  // The release metadata must have been served by the local mock.
-  expect(apiHits).toBeGreaterThan(0);
-  // The upgrade reached the download/temp-dir stage with our fake release.
+  // Both the release metadata and the archive must have been served locally;
+  // the archive fetch is what proves we reached filesystem.tmpdir().
+  expect({ apiHits, downloadHits }).toEqual({ apiHits: 1, downloadHits: 1 });
   expect(stderr).toContain("9.8.7");
   // No EBUSY while staging into the temp directory.
   expect(stderr).not.toContain("EBUSY");

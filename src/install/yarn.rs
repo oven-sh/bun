@@ -2,8 +2,8 @@ use bun_collections::VecExt;
 use std::borrow::Cow;
 use std::io::Write as _;
 
+use crate::Error;
 use bun_collections::{HashMap, StringHashMap};
-use bun_core::Error;
 use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
@@ -684,7 +684,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 ) -> Result<LoadResult<'a>, Error> {
     // yarn v2+ (berry) lockfiles are not supported; only the v1 format migrates.
     if !strings::index_of(data, b"# yarn lockfile v1").is_some() {
-        return Err(bun_core::err!("UnsupportedYarnLockfileVersion"));
+        return Err(crate::Error::UnsupportedYarnLockfileVersion);
     }
 
     let mut yarn_lock = YarnLock::init();
@@ -719,10 +719,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let Ok(package_json_fd) =
             bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
         else {
-            return Err(bun_core::err!("InvalidPackageJSON"));
+            return Err(crate::Error::InvalidPackageJSON);
         };
         let Ok(package_json_contents) = package_json_fd.read_to_end() else {
-            return Err(bun_core::err!("InvalidPackageJSON"));
+            return Err(crate::Error::InvalidPackageJSON);
         };
 
         // The path buffer must outlive `package_json_source`: `Source.path.text`
@@ -733,26 +733,24 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             let Ok(package_json_path) =
                 bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
             else {
-                return Err(bun_core::err!("InvalidPackageJSON"));
+                return Err(crate::Error::InvalidPackageJSON);
             };
             bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        // The 8 JSON option flags are spelled out as const generics (stable
-        // Rust has no struct const-generics).
         let json_bump = bun_alloc::Arena::new();
-        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts::<
-            true,  // IS_JSON
-            true,  // ALLOW_COMMENTS
-            true,  // ALLOW_TRAILING_COMMAS
-            false, // IGNORE_LEADING_ESCAPE_SEQUENCES
-            false, // IGNORE_TRAILING_ESCAPE_SEQUENCES
-            false, // JSON_WARN_DUPLICATE_KEYS
-            false, // WAS_ORIGINALLY_MACRO
-            true,  // GUESS_INDENTATION
-        >(&package_json_source, log, &json_bump) else {
-            return Err(bun_core::err!("InvalidPackageJSON"));
+        let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
+            bun_json::JSONOptions {
+                json_warn_duplicate_keys: false,
+                guess_indentation: true,
+                ..bun_json::PACKAGE_JSON_OPTS
+            },
+            &package_json_source,
+            log,
+            &json_bump,
+        ) else {
+            return Err(crate::Error::InvalidPackageJSON);
         };
 
         let package_json = package_json_expr.root;
@@ -2023,9 +2021,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     }
 
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
-    // a tagged `bun_core::Error` until `From<SubtreeError>` lands.
+    // a tagged error until `From<SubtreeError>` lands.
     if let Err(_e) = this.resolve(log) {
-        return Err(bun_core::err!("LockfileResolveFailed"));
+        return Err(crate::Error::LockfileResolveFailed);
     }
 
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true>(manager)?;

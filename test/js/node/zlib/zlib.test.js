@@ -2,6 +2,7 @@ import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
+import { randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
@@ -103,6 +104,36 @@ describe("zlib", () => {
   it("should throw on invalid gzip data", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
+  });
+
+  describe("libdeflate level validation", () => {
+    const data = Buffer.alloc(64, "a");
+    // libdeflate_alloc_compressor returns NULL for level outside [0, 12]; that NULL must
+    // surface as an invalid-argument error, not "Out of memory".
+    for (const fn of [gzipSync, deflateSync]) {
+      it(`${fn.name}: out-of-range level throws an argument error, not OOM`, () => {
+        for (const level of [-2, -1, 13, 100]) {
+          let err;
+          try {
+            fn(data, { library: "libdeflate", level });
+          } catch (e) {
+            err = e;
+          }
+          expect(err).toBeDefined();
+          expect(err.message).not.toContain("memory");
+          expect(err.message).toContain("Compression level must be between 0 and 12");
+        }
+      });
+
+      it(`${fn.name}: in-range levels 0..12 succeed and round-trip`, () => {
+        const decompress = fn === gzipSync ? gunzipSync : inflateSync;
+        for (const level of [0, 1, 6, 9, 12]) {
+          const out = fn(data, { library: "libdeflate", level });
+          expect(out.length).toBeGreaterThan(0);
+          expect(Buffer.from(decompress(out, { library: "libdeflate" }))).toEqual(data);
+        }
+      });
+    }
   });
 });
 
@@ -245,13 +276,11 @@ describe("zlib.brotli", () => {
   });
 
   it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
     const readStream = new stream.Readable();
-    const brotliStream = zlib.createBrotliCompress();
-    const rand = createPRNG(1);
+    // Quality 4: the test asserts the transform emits multiple output chunks
+    // rather than buffering, which is quality-independent; the default (11)
+    // pushes 8 MB of random input past the 15s budget on a contended runner.
+    const brotliStream = zlib.createBrotliCompress({ params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 4 } });
     let all = [];
 
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -259,10 +288,9 @@ describe("zlib.brotli", () => {
     brotliStream.on("end", resolve);
     brotliStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
+    // Distinct incompressible (random) chunks so the compressor emits many output chunks.
+    for (let i = 0; i < 8; i++) {
+      readStream.push(randomFillSync(Buffer.alloc(1024 * 1024)));
     }
     readStream.push(null);
     readStream.pipe(brotliStream);
@@ -609,13 +637,8 @@ describe("zlib.zstd", () => {
   });
 
   it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
     const readStream = new stream.Readable();
     const zstdStream = zlib.createZstdCompress();
-    const rand = createPRNG(1);
     let all = [];
 
     const { promise, resolve, reject } = Promise.withResolvers();
@@ -623,10 +646,9 @@ describe("zlib.zstd", () => {
     zstdStream.on("end", resolve);
     zstdStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
+    // Distinct incompressible (random) chunks so the compressor emits many output chunks.
+    for (let i = 0; i < 8; i++) {
+      readStream.push(randomFillSync(Buffer.alloc(1024 * 1024)));
     }
     readStream.push(null);
     readStream.pipe(zstdStream);
@@ -734,5 +756,13 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+
+describe("crc32", () => {
+  it("rejects String objects", () => {
+    expect(() => zlib.crc32(new String("abc"))).toThrow(TypeError);
+    expect(() => zlib.crc32(String.prototype)).toThrow(TypeError);
+    expect(zlib.crc32("abc")).toBe(891568578);
   });
 });

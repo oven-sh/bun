@@ -86,6 +86,30 @@ describe("CONNECT failure status", () => {
       expect(origin.requests.length).toBe(0);
     });
   }
+
+  for (const proxyTls of [false, true] as const) {
+    test.concurrent(
+      `${proxyTls ? "https" : "http"}-proxy CONNECT → 101 fails even when the request asked to upgrade`,
+      async () => {
+        await using origin = await createAdversarialOrigin({ tls: true, body: "unreachable" });
+        await using proxy = await createAdversarialProxy({
+          tls: proxyTls,
+          connectStatus: 101,
+          connectStatusBody: "from-the-proxy",
+        });
+
+        await expect(
+          fetch(origin.url, {
+            proxy: proxy.url,
+            keepalive: false,
+            tls: laxTls,
+            headers: { Connection: "Upgrade", Upgrade: "websocket" },
+          }),
+        ).rejects.toMatchObject({ code: "UnrequestedUpgrade" });
+        expect(origin.requests.length).toBe(0);
+      },
+    );
+  }
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

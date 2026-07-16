@@ -68,6 +68,36 @@ test("Bun.TOML.parse normalizes literal CRLF to LF in multiline basic strings", 
   expect(Bun.TOML.parse(input).k).toBe("a\nb\tc");
 });
 
+const overflowingDigits = Buffer.alloc(64, "f").toString();
+
+// https://github.com/oven-sh/bun/issues/30825
+// The TOML lexer carries a copy of the JS lexer's variable-length `\u{...}` loop and
+// inherited both of its bugs: `value * 16` trapped in debug builds once the escape had
+// enough hex digits to overflow `i64`, and falling off the end of the literal before the
+// closing `}` accepted the half-parsed value (`"\u{41"` decoded to `"A"`).
+test("Bun.TOML.parse rejects out-of-range \\u{...} escapes without overflowing (#30825)", () => {
+  expect(() => Bun.TOML.parse('a = "\\u{3333333316aaaaaaa}"')).toThrow("Unicode escape sequence is out of range");
+  expect(() => Bun.TOML.parse(`a = "\\u{${overflowingDigits}}"`)).toThrow("Unicode escape sequence is out of range");
+  expect(() => Bun.TOML.parse(`a = "\\u{0000${overflowingDigits}}"`)).toThrow(
+    "Unicode escape sequence is out of range",
+  );
+  expect(() => Bun.TOML.parse('a = "\\u{110000}"')).toThrow("Unicode escape sequence is out of range");
+});
+
+test("Bun.TOML.parse rejects \\u{...} escapes with no closing brace (#30825)", () => {
+  expect(() => Bun.TOML.parse('a = "\\u{41"')).toThrow("Syntax Error");
+  expect(() => Bun.TOML.parse('a = "\\u{"')).toThrow("Syntax Error");
+  expect(() => Bun.TOML.parse('a = "\\u{110000"')).toThrow("Syntax Error");
+  expect(() => Bun.TOML.parse(`a = "\\u{${overflowingDigits}"`)).toThrow("Syntax Error");
+});
+
+test("Bun.TOML.parse still accepts in-range \\u{...} escapes (#30825)", () => {
+  expect(Bun.TOML.parse('a = "\\u{41}"')).toEqual({ a: "A" });
+  // Long enough to overflow if the leading zeros were counted as significant digits.
+  expect(Bun.TOML.parse(`a = "\\u{${Buffer.alloc(64, "0").toString()}41}"`)).toEqual({ a: "A" });
+  expect(Bun.TOML.parse('a = "\\u{10FFFF}"')).toEqual({ a: "\u{10FFFF}" });
+});
+
 // https://github.com/oven-sh/bun/issues/31252
 // `Lexer::expect` in the TOML lexer logs a mismatch via `add_range_error` and
 // then falls through to `next()` for error recovery, so the parser returned

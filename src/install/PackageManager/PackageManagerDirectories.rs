@@ -3,11 +3,12 @@ use std::io::Write as _;
 
 use bun_alloc::AllocError;
 
+use crate::Error;
 use crate::bun_fs::FileSystem;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
-use bun_core::{Error, Global, Output, ZBox, env_var, fmt as bun_fmt};
+use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
@@ -233,7 +234,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     Err(err) => {
                         bun_core::pretty_errorln!(
                             "<r><red>error<r>: bun is unable to access tempdir: {}",
-                            err.name()
+                            bun_fmt::s(err.name())
                         );
                         Global::crash();
                     }
@@ -246,7 +247,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
     let mut timer = if manager.options.log_level != LogLevel::Silent {
-        Some(bun_core::time::Timer::start().expect("unreachable"))
+        Some(bun_core::time::Timer::start())
     } else {
         None
     };
@@ -273,7 +274,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                         Err(err) => {
                             bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to access tempdir: {}",
-                                err.name()
+                                bun_fmt::s(err.name())
                             );
                             Global::crash();
                         }
@@ -282,7 +283,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     if verbose_install() {
                         bun_core::pretty_errorln!(
                             "<r><yellow>warn<r>: bun is unable to access tempdir: {}, using fallback",
-                            err2.name()
+                            bun_fmt::s(err2.name())
                         );
                     }
 
@@ -290,7 +291,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 }
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
-                    err2.name()
+                    bun_fmt::s(err2.name())
                 );
                 Global::crash();
             }
@@ -307,7 +308,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                         Err(err2) => {
                             bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to write files to tempdir: {}",
-                                err2.name()
+                                bun_fmt::s(err2.name())
                             );
                             Global::crash();
                         }
@@ -422,7 +423,7 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun is unable to write files: {}",
-                    err.name()
+                    bun_fmt::s(err.name())
                 );
                 Global::crash();
             }
@@ -848,7 +849,7 @@ pub fn global_link_dir(this: &mut PackageManager) -> Fd {
 
     let global_dir = match options::open_global_dir(this.options.explicit_global_directory) {
         Ok(d) => Dir::from_fd(d),
-        Err(err) if err == bun_core::err!("No global directory found") => {
+        Err(crate::Error::NoGlobalDirectoryFound) => {
             Output::err_generic(
                 "failed to find a global directory for package caching and global link directories",
                 (),
@@ -1113,7 +1114,10 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     ) {
         Ok(f) => f,
         Err(err) => {
-            bun_core::pretty_errorln!("<r><red>error:<r> {} create package.json", err.name());
+            bun_core::pretty_errorln!(
+                "<r><red>error:<r> {} create package.json",
+                bun_fmt::s(err.name())
+            );
             Global::crash();
         }
     };
@@ -1284,7 +1288,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             .to_le_bytes(),
     );
     let mut base64_bytes = [0u8; 64];
-    bun_core::csprng(&mut base64_bytes);
+    bun_boringssl_sys::rand_bytes(&mut base64_bytes);
 
     // Format each byte as zero-padded 2-char lower hex (128 chars total).
     let tmpname_len = {

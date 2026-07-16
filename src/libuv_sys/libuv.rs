@@ -516,8 +516,11 @@ impl Loop {
         // SAFETY: self is a live loop.
         let _ = unsafe { uv_run(self, RunMode::Default) };
     }
+    /// Signature matches the uSockets loop's so callers need no `cfg`. Both args are ignored:
+    /// libuv derives its own deadline, and the Windows park hook is driven from `us_loop_run`
+    /// (libuv.c), which reuses libuv's already-refreshed clock via `uv_now`.
     #[inline]
-    pub fn tick_with_timeout(&mut self, _: i64) {
+    pub fn tick_with_timeout(&mut self, _: i64, _now_ns: u64) {
         // SAFETY: self is a live loop.
         let _ = unsafe { uv_run(self, RunMode::NoWait) };
     }
@@ -2253,6 +2256,7 @@ unsafe impl bun_core::ffi::Zeroable for uv_fs_event_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_getaddrinfo_t {}
 unsafe impl bun_core::ffi::Zeroable for uv_tty_t {}
 unsafe impl bun_core::ffi::Zeroable for fs_t {}
+unsafe impl bun_core::ffi::Zeroable for uv_stat_t {}
 impl ReturnCode {
     pub const ZERO: ReturnCode = ReturnCode(0);
     #[inline]

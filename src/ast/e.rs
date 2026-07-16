@@ -862,6 +862,371 @@ impl BigInt {
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
 
+// ── immutable JSON nodes ───────────────────────────────────────────────────
+// Compact, read-only object/array nodes: the JSON parser's native output.
+// Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
+
+/// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
+#[derive(Clone, Copy)]
+pub enum JsonValue {
+    Null,
+    Boolean(bool),
+    Number(Number),
+    String(Str),
+    Object(StoreRef<ObjectJSON>),
+    Array(StoreRef<ArrayJSON>),
+}
+
+const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
+const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
+
+impl JsonValue {
+    pub fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+        match self {
+            JsonValue::Null => hasher.update(&[0]),
+            JsonValue::Boolean(b) => hasher.update(&[1, *b as u8]),
+            JsonValue::Number(n) => {
+                hasher.update(&[2]);
+                hasher.update(&n.value().to_bits().to_le_bytes());
+            }
+            JsonValue::String(s) => {
+                hasher.update(&[3]);
+                hasher.update(s.slice());
+            }
+            JsonValue::Object(o) => {
+                let o = o.get();
+                hasher.update(&[4]);
+                hasher.update(&(o.properties().len() as u32).to_le_bytes());
+                for p in o.properties().iter() {
+                    hasher.update(p.key.slice());
+                    p.value.write_to_hasher(hasher);
+                }
+            }
+            JsonValue::Array(a) => {
+                let a = a.get();
+                hasher.update(&[5]);
+                hasher.update(&(a.items().len() as u32).to_le_bytes());
+                for item in a.items().iter() {
+                    item.write_to_hasher(hasher);
+                }
+            }
+        }
+    }
+
+    #[inline]
+    pub fn as_str(&self) -> Option<&[u8]> {
+        match self {
+            JsonValue::String(s) => Some(s.slice()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_object(&self) -> Option<&ObjectJSON> {
+        match self {
+            JsonValue::Object(o) => Some(o.get()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_array(&self) -> Option<&ArrayJSON> {
+        match self {
+            JsonValue::Array(a) => Some(a.get()),
+            _ => None,
+        }
+    }
+}
+
+/// One `"key": value` row of an [`ObjectJSON`].
+#[derive(Clone, Copy)]
+pub struct PropertyJSON {
+    pub key: Str,
+    pub key_loc: crate::Loc,
+    pub value: JsonValue,
+}
+
+const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
+
+/// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
+#[derive(Clone, Copy)]
+pub enum TapeAlloc {
+    Global,
+    Arena(core::ptr::NonNull<Bump>),
+}
+
+// SAFETY: an arena tape is built and read on the thread that owns the arena.
+unsafe impl Send for TapeAlloc {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for TapeAlloc {}
+
+// SAFETY: both arms forward to allocators that uphold the `Allocator` contract.
+unsafe impl core::alloc::Allocator for TapeAlloc {
+    fn allocate(
+        &self,
+        layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        match self {
+            TapeAlloc::Global => core::alloc::Allocator::allocate(&std::alloc::Global, layout),
+            TapeAlloc::Arena(a) => {
+                // SAFETY: the arena outlives the tape (the type's contract).
+                let arena: &Bump = unsafe { a.as_ref() };
+                core::alloc::Allocator::allocate(&arena, layout)
+            }
+        }
+    }
+
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        match self {
+            // SAFETY: forwarding the caller's contract.
+            TapeAlloc::Global => unsafe {
+                core::alloc::Allocator::deallocate(&std::alloc::Global, ptr, layout)
+            },
+            TapeAlloc::Arena(a) => {
+                // SAFETY: the arena outlives the tape (the type's contract).
+                let arena: &Bump = unsafe { a.as_ref() };
+                // SAFETY: forwarding the caller's contract to the arena.
+                unsafe { core::alloc::Allocator::deallocate(&arena, ptr, layout) }
+            }
+        }
+    }
+}
+
+/// Everything one parsed JSON document allocates that does not borrow the source.
+pub struct JsonTape {
+    props: Vec<PropertyJSON, TapeAlloc>,
+    items: Vec<JsonValue, TapeAlloc>,
+    prop_value_locs: Vec<crate::Loc, TapeAlloc>,
+    item_locs: Vec<crate::Loc, TapeAlloc>,
+    str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
+    str_used: usize,
+}
+
+// SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
+unsafe impl Send for JsonTape {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for JsonTape {}
+
+impl JsonTape {
+    const STR_CHUNK: usize = 4096;
+
+    pub fn empty() -> JsonTape {
+        Self::empty_in(TapeAlloc::Global)
+    }
+
+    pub fn empty_in(alloc: TapeAlloc) -> JsonTape {
+        JsonTape {
+            props: Vec::new_in(alloc),
+            items: Vec::new_in(alloc),
+            prop_value_locs: Vec::new_in(alloc),
+            item_locs: Vec::new_in(alloc),
+            str_chunks: Vec::new_in(alloc),
+            str_used: 0,
+        }
+    }
+
+    /// The tape allocation's own pointer, for [`ObjectJSON::new`] /
+    /// [`ArrayJSON::new`].
+    ///
+    /// Takes `&mut self` so the result can never be a shared reborrow: the
+    /// parser keeps writing through this pointer for the rest of the parse, and
+    /// a `&JsonTape`-derived pointer is frozen and has no permission to do that.
+    /// Build the pointer with this rather than a bare `NonNull::from`, so the
+    /// borrow it is derived from cannot silently be the wrong one.
+    #[inline]
+    pub fn root_ptr(&mut self) -> core::ptr::NonNull<JsonTape> {
+        core::ptr::NonNull::from(self)
+    }
+
+    #[inline]
+    fn alloc(&self) -> TapeAlloc {
+        *self.props.allocator()
+    }
+
+    #[inline]
+    pub fn append_props(&mut self, rows: &[PropertyJSON], value_locs: &[crate::Loc]) -> (u32, u32) {
+        let first = self.props.len() as u32;
+        self.props.extend_from_slice(rows);
+        self.prop_value_locs.extend_from_slice(value_locs);
+        (first, rows.len() as u32)
+    }
+
+    #[inline]
+    pub fn append_items(&mut self, rows: &[JsonValue], item_locs: &[crate::Loc]) -> (u32, u32) {
+        let first = self.items.len() as u32;
+        self.items.extend_from_slice(rows);
+        self.item_locs.extend_from_slice(item_locs);
+        (first, rows.len() as u32)
+    }
+
+    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
+        let fits = self
+            .str_chunks
+            .last()
+            .is_some_and(|c| c.len() - self.str_used >= bytes.len());
+        if !fits {
+            let cap = bytes.len().max(Self::STR_CHUNK);
+            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
+            chunk.resize(cap, 0);
+            self.str_chunks.push(chunk);
+            self.str_used = 0;
+        }
+        let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
+        let out = &mut chunk[self.str_used..self.str_used + bytes.len()];
+        out.copy_from_slice(bytes);
+        self.str_used += bytes.len();
+        Str::new(out)
+    }
+
+    #[inline]
+    fn prop_value_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.prop_value_locs
+            .get(first as usize..first as usize + count as usize)
+    }
+
+    #[inline]
+    fn item_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.item_locs
+            .get(first as usize..first as usize + count as usize)
+    }
+
+    #[inline]
+    fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON] {
+        &self.props[first as usize..first as usize + count as usize]
+    }
+
+    #[inline]
+    fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
+        &self.items[first as usize..first as usize + count as usize]
+    }
+}
+
+/// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
+pub struct ObjectJSON {
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
+    pub close_brace_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+// SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
+unsafe impl Send for ObjectJSON {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for ObjectJSON {}
+
+impl ObjectJSON {
+    /// `tape` must be the document's [`JsonTape`], and must outlive this node.
+    ///
+    /// # Safety
+    /// `tape` must carry the tape allocation's own provenance — the parser's
+    /// `NonNull<JsonTape>` — **not** a `&JsonTape`/`&mut JsonTape` reborrow of
+    /// it. The parser keeps appending to the tape after this node is built
+    /// (sibling properties, the enclosing object, later strings), and each of
+    /// those writes would invalidate a reborrow-derived pointer, making every
+    /// later [`properties`](Self::properties) read UB.
+    #[inline]
+    pub unsafe fn new(
+        tape: core::ptr::NonNull<JsonTape>,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_brace_loc: crate::Loc,
+    ) -> Self {
+        ObjectJSON {
+            tape,
+            first,
+            count,
+            close_brace_loc,
+            is_single_line,
+        }
+    }
+
+    #[inline]
+    pub fn properties(&self) -> &[PropertyJSON] {
+        if self.count == 0 {
+            return &[];
+        }
+        // SAFETY: per the constructor's contract the tape outlives this node.
+        unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
+    }
+
+    /// Parallel to [`Self::properties`]; `None` unless the parse recorded value locations.
+    #[inline]
+    pub fn value_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `properties`.
+        unsafe { self.tape.as_ref() }.prop_value_locs_span(self.first, self.count)
+    }
+
+    #[inline]
+    pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
+        self.properties()
+            .iter()
+            .find(|p| p.key.slice() == key)
+            .map(|p| &p.value)
+    }
+}
+
+/// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
+pub struct ArrayJSON {
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
+    pub close_bracket_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+// SAFETY: see `ObjectJSON`.
+unsafe impl Send for ArrayJSON {}
+// SAFETY: see `ObjectJSON`.
+unsafe impl Sync for ArrayJSON {}
+
+impl ArrayJSON {
+    /// `tape` must be the document's [`JsonTape`], and must outlive this node.
+    ///
+    /// # Safety
+    /// Same provenance contract as [`ObjectJSON::new`].
+    #[inline]
+    pub unsafe fn new(
+        tape: core::ptr::NonNull<JsonTape>,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_bracket_loc: crate::Loc,
+    ) -> Self {
+        ArrayJSON {
+            tape,
+            first,
+            count,
+            close_bracket_loc,
+            is_single_line,
+        }
+    }
+
+    #[inline]
+    pub fn items(&self) -> &[JsonValue] {
+        if self.count == 0 {
+            return &[];
+        }
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
+    }
+
+    /// Parallel to [`Self::items`]; `None` unless the parse recorded item locations.
+    #[inline]
+    pub fn item_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }.item_locs_span(self.first, self.count)
+    }
+}
+
 pub struct Object {
     pub properties: G::PropertyList,
     pub comma_after_spread: crate::Loc,
@@ -934,11 +1299,11 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for bun_core::Error {
+impl From<SetError> for crate::Error {
     fn from(e: SetError) -> Self {
         match e {
-            SetError::OutOfMemory => bun_core::err!(OutOfMemory),
-            SetError::Clobber => bun_core::err!(Clobber),
+            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            SetError::Clobber => crate::Error::Clobber,
         }
     }
 }
@@ -1000,10 +1365,12 @@ impl Object {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
+            let key = Expr::init(EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
-                    key: Some(Expr::init(EString::init(key), expr.loc)),
+                    flags: own_key_property_flags(&key),
+                    key: Some(key),
                     value: Some(expr),
                     ..G::Property::default()
                 },
@@ -1062,6 +1429,7 @@ impl Object {
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
+                    flags: own_key_property_flags(&rope.head),
                     ..G::Property::default()
                 },
             );
@@ -1074,10 +1442,23 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
         Ok(out)
+    }
+}
+
+/// Data-file parsers (JSON/JSON5/TOML/YAML) define every key as an own
+/// property, so an own `"__proto__"` string key must be marked computed:
+/// a plain `"__proto__":` key in a printed object literal sets the prototype.
+pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
+    match &key.data {
+        crate::expr::Data::EString(key_str) if key_str.eql_comptime(b"__proto__") => {
+            crate::flags::Property::IsComputed.into()
+        }
+        _ => crate::flags::PROPERTY_NONE,
     }
 }
 
@@ -1095,6 +1476,7 @@ impl Object {
         VecExt::append(
             &mut self.properties,
             G::Property {
+                flags: own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
                 ..G::Property::default()
@@ -1160,6 +1542,7 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(value_),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
@@ -1215,6 +1598,7 @@ impl Object {
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
+                    flags: own_key_property_flags(&rope.head),
                     ..G::Property::default()
                 },
             );
@@ -1227,6 +1611,7 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
@@ -1482,7 +1867,8 @@ impl EString {
         } else {
             // PERF: transcodes to a heap Vec then copies into the bump
             // arena — profile.
-            let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false).expect("unreachable"); // fail_if_invalid=false → never errors
+            // `fail_if_invalid = false` means the only possible error is `OutOfMemory`.
+            let utf16 = bun_core::handle_oom(strings::to_utf16_alloc_for_real(utf8, false, false));
             let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
             Self::init_utf16(arena_slice)
         }
@@ -2236,3 +2622,162 @@ impl Import {
 }
 
 pub use G::Class;
+
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+//
+// Run under Miri (`bun run rust:miri -p bun_ast`): the JSON tape hands `(first,
+// count)` spans to nodes that hold a raw `NonNull<JsonTape>` and read through
+// it long after parsing appended more rows, so Tree Borrows is what proves the
+// stored pointer survives those writes.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod json_tape_tests {
+    use super::*;
+    use crate::Loc;
+    use core::ptr::NonNull;
+
+    fn prop(key: Str, value: JsonValue) -> PropertyJSON {
+        PropertyJSON {
+            key,
+            key_loc: Loc::EMPTY,
+            value,
+        }
+    }
+
+    /// Mirrors `Parser`'s ownership: the tape is a heap allocation the parser
+    /// holds as a `NonNull` and reaches only through that pointer, handing the
+    /// same pointer to every node it builds.
+    struct TapeOwner(NonNull<JsonTape>);
+
+    impl TapeOwner {
+        fn new() -> Self {
+            TapeOwner(
+                NonNull::new(bun_core::heap::into_raw(Box::new(JsonTape::empty())))
+                    .expect("non-null"),
+            )
+        }
+        fn ptr(&self) -> NonNull<JsonTape> {
+            self.0
+        }
+        /// `Parser::tape_mut` — a fresh reborrow of the root pointer per call.
+        #[allow(clippy::mut_from_ref)]
+        fn get(&self) -> &mut JsonTape {
+            // SAFETY: sole owner; each call hands out one short-lived borrow.
+            unsafe { &mut *self.0.as_ptr() }
+        }
+    }
+
+    impl Drop for TapeOwner {
+        fn drop(&mut self) {
+            // SAFETY: sole owner of a `Box`-allocated tape.
+            drop(unsafe { bun_core::heap::take(self.0.as_ptr()) });
+        }
+    }
+
+    /// The parser keeps appending to the tape while it builds enclosing nodes.
+    /// Mirrors `{"a": {"b": null}}`: the inner object's node is built first,
+    /// then the outer object allocates a key and appends its own rows — writes
+    /// the inner node must survive, because `properties()` is read afterwards.
+    #[test]
+    fn object_json_survives_later_tape_writes() {
+        let tape = TapeOwner::new();
+
+        // Inner `{"b": null}`.
+        let kb = tape.get().alloc_str(b"b");
+        let (first, count) = tape.get().append_props(&[prop(kb, JsonValue::Null)], &[]);
+        // SAFETY: the tape's own pointer, as `Parser` passes it.
+        let inner = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        // The parse continues: another string, then the outer object's rows.
+        let ka = tape.get().alloc_str(b"a");
+        let (first, count) = tape.get().append_props(&[prop(ka, JsonValue::Null)], &[]);
+        // SAFETY: as above.
+        let outer = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        // Post-parse reads, after every one of those writes.
+        assert_eq!(inner.properties().len(), 1);
+        assert_eq!(inner.properties()[0].key.slice(), b"b");
+        assert_eq!(outer.properties().len(), 1);
+        assert_eq!(outer.properties()[0].key.slice(), b"a");
+        assert!(inner.get(b"b").is_some());
+        assert!(inner.get(b"nope").is_none());
+    }
+
+    #[test]
+    fn array_json_survives_later_tape_writes() {
+        let tape = TapeOwner::new();
+
+        let (first, count) = tape.get().append_items(&[JsonValue::Null], &[]);
+        // SAFETY: the tape's own pointer, as `Parser` passes it.
+        let inner = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        let (first, count) = tape.get().append_items(&[JsonValue::Boolean(true)], &[]);
+        // SAFETY: as above.
+        let outer = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        assert_eq!(inner.items().len(), 1);
+        assert!(matches!(inner.items()[0], JsonValue::Null));
+        assert_eq!(outer.items().len(), 1);
+        assert!(matches!(outer.items()[0], JsonValue::Boolean(true)));
+    }
+
+    /// An empty span must not dereference the tape at all.
+    #[test]
+    fn zero_count_spans_do_not_read_the_tape() {
+        let tape = TapeOwner::new();
+        // SAFETY: the tape's own pointer.
+        let o = unsafe { ObjectJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        // SAFETY: as above.
+        let a = unsafe { ArrayJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        assert!(o.properties().is_empty());
+        assert_eq!(o.value_locs(), Some(&[][..]));
+        assert!(a.items().is_empty());
+        assert_eq!(a.item_locs(), Some(&[][..]));
+    }
+
+    /// `alloc_str` hands out `Str`s pointing into chunks that must stay put as
+    /// later strings spill into new chunks.
+    #[test]
+    fn alloc_str_chunks_never_move() {
+        let tape = TapeOwner::new();
+        let a = tape.get().alloc_str(b"first");
+        // Force a fresh chunk: bigger than what is left in the current one.
+        let big = vec![b'x'; JsonTape::STR_CHUNK + 1];
+        let b = tape.get().alloc_str(&big);
+        let c = tape.get().alloc_str(b"third");
+        assert_eq!(a.slice(), b"first");
+        assert_eq!(b.slice(), &big[..]);
+        assert_eq!(c.slice(), b"third");
+    }
+
+    /// `Parser::new`'s arena arm roots the tape at the `&mut JsonTape` the
+    /// allocator hands back, not at a `Box::into_raw`. Writes through that root
+    /// must still be permitted: a shared reborrow here is frozen, so every
+    /// `append_props` the parse performs afterwards would be UB. This is the
+    /// shape the bundler's JSON imports take.
+    #[test]
+    fn tape_rooted_at_a_mutable_borrow_still_accepts_writes() {
+        let mut owner = JsonTape::empty();
+        // `root_ptr` takes `&mut self`, exactly as `arena.alloc(..)` yields.
+        let tape_ptr = owner.root_ptr();
+        // From here on reach the tape only through `tape_ptr`, as the parser does.
+        // SAFETY: `tape_ptr` roots the tape; `owner` is untouched until it drops.
+        let tape = |p: NonNull<JsonTape>| -> &mut JsonTape { unsafe { &mut *p.as_ptr() } };
+
+        let kb = tape(tape_ptr).alloc_str(b"b");
+        let (first, count) = tape(tape_ptr).append_props(&[prop(kb, JsonValue::Null)], &[]);
+        // SAFETY: the tape's own pointer.
+        let inner = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+
+        // The parse keeps appending after the node is built.
+        let ka = tape(tape_ptr).alloc_str(b"a");
+        let (first, count) = tape(tape_ptr).append_props(&[prop(ka, JsonValue::Null)], &[]);
+        // SAFETY: as above.
+        let outer = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+
+        assert_eq!(inner.properties()[0].key.slice(), b"b");
+        assert_eq!(outer.properties()[0].key.slice(), b"a");
+    }
+}

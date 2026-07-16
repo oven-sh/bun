@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { isLinux, isWindows, tmpdirSync } from "harness";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -110,6 +110,18 @@ describe("fs.mkdirSync", () => {
 
     fs.mkdirSync(pathname, { mode: 0o777 });
     expect(fs.existsSync(pathname)).toBe(true);
+  });
+
+  it.skipIf(isWindows)("creates a directory honoring mode bits above 0o777", () => {
+    const pathname = path.join(tmpdir, nextdir());
+
+    fs.mkdirSync(pathname, { mode: 0o1777 });
+    const mode = fs.statSync(pathname).mode;
+    expect(mode & 0o777).toBe(0o777 & ~process.umask());
+    // macOS mkdir(2) does not honor the sticky bit in the mode argument.
+    if (isLinux) {
+      expect(mode & 0o7000).toBe(0o1000);
+    }
   });
 
   it("throws for invalid path types", () => {

@@ -16,9 +16,9 @@ use smallvec::SmallVec;
 // without a back-edge. `bun_shell` re-exports these under its old paths.
 // ═══════════════════════════════════════════════════════════════════════════
 
-use bun_core::immutable::CodePoint; // i32
-use bun_core::immutable::{CodepointIterator, Cursor};
 use bun_core::strings;
+use bun_core::strings::CodePoint; // i32
+use bun_core::strings::{CodepointIterator, Cursor};
 
 /// Encoding of the shell input bytes being expanded.
 #[derive(Clone, Copy, PartialEq, Eq, core::marker::ConstParamTy)]
@@ -358,7 +358,7 @@ impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
 /// (codepoint-aware for non-ASCII input).
 pub fn has_eq_sign(str_: &[u8]) -> Option<u32> {
     if strings::is_all_ascii(str_) {
-        return bun_core::immutable::index_of_char(str_, b'=');
+        return bun_core::strings::index_of_char(str_, b'=');
     }
 
     // TODO actually i think that this can also use the simd stuff
@@ -658,12 +658,12 @@ pub enum ParserError {
 
 bun_core::oom_from_alloc!(ParserError);
 
-impl From<ParserError> for bun_core::Error {
+impl From<ParserError> for crate::Error {
     fn from(e: ParserError) -> Self {
         match e {
-            ParserError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            ParserError::UnexpectedToken => bun_core::err!("UnexpectedToken"),
-            ParserError::TooManyBraces => bun_core::err!("TooManyBraces"),
+            ParserError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ParserError::UnexpectedToken => crate::Error::UnexpectedToken,
+            ParserError::TooManyBraces => crate::Error::TooManyBraces,
         }
     }
 }

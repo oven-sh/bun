@@ -42,8 +42,6 @@ impl core::fmt::Display for PrettyStr {
     }
 }
 
-use bun_jsc::c_api::{JSObjectGetPropertyAtIndex, JSObjectGetProxyTarget};
-
 /// `Expect*.js.*GetCached` accessors — generate-classes.ts emits these
 /// per-type for `cache: true` props (jest.classes.ts).
 /// Rust has no inherent associated modules, so each
@@ -394,7 +392,7 @@ impl Drop for Formatter<'_> {
                 let data = node.as_mut().data.assume_init_mut();
                 *data = core::mem::take(&mut self.map);
                 data.clear();
-                visited::Pool::release(node.as_mut());
+                visited::Pool::release(node.as_ptr());
             }
         }
     }
@@ -576,12 +574,7 @@ impl Tag {
         }
 
         if js_type == JSType::GlobalProxy {
-            // SAFETY: `value` is a GlobalProxy cell (checked above); JSC C-API
-            // returns the wrapped target object (never null for a live proxy).
-            return Tag::get(
-                JSValue::c(unsafe { JSObjectGetProxyTarget(value.as_object_ref()) }),
-                global_this,
-            );
+            return Tag::get(value.get_proxy_target(), global_this);
         }
 
         // Is this a react element?
@@ -1528,8 +1521,6 @@ impl<'a> Formatter<'a> {
 
                         self.add_for_new_line(2);
 
-                        let r#ref = value.as_object_ref();
-
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
@@ -1538,17 +1529,7 @@ impl<'a> Formatter<'a> {
                         // a closure and restore unconditionally afterward.
                         let inner: JsResult<()> = (|| {
                             {
-                                // SAFETY: `r#ref` is a live JSObjectRef for `value`; index 0 is
-                                // bounds-checked by `len > 0` in the enclosing branch. The C-API
-                                // takes `*mut JSGlobalObject` by convention but never mutates it.
-                                let element = JSValue::c(unsafe {
-                                    JSObjectGetPropertyAtIndex(
-                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
-                                        r#ref,
-                                        0,
-                                        core::ptr::null_mut(),
-                                    )
-                                });
+                                let element = value.get_index(self.global_this, 0)?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 was_good_time = was_good_time
@@ -1587,16 +1568,7 @@ impl<'a> Formatter<'a> {
                                 writer.write_all(b"\n");
                                 self.write_indent(writer.ctx).expect("unreachable");
 
-                                // SAFETY: `i < len`, `r#ref` is the live object ref. The C-API
-                                // takes `*mut JSGlobalObject` by convention but never mutates it.
-                                let element = JSValue::c(unsafe {
-                                    JSObjectGetPropertyAtIndex(
-                                        std::ptr::from_ref::<JSGlobalObject>(self.global_this).cast_mut(),
-                                        r#ref,
-                                        i,
-                                        core::ptr::null_mut(),
-                                    )
-                                });
+                                let element = value.get_index(self.global_this, i)?;
                                 let tag = Tag::get(element, self.global_this)?;
 
                                 self.format::<W, ENABLE_ANSI_COLORS>(
@@ -1655,7 +1627,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Response",
                                 ));
                             }
@@ -1673,7 +1645,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Request",
                                 ));
                             }
@@ -1693,7 +1665,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print BuildArtifact",
                                 ));
                             }
@@ -1711,7 +1683,7 @@ impl<'a> Formatter<'a> {
                             // TODO: make this better
                             if !self.global_this.has_exception() {
                                 return Err(self.global_this.throw_error(
-                                    bun_core::err!("FmtError"),
+                                    bun_core::Error::FmtError,
                                     "failed to print Blob",
                                 ));
                             }

@@ -12,7 +12,7 @@ use bun_install::{Dependency, Lockfile, PackageManager};
 // `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
 // dep and produce distinct-`Expr`-type errors at every call site, so use the
 // T2 type directly.
-use crate::bun_json::{E, Expr, ExprData};
+use crate::bun_json::{E, Expr, ExprData, value_loc_of_property};
 use bun_ast::{Log, Source};
 use bun_semver::String;
 use bun_semver::string::{ArrayHashContext, Buf as StringBuf, Builder as StringBuilderNs};
@@ -114,54 +114,24 @@ impl CatalogMap {
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
     pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
-            if let ExprData::EObject(obj) = &default_catalog.data {
-                for item in obj.properties.slice() {
-                    let key = item.key.as_ref().expect("infallible: prop has key");
-                    builder.count(
-                        key.as_utf8_string_literal()
-                            .expect("infallible: is_string checked"),
-                    );
-                    if let ExprData::EString(version_str) = &item
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .data
-                    {
-                        builder.count(&version_str.data);
-                    }
-                }
-            }
+            Self::count_catalog_group(&default_catalog, builder);
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
-            if let ExprData::EObject(catalog_names) = &catalogs.data {
-                for catalog in catalog_names.properties.slice() {
-                    let catalog_key = catalog.key.as_ref().unwrap();
-                    builder.count(
-                        catalog_key
-                            .as_utf8_string_literal()
-                            .expect("infallible: is_string checked"),
-                    );
-                    if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
-                        for item in obj.properties.slice() {
-                            let key = item.key.as_ref().expect("infallible: prop has key");
-                            builder.count(
-                                key.as_utf8_string_literal()
-                                    .expect("infallible: is_string checked"),
-                            );
-                            if let ExprData::EString(version_str) = &item
-                                .value
-                                .as_ref()
-                                .expect("infallible: prop has value")
-                                .data
-                            {
-                                builder.count(&version_str.data);
-                            }
-                        }
-                    }
-                }
-            }
+            catalogs.for_each_property(|catalog_name, _, catalog_value| {
+                builder.count(catalog_name);
+                Self::count_catalog_group(&catalog_value, builder);
+            });
         }
+    }
+
+    fn count_catalog_group(group: &Expr, builder: &mut StringBuilder) {
+        group.for_each_property(|dep_name, _, version| {
+            builder.count(dep_name);
+            if let Some(version_str) = version.as_utf8_string_literal() {
+                builder.count(version_str);
+            }
+        });
     }
 
     /// `builder` already holds `&mut string_bytes`, so the string buffer is
@@ -179,122 +149,73 @@ impl CatalogMap {
         if let Some(default_catalog) = expr.get(b"catalog") {
             let group = self.get_or_put_group(builder.string_bytes.as_slice(), String::EMPTY)?;
             found_any = true;
-            if let ExprData::EObject(obj) = &default_catalog.data {
-                for item in obj.properties.slice() {
-                    let key = item.key.as_ref().expect("infallible: prop has key");
-                    let value = item.value.as_ref().expect("infallible: prop has value");
-                    let dep_name_str = key
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked");
-
-                    let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
-                    let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
-
-                    if let ExprData::EString(version_str) = &value.data {
-                        let version_literal = builder.append::<String>(&version_str.data);
-
-                        let buf = builder.string_bytes.as_slice();
-                        let version_sliced = version_literal.sliced(buf);
-
-                        let Some(version) = Dependency::parse(
-                            dep_name,
-                            dep_name_hash,
-                            version_sliced.slice,
-                            &version_sliced,
-                            &mut *log,
-                            Some(&mut *pm),
-                        ) else {
-                            log.add_error(Some(source), value.loc, b"Invalid dependency version");
-                            continue;
-                        };
-
-                        let buf = builder.string_bytes.as_slice();
-                        let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
-
-                        if entry.found_existing {
-                            log.add_error(Some(source), key.loc, b"Duplicate catalog");
-                            continue;
-                        }
-
-                        *entry.key_ptr = dep_name;
-                        *entry.value_ptr = Dependency {
-                            name: dep_name,
-                            name_hash: dep_name_hash,
-                            version,
-                            ..Dependency::default()
-                        };
-                    }
-                }
-            }
+            Self::parse_append_group(group, pm, log, source, &default_catalog, builder)?;
         }
 
         if let Some(catalogs) = expr.get(b"catalogs") {
             found_any = true;
-            if let ExprData::EObject(catalog_names) = &catalogs.data {
-                for catalog in catalog_names.properties.slice() {
-                    let catalog_key = catalog.key.as_ref().unwrap();
-                    let catalog_name_str = catalog_key
-                        .as_utf8_string_literal()
-                        .expect("infallible: is_string checked");
-                    let catalog_name = builder.append::<String>(catalog_name_str);
-
-                    let group =
-                        self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
-
-                    if let ExprData::EObject(obj) = &catalog.value.as_ref().unwrap().data {
-                        for item in obj.properties.slice() {
-                            let key = item.key.as_ref().expect("infallible: prop has key");
-                            let value = item.value.as_ref().expect("infallible: prop has value");
-                            let dep_name_str = key
-                                .as_utf8_string_literal()
-                                .expect("infallible: is_string checked");
-                            let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
-                            let dep_name =
-                                builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
-                            if let ExprData::EString(version_str) = &value.data {
-                                let version_literal = builder.append::<String>(&version_str.data);
-                                let buf = builder.string_bytes.as_slice();
-                                let version_sliced = version_literal.sliced(buf);
-
-                                let Some(version) = Dependency::parse(
-                                    dep_name,
-                                    dep_name_hash,
-                                    version_sliced.slice,
-                                    &version_sliced,
-                                    &mut *log,
-                                    Some(&mut *pm),
-                                ) else {
-                                    log.add_error(
-                                        Some(source),
-                                        value.loc,
-                                        b"Invalid dependency version",
-                                    );
-                                    continue;
-                                };
-
-                                let buf = builder.string_bytes.as_slice();
-                                let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
-
-                                if entry.found_existing {
-                                    log.add_error(Some(source), key.loc, b"Duplicate catalog");
-                                    continue;
-                                }
-
-                                *entry.key_ptr = dep_name;
-                                *entry.value_ptr = Dependency {
-                                    name: dep_name,
-                                    name_hash: dep_name_hash,
-                                    version,
-                                    ..Dependency::default()
-                                };
-                            }
-                        }
-                    }
-                }
-            }
+            catalogs.try_for_each_property(|catalog_name_str, _, catalog_value| {
+                let catalog_name = builder.append::<String>(catalog_name_str);
+                let group = self.get_or_put_group(builder.string_bytes.as_slice(), catalog_name)?;
+                Self::parse_append_group(group, pm, log, source, &catalog_value, builder)
+            })?;
         }
 
         Ok(found_any)
+    }
+
+    fn parse_append_group(
+        group: &mut Map,
+        pm: &mut PackageManager,
+        log: &mut Log,
+        source: &Source,
+        catalog: &Expr,
+        builder: &mut StringBuilder,
+    ) -> Result<(), AllocError> {
+        catalog.try_for_each_property(|dep_name_str, key_loc, value| {
+            let dep_name_hash = StringBuilderNs::string_hash(dep_name_str);
+            let dep_name = builder.append_with_hash::<String>(dep_name_str, dep_name_hash);
+
+            let Some(version_str) = value.as_utf8_string_literal() else {
+                return Ok(());
+            };
+            let version_literal = builder.append::<String>(version_str);
+            let buf = builder.string_bytes.as_slice();
+            let version_sliced = version_literal.sliced(buf);
+
+            let Some(version) = Dependency::parse(
+                dep_name,
+                dep_name_hash,
+                version_sliced.slice,
+                &version_sliced,
+                &mut *log,
+                Some(&mut *pm),
+            ) else {
+                log.add_error(
+                    Some(source),
+                    value_loc_of_property(&source.contents, key_loc, &value),
+                    b"Invalid dependency version",
+                );
+                return Ok(());
+            };
+
+            let buf = builder.string_bytes.as_slice();
+            let entry = group.get_or_put_adapted(&dep_name, &ctx(buf))?;
+
+            if entry.found_existing {
+                log.add_error(Some(source), key_loc, b"Duplicate catalog");
+                return Ok(());
+            }
+
+            *entry.key_ptr = dep_name;
+            *entry.value_ptr = Dependency {
+                name: dep_name,
+                name_hash: dep_name_hash,
+                version,
+                ..Dependency::default()
+            };
+            Ok(())
+        })
     }
 
     // The only lockfile field this body touches is `lockfile.catalogs`, and
@@ -395,7 +316,7 @@ impl CatalogMap {
         pm: &mut PM,
         old_buf: &[u8],
         builder: &mut StringBuilder,
-    ) -> Result<CatalogMap, bun_core::Error> {
+    ) -> Result<CatalogMap, crate::Error> {
         let mut new_catalog = CatalogMap::default();
 
         new_catalog
@@ -460,8 +381,6 @@ pub enum FromPnpmLockfileError {
 }
 
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
-
-bun_core::named_error_set!(FromPnpmLockfileError);
 
 fn put_entries_from_pnpm_lockfile(
     catalog_map: &mut Map,

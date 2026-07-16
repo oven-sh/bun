@@ -8,11 +8,11 @@
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
 //
-// Preview build of oven-sh/WebKit#268 (AsyncFunctionResume keeps the async
-// context installed across the settle, and PromiseFinallyAwaitJob carries it
-// across), on top of WebKit main 4895f45d. Re-pin to the autobuild tag of its
-// merge commit once it lands on main.
-export const WEBKIT_VERSION = "autobuild-preview-pr-268-0aef04ea";
+// Preview build of oven-sh/WebKit#268 (PromiseFinallyAwaitJob carries the
+// async context across), on top of WebKit e5f7fc2b — which already has the
+// AsyncFunctionResume settle-ordering fix (#295). Re-pin to the autobuild tag
+// of its merge commit once it lands on WebKit main.
+export const WEBKIT_VERSION = "autobuild-preview-pr-268-86efe056";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

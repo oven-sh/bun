@@ -246,7 +246,8 @@ pub(super) struct HskSnapshot {
     sni: Option<Vec<u8>>,
     cipher: Option<Vec<u8>>,
     alpn: Option<Vec<u8>>,
-    validation: Option<&'static str>,
+    /// `(code name, reason)`, as node reports them.
+    validation: Option<(&'static str, &'static str)>,
     peer_cert_der: Option<Vec<u8>>,
     local_cert_der: Option<Vec<u8>>,
     ephemeral: Option<(&'static str, Option<&'static str>, u32)>,
@@ -1473,18 +1474,19 @@ impl QuicSession {
         // that received NO client certificate reports X509_V_ERR_UNSPECIFIED
         // (Node: `verifyPeerCertificate()` returns nullopt without a peer
         // cert, mapped through `value_or(X509_V_ERR_UNSPECIFIED)`).
-        let (verify_reason, verify_code) = match snap_validation {
-            Some(s) => {
-                let v = bun_core::String::static_(s.as_bytes())
-                    .to_js(global)
-                    .unwrap_or(JSValue::UNDEFINED);
-                (v, v)
+        let pair = match snap_validation {
+            Some(pair) => Some(pair),
+            None if self.is_server.get() && !have_peer_cert => {
+                Some(tls::validation_error_strings(tls::X509_V_ERR_UNSPECIFIED))
             }
-            None if self.is_server.get() && !have_peer_cert => (
-                bun_core::String::static_(b"unspecified certificate verification error")
+            None => None,
+        };
+        let (verify_reason, verify_code) = match pair {
+            Some((code, reason)) => (
+                bun_core::String::static_(reason.as_bytes())
                     .to_js(global)
                     .unwrap_or(JSValue::UNDEFINED),
-                bun_core::String::static_(b"UNSPECIFIED")
+                bun_core::String::static_(code.as_bytes())
                     .to_js(global)
                     .unwrap_or(JSValue::UNDEFINED),
             ),
@@ -1562,7 +1564,7 @@ impl QuicSession {
             self.endpoint_ref()
                 .and_then(|ep| ep.configured_alpn(self.is_server.get()))
         });
-        let validation = tls::validation_error(ssl).map(|(_, s)| s);
+        let validation = tls::validation_error(ssl);
         let peer_cert_der = tls::peer_certificate_der(ssl);
         let local_cert_der = tls::local_certificate_der(ssl);
         let ephemeral = tls::ephemeral_key_info(ssl);

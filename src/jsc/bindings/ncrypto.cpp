@@ -4978,3 +4978,11 @@ const Digest Digest::FromName(WTF::StringView name)
 }
 
 } // namespace ncrypto
+
+// `X509_V_ERR_*` -> the code name node reports for a peer-certificate
+// validation failure (crypto::GetValidationErrorCode -> X509Pointer::ErrorCode).
+// Every arm returns a string literal, so the pointer outlives any caller.
+extern "C" const char* Bun__X509__validationErrorCode(int32_t err)
+{
+    return ncrypto::X509Pointer::ErrorCode(err).characters();
+}

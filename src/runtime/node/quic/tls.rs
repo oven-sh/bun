@@ -560,7 +560,38 @@ pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     Some(unsafe { core::slice::from_raw_parts(data, len as usize).to_vec() })
 }
 
-pub(super) fn validation_error(ssl: *mut ssl::SSL) -> Option<(i64, &'static str)> {
+unsafe extern "C" {
+    /// `X509_V_ERR_*` -> node's code name; see ncrypto.cpp.
+    fn Bun__X509__validationErrorCode(err: i32) -> *const core::ffi::c_char;
+}
+
+/// node's `X509_V_ERR_UNSPECIFIED`, reported when a peer sent no certificate
+/// at all (`verifyPeerCertificate()` nullopt -> `value_or`).
+pub(super) const X509_V_ERR_UNSPECIFIED: i32 = 1;
+
+/// The `(code name, reason)` pair node reports as
+/// `validationErrorCode` / `validationErrorReason`.
+pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str) {
+    // SAFETY: every arm of the C++ switch returns a string literal.
+    let name = unsafe { Bun__X509__validationErrorCode(code) };
+    let name = if name.is_null() {
+        "UNSPECIFIED"
+    } else {
+        // SAFETY: as above; NUL-terminated and 'static.
+        unsafe { core::ffi::CStr::from_ptr(name).to_str().unwrap_or("UNSPECIFIED") }
+    };
+    // SAFETY: the returned string is a static name owned by BoringSSL.
+    let s = unsafe { ssl::X509_verify_cert_error_string(code as _) };
+    let reason = if s.is_null() {
+        ""
+    } else {
+        // SAFETY: as above.
+        unsafe { core::ffi::CStr::from_ptr(s).to_str().unwrap_or("") }
+    };
+    (name, reason)
+}
+
+pub(super) fn validation_error(ssl: *mut ssl::SSL) -> Option<(&'static str, &'static str)> {
     if ssl.is_null() {
         return None;
     }
@@ -569,15 +600,7 @@ pub(super) fn validation_error(ssl: *mut ssl::SSL) -> Option<(i64, &'static str)
     if code == 0 {
         return None;
     }
-    // SAFETY: the returned string is a static name owned by BoringSSL.
-    let s = unsafe { ssl::X509_verify_cert_error_string(code) };
-    let reason = if s.is_null() {
-        ""
-    } else {
-        // SAFETY: as above.
-        unsafe { core::ffi::CStr::from_ptr(s).to_str().unwrap_or("") }
-    };
-    Some((code as i64, reason))
+    Some(validation_error_strings(code as i32))
 }
 
 pub(super) fn ephemeral_key_info(

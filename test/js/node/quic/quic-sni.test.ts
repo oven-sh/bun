@@ -118,3 +118,26 @@ test("setSNIContexts() rejects a non-object and a closed endpoint", async () => 
     expect.objectContaining({ code: "ERR_INVALID_STATE" }),
   );
 });
+
+// The vendored test-quic-session-opened-validation.mjs only asserts that
+// validationErrorCode is a non-empty string, so reporting the human-readable
+// reason for it passes upstream too. Node sends the X509 code name
+// (crypto::GetValidationErrorCode -> X509Pointer::ErrorCode) and real code
+// switches on it, so assert the value.
+test("opened reports the X509 code name for validationErrorCode", async () => {
+  await using server = await listen(ignoreErrors, { sni: { "*": identity1 }, alpn: ["quic-test"] });
+
+  // No `ca` on the client, so the self-signed agent1 chain cannot be verified.
+  const session = await connect(server.address, {
+    alpn: "quic-test",
+    servername: "agent1",
+    verifyPeer: "manual",
+  });
+  const info = await session.opened;
+  await session.close();
+
+  expect({ code: info.validationErrorCode, reason: info.validationErrorReason }).toEqual({
+    code: "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+    reason: "unable to get local issuer certificate",
+  });
+});

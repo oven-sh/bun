@@ -482,10 +482,11 @@ function setupWorkerStdio(stdio) {
   );
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the captured streams when present.
-  // Capture the native console object first: require("node:console") is
-  // `export default globalThis.console`, which would re-enter this getter.
+  // Capture via require("node:console") first so the module registry caches the
+  // native object (which carries .Console/.write); otherwise a later user require
+  // would evaluate `export default console` through this getter and cache a bare instance.
   if (stdout || stderr) {
-    const nativeConsole = globalThis.console as typeof globalThis.console & { Console: any };
+    const nativeConsole = require("node:console") as typeof globalThis.console & { Console: any };
     defineLazy(globalThis, "console", false, () => new nativeConsole.Console(process.stdout, process.stderr));
   }
 }

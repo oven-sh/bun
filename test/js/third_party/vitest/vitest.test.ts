@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { spawnSync } from "node:child_process";
 
 // Runs the real vitest CLI (and its @vitest/coverage-v8 provider) under Bun.
 // The coverage provider drives node:inspector's Profiler.startPreciseCoverage /

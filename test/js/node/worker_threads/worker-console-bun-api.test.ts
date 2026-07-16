@@ -79,6 +79,10 @@ describe.concurrent("node:worker_threads console", () => {
         } else {
           console.log("via-console", new Map([["k","v"]]));
           console.error("via-error");
+          console.count("cnt");
+          console.time("tmr");
+          console.timeLog("tmr", "extra");
+          console.timeEnd("tmr");
           process.stdout.write("via-process\\n");
         }
       `,
@@ -97,7 +101,11 @@ describe.concurrent("node:worker_threads console", () => {
     // Both console.log and process.stdout.write were routed through worker.stdout.
     expect(out).toContain("via-console");
     expect(out).toContain("via-process");
+    expect(out).toContain("cnt: 1");
     expect(err).toContain("via-error");
+    // timeEnd/timeLog are captured on worker.stderr, not leaked to the parent fd.
+    expect(err).toMatch(/\[[\d.]+ms\] tmr extra\n/);
+    expect(err).toMatch(/\[[\d.]+ms\] tmr\n/);
     // Bun formatting, not Node's `'k' => 'v'`.
     expect(out).not.toContain("=>");
 

@@ -530,8 +530,8 @@ fn message_with_type_and_level_(
     // again until the deferred `_indent_guard` runs on scope exit, so the two
     // later reads (FormatOptions / TablePrinter) can use this cached copy
     // instead of re-dereferencing the raw `console` pointer.
-    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
     let (default_indent, override_stream) = {
+        // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
         let c = unsafe { vm_console_mut(global) };
         (c.default_indent, c.override_for(use_stderr))
     };
@@ -5984,10 +5984,10 @@ pub extern "C" fn Bun__ConsoleObject__count(
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
-    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
-    // set-once `VirtualMachine.console` box. The borrow is scoped so it ends
-    // before the override path calls back into JS (which may re-enter here).
     let (current, override_stream) = {
+        // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+        // set-once `VirtualMachine.console` box. Scoped so the borrow ends
+        // before the override path calls back into JS (which may re-enter).
         let this = unsafe { vm_console_mut(global_this) };
         // we don't want to store these strings, it will take too much memory
         let counter = this.counts.get_or_put(hash).expect("unreachable");
@@ -6054,6 +6054,17 @@ thread_local! {
     static PENDING_TIME_LOGS_LOADED: Cell<bool> = const { Cell::new(false) };
 }
 
+/// `Output::print_elapsed`'s `[X.XXms]`/`[X.XXs]` shape, rendered into a
+/// writer without ANSI so `timeEnd`/`timeLog` match the main thread when
+/// routed through a JS stream override.
+fn write_elapsed(w: &mut dyn bun_io::Write, elapsed_ms: f64) {
+    if (elapsed_ms.round() as i64) <= 1500 {
+        let _ = write!(w, "[{:>.2}ms]", elapsed_ms);
+    } else {
+        let _ = write!(w, "[{:>.2}s]", elapsed_ms / 1000.0);
+    }
+}
+
 #[unsafe(no_mangle)]
 #[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__time(
@@ -6081,7 +6092,7 @@ pub extern "C" fn Bun__ConsoleObject__time(
 #[crate::host_call]
 pub extern "C" fn Bun__ConsoleObject__timeEnd(
     _console: *mut ConsoleObject,
-    _global: &JSGlobalObject,
+    global: &JSGlobalObject,
     chars: *const u8,
     len: usize,
 ) {
@@ -6099,9 +6110,27 @@ pub extern "C" fn Bun__ConsoleObject__timeEnd(
     };
     let Some(value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
+    let elapsed_ms =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
+
+    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
+    if let Some(stream) = unsafe { vm_console_mut(global) }.stderr_override.get() {
+        let mut buf: Vec<u8> = Vec::new();
+        write_elapsed(&mut buf, elapsed_ms);
+        let w: &mut dyn bun_io::Write = &mut buf;
+        match len {
+            0 => {
+                let _ = writeln!(w);
+            }
+            _ => {
+                let _ = writeln!(w, " {}", bstr::BStr::new(slice));
+            }
+        }
+        let _ = write_to_js_stream(global, stream, &buf);
+        return;
+    }
+
+    Output::print_elapsed(elapsed_ms);
     match len {
         0 => Output::print_errorln(format_args!("")),
         _ => Output::print_errorln(format_args!(" {}", bstr::BStr::new(slice))),
@@ -6131,16 +6160,12 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         return;
     };
     // get the duration in microseconds, then display it in milliseconds
-    Output::print_elapsed(
-        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64,
-    );
-    match len {
-        0 => {}
-        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
-    }
-    Output::flush();
+    let elapsed_ms =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
 
-    // print the arguments
+    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
+    let override_stream = unsafe { vm_console_mut(global) }.stderr_override.get();
+
     // `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
     let mut fmt = Formatter::new(global);
@@ -6149,6 +6174,35 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         .unwrap_or(DEFAULT_CONSOLE_LOG_DEPTH);
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
+
+    if let Some(stream) = override_stream {
+        let mut buf: Vec<u8> = Vec::new();
+        write_elapsed(&mut buf, elapsed_ms);
+        let w: &mut dyn bun_io::Write = &mut buf;
+        if len > 0 {
+            let _ = write!(w, " {}", bstr::BStr::new(slice));
+        }
+        // SAFETY: caller passes a valid (args, args_len) pair.
+        for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
+            let Ok(tag) = formatter::Tag::get(arg, global) else {
+                return;
+            };
+            let _ = w.write_all(b" ");
+            let _ = fmt.format::<false>(tag, w, arg, global);
+        }
+        let _ = w.write_all(b"\n");
+        let _ = write_to_js_stream(global, stream, &buf);
+        return;
+    }
+
+    Output::print_elapsed(elapsed_ms);
+    match len {
+        0 => {}
+        _ => Output::print_error(format_args!(" {}", bstr::BStr::new(slice))),
+    }
+    Output::flush();
+
+    // print the arguments
     let console = vm_console(global);
     // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
     // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the

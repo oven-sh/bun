@@ -51,11 +51,7 @@ describe("tsconfig compilerOptions.jsx", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
         stdout: runStdout,
         stderr: "",
@@ -72,18 +68,11 @@ describe("tsconfig compilerOptions.jsx", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([
-        proc.stdout.text(),
-        proc.stderr.text(),
-        proc.exited,
-      ]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toBe("");
       expect(stdout).toContain(`"${importSource}"`);
-      expect(stdout).not.toContain(
-        importSource === "shim/jsx-runtime" ? "jsx-dev-runtime" : '"shim/jsx-runtime"',
-      );
+      expect(stdout).not.toContain(importSource === "shim/jsx-runtime" ? "jsx-dev-runtime" : '"shim/jsx-runtime"');
       expect(exitCode).toBe(0);
     }
   });
-
 });

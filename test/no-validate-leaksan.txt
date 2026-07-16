@@ -459,9 +459,3 @@ test/js/node/tls/node-tls-connect.test.ts
 # ("TODO: think about the finalizer here"), so the meta is never freed. All 18
 # tests pass; only the exit check fails. Remove once that TODO is resolved.
 test/bundler/native-plugin.test.ts
-
-# The upgrade-path Request wrapper is unreachable after on_web_socket_upgrade
-# returns, but on the debian x64-asan lane (only) the exit-time collectNow's
-# conservative stack scan keeps its cell covered. Functional assertions pass;
-# 0/15 reproducible locally on release-asan.
-test/js/web/websocket/websocket-syscall-fault.test.ts

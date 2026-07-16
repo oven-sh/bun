@@ -126,3 +126,12 @@ leak:WTF::RunLoop::dispatchAfter
 # LSAN's conservative stack scan no longer finds the pointers.
 leak:bun_runtime::cli::filter_run::run_scripts_with_filter
 leak:bun_runtime::cli::multi_run::run
+# test/js/web/websocket/websocket-syscall-fault.test.ts — the Request JS cell
+# created in on_web_socket_upgrade has zero heap retainers (heap snapshot
+# verified) but is pinned by exit-time conservative stack scan when ws.send
+# (>~1KB) ran inside open(): rooting the fetch handler via the server cell's
+# m_onRequest WriteBarrier slot (instead of a Strong handle) changes which
+# MarkedBlocks survive the first full GC, so the Request lands at an address
+# that aliases stale bytes left on the native stack by the corked send's
+# backpressure path. One await Bun.sleep(0) before GC clears it.
+leak:on_web_socket_upgrade

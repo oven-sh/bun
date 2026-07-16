@@ -698,13 +698,24 @@ JSC_DEFINE_HOST_FUNCTION(functionBunDeepEquals, (JSGlobalObject * globalObject, 
     JSC::JSValue arg1 = callFrame->uncheckedArgument(0);
     JSC::JSValue arg2 = callFrame->uncheckedArgument(1);
     JSC::JSValue strict = callFrame->argument(2);
+    // Optional 4th argument (internal): when `false`, skip the strict-mode
+    // prototype-identity check while keeping strict content comparison. Used
+    // by `assert.partialDeepStrictEqual`, whose Node semantics do not enforce
+    // prototype identity. Defaults to true so `Bun.deepEquals(a, b, true)`
+    // and `node:assert.deepStrictEqual` keep comparing prototypes.
+    JSC::JSValue checkPrototypesArg = callFrame->argument(3);
+    bool checkPrototypes = !(checkPrototypesArg.isBoolean() && !checkPrototypesArg.asBoolean());
 
     Vector<std::pair<JSValue, JSValue>, 16> stack;
     MarkedArgumentBuffer gcBuffer;
 
     if (strict.isBoolean() && strict.asBoolean()) {
-
-        bool isEqual = Bun__deepEquals<true, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+        if (checkPrototypes) {
+            bool isEqual = Bun__deepEquals<true, false, true>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
+            RETURN_IF_EXCEPTION(scope, {});
+            return JSValue::encode(jsBoolean(isEqual));
+        }
+        bool isEqual = Bun__deepEquals<true, false, false>(globalObject, arg1, arg2, gcBuffer, stack, scope, true);
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsBoolean(isEqual));
     } else {

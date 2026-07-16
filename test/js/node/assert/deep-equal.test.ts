@@ -167,7 +167,6 @@ const cases: Case[] = [
     b: () => ({}),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "two null-prototype objects with the same keys",
@@ -205,7 +204,6 @@ const cases: Case[] = [
     b: anonymousClassInstance,
     strict: false,
     loose: true,
-    strictBug: "matches classes by name, so reports equal",
   },
   {
     name: "instances of two distinct identically named classes",
@@ -213,7 +211,6 @@ const cases: Case[] = [
     b: sameNameClassInstance,
     strict: false,
     loose: true,
-    strictBug: "matches classes by name, so reports equal",
   },
   {
     name: "an Array subclass instance and an array",
@@ -221,7 +218,6 @@ const cases: Case[] = [
     b: () => [],
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "[] and Object.create(Array.prototype)",
@@ -490,7 +486,6 @@ const cases: Case[] = [
     b: () => new Uint8Array([1]),
     strict: false,
     loose: true,
-    strictBug: "reports equal",
   },
   {
     name: "a typed array with an extra own property",

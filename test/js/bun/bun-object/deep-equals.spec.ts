@@ -125,7 +125,7 @@ describe("Bun.deepEquals strict mode", () => {
 
   // Matches Node's util.isDeepStrictEqual, which rejects a null prototype
   // against Object.prototype.
-  it.failing("distinguishes a null-prototype object from an object literal", () => {
+  it("distinguishes a null-prototype object from an object literal", () => {
     expect(Bun.deepEquals(Object.create(null), {}, true)).toBe(false);
   });
 });

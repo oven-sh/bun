@@ -235,14 +235,6 @@ test/js/node/test/parallel/test-http2-session-cleanup-on-nghttp2-goaway.js [ SKI
 [ ASAN ] test/js/node/test/parallel/test-http2-client-unescaped-path.js [ SKIP ] # ASan report under investigation
 [ ASAN ] test/js/node/test/parallel/test-http2-buffersize.js [ SKIP ] # ASan report under investigation
 
-# The bun-specific http2 integration suites are being reconciled with the rewritten
-# (node-faithful) HTTP/2 engine: several of their expectations pin legacy-parser behaviors
-# that contradict node's (e.g. 'ping' events for PING ACKs, connection-error codes for
-# wrong-size frames that RFC 9113 defines as stream errors). Tracked for reconciliation;
-# the ported node parallel suite covers the node-faithful contract.
-test/js/node/http2/node-http2.test.js [ FAIL ] # legacy-parser expectations under reconciliation
-test/js/node/http2/h2-conformance.test.ts [ FAIL ] # under reconciliation with the rewritten engine (CONTINUATION flood + RST rate-limit cases)
-test/js/node/http2/node-http2-invalid-padding.test.ts [ FAIL ] # legacy-parser expectations under reconciliation
 [ ASAN ] test/js/third_party/grpc-js/test-server.test.ts [ SKIP ] # connect-race socket lifetime report under investigation
 [ WINDOWS ] test/js/third_party/grpc-js/test-server.test.ts [ FAIL ] # http2 teardown gap on Windows
 

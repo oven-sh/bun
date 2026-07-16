@@ -125,13 +125,16 @@ describe.skipIf(!isMacOS).concurrent("macOS libinfo DNS stale-request fallback",
     const script = `
       const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
       const url = "http://localhost:" + server.port + "/";
+      const t0 = performance.now();
       const bodies = await Promise.all([
         fetch(url, { keepalive: false }).then(r => r.text()),
         fetch(url, { keepalive: false }).then(r => r.text()),
         fetch(url, { keepalive: false }).then(r => r.text()),
       ]);
+      const dt = performance.now() - t0;
+      const { cacheHitsInflight } = Bun.dns.getCacheStats();
       await server.stop();
-      console.log(JSON.stringify(bodies));
+      console.log(JSON.stringify({ bodies, dt: Math.round(dt), cacheHitsInflight }));
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", script],
@@ -141,10 +144,15 @@ describe.skipIf(!isMacOS).concurrent("macOS libinfo DNS stale-request fallback",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
-      out: ["ok", "ok", "ok"],
+    const out = JSON.parse(stdout.trim() || "null");
+    expect({ out, stderr, exitCode }).toEqual({
+      out: { bodies: ["ok", "ok", "ok"], dt: expect.any(Number), cacheHitsInflight: expect.any(Number) },
       stderr: "",
       exitCode: 0,
     });
+    // Same lower bound as the first test: the stall must have been exercised.
+    expect(out.dt).toBeGreaterThan(3000);
+    // Fetches 2 and 3 must have coalesced onto the stalled entry for fetch 1.
+    expect(out.cacheHitsInflight).toBeGreaterThanOrEqual(2);
   }, 30_000);
 });

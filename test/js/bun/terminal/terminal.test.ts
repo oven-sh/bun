@@ -646,6 +646,31 @@ describe("Bun.Terminal", () => {
 
       expect(drainCalled).toBe(true);
     });
+
+    test.skipIf(isWindows)("drain fires when a second write flushes what the first buffered", async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let drainCount = 0;
+
+      const terminal = new Bun.Terminal({
+        drain() {
+          drainCount++;
+          resolve();
+        },
+      });
+      terminal.setRawMode(true);
+
+      // First write is below CHUNK_SIZE so it buffers; second write exceeds
+      // CHUNK_SIZE so the combined buffer is flushed synchronously inside
+      // write(). The buffered→drained transition happens during the second
+      // with_mut call, which must still surface as a drain callback.
+      expect(terminal.write("hello")).toBe(5);
+      expect(terminal.write(Buffer.alloc(5000, 66))).toBe(5000);
+
+      await promise;
+      terminal.close();
+
+      expect(drainCount).toBeGreaterThan(0);
+    });
   });
 
   describe.concurrent("subprocess interaction", () => {

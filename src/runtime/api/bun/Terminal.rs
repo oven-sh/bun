@@ -1439,12 +1439,20 @@ impl Terminal {
         // Suppress drain firing from the synchronous on_write calls that
         // StreamingWriter::write() makes while we still hold the `with_mut`
         // borrow; it is restored from `has_pending_data()` immediately after.
-        self.writer_has_buffered.set(false);
+        let had_buffered = self.writer_has_buffered.replace(false);
         let (write_result, has_pending) = self.writer.with_mut(|w| {
             let r = w.write(bytes);
             (r, w.has_pending_data())
         });
         self.writer_has_buffered.set(has_pending);
+        // A second write() can drain what an earlier one buffered; on_write saw
+        // the cleared flag, so fire drain here (outside `with_mut`).
+        #[cfg(unix)]
+        if had_buffered && !has_pending {
+            self.on_writer_ready();
+        }
+        #[cfg(not(unix))]
+        let _ = had_buffered;
 
         // StreamingWriter::write() buffers any bytes it couldn't flush
         // synchronously, so the full input has been accepted on every non-error

@@ -694,7 +694,8 @@ describe("Bun.wrapAnsi", () => {
       });
 
       test("hard wrap respects columns (UTF-16 input)", () => {
-        const input = `${open[v]}longlonglongword${close[v]}\u00e9`;
+        // U+0100 > 0xFF forces a 16-bit backing string so wrapAnsiImpl<UChar> runs.
+        const input = `${open[v]}longlonglongword${close[v]}\u0100`;
         for (const w of lineWidths(Bun.wrapAnsi(input, 5, { hard: true }))) {
           expect(w).toBeLessThanOrEqual(5);
         }

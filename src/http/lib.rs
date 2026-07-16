@@ -2083,7 +2083,8 @@ impl<'a> HTTPClient<'a> {
                 // on attacker-chosen data before verification. Force the
                 // redirect-error path for the replay so a buffered 3xx fails
                 // closed instead of calling `do_redirect`.
-                let redirect_type = core::mem::replace(&mut self.redirect_type, FetchRedirect::Error);
+                let redirect_type =
+                    core::mem::replace(&mut self.redirect_type, FetchRedirect::Error);
                 // A terminal outcome frees the AsyncHTTP that embeds `*self`
                 // (via `on_async_http_callback_raw`, which is the sole
                 // HTTP-thread `ACTIVE_REQUESTS_COUNT` decrement). HTTP-thread-only.

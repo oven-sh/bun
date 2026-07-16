@@ -3332,10 +3332,6 @@ describe("createWriteStream", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/31763
-  // Many small writes must be coalesced through Writable's `_writev` batching
-  // (like Node's fs.WriteStream) instead of one `_write`/write(2) per chunk.
-  // The batch can exceed IOV_MAX (1024) iovecs, which writev(2) rejects with
-  // EINVAL unless the syscall layer batches — so this also covers that path.
   it("coalesces many small writes via _writev (issue #31763)", async () => {
     const streamPath = join(tmpdirSync(), "writev-batching.bin");
     const stream = createWriteStream(streamPath);
@@ -3379,10 +3375,8 @@ describe("createWriteStream", () => {
   });
 
   // https://github.com/oven-sh/bun/issues/31763
-  // On a partial write the WriteStream retries the unwritten tail. With no
-  // `start`, `this.pos` is undefined ("current offset"); the retry must keep
-  // it undefined rather than computing `undefined + bytesWritten === NaN`,
-  // which the binding would coerce to offset 0 and overwrite the file head.
+  // With no `start`, the retry position must stay undefined, not
+  // `undefined + bytesWritten === NaN` (coerced to offset 0 by the binding).
   it.each(["write", "writev"])("partial %s retry does not corrupt the file (issue #31763)", async method => {
     const streamPath = join(tmpdirSync(), `partial-${method}.bin`);
     const payload = Buffer.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");

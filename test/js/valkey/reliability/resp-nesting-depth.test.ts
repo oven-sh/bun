@@ -286,10 +286,7 @@ describe("Valkey: RESP line-terminated replies (>512KB)", () => {
 
   test("surfaces an error (`-`) reply longer than 512KB with its original text", async () => {
     const body = "ERR user_script:1: " + Buffer.alloc(600_000, "e").toString();
-    const { server, port } = await createMockRedisServer([
-      Buffer.from(`-${body}\r\n`),
-      Buffer.from("+PONG\r\n"),
-    ]);
+    const { server, port } = await createMockRedisServer([Buffer.from(`-${body}\r\n`), Buffer.from("+PONG\r\n")]);
     try {
       const client = new Bun.RedisClient(`redis://127.0.0.1:${port}`, {
         autoReconnect: false,

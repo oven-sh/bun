@@ -1135,22 +1135,38 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("abcX\n\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
       expect(Bun.sliceAnsi("ЖЗИК\nЛ", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
       expect(Bun.sliceAnsi("\x1b[0mabcX\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
-      // Wide char straddling specEnd is a cut (its tail column is past end).
+      // A GCB=Prepend codepoint (U+0600) has width 0 but leads a visible
+      // cluster via GB9b: the cluster past end is a cut.
+      expect(Bun.sliceAnsi("abcX\u0600Y", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("abcX\u0600YZ", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("abcX\u0600", 0, 4, { ellipsis: E })).toBe("abcX");
+      // Wide char straddling specEnd is a cut (its tail column is past end),
+      // with or without a trailing break to re-enter the boundary check.
       expect(Bun.sliceAnsi("ab\u6F22\n", 0, 3, { ellipsis: E })).toBe("ab" + E);
+      expect(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E })).toBe("ab" + E);
+      expect(Bun.sliceAnsi("abcd", 0, 3, { ellipsis: E })).toBe("ab" + E);
     });
 
-    test("end-cut degenerate on the lazy path matches the ASCII fast path", () => {
-      // Ellipsis wider than the requested range, start=0, end is cut: the
-      // streaming walk must fall back to the bare ellipsis, same as the
-      // ASCII fast path does via its !doStart && !doEnd branch.
+    test("lazy-path degenerate (ellipsis wider than range) matches ASCII fast path", () => {
+      // Ellipsis wider than the requested range: the streaming walk must fall
+      // back to the bare ellipsis when either side is cut, same as the ASCII
+      // fast path's !doStart && !doEnd branch.
       const e = { ellipsis: ">>" };
+      // End cut only.
       expect(Bun.sliceAnsi("abc", 0, 1, e)).toBe(">>");
       expect(Bun.sliceAnsi("ЖЗИ", 0, 1, e)).toBe(">>");
       expect(Bun.sliceAnsi("abc", 0, 2, e)).toBe(">>");
       expect(Bun.sliceAnsi("ЖЗИ", 0, 2, e)).toBe(">>");
       expect(Bun.sliceAnsi("\x1b[0mabc", 0, 1, e)).toBe(">>");
-      // No cut at end (string fits exactly, or only zero-width past it):
-      // content is returned, not the ellipsis.
+      expect(Bun.sliceAnsi("Ж\u0600Y", 0, 1, e)).toBe(">>");
+      // Start cut only (string ends exactly at the range end).
+      expect(Bun.sliceAnsi("abc", 1, 3, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 3, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗ", 1, 2, e)).toBe(">>");
+      // Both sides cut.
+      expect(Bun.sliceAnsi("abc", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 2, e)).toBe(">>");
+      // No cut on either side: content returned, no ellipsis.
       expect(Bun.sliceAnsi("Ж", 0, 1, e)).toBe("Ж");
       expect(Bun.sliceAnsi("Ж\n", 0, 1, e)).toBe("Ж");
       expect(Bun.sliceAnsi("Ж\r\n", 0, 1, e)).toBe("Ж");

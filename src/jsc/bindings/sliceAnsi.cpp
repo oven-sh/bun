@@ -958,7 +958,10 @@ static WTF::String emitSliceStreaming(
                 // A visible cut needs width past specEnd: the prior cluster
                 // overflowed, or this cp is visible. A zero-width cp at exactly
                 // specEnd (LF/CR/ZWSP) is not a cut; keep scanning, don't emit.
-                if (position > specEnd || Bun__codepointWidth(cp, ambiguousIsWide) > 0) {
+                // Without an ellipsis the distinction is unobservable, so break
+                // immediately and keep the O(slice-length) scan bound.
+                if (ellipsisWidth == 0 || position > specEnd
+                    || Bun__codepointWidth(cp, ambiguousIsWide) > 0) {
                     sawCutEnd = true;
                     flushPending(/*filterCloseOnly=*/true);
                     return false; // signal break
@@ -1202,6 +1205,9 @@ walkDone:;
     // with close-only filtering; we don't re-finalize.)
     if (!sawCutEnd) {
         if (hasPrev) position += gs.width();
+        // The last cluster may have overflowed specEnd (wide char straddling
+        // the boundary, or a Prepend-led cluster that started zero-width).
+        if (!endUnbounded && position > specEnd) sawCutEnd = true;
         // Trailing ANSI: if position >= end, it's post-cut → filter. Use the
         // ORIGINAL end bound (specEnd includes the spec zone; for filtering,
         // what matters is whether position exceeds the USER'S requested end,
@@ -1213,10 +1219,10 @@ walkDone:;
 
     if (!include) return emptyString();
 
-    // End-cut degenerate on the lazy path: the ellipsis was too wide to
-    // budget (neither needStart nor needEnd set) but the walk found visible
-    // content past end. Match the cutEndKnown/ASCII fast-path fallback.
-    if (ellipsisWidth > 0 && !cutEndKnown && sawCutEnd
+    // Lazy-path degenerate: the ellipsis was too wide to budget (neither
+    // needStart nor needEnd set) but something was cut. Mirrors the
+    // cutEndKnown/ASCII fast-path (cutStartForEllipsis || cutEndHint) branch.
+    if (ellipsisWidth > 0 && !cutEndKnown && (cutStartForEllipsis || sawCutEnd)
         && !needStartEllipsis && !needEndEllipsis)
         return ellipsis.toString();
 

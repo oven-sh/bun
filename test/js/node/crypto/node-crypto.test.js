@@ -706,6 +706,21 @@ describe("DiffieHellman", () => {
       expect(dh.verifyError).toBe(DH_CHECK_P_NOT_PRIME | DH_MODULUS_TOO_SMALL);
     });
 
+    // BoringSSL's DH_check() refuses an even modulus outright (dh_check_params_fast
+    // returns 0 for !BN_is_odd(p)), so the getter used to throw instead of
+    // reporting flags. OpenSSL 3 folds this into DH_CHECK_P_NOT_PRIME.
+    it("reports an even modulus rather than throwing", () => {
+      const dh = crypto.createDiffieHellman(Buffer.from([0x10]), 2);
+      expect(dh.verifyError).toBe(DH_CHECK_P_NOT_PRIME | DH_MODULUS_TOO_SMALL);
+    });
+
+    it("reports a wide even modulus rather than throwing", () => {
+      const p = crypto.getDiffieHellman("modp14").getPrime();
+      p[p.length - 1] &= 0xfe;
+      const dh = crypto.createDiffieHellman(p, 2);
+      expect(dh.verifyError).toBe(DH_CHECK_P_NOT_PRIME);
+    });
+
     // 101 is prime but (101 - 1) / 2 = 50 is not.
     it("reports a prime modulus that is not a safe prime", () => {
       const dh = crypto.createDiffieHellman(Buffer.from([101]), Buffer.from([2]));

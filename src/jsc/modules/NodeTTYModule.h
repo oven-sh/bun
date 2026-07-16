@@ -11,6 +11,5 @@ namespace Zig {
 using namespace WebCore;
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionTty_isatty);
-JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplementedYet);
 
 } // namespace Zig

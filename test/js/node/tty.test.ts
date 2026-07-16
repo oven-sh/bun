@@ -228,9 +228,13 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
       });
     }
 
-    // stdin EOF means the pty master is closed, so the next stdout write is
-    // guaranteed to fail with EIO. No polling, no timers.
-    process.stdin.on("end", () => {
+    // stdin EOF (or EIO, which a hung-up pty slave can report for read()
+    // depending on platform/timing) means the master is closed, so the next
+    // stdout write is guaranteed to fail with EIO. No polling, no timers.
+    let fired = false;
+    const afterHangup = () => {
+      if (fired) return;
+      fired = true;
       if (process.env.USE_END) {
         // Writable.prototype.end(chunk) routes through _write (underscoreWriteFast)
         // with state.onwrite as the callback, rather than the writeFast override.
@@ -240,7 +244,9 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
           if (err) events.push("cb:" + err.code);
         });
       }
-    });
+    };
+    process.stdin.on("end", afterHangup);
+    process.stdin.on("error", afterHangup);
     process.stdin.resume();
 
     process.stdout.write("READY\\n");

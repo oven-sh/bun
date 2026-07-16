@@ -4,7 +4,7 @@
 // (BUN_INSTALL_CACHE_DIR -> BUN_INSTALL -> XDG_CACHE_HOME -> HOME),
 // not a stub that only reads HOME.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -130,7 +130,9 @@ describe.concurrent("bun build --compile cross-compile cache directory resolutio
     });
   }
 
-  test("falls back to node_modules/.bun-cache when no HOME-family var is set", async () => {
+  // Windows always provides USERPROFILE to new processes, so the "no HOME"
+  // branch can't be reached there; the precedence tests above cover Windows.
+  test.skipIf(isWindows)("falls back to node_modules/.bun-cache when no HOME-family var is set", async () => {
     using dir = tempDir("compile-cross-cache", {
       "entry.js": `console.log("ok");`,
     });

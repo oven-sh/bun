@@ -57,5 +57,9 @@ server.listen(0, function() {
 
   client1.on('error', () => {});
 
-  client1.write('GET / HTTP/1.1\r\nHost: example.com\r\n\r\n'); // Bun only reports connect after headers are received
+  // Bun's http server fires 'connection' only after receiving a full request,
+  // so send one (upstream sends 'GET / HTTP/1.1'), and drain the response so
+  // 'close' fires once closeAllConnections() ends the keep-alive connection.
+  client1.resume();
+  client1.write('GET / HTTP/1.1\r\nHost: example.com\r\n\r\n');
 });

@@ -574,6 +574,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted socket holds the loop via its own poll_ref so
+        // node:net's per-socket unref() is meaningful (balanced in mark_inactive).
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
@@ -617,6 +620,9 @@ impl Listener {
         });
         let s = this_socket;
         s.ref_();
+        // Each accepted socket holds the loop via its own poll_ref so
+        // node:net's per-socket unref() is meaningful (balanced in mark_inactive).
+        s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         let default_data = listener.strong_data.get().get();
         if let Some(default_data) = default_data {
             let global = listener.handlers.global_object;
@@ -766,8 +772,10 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
+        // The listener's poll_ref covers only the listener; accepted sockets
+        // ref their own (on_create), so release this one unconditionally.
+        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());

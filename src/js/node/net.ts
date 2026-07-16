@@ -299,16 +299,10 @@ const SocketHandlers: SocketHandler = {
 
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
-    // libuv drops the handle's hold on the loop at UV_EOF, so in Node a
-    // socket with buffered unread bytes does not keep the process alive.
-    // Bun's accepted sockets hold the loop via the listener until closed,
-    // so when 'end' cannot fire (readable buffer non-empty) trigger
-    // allowHalfOpen's auto-end here instead of from 'end'. For client
-    // sockets the poll_ref unref gives the same effect.
-    if (!self[kwriteCallback]) socket.unref();
-    if (self.readableLength > 0 && self.allowHalfOpen === false && !self.writableEnded) {
-      self.end();
-    }
+    // libuv unrefs the handle at UV_EOF; mirror that so a socket that has
+    // received FIN does not keep the process alive. Skip while a write is
+    // in flight or allowHalfOpen may still write, so drain can complete.
+    if (!self[kwriteCallback] && (self.allowHalfOpen === false || self.writableFinished)) socket.unref();
   },
   // A new resumable TLS session arrived (the peer's NewSessionTicket was just
   // processed). Mirrors Node's onnewsessionclient: emit once the handshake has
@@ -993,11 +987,9 @@ function onconnection(err, clientHandle) {
   }
 
   self.emit("connection", _socket);
-  // Node's onconnection leaves readableFlowing at null (via read(0)) so bytes
-  // arriving before a 'data' listener is attached buffer in the Readable. The
-  // native handle is already reading after accept; resume() here would flip
-  // the stream to flowing mode and discard those bytes, and would also stomp
-  // any pause() the user made inside their 'connection' handler.
+  // Node leaves readableFlowing null so early bytes buffer; the native handle
+  // is already reading, and resume() here would discard them and stomp any
+  // pause() made in the 'connection' handler.
 }
 
 // TODO: SocketHandlers2 is a bad name but its temporary. reworking the Server in a followup PR
@@ -1062,16 +1054,10 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
-    // Mirror libuv: once UV_EOF is delivered the handle stops reading and no
-    // longer holds the loop. Keep the ref only while a write is still
-    // pending so drain can complete.
-    if (!self[kwriteCallback]) socket.unref();
-    // With buffered unread bytes 'end' cannot fire, so Duplex's
-    // allowHalfOpen auto-end never runs; trigger it here so the native
-    // socket closes and stops holding the loop.
-    if (self.readableLength > 0 && self.allowHalfOpen === false && !self.writableEnded) {
-      self.end();
-    }
+    // libuv unrefs the handle at UV_EOF; mirror that so a socket that has
+    // received FIN does not keep the process alive. Skip while a write is
+    // in flight or allowHalfOpen may still write, so drain can complete.
+    if (!self[kwriteCallback] && (self.allowHalfOpen === false || self.writableFinished)) socket.unref();
   },
   // See SocketHandlers.session.
   session(socket, session) {
@@ -1640,10 +1626,8 @@ Socket.prototype.connect = function connect(...args) {
     if (pauseOnConnect) {
       this.pause();
     } else {
-      // afterConnect starts native reads via self.read(0) once connected
-      // (Node's afterConnect does the same); readableFlowing stays null so
-      // bytes arriving before a 'data' listener attaches buffer instead of
-      // being discarded.
+      // afterConnect kicks native reads via read(0); readableFlowing stays
+      // null so bytes arriving before a 'data' listener buffer.
       this.connecting = true;
     }
     if (fd) {

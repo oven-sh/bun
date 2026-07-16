@@ -628,10 +628,7 @@ describe("Bun.Terminal", () => {
     });
   });
 
-  // On Windows the StreamingWriter is async so drain fires after each write.
-  // On POSIX, drain only fires after backpressure clears, which requires a
-  // reader on the slave side; with no child attached the buffer never drains.
-  describe.todoIf(!isWindows)("drain callback", () => {
+  describe("drain callback", () => {
     test("drain callback is invoked when writer is ready", async () => {
       const { promise, resolve } = Promise.withResolvers<void>();
       let drainCalled = false;

@@ -732,7 +732,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             false
         };
 
-        let initial_delay: u32 = if args.len > 1 {
+        // `initialDelay` is documented in milliseconds; TCP_KEEPIDLE is seconds.
+        let initial_delay_ms: u32 = if args.len > 1 {
             u32::try_from(global.validate_integer_range(
                 args.ptr[1],
                 0i32,
@@ -746,6 +747,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         } else {
             0
         };
+        let initial_delay = initial_delay_ms / 1000;
         log!("setKeepAlive({}, {})", enabled, initial_delay);
 
         Ok(JSValue::from(

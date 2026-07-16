@@ -578,8 +578,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
+    /* delay == 0 means "enable SO_KEEPALIVE, keep the kernel-default idle". */
     if (delay == 0)
-        return -1;
+        return 0;
 
 
 #ifdef TCP_KEEPIDLE
@@ -616,14 +617,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
-    if (delay < 1) {
-        #ifdef LIBUS_USE_LIBUV
-            return -4071; //UV_EINVAL;
-        #else
-            //TODO: revisit this when IOCP loop is implemented without libuv here
-            return 4071;
-        #endif
-    }
+    if (delay == 0)
+        return 0;
+
     if (setsockopt(fd,
                     IPPROTO_TCP,
                     TCP_KEEPALIVE,

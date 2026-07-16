@@ -197,10 +197,11 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
-/// thread's). `WTFTimer` and the `timer_insert`/`timer_remove` hooks may be
-/// invoked off the VM's JS thread (the `All.lock` mutex exists for exactly
-/// that), so they must reach the heap through `vm.runtime_state` rather than
-/// the thread-local cache.
+/// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
+/// `All.wtf_timers` heap exists for exactly that), and the
+/// `timer_insert`/`timer_remove` hooks take `vm` from a tier that cannot see
+/// `RuntimeState`; both must reach the heap through `vm.runtime_state`
+/// rather than the thread-local cache.
 ///
 /// # Safety
 /// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
@@ -1223,8 +1224,7 @@ unsafe fn timer_insert(
     let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_insert before init_runtime_state");
     // SAFETY: this leaf hook runs no JS, so a short-lived `&mut RuntimeState`
-    // does not alias anything. `Timer::All::insert` takes its own lock and
-    // re-derefs `t` per-field.
+    // does not alias anything. `Timer::All::insert` re-derefs `t` per-field.
     unsafe { &mut (*state).timer }.insert(t);
 }
 

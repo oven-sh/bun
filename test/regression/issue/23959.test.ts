@@ -44,7 +44,9 @@ async function buildAndGetRuntime(opts: {
   const matches = stdout.match(/react\/jsx[a-z-]*runtime/g) ?? [];
   const unique = [...new Set(matches)];
   if (exitCode !== 0 || unique.length !== 1) {
-    throw new Error(`bun build exited ${exitCode}; runtimes=${JSON.stringify(unique)}\nstderr:\n${stderr}\nstdout:\n${stdout}`);
+    throw new Error(
+      `bun build exited ${exitCode}; runtimes=${JSON.stringify(unique)}\nstderr:\n${stderr}\nstdout:\n${stdout}`,
+    );
   }
   return { runtime: unique[0], stdout, stderr };
 }

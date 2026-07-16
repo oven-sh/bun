@@ -1,7 +1,7 @@
 import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 
-import { disableAggressiveGCScope } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isIPv6, isMacOS, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -303,4 +303,167 @@ describe("bind()", () => {
     await listening;
     expect(onError).not.toHaveBeenCalled();
   });
+});
+
+// Node implicitly binds an unbound socket to a random port before a membership
+// operation (libuv's deferred bind) rather than throwing "not running". The
+// loopback interface is explicit so the joins don't need a multicast route.
+describe("membership on an unbound socket", () => {
+  const GROUP4 = "224.0.0.114";
+  const SSM_GROUP4 = "232.0.0.114";
+  const SSM_SOURCE4 = "127.0.0.2";
+  const LO4 = "127.0.0.1";
+
+  // Same loopback scope ids node-dgram.test.js uses for the bound-socket case.
+  const LO6 = isWindows ? "::%1" : isMacOS ? "::%lo0" : "::%lo";
+
+  test("addMembership() implicitly binds", () => {
+    const socket = createSocket("udp4");
+    try {
+      socket.addMembership(GROUP4, LO4);
+      expect(socket.address()).toMatchObject({ address: "0.0.0.0", family: "IPv4" });
+      expect(socket.address().port).toBeGreaterThan(0);
+      socket.dropMembership(GROUP4, LO4);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("addSourceSpecificMembership() implicitly binds", () => {
+    const socket = createSocket("udp4");
+    try {
+      socket.addSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4);
+      expect(socket.address()).toMatchObject({ address: "0.0.0.0", family: "IPv4" });
+      expect(socket.address().port).toBeGreaterThan(0);
+      socket.dropSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.skipIf(!isIPv6())("addMembership() on a udp6 socket implicitly binds to [::]", () => {
+    const socket = createSocket("udp6");
+    try {
+      socket.addMembership("ff01::1", LO6);
+      expect(socket.address()).toMatchObject({ address: "::", family: "IPv6" });
+      expect(socket.address().port).toBeGreaterThan(0);
+      socket.dropMembership("ff01::1", LO6);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("the implicitly bound socket can send", async () => {
+    const receiver = createSocket("udp4");
+    const sender = createSocket("udp4");
+    let done = false;
+    try {
+      const received = Promise.withResolvers<Buffer>();
+      receiver.on("message", received.resolve);
+      receiver.on("error", received.reject);
+      sender.on("error", received.reject);
+
+      const listening = Promise.withResolvers<void>();
+      receiver.on("listening", listening.resolve);
+      receiver.bind(0, LO4);
+      await listening.promise;
+
+      sender.addMembership(GROUP4, LO4);
+
+      // Handle unreliable transmission in UDP: keep re-sending until the
+      // receiver sees a datagram, like the other send tests in this file.
+      // `send()` reports errors only through this callback, never "error".
+      const port = receiver.address().port;
+      function sendRec() {
+        if (done) return;
+        sender.send("via implicit bind", port, LO4, err => {
+          if (err) {
+            received.reject(err);
+            return;
+          }
+          setTimeout(sendRec, 10);
+        });
+      }
+      sendRec();
+
+      expect((await received.promise).toString()).toBe("via implicit bind");
+    } finally {
+      done = true;
+      sender.close();
+      receiver.close();
+    }
+  });
+
+  test("an invalid multicast address does not trigger the implicit bind", () => {
+    const socket = createSocket("udp4");
+    try {
+      expect(() => socket.addMembership("256.256.256.256")).toThrowWithCode(Error, "EINVAL");
+      expect(() => socket.address()).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+    } finally {
+      socket.close();
+    }
+  });
+
+  test("a closed socket still throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const socket = createSocket("udp4");
+    const { promise: closed, resolve: onClose } = Promise.withResolvers<void>();
+    socket.close(onClose);
+    await closed;
+    expect(() => socket.addMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+    expect(() => socket.dropMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+    expect(() => socket.addSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4)).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+    expect(() => socket.dropSourceSpecificMembership(SSM_SOURCE4, SSM_GROUP4, LO4)).toThrowWithCode(
+      Error,
+      "ERR_SOCKET_DGRAM_NOT_RUNNING",
+    );
+  });
+
+  test("a bind() already in flight still throws ERR_SOCKET_DGRAM_NOT_RUNNING", async () => {
+    const socket = createSocket("udp4");
+    try {
+      const { promise: listening, resolve: onListening } = Promise.withResolvers<void>();
+      socket.bind(0, onListening);
+      expect(() => socket.addMembership(GROUP4, LO4)).toThrowWithCode(Error, "ERR_SOCKET_DGRAM_NOT_RUNNING");
+      await listening;
+    } finally {
+      socket.close();
+    }
+  });
+});
+
+// "listening" is now emitted from inside dns.lookup's callback when bind()
+// gets a hostname. A throw from a listener must not re-enter that callback
+// as a lookup error and reset the bind state (see dns-lookup-keepalive.test.ts).
+test("a throwing 'listening' listener on a hostname bind() does not corrupt the socket", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const s = require("dgram").createSocket("udp4");
+      process.on("uncaughtException", () => {});
+      s.on("error", e => console.log("error:" + e.message));
+      s.bind(0, "localhost", () => {
+        const port = s.address().port;
+        setImmediate(() => {
+          s.send("x", port, "127.0.0.1", () => {
+            console.log(s.address().port === port ? "same-port" : "rebound");
+            s.close();
+          });
+        });
+        throw new Error("boom from the listening listener");
+      });`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = rawStderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "same-port\n", stderr: "", exitCode: 0 });
 });

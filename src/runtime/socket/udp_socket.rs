@@ -491,7 +491,7 @@ impl UDPSocket {
     /// Recover `&UDPSocket` from the uws user-data slot. Centralises the
     /// `unsafe { &*(*socket).user().cast() }` back-ref deref shared by every
     /// `extern "C"` callback below — the user pointer was set to the
-    /// heap-allocated `UDPSocket` in [`udp_socket`] via
+    /// heap-allocated `UDPSocket` in [`Self::create`] via
     /// `uws::udp::Socket::create(.., user_data = this_ptr)` and remains live
     /// until `on_close` (uws guarantees no callback after close). All mutated
     /// fields are `Cell`/`JsCell`, so a shared borrow is sufficient (R-2).
@@ -504,7 +504,26 @@ impl UDPSocket {
         unsafe { &*user.cast::<UDPSocket>() }
     }
 
+    /// `Bun.udpSocket(options)`. The bind happens synchronously inside
+    /// [`Self::create`]; the Promise is only the public API shape.
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
+        let this_value = Self::create(global_this, options)?;
+        Ok(bun_jsc::JSPromise::resolved_promise_value(
+            global_this,
+            this_value,
+        ))
+    }
+
+    // See `js_connect` — codegen `JsClass` derive owns the link name.
+    // `node:dgram` implicitly binds before a membership operation (libuv's
+    // deferred bind), so it needs the socket without a promise round-trip.
+    pub fn js_create(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+        Self::create(global_this, call_frame.argument(0))
+    }
+
+    /// Creates, binds, and (optionally) connects the socket. Returns the JS
+    /// wrapper directly; every failure is thrown synchronously.
+    fn create(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
         let vm = global_this.bun_vm_ptr();
@@ -651,10 +670,7 @@ impl UDPSocket {
         scopeguard::ScopeGuard::into_inner(guard);
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
-        Ok(bun_jsc::JSPromise::resolved_promise_value(
-            global_this,
-            this_value,
-        ))
+        Ok(this_value)
     }
 
     pub fn call_error_handler(&self, this_value_: JSValue, err: JSValue) {

@@ -237,13 +237,8 @@ macro_rules! arena_format {
     }};
 }
 
-/// `bun.use_mimalloc` — true when mimalloc is the `#[global_allocator]`.
-/// False only under ASAN on Unix, where `std::alloc::System` is installed so
-/// the ASAN interceptor sees every allocation. Windows ASAN stays on mimalloc
-/// (built with `MI_TRACK_ASAN=1`) because its libc has no `posix_memalign`
-/// and `std::alloc::System` on Windows is `HeapAlloc`, which would diverge
-/// from `default_alloc`'s libc malloc/free.
-pub const USE_MIMALLOC: bool = cfg!(not(all(bun_asan, unix)));
+/// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
+pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
@@ -264,21 +259,13 @@ pub mod max_heap_allocator;
 pub mod nullable_allocator;
 pub mod stack_fallback;
 
-/// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN on Unix).
+/// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
 pub mod default_alloc {
     use core::ffi::c_void;
 
-    // Unix ASAN routes through libc so the interceptor owns every allocation.
-    // Windows ASAN stays on mimalloc (see `USE_MIMALLOC` above): the libc
-    // crate has no `posix_memalign` on MSVC, and `_aligned_malloc` requires a
-    // matching `_aligned_free` that this module's single `free` entry point
-    // can't dispatch to. mimalloc is built with `MI_TRACK_ASAN=1`, so redzone
-    // poisoning still catches heap overflow on that path.
-    const ASAN_LIBC: bool = cfg!(all(bun_asan, unix));
-
     #[inline]
     pub fn malloc(size: usize) -> *mut c_void {
-        if ASAN_LIBC {
+        if cfg!(bun_asan) {
             // SAFETY: `libc::malloc` has no input preconditions; null on failure.
             unsafe { libc::malloc(size) }
         } else {
@@ -288,7 +275,7 @@ pub mod default_alloc {
 
     #[inline]
     pub fn zalloc(size: usize) -> *mut c_void {
-        if ASAN_LIBC {
+        if cfg!(bun_asan) {
             // SAFETY: `libc::calloc` has no input preconditions; null on failure.
             unsafe { libc::calloc(1, size) }
         } else {
@@ -298,7 +285,7 @@ pub mod default_alloc {
 
     #[inline]
     pub fn calloc(count: usize, size: usize) -> *mut c_void {
-        if ASAN_LIBC {
+        if cfg!(bun_asan) {
             // SAFETY: `libc::calloc` has no input preconditions; null on failure.
             unsafe { libc::calloc(count, size) }
         } else {
@@ -310,7 +297,7 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
     pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-        if ASAN_LIBC {
+        if cfg!(bun_asan) {
             // SAFETY: caller guarantees `ptr` is null or a live libc allocation
             // (the default allocator under ASAN).
             unsafe { libc::realloc(ptr, new_size) }
@@ -324,10 +311,12 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
     pub unsafe fn free(ptr: *mut c_void) {
-        if ASAN_LIBC {
+        if cfg!(bun_asan) {
             // SAFETY: caller guarantees `ptr` is null or a live libc allocation
-            // (the default allocator under ASAN).
-            unsafe { libc::free(ptr) }
+            // (the default allocator under ASAN). On Windows, an over-aligned
+            // `malloc_aligned` result points into the interior of a larger
+            // ASAN chunk; `alloc_begin` recovers the original pointer.
+            unsafe { libc::free(alloc_begin(ptr)) }
         } else {
             // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation.
             unsafe { crate::mimalloc::mi_free(ptr) }
@@ -341,50 +330,103 @@ pub mod default_alloc {
         if ptr.is_null() {
             return 0;
         }
-        // Under Unix ASAN the global allocator is `std::alloc::System`, so the
+        // Under `bun_asan` the global allocator is `std::alloc::System`, so the
         // size must come from libc, not mimalloc — and the symbol differs per
-        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). Windows
-        // ASAN and every non-asan build stay on mimalloc (see `ASAN_LIBC`).
+        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS, the ASAN
+        // runtime's `__sanitizer_get_allocated_size` on Windows, subtracting
+        // any over-alignment slack so callers see only the usable tail). The
+        // catch-all (non-asan, every `check-all` target including Windows)
+        // stays on mimalloc.
         #[cfg(all(bun_asan, target_os = "linux"))]
         return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
         #[cfg(all(bun_asan, target_os = "macos"))]
         return unsafe { libc::malloc_size(ptr) };
+        #[cfg(all(bun_asan, windows))]
+        return unsafe {
+            let begin = asan_win::__sanitizer_get_allocated_begin(ptr);
+            if begin.is_null() {
+                return 0;
+            }
+            let total = asan_win::__sanitizer_get_allocated_size(begin);
+            total - (ptr.addr() - begin.addr())
+        };
         // SAFETY: caller guarantees `ptr` is a live mimalloc allocation (the
         // non-null check above already handled null).
-        #[cfg(not(any(all(bun_asan, target_os = "linux"), all(bun_asan, target_os = "macos"))))]
+        #[cfg(not(bun_asan))]
         return unsafe { crate::mimalloc::mi_usable_size(ptr) };
     }
 
     // The aligned variants are `#[cfg]`-split (not `if cfg!()`) because the
     // posix_memalign/malloc_usable_size symbols don't exist on Windows.
 
-    #[cfg(not(all(bun_asan, unix)))]
+    // Windows ASAN: the clang_rt runtime does NOT intercept `_aligned_malloc`,
+    // so routing over-aligned requests there would pair an uninstrumented CRT
+    // allocation with ASAN's `free`. Instead, over-allocate with plain
+    // `malloc` (ASAN-intercepted) and bump into alignment; `free()` and
+    // `usable_size()` above recover the true chunk start via
+    // `__sanitizer_get_allocated_begin` so no header is needed and the
+    // single-entry `free(ptr)` contract is preserved.
+    #[cfg(all(bun_asan, windows))]
+    mod asan_win {
+        use core::ffi::c_void;
+        unsafe extern "C" {
+            pub(super) safe fn __sanitizer_get_allocated_begin(ptr: *const c_void) -> *mut c_void;
+            pub(super) fn __sanitizer_get_allocated_size(ptr: *const c_void) -> usize;
+        }
+    }
+
+    /// Map an interior pointer returned by `malloc_aligned` back to the chunk
+    /// start that `free` / `realloc` must see. Only Windows ASAN produces
+    /// interior pointers (bump-aligned over-allocations); everywhere else this
+    /// is the identity, so it stays `#[inline]` and folds away.
+    #[inline]
+    fn alloc_begin(ptr: *mut c_void) -> *mut c_void {
+        #[cfg(all(bun_asan, windows))]
+        if !ptr.is_null() {
+            return asan_win::__sanitizer_get_allocated_begin(ptr);
+        }
+        ptr
+    }
+
+    #[cfg(not(bun_asan))]
     #[inline]
     pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         crate::mimalloc::mi_malloc_auto_align(size, align)
     }
 
-    #[cfg(all(bun_asan, unix))]
+    #[cfg(bun_asan)]
     #[inline]
     pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
             return unsafe { libc::malloc(size) };
         }
-        let mut p: *mut c_void = core::ptr::null_mut();
-        let align = align.max(core::mem::size_of::<*mut c_void>());
-        if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
-            return core::ptr::null_mut();
+        #[cfg(unix)]
+        {
+            let mut p: *mut c_void = core::ptr::null_mut();
+            let align = align.max(core::mem::size_of::<*mut c_void>());
+            if unsafe { libc::posix_memalign(&mut p, align, size) } != 0 {
+                return core::ptr::null_mut();
+            }
+            p
         }
-        p
+        #[cfg(windows)]
+        {
+            let raw = unsafe { libc::malloc(size + align - 1) };
+            if raw.is_null() {
+                return raw;
+            }
+            let mask = align - 1;
+            raw.map_addr(|a| (a + mask) & !mask)
+        }
     }
 
-    #[cfg(not(all(bun_asan, unix)))]
+    #[cfg(not(bun_asan))]
     #[inline]
     pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
         crate::mimalloc::mi_zalloc_auto_align(size, align)
     }
 
-    #[cfg(all(bun_asan, unix))]
+    #[cfg(bun_asan)]
     #[inline]
     pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
@@ -399,7 +441,7 @@ pub mod default_alloc {
 
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(not(all(bun_asan, unix)))]
+    #[cfg(not(bun_asan))]
     #[inline]
     pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
@@ -409,7 +451,7 @@ pub mod default_alloc {
 
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(all(bun_asan, unix))]
+    #[cfg(bun_asan)]
     #[inline]
     pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
@@ -423,7 +465,7 @@ pub mod default_alloc {
             unsafe {
                 let copy = usable_size(ptr).min(new_size);
                 core::ptr::copy_nonoverlapping(ptr.cast::<u8>(), new_ptr.cast::<u8>(), copy);
-                libc::free(ptr);
+                libc::free(alloc_begin(ptr));
             }
         }
         new_ptr

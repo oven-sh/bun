@@ -2306,9 +2306,9 @@ pub use strings_impl::*;
 /// from `immutable`, so this is the only public path.
 pub use crate::string::immutable as strings;
 
-// `true` when mimalloc is the `#[global_allocator]`; `false` under Unix ASAN
-// where `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
-pub const USE_MIMALLOC: bool = cfg!(not(all(bun_asan, unix)));
+// `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
+// `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
+pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 pub mod debug_allocator_data {
     /// Only referenced from `debug_assert!` — dead in release builds.
     #[allow(dead_code)]

@@ -4,14 +4,14 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
 #include "JavaScriptCore/Identifier.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
 
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 
 #include <JavaScriptCore/JSSourceCode.h>
 #include <JavaScriptCore/JSString.h>
@@ -45,7 +45,6 @@
 
 namespace Bun {
 using namespace JSC;
-using namespace Zig;
 using namespace WebCore;
 
 class ResolvedSourceCodeHolder {
@@ -130,7 +129,7 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
     };
 }
 
-static OnLoadResult handleOnLoadObjectResult(Zig::GlobalObject* globalObject, JSC::JSObject* object)
+static OnLoadResult handleOnLoadObjectResult(Bun::GlobalObject* globalObject, JSC::JSObject* object)
 {
     OnLoadResult result {};
     result.type = OnLoadResultTypeObject;
@@ -199,13 +198,13 @@ DEFINE_VISIT_CHILDREN(PendingVirtualModuleResult);
 
 PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleLock)
 {
-    auto* virtualModule = create(globalObject->vm(), static_cast<Zig::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure());
+    auto* virtualModule = create(globalObject->vm(), static_cast<Bun::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure());
     virtualModule->finishCreation(globalObject->vm(), specifier, referrer);
     virtualModule->wasModuleMock = wasModuleLock;
     return virtualModule;
 }
 
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock)
+OnLoadResult handleOnLoadResultNotPromise(Bun::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock)
 {
     OnLoadResult result = {};
     result.type = OnLoadResultTypeError;
@@ -297,7 +296,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (contentsValue) {
         if (contentsValue.isString()) {
             if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
-                result.value.sourceText.string = Zig::toZigString(contentsJSString, globalObject);
+                result.value.sourceText.string = Bun::toZigString(contentsJSString, globalObject);
                 result.value.sourceText.value = contentsValue;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
@@ -317,7 +316,7 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     return result;
 }
 
-static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock = false)
+static OnLoadResult handleOnLoadResult(Bun::GlobalObject* globalObject, JSC::JSValue objectValue, BunString* specifier, bool wasModuleMock = false)
 {
     if (dynamicDowncast<JSC::JSPromise>(objectValue)) {
         OnLoadResult result = {};
@@ -332,7 +331,7 @@ static OnLoadResult handleOnLoadResult(Zig::GlobalObject* globalObject, JSC::JSV
 
 template<bool allowPromise>
 static JSValue handleVirtualModuleResult(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSValue virtualModuleResult,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -392,7 +391,7 @@ static JSValue handleVirtualModuleResult(
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
         }
 
-        auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
+        auto provider = Bun::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
     }
     case OnLoadResultTypeError: {
@@ -458,7 +457,7 @@ static JSValue handleVirtualModuleResult(
 }
 
 extern "C" void Bun__onFulfillAsyncModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::EncodedJSValue encodedPromiseValue,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -507,7 +506,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         }
     } else {
-        auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
+        auto provider = Bun::SourceProvider::create(globalObject, res->result.value);
         if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
         }
@@ -517,7 +516,7 @@ extern "C" void Bun__onFulfillAsyncModule(
 }
 
 JSValue fetchBuiltinModuleWithoutResolution(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier,
     ErrorableResolvedSource* res)
 {
@@ -567,7 +566,7 @@ JSValue fetchBuiltinModuleWithoutResolution(
 }
 
 JSValue resolveAndFetchBuiltinModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier)
 {
     void* bunVM = globalObject->bunVM();
@@ -614,7 +613,7 @@ JSValue resolveAndFetchBuiltinModule(
 }
 
 void evaluateCommonJSCustomExtension(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSCommonJSModule* target,
     String filename,
     JSValue filenameValue,
@@ -639,7 +638,7 @@ void evaluateCommonJSCustomExtension(
 }
 
 JSValue fetchCommonJSModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSCommonJSModule* target,
     JSValue specifierValue,
     String specifierWtfString,
@@ -799,7 +798,7 @@ template<bool isExtension>
 JSValue fetchCommonJSModuleNonBuiltin(
     void* bunVM,
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -869,7 +868,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
         RELEASE_AND_RETURN(scope, target);
     }
 
-    auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    auto&& provider = Bun::SourceProvider::create(globalObject, res->result.value);
     if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
         Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
     // provideFetch() now drives the C++ loader pipeline (parse -> module record)
@@ -893,7 +892,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
 template JSValue fetchCommonJSModuleNonBuiltin<true>(
     void* bunVM,
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -906,7 +905,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<true>(
 template JSValue fetchCommonJSModuleNonBuiltin<false>(
     void* bunVM,
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     BunString* specifier,
     JSC::JSValue specifierValue,
     BunString* referrer,
@@ -921,7 +920,7 @@ extern "C" bool isBunTest;
 
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -1015,7 +1014,7 @@ static JSValue fetchESMSourceCode(
         auto tag = res->result.value.tag;
         switch (tag) {
         case SyntheticModuleType::ESM: {
-            auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+            auto&& provider = Bun::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
             if (useIsolationCacheForBuiltin)
                 Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
@@ -1036,7 +1035,7 @@ static JSValue fetchESMSourceCode(
                 auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey));
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(source))));
             } else {
-                auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
+                auto&& provider = Bun::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
                 if (useIsolationCacheForBuiltin)
                     Bun::IsolatedModuleCache::insert(vm, moduleKey, provider.get());
                 RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider))));
@@ -1177,7 +1176,7 @@ static JSValue fetchESMSourceCode(
         RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTF::move(source))));
     }
 
-    auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
+    auto provider = Bun::SourceProvider::create(globalObject, res->result.value);
     if (useIsolationCache) {
         Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
     }
@@ -1185,7 +1184,7 @@ static JSValue fetchESMSourceCode(
 }
 
 JSValue fetchESMSourceCodeSync(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -1196,7 +1195,7 @@ JSValue fetchESMSourceCodeSync(
 }
 
 JSValue fetchESMSourceCodeAsync(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSString* specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
@@ -1242,7 +1241,7 @@ BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObje
 
     bool wasModuleMock = pendingModule->wasModuleMock;
 
-    JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Zig::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
+    JSC::JSValue result = handleVirtualModuleResult<false>(static_cast<Bun::GlobalObject*>(globalObject), objectResult, &res, &specifier, &referrer, wasModuleMock);
     if (!scope.exception() && !res.success) [[unlikely]] {
         throwException(globalObject, scope, result);
     }

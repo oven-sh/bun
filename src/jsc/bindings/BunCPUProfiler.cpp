@@ -1,6 +1,6 @@
 #include "root.h"
 #include "BunCPUProfiler.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "helpers.h"
 #include "BunString.h"
 #include <JavaScriptCore/SamplingProfiler.h>

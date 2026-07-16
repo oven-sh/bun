@@ -10,7 +10,7 @@
 #include "JSWritableStreamDefaultController.h"
 #include "JSWritableStreamDefaultWriter.h"
 #include "StreamQueue.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/InternalFieldTuple.h>

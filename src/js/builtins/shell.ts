@@ -114,7 +114,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
       // Create the error immediately so it captures the stacktrace at the point
       // of the shell script's invocation. Just creating the error should be
       // relatively cheap, the costly work is actually computing the stacktrace
-      // (`computeErrorInfo()` in ZigGlobalObject.cpp)
+      // (`computeErrorInfo()` in BunGlobalObject.cpp)
       let potentialError: ShellError | undefined = new ShellError();
       let resolve, reject;
 

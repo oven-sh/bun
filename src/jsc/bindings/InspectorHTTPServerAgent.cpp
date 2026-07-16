@@ -7,7 +7,7 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include <wtf/TZoneMallocInlines.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Inspector {
 

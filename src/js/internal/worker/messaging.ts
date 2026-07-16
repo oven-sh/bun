@@ -216,7 +216,7 @@ function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void
   mainThreadPort = port;
   mainThreadPort.on("message", handleMessageFromMainThreadGated);
 
-  // Stored on ZigGlobalObject (WriteBarrier), not on globalThis, so user code
+  // Stored on BunGlobalObject (WriteBarrier), not on globalThis, so user code
   // can't observe or clobber it. WebWorker__dispatchOnline calls it once.
   setEntryEvaluatedHook(() => {
     entryEvaluated = true;

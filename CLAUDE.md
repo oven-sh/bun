@@ -157,7 +157,7 @@ When implementing JavaScript classes in C++:
    - `class FooConstructor : public JSC::InternalFunction`
 2. Define properties using HashTableValue arrays
 3. Add iso subspaces for classes with C++ fields
-4. Cache structures in `ZigGlobalObject`
+4. Cache structures in `BunGlobalObject`
 
 ### Code Generation
 
@@ -241,7 +241,7 @@ Several situational sections live in `.claude/docs/landing-prs.md` — read the 
 ### Architecture & layering
 
 - **Fix bugs at the layer that owns the violated invariant, never where the symptom appears.** If a shared helper produces wrong output, fix the helper, not one call site; escaping/serialization lives in the output layer that sees every producer; a downstream null-check or isDead() probe on a possibly-freed object is papering over the defect. Prove the mechanism, don't correlate — "the crash goes away" is not a root cause, and a fix you can't explain hides an adjacent unhandled case. Before changing anything shared, enumerate every consumer; prefer scoping the change to your one caller via an explicit flag. Never change a Bun-native default to fix Node compatibility — that belongs in the node: compat layer.
-- **One implementation, in the right place.** Never copy a helper or constant table between modules or between the read and write sides of a format — share or derive it. Parameterize the existing path rather than cloning a parallel branch; when your change supersedes a mechanism, delete the old path in the same PR. Place new code in the module that owns the feature, never god files (no new fields on ZigGlobalObject, no bindings in monolithic bindings.cpp). Substantial subsystems get their own globally-unique filename. No re-export shim files.
+- **One implementation, in the right place.** Never copy a helper or constant table between modules or between the read and write sides of a format — share or derive it. Parameterize the existing path rather than cloning a parallel branch; when your change supersedes a mechanism, delete the old path in the same PR. Place new code in the module that owns the feature, never god files (no new fields on BunGlobalObject, no bindings in monolithic bindings.cpp). Substantial subsystems get their own globally-unique filename. No re-export shim files.
 - **Store state on the object whose lifetime matches it.** Per-VM state goes on VirtualMachine/RareData, never process globals or thread-locals (workers share globals; pool threads are reused). Per-connection facts live on the socket, never a shared context. Reset per-operation state at the start of each use of a reusable object; update every lifecycle method (reset/init/drop/clone) when adding mutable state; prune bookkeeping keyed by recyclable identifiers (PIDs, fds) on every path that learns of death. Don't add fields mirroring recoverable information — compute from the source of truth at use.
 - **Use the simplest mechanism the invariants allow.** No vtables when the implementation set is closed at compile time; no bit-packing or lock-free tricks when a stated invariant makes plain code correct; no speculative edge-case handling nobody filed an issue for. When a heuristic keeps sprouting counterexamples in review, redesign structurally instead of adding tie-breakers. If a maintainer doesn't understand your logic after one explanation, simplify rather than justify. New cross-cutting abstractions need maintainer agreement before appearing inside a feature PR.
 

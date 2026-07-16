@@ -184,12 +184,12 @@ impl<'a, G: GlobalObjectRef + ?Sized> ErrorBuilder<'a, G> {
 }
 
 // C++ compares parser-error sentinels against these exported statics
-// (`extern "C" ZigErrorCode Zig_ErrorCodeParserError;`, headers-handwritten.h).
+// (`extern "C" BunErrorCode Bun_ErrorCodeParserError;`, headers-handwritten.h).
 
 #[unsafe(no_mangle)]
-pub(crate) static Zig_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
+pub(crate) static Bun_ErrorCodeParserError: ErrorCodeInt = ErrorCode::PARSER_ERROR;
 
 #[unsafe(no_mangle)]
-pub(crate) static Zig_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
+pub(crate) static Bun_ErrorCodeJSErrorObject: ErrorCodeInt = ErrorCode::JS_ERROR_OBJECT;
 
 // ported from: src/jsc/bindings/ErrorCode.ts

@@ -13,7 +13,7 @@
 #include "JSTransformStreamDefaultController.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultController.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSCInlines.h>

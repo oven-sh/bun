@@ -17,7 +17,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bun {
 
@@ -34,7 +34,7 @@ JSC_DECLARE_HOST_FUNCTION(constructStatFS);
 JSC_DECLARE_HOST_FUNCTION(constructBigIntStatFS);
 
 template<bool isBigInt>
-Structure* getStatFSStructure(Zig::GlobalObject* globalObject)
+Structure* getStatFSStructure(Bun::GlobalObject* globalObject)
 {
     if (isBigInt) {
         return globalObject->m_JSStatFSBigIntClassStructure.getInitializedOnMainThread(globalObject);
@@ -44,7 +44,7 @@ Structure* getStatFSStructure(Zig::GlobalObject* globalObject)
 }
 
 template<bool isBigInt>
-JSObject* getStatFSPrototype(Zig::GlobalObject* globalObject)
+JSObject* getStatFSPrototype(Bun::GlobalObject* globalObject)
 {
     if (isBigInt) {
         return globalObject->m_JSStatFSBigIntClassStructure.prototypeInitializedOnMainThread(globalObject);
@@ -54,7 +54,7 @@ JSObject* getStatFSPrototype(Zig::GlobalObject* globalObject)
 }
 
 template<bool isBigInt>
-JSObject* getStatFSConstructor(Zig::GlobalObject* globalObject)
+JSObject* getStatFSConstructor(Bun::GlobalObject* globalObject)
 {
     if (isBigInt) {
         return globalObject->m_JSStatFSBigIntClassStructure.constructorInitializedOnMainThread(globalObject);
@@ -249,7 +249,7 @@ JSC::Structure* createJSBigIntStatFSObjectStructure(JSC::VM& vm, JSC::JSGlobalOb
     return structure;
 }
 
-extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* globalObject,
+extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Bun::GlobalObject* globalObject,
     int64_t fstype,
     int64_t bsize,
     int64_t blocks,
@@ -282,7 +282,7 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatFSObject(Zig::GlobalObject* glob
     return JSC::JSValue::encode(object);
 }
 
-extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Zig::GlobalObject* globalObject,
+extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatFSObject(Bun::GlobalObject* globalObject,
     int64_t fstype,
     int64_t bsize,
     int64_t blocks,
@@ -361,7 +361,7 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
 
     auto* structure = getStatFSStructure<isBigInt>(globalObject);
     auto* constructor = getStatFSConstructor<isBigInt>(globalObject);
@@ -369,7 +369,7 @@ inline JSValue constructJSStatFSObject(JSC::JSGlobalObject* lexicalGlobalObject,
 
     if (constructor != newTarget) {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* functionGlobalObject = static_cast<Zig::GlobalObject*>(
+        auto* functionGlobalObject = static_cast<Bun::GlobalObject*>(
             // ShadowRealm functions belong to a different global object.
             getFunctionRealm(lexicalGlobalObject, newTarget));
         RETURN_IF_EXCEPTION(scope, {});
@@ -417,12 +417,12 @@ JSC_DEFINE_HOST_FUNCTION(callBigIntStatFS, (JSC::JSGlobalObject * lexicalGlobalO
     return JSValue::encode(callJSStatFSFunction<true>(lexicalGlobalObject, callFrame));
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSBigIntStatFSObjectConstructor(Zig::GlobalObject* globalobject)
+extern "C" JSC::EncodedJSValue Bun__JSBigIntStatFSObjectConstructor(Bun::GlobalObject* globalobject)
 {
     return JSValue::encode(globalobject->m_JSStatFSBigIntClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSStatFSObjectConstructor(Zig::GlobalObject* globalobject)
+extern "C" JSC::EncodedJSValue Bun__JSStatFSObjectConstructor(Bun::GlobalObject* globalobject)
 {
     return JSValue::encode(globalobject->m_JSStatFSClassStructure.constructor(globalobject));
 }

@@ -9,7 +9,7 @@
 
 using namespace JSC;
 
-namespace Zig {
+namespace Bun {
 
 class CallSitePrototype final : public JSC::JSNonFinalObject {
 public:

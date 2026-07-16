@@ -9,7 +9,7 @@
 #include "JSReadableStream.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGeneratedClasses.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/FunctionExecutable.h>
@@ -28,7 +28,7 @@ using namespace JSC;
 using WebCore::JSReadableStream;
 
 // Shared brand check of every consumer entry point; throws ERR_INVALID_ARG_TYPE.
-static JSReadableStream* toReadableStream(Zig::GlobalObject* globalObject, ThrowScope& scope, EncodedJSValue encodedStream)
+static JSReadableStream* toReadableStream(Bun::GlobalObject* globalObject, ThrowScope& scope, EncodedJSValue encodedStream)
 {
     JSValue streamValue = JSValue::decode(encodedStream);
     auto* stream = dynamicDowncast<JSReadableStream>(streamValue);
@@ -44,7 +44,7 @@ using namespace JSC;
 using namespace WebCore;
 using namespace Bun::WebStreams;
 
-extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
+extern "C" int32_t ReadableStreamTag__tagged(Bun::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
     *ptr = nullptr;
     JSValue value = JSValue::decode(*possibleReadableStream);
@@ -91,7 +91,7 @@ extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JS
     return 0;
 }
 
-extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
+extern "C" bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
@@ -112,19 +112,19 @@ extern "C" bool ReadableStream__is(JSC::EncodedJSValue value)
     return !!dynamicDowncast<JSReadableStream>(JSValue::decode(value));
 }
 
-extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+extern "C" bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     return stream && stream->m_disturbed;
 }
 
-extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*)
+extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     return stream && isReadableStreamLocked(stream);
 }
 
-extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
@@ -151,7 +151,7 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
     markPromiseAsHandled(vm, result);
 }
 
-extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
@@ -168,7 +168,7 @@ extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleRea
     markPromiseAsHandled(vm, result);
 }
 
-extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject* globalObject)
 {
     auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(possibleReadableStream));
     if (!stream) [[unlikely]]
@@ -178,7 +178,7 @@ extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStrea
     stream->m_disturbed = true;
 }
 
-extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue ReadableStream__empty(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -189,7 +189,7 @@ extern "C" JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalOb
     return JSValue::encode(stream);
 }
 
-extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue ReadableStream__used(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -200,7 +200,7 @@ extern "C" JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObj
     return JSValue::encode(stream);
 }
 
-extern "C" JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject* globalObject, JSC::EncodedJSValue reason)
+extern "C" JSC::EncodedJSValue ReadableStream__errored(Bun::GlobalObject* globalObject, JSC::EncodedJSValue reason)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -211,7 +211,7 @@ extern "C" JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject* global
     return JSValue::encode(stream);
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
+extern "C" JSC::EncodedJSValue BunGlobalObject__createNativeReadableStream(Bun::GlobalObject* globalObject, JSC::EncodedJSValue nativePtr)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -224,7 +224,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::
     return JSValue::encode(stream);
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToArrayBuffer(Bun::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -233,7 +233,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig:
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToArrayBuffer(globalObject, stream)));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToBytes(Bun::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -242,7 +242,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::Globa
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBytes(globalObject, stream)));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToText(Bun::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -251,7 +251,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::Global
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToText(globalObject, stream)));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToJSON(Bun::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -260,7 +260,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::Global
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToJSON(globalObject, stream)));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToBlob(Bun::GlobalObject* globalObject, JSC::EncodedJSValue streamValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -269,7 +269,7 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::Global
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(globalObject, stream)));
 }
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue contentType)
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToFormData(Bun::GlobalObject* globalObject, JSC::EncodedJSValue streamValue, JSC::EncodedJSValue contentType)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

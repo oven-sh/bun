@@ -1,8 +1,8 @@
 // JSStreamsRuntime — the ONE per-global cell holding every piece of per-global Web Streams
 // state: the two CLOSED handler-function lists, the per-realm queuing-strategy `size`
 // functions, and the cached Structures of every internal (prototype-less) cell class. It is
-// reached through ONE LazyProperty on Zig::GlobalObject (`globalObject->streamsRuntime()`);
-// do NOT add per-function fields to ZigGlobalObject. Every handler / size function /
+// reached through ONE LazyProperty on Bun::GlobalObject (`globalObject->streamsRuntime()`);
+// do NOT add per-function fields to BunGlobalObject. Every handler / size function /
 // Structure is a LazyProperty materialized on first use via `m_NAME.get(this)`.
 //
 // THE TWO CALLABLE MECHANISMS — the ONLY two. Anything else (a per-stream JSFunction, ANY
@@ -337,12 +337,12 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = JSC::DoesNotNeedDestruction;
 
-    // Zig::GlobalObject holds ONE LazyProperty whose initializer calls this.
-    static JSStreamsRuntime* create(JSC::VM&, Zig::GlobalObject*);
+    // Bun::GlobalObject holds ONE LazyProperty whose initializer calls this.
+    static JSStreamsRuntime* create(JSC::VM&, Bun::GlobalObject*);
     static JSC::Structure* createStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 
     // The one accessor everything uses: `defaultGlobalObject(global)->streamsRuntime()`
-    // behind a free function so streams .cpp files do not include ZigGlobalObject.h.
+    // behind a free function so streams .cpp files do not include BunGlobalObject.h.
     static JSStreamsRuntime* from(JSC::JSGlobalObject*);
 
     // End-of-tick flush service for JS-facing direct controllers: the runtime (a
@@ -378,22 +378,22 @@ public:
 
     // The per-realm queuing-strategy size functions (spec: same function object per realm;
     // %ByteLengthQueuingStrategy%.prototype.size / %CountQueuingStrategy%.prototype.size).
-    JSC::JSFunction* byteLengthQueuingStrategySizeFunction(const Zig::GlobalObject*);
-    JSC::JSFunction* countQueuingStrategySizeFunction(const Zig::GlobalObject*);
+    JSC::JSFunction* byteLengthQueuingStrategySizeFunction(const Bun::GlobalObject*);
+    JSC::JSFunction* countQueuingStrategySizeFunction(const Bun::GlobalObject*);
 
     // The cached Structures of the internal cells.
 #define WEB_STREAMS_DECLARE_STRUCTURE_ACCESSOR(memberName, ClassName) \
-    JSC::Structure* memberName(const Zig::GlobalObject*);
+    JSC::Structure* memberName(const Bun::GlobalObject*);
     FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DECLARE_STRUCTURE_ACCESSOR)
 #undef WEB_STREAMS_DECLARE_STRUCTURE_ACCESSOR
 
     // The readMany `{value, size, done}` result shape, so results are built with
     // putDirectOffset instead of three transitioning putDirects.
-    JSC::Structure* readManyResultStructure(const Zig::GlobalObject*);
+    JSC::Structure* readManyResultStructure(const Bun::GlobalObject*);
 
 private:
     JSStreamsRuntime(JSC::VM&, JSC::Structure*);
-    void finishCreation(JSC::VM&, Zig::GlobalObject*);
+    void finishCreation(JSC::VM&, Bun::GlobalObject*);
 
 #define WEB_STREAMS_DECLARE_HANDLER_MEMBER(name) \
     JSC::LazyProperty<JSStreamsRuntime, JSC::JSFunction> m_##name;

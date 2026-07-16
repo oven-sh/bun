@@ -22,7 +22,7 @@
 #include "JSStreamTeeState.h"
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -45,7 +45,7 @@ Structure* JSStreamsRuntime::createStructure(VM& vm, JSGlobalObject* globalObjec
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
 }
 
-JSStreamsRuntime* JSStreamsRuntime::create(VM& vm, Zig::GlobalObject* globalObject)
+JSStreamsRuntime* JSStreamsRuntime::create(VM& vm, Bun::GlobalObject* globalObject)
 {
     auto* structure = createStructure(vm, globalObject, jsNull());
     auto* cell = new (NotNull, allocateCell<JSStreamsRuntime>(vm)) JSStreamsRuntime(vm, structure);
@@ -68,7 +68,7 @@ GCClient::IsoSubspace* JSStreamsRuntime::subspaceForImpl(VM& vm)
         [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamsRuntime = std::forward<decltype(space)>(space); });
 }
 
-void JSStreamsRuntime::finishCreation(VM& vm, Zig::GlobalObject*)
+void JSStreamsRuntime::finishCreation(VM& vm, Bun::GlobalObject*)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
@@ -215,25 +215,25 @@ void JSStreamsRuntime::armEndOfTickFlush(JSGlobalObject* globalObject, JSDirectS
     Bun__EventLoop__postDeferredTask(bunVM(globalObject), this, &Bun__StreamsRuntime__endOfTickFlush);
 }
 
-JSFunction* JSStreamsRuntime::byteLengthQueuingStrategySizeFunction(const Zig::GlobalObject*)
+JSFunction* JSStreamsRuntime::byteLengthQueuingStrategySizeFunction(const Bun::GlobalObject*)
 {
     return m_byteLengthQueuingStrategySizeFunction.get(this);
 }
 
-JSFunction* JSStreamsRuntime::countQueuingStrategySizeFunction(const Zig::GlobalObject*)
+JSFunction* JSStreamsRuntime::countQueuingStrategySizeFunction(const Bun::GlobalObject*)
 {
     return m_countQueuingStrategySizeFunction.get(this);
 }
 
 #define WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR(memberName, ClassName)  \
-    Structure* JSStreamsRuntime::memberName(const Zig::GlobalObject*) \
+    Structure* JSStreamsRuntime::memberName(const Bun::GlobalObject*) \
     {                                                                 \
         return m_##memberName.get(this);                              \
     }
 FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE(WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR)
 #undef WEB_STREAMS_DEFINE_STRUCTURE_ACCESSOR
 
-Structure* JSStreamsRuntime::readManyResultStructure(const Zig::GlobalObject*)
+Structure* JSStreamsRuntime::readManyResultStructure(const Bun::GlobalObject*)
 {
     return m_readManyResultStructure.get(this);
 }

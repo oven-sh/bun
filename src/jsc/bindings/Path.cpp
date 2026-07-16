@@ -2,7 +2,7 @@
 #include "root.h"
 #include "headers.h"
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/JSMicrotask.h>
@@ -10,7 +10,7 @@
 
 #pragma mark - Node.js Path
 
-namespace Zig {
+namespace Bun {
 
 static JSC::JSObject* createPath(JSC::JSGlobalObject* globalThis, bool isWindows);
 
@@ -112,7 +112,7 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
     return path;
 }
 
-} // namespace Zig
+} // namespace Bun
 
 extern "C" JSC::EncodedJSValue PathParsedObject__create(
     JSC::JSGlobalObject* globalObject,
@@ -122,7 +122,7 @@ extern "C" JSC::EncodedJSValue PathParsedObject__create(
     JSC::EncodedJSValue ext,
     JSC::EncodedJSValue name)
 {
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     auto& vm = JSC::getVM(globalObject);
     JSC::JSObject* result = JSC::constructEmptyObject(vm, global->pathParsedObjectStructure());
     result->putDirectOffset(vm, 0, JSC::JSValue::decode(root));
@@ -135,7 +135,7 @@ extern "C" JSC::EncodedJSValue PathParsedObject__create(
 
 namespace Bun {
 
-JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
+JSC::JSValue createNodePathBinding(Bun::GlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -144,12 +144,12 @@ JSC::JSValue createNodePathBinding(Zig::GlobalObject* globalObject)
     binding->putDirectIndex(
         globalObject,
         (unsigned)0,
-        Zig::createPath(globalObject, false));
+        Bun::createPath(globalObject, false));
     RETURN_IF_EXCEPTION(scope, {});
     binding->putDirectIndex(
         globalObject,
         (unsigned)1,
-        Zig::createPath(globalObject, true));
+        Bun::createPath(globalObject, true));
     RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }

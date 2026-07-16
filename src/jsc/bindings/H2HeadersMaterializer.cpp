@@ -6,7 +6,7 @@
 // interned header-name strings so known header names allocate nothing.
 
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "helpers.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>

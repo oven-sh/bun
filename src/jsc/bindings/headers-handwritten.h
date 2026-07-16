@@ -7,7 +7,7 @@
 
 #ifndef HEADERS_HANDWRITTEN
 #define HEADERS_HANDWRITTEN
-typedef uint16_t ZigErrorCode;
+typedef uint16_t BunErrorCode;
 typedef struct VirtualMachine VirtualMachine;
 // exists to make headers.h happy
 typedef struct CppWebSocket CppWebSocket;
@@ -96,13 +96,13 @@ typedef struct BunString {
 
 } BunString;
 
-typedef struct ZigErrorType {
-    ZigErrorCode code;
+typedef struct BunErrorType {
+    BunErrorCode code;
     JSC::EncodedJSValue value;
-} ZigErrorType;
+} BunErrorType;
 typedef union ErrorableZigStringResult {
     ZigString value;
-    ZigErrorType err;
+    BunErrorType err;
 } ErrorableZigStringResult;
 typedef struct ErrorableZigString {
     ErrorableZigStringResult result;
@@ -110,7 +110,7 @@ typedef struct ErrorableZigString {
 } ErrorableZigString;
 typedef union ErrorableStringResult {
     BunString value;
-    ZigErrorType err;
+    BunErrorType err;
 } ErrorableStringResult;
 typedef struct ErrorableString {
     ErrorableStringResult result;
@@ -138,7 +138,7 @@ typedef struct ResolvedSource {
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
-    ZigErrorType err;
+    BunErrorType err;
 } ErrorableResolvedSourceResult;
 typedef struct ErrorableResolvedSource {
     ErrorableResolvedSourceResult result;
@@ -165,19 +165,19 @@ inline constexpr BunPluginTarget BunPluginTargetBrowser = 1;
 inline constexpr BunPluginTarget BunPluginTargetNode = 2;
 inline constexpr BunPluginTarget BunPluginTargetMax = BunPluginTargetNode;
 
-typedef uint8_t ZigStackFrameCode;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeNone = 0;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeEval = 1;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeModule = 2;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeFunction = 3;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeWasm = 5;
-inline constexpr ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
+typedef uint8_t BunStackFrameCode;
+inline constexpr BunStackFrameCode BunStackFrameCodeNone = 0;
+inline constexpr BunStackFrameCode BunStackFrameCodeEval = 1;
+inline constexpr BunStackFrameCode BunStackFrameCodeModule = 2;
+inline constexpr BunStackFrameCode BunStackFrameCodeFunction = 3;
+inline constexpr BunStackFrameCode BunStackFrameCodeGlobal = 4;
+inline constexpr BunStackFrameCode BunStackFrameCodeWasm = 5;
+inline constexpr BunStackFrameCode BunStackFrameCodeConstructor = 6;
 
 extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 #define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
 
-typedef struct ZigStackFramePosition {
+typedef struct BunStackFramePosition {
     int32_t line_zero_based;
     int32_t column_zero_based;
     int32_t byte_position;
@@ -190,18 +190,18 @@ typedef struct ZigStackFramePosition {
     {
         return OrdinalNumber::fromZeroBasedInt(this->line_zero_based);
     }
-} ZigStackFramePosition;
+} BunStackFramePosition;
 
-typedef struct ZigStackFrame {
+typedef struct BunStackFrame {
     BunString function_name;
     BunString source_url;
-    ZigStackFramePosition position;
-    ZigStackFrameCode code_type;
+    BunStackFramePosition position;
+    BunStackFrameCode code_type;
     bool is_async;
     bool remapped;
     int32_t jsc_stack_frame_index;
 
-    ZigStackFrame()
+    BunStackFrame()
         : function_name {}
         , source_url {}
         , position {}
@@ -211,20 +211,20 @@ typedef struct ZigStackFrame {
         , jsc_stack_frame_index(-1)
     {
     }
-} ZigStackFrame;
+} BunStackFrame;
 
-typedef struct ZigStackTrace {
+typedef struct BunStackTrace {
     BunString* source_lines_ptr;
     OrdinalNumber* source_lines_numbers;
     uint8_t source_lines_len;
     uint8_t source_lines_to_collect;
-    ZigStackFrame* frames_ptr;
+    BunStackFrame* frames_ptr;
     uint8_t frames_len;
     uint8_t frames_cap;
     JSC::SourceProvider* referenced_source_provider;
-} ZigStackTrace;
+} BunStackTrace;
 
-typedef struct ZigException {
+typedef struct BunException {
     unsigned char type;
     uint16_t runtime_type;
     int errno_;
@@ -233,11 +233,11 @@ typedef struct ZigException {
     BunString path;
     BunString name;
     BunString message;
-    ZigStackTrace stack;
+    BunStackTrace stack;
     void* exception;
     bool remapped;
     int fd;
-} ZigException;
+} BunException;
 
 typedef uint8_t JSErrorCode;
 inline constexpr JSErrorCode JSErrorCodeError = 0;
@@ -363,7 +363,7 @@ typedef struct {
 
 extern "C" const char* Bun__userAgent;
 
-extern "C" ZigErrorCode Zig_ErrorCodeParserError;
+extern "C" BunErrorCode Bun_ErrorCodeParserError;
 
 extern "C" void ZigString__free(const unsigned char* ptr, size_t len, void* allocator);
 
@@ -476,7 +476,7 @@ bool Bun__deepMatch(
     bool replacePropsWithAsymmetricMatchers,
     bool isMatchingObjectContaining);
 
-extern "C" void Bun__remapStackFramePositions(void*, ZigStackFrame*, size_t);
+extern "C" void Bun__remapStackFramePositions(void*, BunStackFrame*, size_t);
 
 namespace Inspector {
 class ScriptArguments;

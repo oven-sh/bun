@@ -1,6 +1,6 @@
 #include "ObjectModule.h"
 
-namespace Zig {
+namespace Bun {
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
     JSC::JSObject* object)
@@ -12,7 +12,7 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject* globalObject,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
-        GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+        Bun::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings,
@@ -46,7 +46,7 @@ generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject* globalObject,
                JSC::MarkedArgumentBuffer& exportValues) -> void {
         auto& vm = JSC::getVM(lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        GlobalObject* globalObject = reinterpret_cast<GlobalObject*>(lexicalGlobalObject);
+        Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
         JSC::EnsureStillAliveScope stillAlive(object);
 
         PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings,
@@ -106,4 +106,4 @@ generateJSValueExportDefaultObjectSourceCode(JSC::JSGlobalObject* globalObject,
             gcUnprotectNullTolerant(value.asCell());
     };
 }
-} // namespace Zig
+} // namespace Bun

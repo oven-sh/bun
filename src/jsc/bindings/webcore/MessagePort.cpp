@@ -39,7 +39,7 @@
 #include "WebCoreOpaqueRoot.h"
 #include <wtf/TZoneMallocInlines.h>
 
-extern "C" void Bun__Process__emitWarning(Zig::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
+extern "C" void Bun__Process__emitWarning(Bun::GlobalObject*, JSC::EncodedJSValue warning, JSC::EncodedJSValue type, JSC::EncodedJSValue code, JSC::EncodedJSValue ctor);
 
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 
@@ -171,7 +171,7 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Only deliver while JS can run; during teardown the queue is left for
     // m_pipe->close() to drop (it unwinds nested port chains iteratively).
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+    if (Bun::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
     // Cap iterations like drainAndDispatch() so a 'message' handler re-injecting
@@ -264,7 +264,7 @@ void MessagePort::dispatchCloseEvent()
     auto* globalObject = defaultGlobalObject(context->globalObject());
     // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
     // close task runs after m_isDetached is set.
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
+    if (Bun::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
         EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
@@ -353,7 +353,7 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     Ref vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
+    if (Bun::GlobalObject::scriptExecutionStatus(globalObject, globalObject) != ScriptExecutionStatus::Running)
         return;
 
     auto ports = MessagePort::entanglePorts(context, WTF::move(message.transferredPorts));

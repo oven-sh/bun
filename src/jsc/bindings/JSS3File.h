@@ -1,6 +1,6 @@
 #pragma once
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 

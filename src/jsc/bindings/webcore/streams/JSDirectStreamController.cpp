@@ -13,7 +13,7 @@
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -946,9 +946,9 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* controller = JSDirectStreamController::create(vm, runtime->directStreamControllerStructure(zigGlobalObject), sinkKind);
+    auto* controller = JSDirectStreamController::create(vm, runtime->directStreamControllerStructure(bunGlobalObject), sinkKind);
     controller->m_stream.set(vm, controller, stream);
     if (JSObject* underlyingSource = stream->m_directUnderlyingSource.get()) {
         controller->m_underlyingSource.set(vm, controller, underlyingSource);
@@ -960,7 +960,7 @@ void setUpDirectStreamController(JSC::JSGlobalObject* globalObject, JSReadableSt
 
     switch (sinkKind) {
     case DirectSinkKind::ArrayBuffer: {
-        JSObject* sinkConstructor = zigGlobalObject->ArrayBufferSink();
+        JSObject* sinkConstructor = bunGlobalObject->ArrayBufferSink();
         auto constructData = JSC::getConstructData(sinkConstructor);
         MarkedArgumentBuffer constructArgs;
         JSObject* sink = JSC::construct(globalObject, sinkConstructor, constructData, constructArgs);

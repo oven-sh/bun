@@ -54,7 +54,7 @@
 #include <dlfcn.h>
 #endif
 
-namespace Zig {
+namespace Bun {
 using namespace WebCore;
 
 DEFINE_NATIVE_MODULE(NodeConstants)
@@ -999,4 +999,4 @@ DEFINE_NATIVE_MODULE(NodeConstants)
     // RETURN_NATIVE_MODULE();
 }
 
-} // namespace Zig
+} // namespace Bun

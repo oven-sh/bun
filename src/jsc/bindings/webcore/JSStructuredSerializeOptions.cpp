@@ -25,7 +25,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMException.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "JSDOMConvertSequences.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>

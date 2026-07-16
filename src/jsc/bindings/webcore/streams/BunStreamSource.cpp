@@ -20,7 +20,7 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/ArgList.h>
 #include <JavaScriptCore/ErrorType.h>

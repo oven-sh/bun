@@ -12,7 +12,7 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/SourceCode.h>
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "InternalModuleRegistry.h"
 
 #pragma push_macro("assert")
@@ -65,7 +65,7 @@ namespace ExposeNodeModuleGlobalGetters {
 #define DECL_GETTER(id, field) \
     JSC_DEFINE_CUSTOM_GETTER(id, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName)) \
     { \
-        Zig::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject); \
+        Bun::GlobalObject* thisObject = defaultGlobalObject(lexicalGlobalObject); \
         JSC::VM& vm = thisObject->vm(); \
         return JSC::JSValue::encode(thisObject->internalModuleRegistry()->requireId(thisObject, vm, field)); \
     }
@@ -74,7 +74,7 @@ FOREACH_EXPOSED_BUILTIN_IMR(DECL_GETTER)
 
 } // namespace ExposeNodeModuleGlobalGetters
 
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Bun::GlobalObject* globalObject)
 {
 
     auto& vm = JSC::getVM(globalObject);
@@ -97,7 +97,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 // Called from VirtualMachine::reload_entry_point when argv carries a
 // Node.js `--trace-*` flag. The registry caches the module, so repeat calls
 // (hot reload, workers) are cheap.
-extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalObject* globalObject)
+extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -111,7 +111,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalOb
 // Set up require(), module, __filename, __dirname on globalThis for the REPL.
 // Creates a CommonJS module object rooted at the given directory so require() resolves correctly.
 extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     const unsigned char* cwdPtr,
     size_t cwdLen)
 {

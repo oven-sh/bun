@@ -279,7 +279,7 @@ void Worker::enqueueToParent(MessageWithMessagePorts&& message)
 // sender. A sustained producer (e.g. a tight postMessage loop) would otherwise
 // make every per-message pop a contended acquire.
 template<typename Dispatch>
-static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
+static inline bool drainInbox(Worker::MessageInbox& inbox, Bun::GlobalObject* globalObject, ScriptExecutionContext& context, Dispatch&& dispatch)
 {
     size_t limit;
     Deque<MessageWithMessagePorts> batch;
@@ -332,7 +332,7 @@ static inline bool drainInbox(Worker::MessageInbox& inbox, Zig::GlobalObject* gl
 
 void Worker::drainToWorker(ScriptExecutionContext& context)
 {
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject());
+    auto* globalObject = uncheckedDowncast<Bun::GlobalObject>(context.jsGlobalObject());
     if (!globalObject) {
         Locker locker { m_toWorker.lock };
         m_toWorker.drainScheduled.store(false, std::memory_order_relaxed);
@@ -446,7 +446,7 @@ void Worker::rejectAllCrossVMRequests(JSC::JSGlobalObject* globalObject)
 
 // ---- Worker-thread entry points ---------------------------------------------
 
-void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
+void Worker::dispatchOnline(Bun::GlobalObject* workerGlobalObject)
 {
     // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
     // a message post racing this transition either queues (drained below by
@@ -494,7 +494,7 @@ static inline void workerScheduleInitialDrain(Worker& worker, Worker::MessageInb
     worker.drainToWorker(ctx);
 }
 
-void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
+void Worker::fireEarlyMessages(Bun::GlobalObject* workerGlobalObject)
 {
     auto tasks = [&]() {
         Locker lock(m_pendingTasksMutex);
@@ -528,7 +528,7 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
     });
 }
 
-bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
+bool Worker::dispatchErrorWithValue(Bun::GlobalObject* workerGlobalObject, JSValue value)
 {
     // This is the top of the stack for the worker's error dispatch: both the
     // structured clone below (even in NonThrowing mode, serialization can run
@@ -639,7 +639,7 @@ bool Worker::dispatchExit(int32_t exitCode)
 
 // ---- extern "C" shims (called from native code) ------------------------------
 
-extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
+extern "C" void WebWorker__teardownJSCVM(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     vm.setHasTerminationRequest();
@@ -667,7 +667,7 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
 
-    // Drop the single ref taken by `Zig__GlobalObject__create`
+    // Drop the single ref taken by `Bun__GlobalObject__create`
     // (`vmPtr->refSuppressingSaferCPPChecking()`), bringing the VM refcount
     // to zero — `~VM` runs here while the API lock is still held by this
     // thread. The worker thread acquires the API lock manually with no
@@ -688,7 +688,7 @@ extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
 // loading. Called from spin() on EVERY post-evaluation path (including entry
 // throw / TLA reject / TLA unsettled) so a buffered postMessageToThread never
 // leaves its sender's Atomics.waitAsync unresolved.
-extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
+extern "C" void WebWorker__entrySettled(Bun::GlobalObject* globalObject)
 {
     auto* hook = globalObject->nodeWorkerEntryEvaluatedHook();
     if (!hook)
@@ -708,18 +708,18 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     CLEAR_IF_EXCEPTION(scope);
 }
 
-extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
+extern "C" void WebWorker__dispatchOnline(Worker* worker, Bun::GlobalObject* globalObject)
 {
     WebWorker__entrySettled(globalObject);
     worker->dispatchOnline(globalObject);
 }
 
-extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Zig::GlobalObject* globalObject)
+extern "C" void WebWorker__fireEarlyMessages(Worker* worker, Bun::GlobalObject* globalObject)
 {
     worker->fireEarlyMessages(globalObject);
 }
 
-extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker* worker, BunString* message, JSC::EncodedJSValue errorValue)
+extern "C" void WebWorker__dispatchError(Bun::GlobalObject* globalObject, Worker* worker, BunString* message, JSC::EncodedJSValue errorValue)
 {
     JSValue error = JSC::JSValue::decode(errorValue);
     WTF::String messageStr = message->transferToWTFString();
@@ -820,7 +820,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetEntryEvaluatedHook, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(jsUndefined());
 }
 
-JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
+JSValue createNodeWorkerThreadsBinding(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 
@@ -899,7 +899,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPostMessage,
     JSC::VM& vm = leixcalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(leixcalGlobalObject);
+    Bun::GlobalObject* globalObject = dynamicDowncast<Bun::GlobalObject>(leixcalGlobalObject);
     if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
 

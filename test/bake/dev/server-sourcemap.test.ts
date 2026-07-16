@@ -202,7 +202,7 @@ devTest("server-side source maps stay correct across repeated reloads", {
   timeoutMultiplier: 2,
 });
 
-// ~DevServerSourceProvider ran after the Zig::GlobalObject cell was swept.
+// ~DevServerSourceProvider ran after the Bun::GlobalObject cell was swept.
 // BUN_DESTRUCT_VM_ON_EXIT=1 triggers that teardown; Malloc=1 puts JSC cells
 // under system malloc so ASAN poisons the freed cell and the UAF is deterministic.
 if (isASAN) {

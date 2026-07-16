@@ -2,7 +2,7 @@
 #include "root.h"
 #include "headers-handwritten.h"
 #include "JavaScriptCore/SourceOrigin.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "MiString.h"
 
 namespace Bake {
@@ -26,9 +26,9 @@ public:
         JSC::SourceProviderSourceType sourceType)
     {
         auto provider = adoptRef(*new DevServerSourceProvider(source, sourceMapJSONPtr, sourceMapJSONLength, sourceOrigin, WTF::move(sourceURL), startPosition, sourceType));
-        auto* zigGlobalObject = uncheckedDowncast<::Zig::GlobalObject>(globalObject);
+        auto* bunGlobalObject = uncheckedDowncast<::Bun::GlobalObject>(globalObject);
         auto specifier = Bun::toString(provider->sourceURL());
-        provider->m_bunVM = zigGlobalObject->bunVM();
+        provider->m_bunVM = bunGlobalObject->bunVM();
         provider->m_specifier = specifier;
         Bun__addDevServerSourceProvider(provider->m_bunVM, provider.ptr(), &specifier);
         return provider;
@@ -68,7 +68,7 @@ private:
 
     MiString m_sourceMapJSON;
     // The Rust VirtualMachine, captured at creation. Not the GC-allocated
-    // Zig::GlobalObject: this destructor runs from JSC sweep, by which point
+    // Bun::GlobalObject: this destructor runs from JSC sweep, by which point
     // the global object cell may already have been swept.
     void* m_bunVM { nullptr };
     BunString m_specifier;

@@ -29,7 +29,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Bun {
 
 static ImplementationVisibility getImplementationVisibility(JSC::CodeBlock* codeBlock)
 {
@@ -152,13 +152,13 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
     JSC::JSObject* callerObject = caller.getObject();
     auto* globalObject = callerObject->globalObject();
-    WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
+    WTF::String callerName = Bun::functionName(vm, globalObject, callerObject);
 
     // Match V8: remove all frames up to and including the caller. If the caller
     // is not found anywhere in the sync portion of the stack, remove everything.
     // We match by cell identity first, then by name — name matching is needed
     // because a resumed async function's frame callee is the generator's `next`
-    // function (a different cell) but Zig::functionName still reports the
+    // function (a different cell) but Bun::functionName still reports the
     // original async function's name.
     size_t removeCount = stackTrace.size();
     for (size_t i = 0; i < stackTrace.size(); i++) {
@@ -169,7 +169,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
             removeCount = i + 1;
             break;
         }
-        if (!callerName.isEmpty() && Zig::functionName(vm, globalObject, frame, FinalizerSafety::NotInFinalizer, nullptr) == callerName) {
+        if (!callerName.isEmpty() && Bun::functionName(vm, globalObject, frame, FinalizerSafety::NotInFinalizer, nullptr) == callerName) {
             removeCount = i + 1;
             break;
         }
@@ -210,7 +210,7 @@ static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
     }
 
     const JSC::SourceCode& source = codeBlock->source();
-    return !Zig::sourceURL(source).isEmpty();
+    return !Bun::sourceURL(source).isEmpty();
 }
 
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
@@ -351,14 +351,14 @@ ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
         return String(sourceURLWasmString);
     }
 
-    auto url = Zig::sourceURL(m_codeBlock);
+    auto url = Bun::sourceURL(m_codeBlock);
     if (!url.isEmpty()) {
         return url;
     }
 
     if (m_callee && m_callee->isObject()) {
         if (auto* jsFunction = dynamicDowncast<JSFunction>(m_callee)) {
-            WTF::String url = Zig::sourceURL(m_vm, jsFunction);
+            WTF::String url = Bun::sourceURL(m_vm, jsFunction);
             if (!url.isEmpty()) {
                 return url;
             }
@@ -393,12 +393,12 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     if (m_callee) {
         auto* calleeObject = m_callee->getObject();
         if (calleeObject) {
-            return Zig::functionName(m_vm, calleeObject->globalObject(), calleeObject);
+            return Bun::functionName(m_vm, calleeObject->globalObject(), calleeObject);
         }
     }
 
     if (m_codeBlock) {
-        auto functionName = Zig::functionName(m_vm, m_codeBlock);
+        auto functionName = Bun::functionName(m_vm, m_codeBlock);
         if (!functionName.isEmpty()) {
             return functionName;
         }
@@ -480,7 +480,7 @@ String sourceURL(JSC::CodeBlock* codeBlock)
         return String();
     }
 
-    return Zig::sourceURL(*codeBlock);
+    return Bun::sourceURL(*codeBlock);
 }
 
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
@@ -526,7 +526,7 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
         return String();
     }
 
-    return Zig::sourceURL(jsExecutable->source());
+    return Bun::sourceURL(jsExecutable->source());
 }
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
@@ -705,7 +705,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                 }
                 if (auto* callee = frame.callee()) {
                     if (auto* object = callee->getObject()) {
-                        functionName = Zig::functionName(vm, lexicalGlobalObject, object);
+                        functionName = Bun::functionName(vm, lexicalGlobalObject, object);
 
                         if (flags) {
                             if (auto* unlinkedCodeBlock = codeblock->unlinkedCodeBlock()) {
@@ -724,13 +724,13 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
             }
 
             if (functionName.isEmpty()) {
-                functionName = Zig::functionName(vm, codeblock);
+                functionName = Bun::functionName(vm, codeblock);
             }
         }
     } else {
         if (auto* callee = frame.callee()) {
             if (auto* object = callee->getObject()) {
-                functionName = Zig::functionName(vm, lexicalGlobalObject, object);
+                functionName = Bun::functionName(vm, lexicalGlobalObject, object);
             }
         }
     }

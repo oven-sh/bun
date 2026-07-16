@@ -24,7 +24,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 const ClassInfo GlobalInternals::s_info = { "GlobalInternals"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(GlobalInternals) };
 
-GlobalInternals* GlobalInternals::create(VM& vm, Structure* structure, Zig::GlobalObject* globalObject)
+GlobalInternals* GlobalInternals::create(VM& vm, Structure* structure, Bun::GlobalObject* globalObject)
 {
     GlobalInternals* internals = new (NotNull, JSC::allocateCell<GlobalInternals>(vm)) GlobalInternals(vm, structure, globalObject);
     internals->finishCreation(vm);

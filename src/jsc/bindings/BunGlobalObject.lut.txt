@@ -1,6 +1,6 @@
-// In a separate file because processing ZigGlobalObject.cpp takes 15+ seconds
+// In a separate file because processing BunGlobalObject.cpp takes 15+ seconds
 
-/* Source for ZigGlobalObject.lut.h
+/* Source for BunGlobalObject.lut.h
 @begin bunGlobalObjectTable
   addEventListener                jsFunctionAddEventListener                           Function 2
   alert                           WebCore__alert                                       Function 1

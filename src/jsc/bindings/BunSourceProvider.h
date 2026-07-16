@@ -16,9 +16,11 @@ class SourceProvider;
 #include <JavaScriptCore/SourceProvider.h>
 #include <JavaScriptCore/Structure.h>
 
-namespace Zig {
-
+namespace Bun {
 class GlobalObject;
+}
+
+namespace Bun {
 
 void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
@@ -37,7 +39,7 @@ class SourceProvider final : public JSC::SourceProvider {
 
 public:
     static Ref<SourceProvider> create(
-        Zig::GlobalObject*,
+        Bun::GlobalObject*,
         ResolvedSource& resolvedSource,
         JSC::SourceProviderSourceType sourceType = JSC::SourceProviderSourceType::Module,
         bool isBuiltIn = false);
@@ -79,4 +81,4 @@ private:
     unsigned m_hash = 0;
 };
 
-} // namespace Zig
+} // namespace Bun

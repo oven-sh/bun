@@ -20,7 +20,7 @@
 #include "JSStreamsRuntime.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/ArrayBuffer.h>
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/ConstructData.h>

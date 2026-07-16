@@ -1,5 +1,5 @@
 //! Bindings to JavaScriptCore and other JavaScript primitives such as
-//! VirtualMachine, JSGlobalObject (Zig::GlobalObject), and the event loop.
+//! VirtualMachine, JSGlobalObject (Bun::GlobalObject), and the event loop.
 //!
 //! Web and runtime-specific APIs should go in `bun.webcore` and `bun.api`.
 //!
@@ -59,6 +59,12 @@ pub const CONV: &str = "C";
 // ──────────────────────────────────────────────────────────────────────────
 pub mod error;
 pub use error::{Error as CrateError, Result as CrateResult};
+#[path = "BunErrorType.rs"]
+pub mod bun_error_type;
+#[path = "BunStackFrameCode.rs"]
+pub mod bun_stack_frame_code;
+#[path = "BunStackFramePosition.rs"]
+pub mod bun_stack_frame_position;
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]
@@ -101,17 +107,11 @@ pub mod text_codec;
 pub mod url_search_params;
 #[path = "WTF.rs"]
 pub mod wtf;
-#[path = "ZigErrorType.rs"]
-pub mod zig_error_type;
-#[path = "ZigStackFrameCode.rs"]
-pub mod zig_stack_frame_code;
-#[path = "ZigStackFramePosition.rs"]
-pub mod zig_stack_frame_position;
 
-/// `bun.schema.api` types that reference `ZigStackFramePosition` (this crate)
+/// `bun.schema.api` types that reference `BunStackFramePosition` (this crate)
 /// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
 pub mod schema_api {
-    use crate::ZigStackFramePosition;
+    use crate::BunStackFramePosition;
 
     /// Non-exhaustive stack-frame scope tag. Newtype keeps any-u8 FFI-safe.
     #[repr(transparent)]
@@ -129,7 +129,7 @@ pub mod schema_api {
     }
 
     /// Line/column position of a stack frame (FFI layout shared with C++).
-    pub type StackFramePosition = ZigStackFramePosition;
+    pub type StackFramePosition = BunStackFramePosition;
 
     /// One captured stack frame: function name, file, position, and scope (FFI layout shared with C++).
     #[derive(Clone)]
@@ -174,7 +174,7 @@ pub mod schema_api {
     }
 
     /// Lives here (not `bun_options_types::schema::api`) because `stack`'s
-    /// [`StackTrace`] transitively names `ZigStackFramePosition` from this
+    /// [`StackTrace`] transitively names `BunStackFramePosition` from this
     /// crate; the `bun_options_types` copy omits `stack` to avoid the cycle.
     #[derive(Clone, Default)]
     pub struct JsException {
@@ -435,6 +435,9 @@ pub use self::common_strings::CommonStrings;
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
+pub use self::bun_error_type::BunErrorType;
+pub use self::bun_stack_frame_code::BunStackFrameCode;
+pub use self::bun_stack_frame_position::BunStackFramePosition;
 pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
 pub use self::custom_getter_setter::CustomGetterSetter;
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
@@ -456,9 +459,6 @@ pub use self::source_provider::SourceProvider;
 pub use self::source_type::SourceType;
 pub use self::text_codec::TextCodec;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_error_type::ZigErrorType;
-pub use self::zig_stack_frame_code::ZigStackFrameCode;
-pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
 #[path = "GarbageCollectionController.rs"]
 pub mod garbage_collection_controller;
@@ -496,6 +496,12 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "BunException.rs"]
+pub mod bun_exception;
+#[path = "BunStackFrame.rs"]
+pub mod bun_stack_frame;
+#[path = "BunStackTrace.rs"]
+pub mod bun_stack_trace;
 #[path = "CachedBytecode.rs"]
 pub mod cached_bytecode;
 #[path = "DeferredError.rs"]
@@ -516,12 +522,6 @@ pub mod system_error;
 pub mod url;
 #[path = "VM.rs"]
 pub mod vm;
-#[path = "ZigException.rs"]
-pub mod zig_exception;
-#[path = "ZigStackFrame.rs"]
-pub mod zig_stack_frame;
-#[path = "ZigStackTrace.rs"]
-pub mod zig_stack_trace;
 // `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
 // every aliased type lives in api/webcore/test_runner/bake, so mounting it
 // here would create a `bun_jsc → bun_runtime` cycle.
@@ -556,7 +556,7 @@ pub mod process_auto_killer;
 #[path = "WorkTask.rs"]
 pub mod work_task;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
+/// Binding for JSCInitialize in BunGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
@@ -984,12 +984,12 @@ mod __macro_smoke {
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
+pub use self::bun_stack_frame::BunStackFrame;
+pub use self::bun_stack_trace::BunStackTrace;
 pub use self::cached_bytecode::CachedBytecode;
 pub use self::deferred_error::DeferredError;
 pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
-pub use self::zig_stack_frame::ZigStackFrame;
-pub use self::zig_stack_trace::ZigStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
@@ -1227,7 +1227,7 @@ pub use self::js_promise::Strong as JSPromiseStrong;
 pub use self::js_promise::Status as PromiseStatus;
 
 /// `bun_ptr::RefPtr` — intrusive refcounted smart pointer. Re-exported here so
-/// `crate::RefPtr<SourceProvider>` (ZigStackTrace.rs) resolves without every
+/// `crate::RefPtr<SourceProvider>` (BunStackTrace.rs) resolves without every
 /// submodule taking a direct `bun_ptr` dep.
 pub use bun_ptr::RefPtr;
 
@@ -1984,7 +1984,7 @@ where
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BuildMessage / ResolveMessage / ZigException::Holder / JsClass.
+// BuildMessage / ResolveMessage / BunException::Holder / JsClass.
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "BuildMessage.rs"]
 pub mod build_message;
@@ -1994,7 +1994,7 @@ pub use self::build_message::BuildMessage;
 pub mod resolve_message;
 pub use self::resolve_message::ResolveMessage;
 
-pub use self::zig_exception::ZigException;
+pub use self::bun_exception::BunException;
 
 /// Trait implemented by `#[bun_jsc::JsClass]`-derived types. The proc-macro
 /// emits `to_js`/`from_js`/`from_js_direct` per type; this is the trait shape.

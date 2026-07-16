@@ -8,7 +8,7 @@
 
 #include "root.h"
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>

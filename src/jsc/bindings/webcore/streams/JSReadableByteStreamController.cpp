@@ -16,7 +16,7 @@
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ExceptionHelpers.h>
@@ -435,8 +435,8 @@ void JSReadableByteStreamController::pullSteps(JSGlobalObject* globalObject, JSR
             auto* error = JSC::createOutOfMemoryError(globalObject);
             RELEASE_AND_RETURN(scope, readRequest->errorSteps(globalObject, error));
         }
-        auto* zigGlobalObject = defaultGlobalObject(globalObject);
-        JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(zigGlobalObject));
+        auto* bunGlobalObject = defaultGlobalObject(globalObject);
+        JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(bunGlobalObject));
         RETURN_IF_EXCEPTION(scope, void());
         pullIntoDescriptor->m_buffer = WTF::move(buffer);
         pullIntoDescriptor->m_bufferByteLength = static_cast<size_t>(m_autoAllocateChunkSize);
@@ -956,8 +956,8 @@ JSReadableStreamBYOBRequest* readableByteStreamControllerGetBYOBRequest(JSGlobal
         const size_t bytesFilled = firstDescriptor->m_bytesFilled;
         JSArrayBufferView* view = constructViewOfType(globalObject, JSC::TypeUint8, firstDescriptor->m_buffer, firstDescriptor->m_byteOffset + bytesFilled, firstDescriptor->m_byteLength - bytesFilled);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        auto* zigGlobalObject = defaultGlobalObject(globalObject);
-        JSReadableStreamBYOBRequest* byobRequest = JSReadableStreamBYOBRequest::create(vm, getDOMStructure<JSReadableStreamBYOBRequest>(vm, *zigGlobalObject));
+        auto* bunGlobalObject = defaultGlobalObject(globalObject);
+        JSReadableStreamBYOBRequest* byobRequest = JSReadableStreamBYOBRequest::create(vm, getDOMStructure<JSReadableStreamBYOBRequest>(vm, *bunGlobalObject));
         byobRequest->m_controller.set(vm, byobRequest, controller);
         byobRequest->m_view.set(vm, byobRequest, view);
         controller->m_byobRequest.set(vm, controller, byobRequest);
@@ -1060,8 +1060,8 @@ void readableByteStreamControllerPullInto(JSGlobalObject* globalObject, JSReadab
     }
     if (!transferAbruptCompletion.isEmpty()) [[unlikely]]
         RELEASE_AND_RETURN(scope, readIntoRequest->errorSteps(globalObject, transferAbruptCompletion));
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(zigGlobalObject));
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    JSPullIntoDescriptor* pullIntoDescriptor = JSPullIntoDescriptor::create(vm, JSStreamsRuntime::from(globalObject)->pullIntoDescriptorStructure(bunGlobalObject));
     pullIntoDescriptor->m_bufferByteLength = buffer->byteLength();
     pullIntoDescriptor->m_buffer = WTF::move(buffer);
     pullIntoDescriptor->m_byteOffset = byteOffset;

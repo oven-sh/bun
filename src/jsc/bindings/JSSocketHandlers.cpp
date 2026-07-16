@@ -2,7 +2,7 @@
 
 #include "JavaScriptCore/JSCJSValueInlines.h"
 #include "JSSocketHandlers.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>

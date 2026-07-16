@@ -285,6 +285,7 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
+
 `;
   var templ = head;
 
@@ -347,7 +348,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__unref, (JSC::JSGlobalObject * lexicalGlobalObj
 
 JSC_DEFINE_CUSTOM_GETTER(function${name}__getter, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
 
     return JSC::JSValue::encode(globalObject->${name}());
 }
@@ -380,7 +381,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__close, (JSC::JSGlobalObject * lexicalGlo
     
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
@@ -427,7 +428,7 @@ JSC_DEFINE_HOST_FUNCTION(${controller}__end, (JSC::JSGlobalObject * lexicalGloba
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     WebCore::${controller}* controller = dynamicDowncast<WebCore::${controller}>(callFrame->thisValue());
     if (!controller) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${controller}"_s));
@@ -477,7 +478,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__getFd, (JSC::JSGlobalObject * lexicalGlobalObj
 {
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
@@ -498,7 +499,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     
     auto& vm = lexicalGlobalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     WebCore::${className}* sink = dynamicDowncast<WebCore::${className}>(callFrame->thisValue());
     if (!sink) {
         scope.throwException(globalObject, JSC::createTypeError(globalObject, "Expected ${name}"_s));
@@ -922,7 +923,7 @@ default:
 extern "C" JSC::EncodedJSValue ${name}__createObject(JSC::JSGlobalObject* arg0, void* sinkPtr, uintptr_t destructor)
 {
     auto& vm = arg0->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(arg0);
     JSC::Structure* structure = globalObject->${name}Structure();
     return JSC::JSValue::encode(WebCore::JS${name}::create(vm, globalObject, structure, sinkPtr, destructor));
 }
@@ -955,7 +956,7 @@ extern "C" void ${name}__detachPtr(JSC::EncodedJSValue JSValue0)
 extern "C" JSC::EncodedJSValue ${name}__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, void* sinkPtr, void **controllerValue)
 {
     auto& vm = arg0->vm();
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    Bun::GlobalObject* globalObject = reinterpret_cast<Bun::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::${controller}>(vm, *globalObject);
     WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr, 0);

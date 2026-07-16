@@ -15,7 +15,7 @@
 #include "WebCoreJSClientData.h"
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -544,7 +544,7 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* runtime = JSStreamsRuntime::from(globalObject);
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
     auto& names = WebCore::builtinNames(vm);
 
     JSValue target = jsUndefined();
@@ -571,7 +571,7 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
         return nullptr;
     }
 
-    auto* op = JSAsyncIteratorSourceOperation::create(vm, runtime->asyncIteratorSourceOperationStructure(zigGlobalObject));
+    auto* op = JSAsyncIteratorSourceOperation::create(vm, runtime->asyncIteratorSourceOperationStructure(bunGlobalObject));
     op->m_iterator.set(vm, op, iterator);
 
     auto* source = constructEmptyObject(globalObject);
@@ -586,7 +586,7 @@ JSReadableStream* readableStreamFromAsyncIterator(JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, nullptr);
     source->putDirect(vm, names.closePublicName(), closeFunction, 0);
 
-    auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *zigGlobalObject));
+    auto* stream = JSReadableStream::create(vm, WebCore::getDOMStructure<JSReadableStream>(vm, *bunGlobalObject));
     initializeReadableStream(stream);
     stream->m_bunMode = WebCore::BunStreamMode::DirectPending;
     stream->m_directUnderlyingSource.set(vm, stream, source);

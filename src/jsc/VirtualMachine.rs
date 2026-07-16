@@ -18,9 +18,9 @@ use crate::module_loader::{self as ModuleLoader, FetchFlags};
 use crate::rare_data::RareData;
 use crate::saved_source_map::SavedSourceMap;
 use crate::{
-    self as jsc, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception, JSGlobalObject,
-    JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop, ResolvedSource, VM,
-    ZigException,
+    self as jsc, BunException, ErrorCode, ErrorableResolvedSource, ErrorableString, Exception,
+    JSGlobalObject, JSInternalPromise, JSValue, JsResult, OpaqueCallback, PlatformEventLoop,
+    ResolvedSource, VM,
 };
 
 pub use crate::process_auto_killer as ProcessAutoKiller;
@@ -61,7 +61,7 @@ pub(crate) type OnUnhandledRejection = fn(&mut VirtualMachine, &JSGlobalObject, 
 pub(crate) type MacroMap = bun_collections::ArrayHashMap<i32, JSValue>;
 /// `api::JsException` lives in
 /// [`crate::schema_api`] (not `bun_options_types::schema::api`) because its
-/// `stack: StackTrace` field transitively names `ZigStackFramePosition` from
+/// `stack: StackTrace` field transitively names `BunStackFramePosition` from
 /// this crate — see the `schema_api` module doc in lib.rs.
 pub type ExceptionList = Vec<crate::schema_api::JsException>;
 
@@ -102,7 +102,7 @@ pub struct InitOptions {
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
-    /// Forwarded to `Zig__GlobalObject__create` so the C++ ZigGlobalObject is
+    /// Forwarded to `Bun__GlobalObject__create` so the C++ BunGlobalObject is
     /// created with its `WebCore::Worker*` already wired. `null` for the
     /// main-thread / bake paths.
     pub worker_ptr: *mut c_void,
@@ -110,7 +110,7 @@ pub struct InitOptions {
     /// `WebWorker::execution_context_id`; `None` lets [`init`] derive it from
     /// `is_main_thread` (matches the previous behaviour for non-worker init).
     pub context_id: Option<i32>,
-    /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
+    /// Forwarded as `mini_mode` to `Bun__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
 }
@@ -212,7 +212,7 @@ pub struct VirtualMachine {
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
-    /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
+    /// the final `collectNow()` in `Bun__GlobalObject__destructOnExit`) would
     /// only leak the hook's `ctx` allocation.
     pub has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
@@ -371,7 +371,7 @@ unsafe extern "C" {
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__WebView__closeAllForTermination();
-    safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
+    safe fn Bun__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
 
 pub const HOT_RELOAD_HOT: u8 = 1;
@@ -1258,7 +1258,7 @@ impl VirtualMachine {
         self.had_errors = false;
 
         // The actual print path needs `ConsoleObject::Formatter` +
-        // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
+        // `BunException` (high tier). Dispatch through `RuntimeHooks` —
         // mirroring `auto_tick`/`ensure_debugger` — so the error is actually
         // emitted to stderr before callers hard-exit. With no hook installed
         // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
@@ -1600,7 +1600,7 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
-            Zig__GlobalObject__destructOnExit(self.global());
+            Bun__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
             // their own embedded group.closeAll() → sockets land in
@@ -1939,9 +1939,9 @@ pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores
-    // into the new ZigGlobalObject (never dereferenced as Rust data); remaining
+    // into the new BunGlobalObject (never dereferenced as Rust data); remaining
     // args are by-value scalars.
-    safe fn Zig__GlobalObject__create(
+    safe fn Bun__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
@@ -2134,7 +2134,7 @@ impl VirtualMachine {
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
         // Note (init order): the transpiler and per-VM timer state must be
         // built BEFORE `JSGlobalObject` creation. The C++ body
-        // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
+        // of `Bun__GlobalObject__create` re-enters via `WTFTimer__create`/
         // `WTFTimer__update` (JSC's GC scheduler), which dereferences
         // `runtime_state().timer` — so this hook MUST run first or that path
         // null-derefs.
@@ -2155,12 +2155,12 @@ impl VirtualMachine {
         // JSGlobalObject creation. `ensure_waker()` must run before the FFI.
         // SAFETY: `vm` is the unique live VM on this thread; raw-ptr deref so
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
-        // ZigGlobalObject.cpp:473/961).
+        // BunGlobalObject.cpp:473/961).
         unsafe { (*vm).regular_event_loop.ensure_waker() };
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).
-        let global = Zig__GlobalObject__create(
+        let global = Bun__GlobalObject__create(
             console.cast(),
             context_id,
             opts.mini_mode,
@@ -2574,7 +2574,7 @@ pub fn process_fetch_log(
                 };
             }
 
-            // C++ `Zig::toString` does `createWithoutCopying`, so the buffer
+            // C++ `Bun::toString` does `createWithoutCopying`, so the buffer
             // must outlive the AggregateError. Mark it global so JSC adopts it
             // as an ExternalStringImpl and frees it via `free_global_string`.
             let message_text: &'static mut [u8] = bun_core::heap::release(
@@ -3097,7 +3097,7 @@ crate::jsc_abi_extern! {
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
 // `console_ptr` is an opaque round-trip pointer C++ stores into the new global
-// (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
+// (never dereferenced as Rust data) — same contract as `Bun__GlobalObject__create`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
@@ -3699,7 +3699,7 @@ impl VirtualMachine {
             is_main_thread: false,
             // The global is created
             // with `worker.cpp_worker`, `worker.execution_context_id`,
-            // and `worker.mini` so the C++ ZigGlobalObject is born with its
+            // and `worker.mini` so the C++ BunGlobalObject is born with its
             // WorkerGlobalScope + debugger context id wired.
             worker_ptr: worker.cpp_worker(),
             context_id: Some(worker.execution_context_id() as i32),
@@ -3747,7 +3747,7 @@ impl VirtualMachine {
         };
         // Note: shares the console / log / event-loop wiring with `init`;
         // the only delta is the global is created via `BakeCreateProdGlobal`
-        // instead of `ZigGlobalObject__create`. Route through `init` then
+        // instead of `Bun__GlobalObject__create`. Route through `init` then
         // swap the global.
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.
@@ -4909,19 +4909,19 @@ impl VirtualMachine {
 
         if was_internal {
             if let Some(exception_) = exception {
-                let mut holder = crate::zig_exception::Holder::init();
+                let mut holder = crate::bun_exception::Holder::init();
                 // Note: `holder.deinit(self)` runs at the tail (for borrowck)
                 // — semantics unchanged because
                 // `need_to_clear_parser_arena_on_deinit` is false here.
-                let zig_exception: &mut ZigException = holder.zig_exception();
-                exception_.get_stack_trace(global_ref, &mut zig_exception.stack);
-                if zig_exception.stack.frames_len > 0 {
-                    let _ = Self::print_stack_trace(writer, &zig_exception.stack, allow_ansi_color);
+                let bun_exception: &mut BunException = holder.bun_exception();
+                exception_.get_stack_trace(global_ref, &mut bun_exception.stack);
+                if bun_exception.stack.frames_len > 0 {
+                    let _ = Self::print_stack_trace(writer, &bun_exception.stack, allow_ansi_color);
                 }
                 if let Some(list) = exception_list {
                     let top_level_dir = self.top_level_dir();
                     let _ =
-                        zig_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
+                        bun_exception.add_to_error_list(list, top_level_dir, Some(&self.origin));
                 }
                 holder.deinit(self);
             }
@@ -5028,7 +5028,7 @@ impl VirtualMachine {
     /// Note: takes a runtime bool + concrete writer.
     pub fn print_stack_trace(
         writer: &mut bun_core::io::Writer,
-        trace: &crate::ZigStackTrace,
+        trace: &crate::BunStackTrace,
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
         let stack = trace.frames();
@@ -5099,10 +5099,10 @@ impl VirtualMachine {
     }
 
     /// # Safety
-    /// `frames` must point to `frames_count` initialized `ZigStackFrame`s.
+    /// `frames` must point to `frames_count` initialized `BunStackFrame`s.
     pub unsafe fn remap_stack_frame_positions(
         &mut self,
-        frames: *mut crate::ZigStackFrame,
+        frames: *mut crate::BunStackFrame,
         frames_count: usize,
     ) {
         if frames_count == 0 {
@@ -5117,7 +5117,7 @@ impl VirtualMachine {
         // would be purely a perf optimization (most stacks repeat the same
         // source); do the straightforward per-frame resolve. See the PERF
         // note below.
-        // SAFETY: caller passes `frames_count` valid `ZigStackFrame`s.
+        // SAFETY: caller passes `frames_count` valid `BunStackFrame`s.
         let frames = unsafe { bun_core::ffi::slice_mut(frames, frames_count) };
         for frame in frames {
             if frame.position.is_invalid() || frame.remapped {
@@ -5160,9 +5160,9 @@ impl VirtualMachine {
     }
 
     /// Fills `exception` from `error_instance`, remapping stack frames through source maps.
-    pub fn remap_zig_exception(
+    pub fn remap_bun_exception(
         &mut self,
-        exception: &mut ZigException,
+        exception: &mut BunException,
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         must_reset_parser_arena_later: &mut bool,
@@ -5172,7 +5172,7 @@ impl VirtualMachine {
         // `global()` returns `&'static`, so the borrow detaches from `&self`
         // and survives the `&mut self` reborrows below.
         let global = self.global();
-        error_instance.to_zig_exception(global, exception);
+        error_instance.to_bun_exception(global, exception);
         // `Cell<bool>` so the `Tail` drop-guard below can hold a shared `&Cell`
         // and read the *current* value at scope-exit without a raw-ptr deref,
         // while the body freely `.set()`s it.
@@ -5188,7 +5188,7 @@ impl VirtualMachine {
         // early `return` is covered.
         struct Tail<'a> {
             this: *mut VirtualMachine,
-            exception: *mut ZigException,
+            exception: *mut BunException,
             exception_list: Option<&'a mut ExceptionList>,
             enable_source_code_preview: &'a Cell<bool>,
             source_code_slice: *const Option<bun_core::ZigStringSlice>,
@@ -5199,7 +5199,7 @@ impl VirtualMachine {
                 // before the body below reborrows them; no overlap at drop.
                 let this = unsafe { &mut *self.this };
                 // SAFETY: `self.exception` is the caller's stack
-                // `ZigException`, live for the guard scope; no overlap at drop.
+                // `BunException`, live for the guard scope; no overlap at drop.
                 let exception = unsafe { &mut *self.exception };
                 #[cfg(debug_assertions)]
                 {
@@ -5243,7 +5243,7 @@ impl VirtualMachine {
         };
         // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
         // touch them until Drop, so no aliasing during the body.
-        let exception: &mut ZigException = unsafe { &mut *_tail.exception };
+        let exception: &mut BunException = unsafe { &mut *_tail.exception };
         // SAFETY: as above — re-borrow through the guard's raw ptr; `_tail`
         // does not touch `source_code_slice` until Drop.
         let source_code_slice: &mut Option<bun_core::ZigStringSlice> =
@@ -5256,7 +5256,7 @@ impl VirtualMachine {
                 || name.eql_comptime("moduleEvaluation")
                 || name.eql_comptime("processTicksAndRejections")
         }
-        fn is_hidden_frame(f: &crate::ZigStackFrame) -> bool {
+        fn is_hidden_frame(f: &crate::BunStackFrame) -> bool {
             f.source_url.eql_comptime("bun:wrap") || f.function_name.eql_comptime("::bunternal::")
         }
         fn is_unknown_source(url: &bun_core::String) -> bool {
@@ -5265,7 +5265,7 @@ impl VirtualMachine {
 
         let mut frames_len = exception.stack.frames_len as usize;
         // SAFETY: `frames_ptr[..frames_len]` is the caller-owned `Holder`
-        // backing buffer (ZigStackTrace contract).
+        // backing buffer (BunStackTrace contract).
         let frames_buf =
             unsafe { bun_core::ffi::slice_mut(exception.stack.frames_ptr, frames_len) };
 
@@ -5295,7 +5295,7 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // Note: `frames[j] = frame`. `ZigStackFrame` impls
+                    // Note: `frames[j] = frame`. `BunStackFrame` impls
                     // `Drop` so `copy_within` is unavailable; swap instead —
                     // the discarded tail past `j` is never read after we
                     // truncate `frames_len` below.
@@ -5453,11 +5453,11 @@ impl VirtualMachine {
 
             let last_line = frames[top].position.line.zero_based().max(0);
             if let Some(lines_buf) = bun_core::strings::get_lines_in_text::<
-                { crate::zig_exception::Holder::SOURCE_LINES_COUNT },
+                { crate::bun_exception::Holder::SOURCE_LINES_COUNT },
             >(code.slice(), last_line as u32)
             {
                 let lines = lines_buf.as_slice();
-                const N: usize = crate::zig_exception::Holder::SOURCE_LINES_COUNT;
+                const N: usize = crate::bun_exception::Holder::SOURCE_LINES_COUNT;
                 // SAFETY: `Holder` backs both arrays with `[_; SOURCE_LINES_COUNT]`.
                 let source_lines =
                     unsafe { bun_core::ffi::slice_mut(exception.stack.source_lines_ptr, N) };
@@ -5518,9 +5518,9 @@ impl VirtualMachine {
     }
 
     /// Prints an already-remapped exception (name, message, stack, source lines) to `writer`.
-    pub fn print_externally_remapped_zig_exception(
+    pub fn print_externally_remapped_bun_exception(
         &mut self,
-        zig_exception: &mut ZigException,
+        bun_exception: &mut BunException,
         formatter: Option<&mut crate::console_object::Formatter>,
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
@@ -5529,7 +5529,7 @@ impl VirtualMachine {
         let mut default_formatter = crate::console_object::Formatter::new(self.global());
         let f = formatter.unwrap_or(&mut default_formatter);
         self.print_error_instance_body(
-            zig_exception,
+            bun_exception,
             JSValue::ZERO,
             None,
             f,
@@ -5555,7 +5555,7 @@ impl VirtualMachine {
         // `print_error_instance_body` dispatches on runtime bools, so it
         // carries the union of all
         // branches' locals (every `pretty_write!` expands to two `write!`s).
-        // More importantly, `remap_zig_exception` below calls
+        // More importantly, `remap_bun_exception` below calls
         // `fetch_without_on_load_plugins` → the transpiler for source-line
         // preview, and on Windows that call tree stack-allocates `PathBuffer`s
         // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
@@ -5567,7 +5567,7 @@ impl VirtualMachine {
         // the caller (`format2` / `Bun.inspect`).
         let extra_headroom: usize = if cfg!(windows) {
             // 3× PathBuffer ≈ 288 KB — empirically enough for the
-            // `remap_zig_exception` → `transpile_source_code` chain on the
+            // `remap_bun_exception` → `transpile_source_code` chain on the
             // 16K-deep Error test (`bun-inspect.test.ts`).
             bun_paths::MAX_PATH_BYTES * 3
         } else {
@@ -5584,19 +5584,19 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // Note: `Holder` is ~4 KB (32 ZigStackFrames + 6 source lines +
-        // ZigException). It sits next to the large runtime-dispatched body, so
+        // Note: `Holder` is ~4 KB (32 BunStackFrames + 6 source lines +
+        // BunException). It sits next to the large runtime-dispatched body, so
         // box it to keep the per-level recursion frame small enough for the
         // 16K-deep `bun-inspect.test.ts` Error chain on Windows debug.
-        let mut exception_holder = Box::new(crate::zig_exception::Holder::init());
-        // Note: reshaped for borrowck — `zig_exception()` returns a
+        let mut exception_holder = Box::new(crate::bun_exception::Holder::init());
+        // Note: reshaped for borrowck — `bun_exception()` returns a
         // `&mut` into the holder; we need to also borrow
         // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
         // raw pointer (the holder is heap-pinned for the call).
-        let exception: *mut ZigException = exception_holder.zig_exception();
+        let exception: *mut BunException = exception_holder.bun_exception();
         let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
-        self.remap_zig_exception(
+        self.remap_bun_exception(
             // SAFETY: `exception` points into stack-local `exception_holder`.
             unsafe { &mut *exception },
             error_instance,
@@ -5612,7 +5612,7 @@ impl VirtualMachine {
             unsafe { &mut *exception },
             error_instance,
             None, // Note: `exception_list` was already
-            // consumed by `remap_zig_exception` above (only writer).
+            // consumed by `remap_bun_exception` above (only writer).
             formatter,
             writer,
             allow_ansi_color,
@@ -5623,7 +5623,7 @@ impl VirtualMachine {
         // `exception_holder.deinit`
         // releases the WTFString refs (`name`/`message`/stack-frame
         // `function_name`/`source_url`/source-line bodies) populated by
-        // `JSC__JSValue__toZigException`. Skipping this leaks ~1 KB/error and
+        // `JSC__JSValue__toBunException`. Skipping this leaks ~1 KB/error and
         // OOMs the inspect-error-leak test.
         exception_holder.deinit(self);
         result
@@ -5637,7 +5637,7 @@ impl VirtualMachine {
     #[allow(clippy::too_many_arguments)]
     fn print_error_instance_body(
         &mut self,
-        exception: &mut ZigException,
+        exception: &mut BunException,
         error_instance: JSValue,
         exception_list: Option<&mut ExceptionList>,
         formatter: &mut crate::console_object::Formatter,
@@ -5679,10 +5679,10 @@ impl VirtualMachine {
         // Defer the GitHub-annotation print to scope exit.
         struct DeferGhAnnotation {
             run: bool,
-            /// BACKREF — borrows the caller's stack-local `ZigException`, live
+            /// BACKREF — borrows the caller's stack-local `BunException`, live
             /// across this drop guard (declared after the `&mut` rebind so it
             /// drops first).
-            exception: bun_ptr::BackRef<ZigException>,
+            exception: bun_ptr::BackRef<BunException>,
         }
         impl Drop for DeferGhAnnotation {
             fn drop(&mut self) {
@@ -5731,7 +5731,7 @@ impl VirtualMachine {
         const MAX_LINE_LENGTH: usize = 1024;
 
         // SAFETY: `source_lines_numbers[..source_lines_len]` is the
-        // caller-owned buffer (see ZigStackTrace contract).
+        // caller-owned buffer (see BunStackTrace contract).
         let line_numbers = exception.stack.source_line_numbers();
         let max_line: i32 = line_numbers.iter().copied().fold(-1, i32::max);
         let max_line_number_pad = count_digits(max_line + 1);
@@ -5843,7 +5843,7 @@ impl VirtualMachine {
                 }
 
                 let frames = exception.stack.frames();
-                let mut top_frame: Option<&crate::ZigStackFrame> = frames.first();
+                let mut top_frame: Option<&crate::BunStackFrame> = frames.first();
                 if self.hide_bun_stackframes {
                     for frame in frames {
                         if frame.position.is_invalid()
@@ -6270,7 +6270,7 @@ impl VirtualMachine {
     /// Emits a GitHub Actions `::error` annotation for the exception when running in CI.
     #[cold]
     #[inline(never)]
-    pub fn print_github_annotation(exception: &ZigException) {
+    pub fn print_github_annotation(exception: &BunException) {
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();

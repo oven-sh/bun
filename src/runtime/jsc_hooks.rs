@@ -3041,7 +3041,7 @@ fn transpile_source_code_inner(
                 // `module_info.asDeserialized()`: finalize the
                 // printer-filled record into the FFI shape consumed by C++
                 // (freed by C++ `~SourceProvider` via
-                // `zig__ModuleInfoDeserialized__deinit` — ZigSourceProvider.cpp;
+                // `bun__ModuleInfoDeserialized__deinit` — BunSourceProvider.cpp;
                 // `ResolvedSource`/`OwnedResolvedSource` never free it, see the
                 // ownership note in ResolvedSource.rs).
                 let module_info: *mut core::ffi::c_void = module_info
@@ -3536,7 +3536,7 @@ fn get_hardcoded_module(
             Some(OwnedResolvedSource::from(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(&ep.contents),
                 // +1 each: ~SourceProvider() derefs `specifier` and
-                // `source_url` once all uses are done (see ZigSourceProvider.cpp).
+                // `source_url` once all uses are done (see BunSourceProvider.cpp).
                 specifier: specifier.dupe_ref(),
                 source_url: specifier.dupe_ref(),
                 tag: Tag::Esm,
@@ -4757,7 +4757,7 @@ unsafe fn resolve_embedded_node_file_hook(
 // + `_resolve`.
 //
 // This is the resolution path behind `Bun__resolveSync`,
-// `Zig__GlobalObject__resolve`, `import.meta.resolve`, and
+// `Bun__GlobalObject__resolve`, `import.meta.resolve`, and
 // `Module._findPath`. The body drives `transpiler.resolver` (a
 // `bun_resolver::Resolver` value field of `VirtualMachine`) and reaches into
 // `ServerEntryPoint` / `ObjectURLRegistry` — all forward-deps on `bun_jsc`,

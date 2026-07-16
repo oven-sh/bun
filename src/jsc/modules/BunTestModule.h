@@ -1,5 +1,5 @@
 
-namespace Zig {
+namespace Bun {
 void generateNativeModule_BunTest(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
@@ -7,7 +7,7 @@ void generateNativeModule_BunTest(
     JSC::MarkedArgumentBuffer& exportValues)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto globalObject = uncheckedDowncast<Bun::GlobalObject>(lexicalGlobalObject);
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSObject* object = globalObject->lazyTestModuleObject();
@@ -37,4 +37,4 @@ void generateNativeModule_BunTest(
     }
 }
 
-} // namespace Zig
+} // namespace Bun

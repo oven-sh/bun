@@ -10,7 +10,7 @@
 #include "wtf/SIMDUTF.h"
 #include <limits>
 
-namespace Zig {
+namespace Bun {
 using namespace WebCore;
 using namespace JSC;
 
@@ -139,13 +139,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto globalObject = static_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     return JSValue::encode(jsNumber(globalObject->INSPECT_MAX_BYTES));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsSetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
 {
-    auto globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto globalObject = static_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto val = JSValue::decode(value);
@@ -216,4 +216,4 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(JSC::Identifier::fromString(vm, "isUtf8"_s), JSC::JSFunction::create(vm, globalObject, 1, "isUtf8"_s, jsBufferConstructorFunction_isUtf8, ImplementationVisibility::Public, NoIntrinsic, jsBufferConstructorFunction_isUtf8));
 }
 
-} // namespace Zig
+} // namespace Bun

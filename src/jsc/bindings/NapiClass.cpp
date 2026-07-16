@@ -2,7 +2,7 @@
 #include "napi.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace Zig {
+namespace Bun {
 
 template<typename Visitor>
 void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)
@@ -63,7 +63,7 @@ JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue NapiClass_ConstructorFunction(JSC::
     }
 
     NAPICallFrame frame(globalObject, callFrame, napi->dataPtr(), newTarget);
-    Bun::NapiHandleScope handleScope(uncheckedDowncast<Zig::GlobalObject>(globalObject));
+    Bun::NapiHandleScope handleScope(uncheckedDowncast<Bun::GlobalObject>(globalObject));
 
     JSValue ret = toJS(napi->constructor()(napi->env(), frame.toNapi()));
     napi_set_last_error(napi->env(), napi_ok);
@@ -111,7 +111,7 @@ napi_status NapiClass::finishCreation(VM& vm, const String& name, napi_callback 
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
     this->m_constructor = constructor;
-    auto globalObject = static_cast<Zig::GlobalObject*>(this->globalObject());
+    auto globalObject = static_cast<Bun::GlobalObject*>(this->globalObject());
 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);
 

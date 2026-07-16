@@ -3,14 +3,14 @@
 #include "JSMIMEType.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSCJSValueInlines.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace WebCore {
 
 using namespace JSC;
 
 // Create the combined MIME binding object with both MIMEParams and MIMEType
-JSValue createMIMEBinding(Zig::GlobalObject* globalObject)
+JSValue createMIMEBinding(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* obj = constructEmptyObject(globalObject);

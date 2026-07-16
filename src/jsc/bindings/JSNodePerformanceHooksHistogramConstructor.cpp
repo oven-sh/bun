@@ -3,7 +3,7 @@
 #include "JSNodePerformanceHooksHistogramConstructor.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "JSNodePerformanceHooksHistogramPrototype.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include "BunString.h"
 #include "wtf/text/ASCIILiteral.h"
@@ -66,8 +66,8 @@ static JSNodePerformanceHooksHistogram* createHistogramInternal(JSGlobalObject* 
         }
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Structure* structure = zigGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(zigGlobalObject);
+    auto* bunGlobalObject = defaultGlobalObject(globalObject);
+    Structure* structure = bunGlobalObject->m_JSNodePerformanceHooksHistogramClassStructure.get(bunGlobalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     return JSNodePerformanceHooksHistogram::create(vm, structure, globalObject, lowest, highest, figures);

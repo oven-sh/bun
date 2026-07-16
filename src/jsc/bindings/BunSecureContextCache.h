@@ -1,6 +1,6 @@
 #pragma once
 
-// Thin wrapper around `WeakGCMap<uint64_t, JSObject>` so ZigGlobalObject.h
+// Thin wrapper around `WeakGCMap<uint64_t, JSObject>` so BunGlobalObject.h
 // can hold a `std::unique_ptr<SecureContextCache>` without pulling in
 // WeakGCMap.h (this header is included from one .cpp file only).
 //

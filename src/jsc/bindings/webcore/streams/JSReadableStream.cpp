@@ -20,7 +20,7 @@
 #include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/DOMAttributeGetterSetter.h>
 #include <JavaScriptCore/Error.h>

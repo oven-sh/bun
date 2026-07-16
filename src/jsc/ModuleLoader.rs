@@ -220,7 +220,7 @@ pub struct LoaderHooks {
     /// `VirtualMachine.resolveMaybeNeedsTrailingSlash(res, global, specifier,
     /// source, query_string?, is_esm, is_a_file_path, is_user_require_resolve)`
     /// — the resolution path behind
-    /// `Bun__resolveSync` / `Zig__GlobalObject__resolve` / `import.meta.resolve`.
+    /// `Bun__resolveSync` / `Bun__GlobalObject__resolve` / `import.meta.resolve`.
     /// Body reaches into `transpiler.resolver.resolveAndAutoInstall`, the
     /// `PluginRunner`, `ObjectURLRegistry`, and `ServerEntryPoint` (all
     /// `bun_runtime` types), so the low tier owns the symbol and dispatches.

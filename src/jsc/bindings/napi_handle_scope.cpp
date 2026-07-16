@@ -1,7 +1,7 @@
 #include "napi_handle_scope.h"
 #include "napi.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bun {
 
@@ -92,7 +92,7 @@ void NapiHandleScopeImpl::releaseHandles()
     m_parent = nullptr;
 }
 
-NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool escapable)
+NapiHandleScopeImpl* NapiHandleScope::open(Bun::GlobalObject* globalObject, bool escapable)
 {
     auto& vm = JSC::getVM(globalObject);
     // Do not create a new handle scope while a finalizer is in progress
@@ -115,7 +115,7 @@ NapiHandleScopeImpl* NapiHandleScope::open(Zig::GlobalObject* globalObject, bool
     return impl;
 }
 
-void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl* current)
+void NapiHandleScope::close(Bun::GlobalObject* globalObject, NapiHandleScopeImpl* current)
 {
     NAPI_LOG_CURRENT_FUNCTION;
     // napi handle scopes may be null pointers if created inside a finalizer
@@ -132,7 +132,7 @@ void NapiHandleScope::close(Zig::GlobalObject* globalObject, NapiHandleScopeImpl
     current->releaseHandles();
 }
 
-NapiHandleScope::NapiHandleScope(Zig::GlobalObject* globalObject)
+NapiHandleScope::NapiHandleScope(Bun::GlobalObject* globalObject)
     : m_globalObject(globalObject)
     , m_impl(NapiHandleScope::open(globalObject, false))
 {

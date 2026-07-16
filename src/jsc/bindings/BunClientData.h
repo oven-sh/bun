@@ -26,13 +26,13 @@ class DOMWrapperWorld;
 #include <wtf/StdLibExtras.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
 namespace WebCore {
 using namespace JSC;
-using namespace Zig;
+using namespace Bun;
 
 enum class UseCustomHeapCellType { Yes,
     No };
@@ -112,7 +112,7 @@ public:
     JSC::GCClient::IsoSubspace& domBuiltinConstructorSpace() { return m_domBuiltinConstructorSpace; }
 
     // Constructed eagerly so the concurrent GC marker
-    // (Zig::GlobalObject::visitChildrenImpl) never races the mutator on a
+    // (Bun::GlobalObject::visitChildrenImpl) never races the mutator on a
     // lazy std::optional::emplace(). The ctor only calls
     // LazyProperty::initLater ~90 times (stores a tagged function pointer),
     // so there is no startup cost worth deferring.
@@ -129,7 +129,7 @@ public:
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
-    // avoid pulling ZigSourceProvider.h into this header; the cache class
+    // avoid pulling BunSourceProvider.h into this header; the cache class
     // downcasts on lookup. Values hold strong refs by design: this map is the
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.

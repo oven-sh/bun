@@ -576,27 +576,27 @@ extern "C" {
 
 // THE tag protocol. Writes the out-params; the async-iterator arm may REPLACE
 // *possibleReadableStream with a newly-built DirectPending stream. userJS: yes.
-int32_t ReadableStreamTag__tagged(Zig::GlobalObject*, JSC::EncodedJSValue* possibleReadableStream, void** ptr);
+int32_t ReadableStreamTag__tagged(Bun::GlobalObject*, JSC::EncodedJSValue* possibleReadableStream, void** ptr);
 
 // The ReadableStream__* set.
-bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2); // userJS: yes
-bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
-bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
+bool ReadableStream__tee(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*, JSC::EncodedJSValue* possibleReadableStream1, JSC::EncodedJSValue* possibleReadableStream2); // userJS: yes
+bool ReadableStream__isDisturbed(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*); // userJS: no
+bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*); // userJS: no
 // no-op unless the reader slot holds a REAL reader (the direct/native lock is a no-op here).
-void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: yes
+void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*); // userJS: yes
 // NO sentinel guard (reachable on a NativeSink-controlled stream).
-void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
-void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject*); // userJS: no
-JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject*); // userJS: no
-JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject*); // userJS: no
-JSC::EncodedJSValue ReadableStream__errored(Zig::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no
-JSC::EncodedJSValue ZigGlobalObject__createNativeReadableStream(Zig::GlobalObject*, JSC::EncodedJSValue nativePtr); // userJS: no
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
-JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
+void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*, JSC::EncodedJSValue reason); // userJS: yes
+void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Bun::GlobalObject*); // userJS: no
+JSC::EncodedJSValue ReadableStream__empty(Bun::GlobalObject*); // userJS: no
+JSC::EncodedJSValue ReadableStream__used(Bun::GlobalObject*); // userJS: no
+JSC::EncodedJSValue ReadableStream__errored(Bun::GlobalObject*, JSC::EncodedJSValue reason); // userJS: no
+JSC::EncodedJSValue BunGlobalObject__createNativeReadableStream(Bun::GlobalObject*, JSC::EncodedJSValue nativePtr); // userJS: no
+JSC::EncodedJSValue BunGlobalObject__readableStreamToArrayBuffer(Bun::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue BunGlobalObject__readableStreamToBytes(Bun::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue BunGlobalObject__readableStreamToText(Bun::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue BunGlobalObject__readableStreamToJSON(Bun::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue BunGlobalObject__readableStreamToBlob(Bun::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue BunGlobalObject__readableStreamToFormData(Bun::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
 // Caller: ResumableSink.rs; returns encoded undefined.
 JSC::EncodedJSValue Bun__assignStreamIntoResumableSink(JSC::JSGlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue sink); // userJS: yes
 

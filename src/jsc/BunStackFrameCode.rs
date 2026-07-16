@@ -4,9 +4,9 @@
 // `match` arms below must keep a fallthrough for unknown values.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ZigStackFrameCode(pub u8);
+pub struct BunStackFrameCode(pub u8);
 
-impl ZigStackFrameCode {
+impl BunStackFrameCode {
     pub const NONE: Self = Self(0);
     /// 🏃
     pub const EVAL: Self = Self(1);

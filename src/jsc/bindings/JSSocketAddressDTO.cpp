@@ -13,7 +13,7 @@ static constexpr PropertyOffset addressOffset = 0;
 static constexpr PropertyOffset familyOffset = 1;
 static constexpr PropertyOffset portOffset = 2;
 
-JSObject* create(Zig::GlobalObject* globalObject, JSString* value, int32_t port, bool isIPv6)
+JSObject* create(Bun::GlobalObject* globalObject, JSString* value, int32_t port, bool isIPv6)
 {
     static const NeverDestroyed<String> IPv4 = MAKE_STATIC_STRING_IMPL("IPv4");
     static const NeverDestroyed<String> IPv6 = MAKE_STATIC_STRING_IMPL("IPv6");
@@ -70,7 +70,7 @@ Structure* createStructure(VM& vm, JSGlobalObject* globalObject)
 extern "C" JSC::EncodedJSValue JSSocketAddressDTO__create(JSGlobalObject* globalObject, EncodedJSValue address, uint16_t port, bool isIPv6)
 {
     VM& vm = globalObject->vm();
-    auto* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* global = uncheckedDowncast<Bun::GlobalObject>(globalObject);
 
     auto* af = isIPv6 ? global->commonStrings().IPv6String(global) : global->commonStrings().IPv4String(global);
 

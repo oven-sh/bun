@@ -26,7 +26,7 @@ class Structure;
 class InternalFieldTuple;
 }
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
@@ -34,8 +34,8 @@ namespace WebCore {
 
 class AbortSignal;
 // NOTE: JSDOMGlobalObject is deliberately NOT forward-declared here. In Bun it is not a
-// class but a type alias (`using JSDOMGlobalObject = Zig::GlobalObject;` in
-// ZigGlobalObject.h), so `class JSDOMGlobalObject;` is a typedef-redefinition error.
+// class but a type alias (`using JSDOMGlobalObject = Bun::GlobalObject;` in
+// BunGlobalObject.h), so `class JSDOMGlobalObject;` is a typedef-redefinition error.
 // Any header that names it must `#include "JSDOMGlobalObject.h"` (they all already do).
 
 // The public (globalThis-exposed) classes.

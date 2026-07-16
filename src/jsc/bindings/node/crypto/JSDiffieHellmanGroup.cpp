@@ -2,7 +2,7 @@
 #include "JSDiffieHellmanGroupPrototype.h"
 #include "JSDiffieHellmanGroupConstructor.h"
 #include "DOMIsoSubspaces.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/LazyClassStructure.h>

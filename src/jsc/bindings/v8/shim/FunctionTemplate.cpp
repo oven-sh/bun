@@ -59,7 +59,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
 {
     auto* callee = dynamicDowncast<Function>(callFrame->jsCallee());
     auto* functionTemplate = callee->functionTemplate();
-    auto* isolate = uncheckedDowncast<Zig::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
+    auto* isolate = uncheckedDowncast<Bun::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
     auto& vm = JSC::getVM(globalObject);
 
     HandleScope hs(isolate);
@@ -107,7 +107,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     // GetIsolate() reads this slot as a raw, untagged pointer
     slot(Info::kIsolateIndex) = TaggedPointer::fromRaw(reinterpret_cast<uintptr_t>(isolate));
     slot(Info::kReturnValueIndex) = TaggedPointer();
-    // Context is always a reinterpret pointer to Zig::GlobalObject
+    // Context is always a reinterpret pointer to Bun::GlobalObject
     slot(Info::kContextIndex) = TaggedPointer::fromRaw(reinterpret_cast<uintptr_t>(globalObject));
     // target holds the Function being called, which contains the FunctionTemplate
     slot(Info::kTargetIndex) = target.tagged();

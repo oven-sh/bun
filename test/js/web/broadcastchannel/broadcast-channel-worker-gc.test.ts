@@ -186,7 +186,7 @@ test(
 );
 
 // SEGV in TypeCastTraits<JSVMClientData>::isType reached from
-// Zig::GlobalObject::visitChildrenImpl on a concurrent GC helper thread. The
+// Bun::GlobalObject::visitChildrenImpl on a concurrent GC helper thread. The
 // visit used `clientData(thisObject->vm())` (raw JSGlobalObject::m_vm deref)
 // and `httpHeaderIdentifiers()` did an unsynchronized std::optional::emplace()
 // that both the mutator and parallel marker threads could enter. Observed in
@@ -195,7 +195,7 @@ test(
 //
 // This stress maximises the race surface:
 //   - extra ShadowRealm globals so multiple parallel marker helpers each visit
-//     a distinct Zig::GlobalObject and all dereference vm.clientData
+//     a distinct Bun::GlobalObject and all dereference vm.clientData
 //   - continuous allocation so the concurrent collector is always active
 //   - worker spawn/terminate churn for the reported correlation
 //
@@ -208,7 +208,7 @@ test(
   async () => {
     const script = /* js */ `
     const workerCode = \`
-      // Extra Zig::GlobalObject cells in this VM so parallel GC helper
+      // Extra Bun::GlobalObject cells in this VM so parallel GC helper
       // threads each get one to visit and all call clientData(vm).
       const realms = [];
       for (let i = 0; i < 6; i++) { try { realms.push(new ShadowRealm()); } catch {} }

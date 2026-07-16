@@ -3,7 +3,7 @@
 #include "bun-uws/src/SocketKinds.h"
 #include "JSWebView.h"
 #include "ipc_protocol.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "BunClientData.h"
 #include "ScriptExecutionContext.h"
 #include "BunString.h"
@@ -94,14 +94,14 @@ using namespace JSC;
 // Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (bidirectional).
 // path overrides auto-detection; extraArgv (count entries, each NUL-
 // terminated) appends after core flags. All pointers nullable.
-extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
+extern "C" int32_t Bun__Chrome__ensure(Bun::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Bun::GlobalObject*, void* impl);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
-extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
-extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
+extern "C" void Bun__EventLoop__enter(Bun::GlobalObject*);
+extern "C" void Bun__EventLoop__exit(Bun::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
     EncodedJSValue thisVal, EncodedJSValue arg0, EncodedJSValue arg1);
 
@@ -279,7 +279,7 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
     .on_handshake = nullptr,
 };
 
-bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
+bool Transport::ensureSpawned(Bun::GlobalObject* bunGlobal, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
     bool stdoutInherit, bool stderrInherit)
 {
@@ -305,7 +305,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         argvC.append(s.utf8());
         argvPtrs.append(argvC.last().data());
     }
-    int32_t fd = Bun__Chrome__ensure(zig,
+    int32_t fd = Bun__Chrome__ensure(bunGlobal,
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
@@ -319,7 +319,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
     // bsd_recv calls recv() which needs a real socket (pipe fds broke here
     // with ENOTSOCK silently misread as EOF).
-    m_global = zig;
+    m_global = bunGlobal;
 
     if (!s_cdpGroup.loop) {
         us_socket_group_init(&s_cdpGroup, uws_get_loop(), &s_cdpVTable, nullptr);
@@ -450,7 +450,7 @@ static void wsOnClose(void* ctx, unsigned short code)
     t.rejectAllAndMarkDead(makeString("Chrome WebSocket closed (code "_s, code, ')'));
 }
 
-bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,
+bool Transport::ensureConnected(Bun::GlobalObject* bunGlobal, const WTF::String& wsUrl, bool autoDetected,
     const WTF::String& userDataDir, bool stdoutInherit, bool stderrInherit)
 {
     // Already connected — singleton semantics, first call wins.
@@ -463,7 +463,7 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
         m_rx.clear();
         m_txQueue.clear();
     }
-    m_global = zig;
+    m_global = bunGlobal;
     m_mode = TransportMode::WebSocket;
     m_wasAutoDetected = autoDetected;
     if (autoDetected) {
@@ -472,7 +472,7 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
         m_fallbackStderrInherit = stderrInherit;
     }
 
-    auto* ctx = zig->scriptExecutionContext();
+    auto* ctx = bunGlobal->scriptExecutionContext();
     auto result = WebCore::WebSocket::create(*ctx, wsUrl);
     if (result.hasException()) {
         m_dead = true;
@@ -653,7 +653,7 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
 // WTF::JSON parses to a C++ tree — no JSValue allocation, no GC pressure.
 // The tree is small (exceptionDetails is error-path only, ~200B). Stamp
 // .stack with description directly; Bun's V8StackTraceIterator
-// (ZigException.cpp) already parses V8 stacks when it needs frames.
+// (BunException.cpp) already parses V8 stacks when it needs frames.
 // ErrorInstance::create stackString overload sets .stack without capturing
 // a JSC-side trace (which would show ChromeBackend.cpp, not page frames).
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)

@@ -3,7 +3,7 @@
 #include "root.h"
 
 #include "JSDOMExceptionHandling.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ncrypto.h"
 #include "JSX509Certificate.h"
 #include "JSX509CertificatePrototype.h"

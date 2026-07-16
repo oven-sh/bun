@@ -46,6 +46,6 @@ private:
     mutable JSC::WriteBarrier<JSC::JSObject> m_cookies;
 };
 
-JSC::Structure* createJSBunRequestStructure(JSC::VM&, Zig::GlobalObject*);
+JSC::Structure* createJSBunRequestStructure(JSC::VM&, Bun::GlobalObject*);
 
 } // namespace Bun

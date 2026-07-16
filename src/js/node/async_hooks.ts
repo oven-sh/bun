@@ -360,7 +360,7 @@ function isEmptyFunction(f: Function) {
 }
 
 const createHookNotImpl = createWarning(
-  "async_hooks.createHook is not implemented in Bun. Hooks can still be created but will never be called.",
+  "async_hooks.createHook is partially implemented in Bun. Only TickObject (process.nextTick) resources emit init/before/after/destroy; other resource types and promiseResolve are not instrumented.",
   true,
 );
 
@@ -376,20 +376,19 @@ function createHook(hook) {
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
-  let enabledInit;
+  let enabled;
   return {
     enable() {
-      if (init !== undefined && enabledInit === undefined) {
-        // init is delivered for TickObject resources (process.nextTick);
-        // other resource types are still unimplemented.
-        // Per-instance wrapper: two hooks registered with the same init
-        // function must stay independently removable (removal is by
-        // identity, and removing the other instance's entry would reorder
-        // its callback relative to unrelated hooks).
-        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
-        require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
+      if (enabled === undefined && (init !== undefined || before !== undefined || after !== undefined || destroy !== undefined)) {
+        // init/before/after/destroy are delivered for TickObject resources
+        // (process.nextTick); other resource types are still unimplemented.
+        // Per-instance entry: two createHook() results sharing the same
+        // callback functions must stay independently removable (removal is
+        // by identity on the entry object).
+        enabled = { init, before, after, destroy };
+        require("internal/async_hooks_tick").tickHooks.push(enabled);
       }
-      if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
+      if (promiseResolve !== undefined) {
         createHookNotImpl(hook);
       }
       hasEnabledCreateHook = true;
@@ -400,11 +399,11 @@ function createHook(hook) {
       return this;
     },
     disable() {
-      if (enabledInit !== undefined) {
-        const hooks = require("internal/async_hooks_tick").tickInitHooks;
-        const idx = hooks.indexOf(enabledInit);
+      if (enabled !== undefined) {
+        const hooks = require("internal/async_hooks_tick").tickHooks;
+        const idx = hooks.indexOf(enabled);
         if (idx !== -1) hooks.splice(idx, 1);
-        enabledInit = undefined;
+        enabled = undefined;
       }
       if (this[kHookEnabled]) {
         this[kHookEnabled] = false;

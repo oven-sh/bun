@@ -1759,7 +1759,7 @@ function stdinStreamWritev(this: any, chunks: any, cb: any) {
     const { chunk, encoding } = chunks[i];
     buffers[i] = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
   }
-  stdinStreamWrite.$call(this, Buffer.concat(buffers), "buffer", cb);
+  stdinStreamWrite.$call(this, BufferConcat(buffers), "buffer", cb);
 }
 
 function stdinStreamDestroy(this: any, err: any, cb: any) {
@@ -1794,6 +1794,7 @@ function createStdinStream(sink: any) {
   if (StdinStream === undefined) {
     const Duplex = require("internal/streams/duplex");
     StdinStream = class Socket extends Duplex {
+      [kStdinSink] = undefined;
       constructor() {
         super({
           readable: false,

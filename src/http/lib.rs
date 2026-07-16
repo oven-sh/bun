@@ -2080,11 +2080,14 @@ impl<'a> HTTPClient<'a> {
             if !self.state.response_message_buffer.list.is_empty() {
                 // A 3xx here comes from a peer whose certificate has not been
                 // approved by the JS callback; following its Location would act
-                // on attacker-chosen data before verification. Force the
-                // redirect-error path for the replay so a buffered 3xx fails
-                // closed instead of calling `do_redirect`.
-                let redirect_type =
-                    core::mem::replace(&mut self.redirect_type, FetchRedirect::Error);
+                // on attacker-chosen data before verification. Downgrade Follow
+                // to Error for the replay so a buffered 3xx fails closed
+                // instead of calling `do_redirect`; Manual/Error keep their own
+                // semantics (neither calls `do_redirect`).
+                let redirect_type = self.redirect_type;
+                if redirect_type == FetchRedirect::Follow {
+                    self.redirect_type = FetchRedirect::Error;
+                }
                 // A terminal outcome frees the AsyncHTTP that embeds `*self`
                 // (via `on_async_http_callback_raw`, which is the sole
                 // HTTP-thread `ACTIVE_REQUESTS_COUNT` decrement). HTTP-thread-only.

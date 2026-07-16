@@ -999,8 +999,60 @@ describe.concurrent(() => {
   });
 
   it("process.report", () => {
-    // TODO: write better tests
     JSON.stringify(process.report.getReport(), null, 2);
+  });
+
+  it("process.report.getReport() returns real diagnostic data", () => {
+    const os = require("node:os");
+    const report = process.report.getReport();
+
+    // header.dumpEventTime is an ISO date string, dumpEventTimeStamp is epoch millis as a string
+    const { header } = report;
+    expect(typeof header.dumpEventTime).toBe("string");
+    expect(Number.isNaN(Date.parse(header.dumpEventTime))).toBe(false);
+    expect(Number.isNaN(Number(header.dumpEventTime))).toBe(true);
+    expect(typeof header.dumpEventTimeStamp).toBe("string");
+    const stampMs = Number(header.dumpEventTimeStamp);
+    expect(Number.isFinite(stampMs)).toBe(true);
+    expect(Math.abs(stampMs - Date.now())).toBeLessThan(60_000);
+
+    // header.commandLine is process.argv, not execArgv
+    expect(Array.isArray(header.commandLine)).toBe(true);
+    expect(header.commandLine.length).toBeGreaterThan(0);
+    expect(header.commandLine[0]).toBe(process.argv[0]);
+
+    // javascriptHeap reflects real JSC heap stats, not physical RAM / zeros
+    const jh = report.javascriptHeap;
+    const mu = process.memoryUsage();
+    expect(jh.totalMemory).toBeGreaterThan(0);
+    expect(jh.totalMemory).toBeLessThan(os.totalmem());
+    expect(jh.totalMemory).toBeLessThan(mu.rss * 4);
+    expect(jh.usedMemory).toBeGreaterThan(0);
+    expect(jh.memoryLimit).toBeGreaterThan(0);
+    expect(jh.totalCommittedMemory).toBeGreaterThan(0);
+    // heapSpaces does not advertise fake V8 space names on a JSC runtime
+    expect(jh.heapSpaces).toBeDefined();
+    expect(jh.heapSpaces.old_space).toBeUndefined();
+    expect(jh.heapSpaces.new_space).toBeUndefined();
+
+    // resourceUsage memory fields are distinct real quantities in bytes
+    const ru = report.resourceUsage;
+    expect(ru.total_memory).toBe(os.totalmem());
+    expect(ru.free_memory).toBeGreaterThan(0);
+    expect(ru.free_memory).toBeLessThanOrEqual(ru.total_memory);
+    expect(ru.rss).toBeGreaterThan(1 << 20);
+    expect(ru.rss).toBeLessThan(ru.total_memory);
+    expect(ru.maxRss).toBeGreaterThanOrEqual(ru.rss >> 1);
+    expect(typeof ru.userCpuSeconds).toBe("number");
+    expect(typeof ru.kernelCpuSeconds).toBe("number");
+    const memFields = new Set([ru.free_memory, ru.total_memory, ru.rss, ru.available_memory, ru.maxRss]);
+    expect(memFields.size).toBeGreaterThan(1);
+
+    // top-level section list matches Node's report shape (no invented cpus/networkInterfaces)
+    expect(Object.hasOwn(report, "cpus")).toBe(false);
+    expect(Object.hasOwn(report, "networkInterfaces")).toBe(false);
+    expect(Object.hasOwn(header, "cpus")).toBe(true);
+    expect(Object.hasOwn(header, "networkInterfaces")).toBe(true);
   });
 
   it("process.exit with jsDoubleNumber that is an integer", async () => {

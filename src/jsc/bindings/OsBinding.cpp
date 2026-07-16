@@ -125,3 +125,43 @@ extern "C" uint64_t Bun__Os__getFreeMemory(void)
     return static_cast<uint64_t>(free_pages) * sysconf(_SC_PAGESIZE);
 }
 #endif
+
+// Physical RAM in bytes, matching os.totalmem() / uv_get_total_memory().
+// Unlike WTF::ramSize() this ignores cgroup limits.
+#if OS(DARWIN)
+#include <sys/sysctl.h>
+extern "C" uint64_t Bun__Os__getTotalMemory(void)
+{
+    uint64_t mem = 0;
+    size_t len = sizeof(mem);
+    if (sysctlbyname("hw.memsize", &mem, &len, nullptr, 0) != 0) {
+        return 0;
+    }
+    return mem;
+}
+#elif OS(LINUX)
+extern "C" uint64_t Bun__Os__getTotalMemory(void)
+{
+    struct sysinfo info;
+    if (sysinfo(&info) == 0) {
+        return static_cast<uint64_t>(info.totalram) * info.mem_unit;
+    }
+    return 0;
+}
+#elif OS(FREEBSD)
+extern "C" uint64_t Bun__Os__getTotalMemory(void)
+{
+    uint64_t mem = 0;
+    size_t len = sizeof(mem);
+    if (sysctlbyname("hw.physmem", &mem, &len, nullptr, 0) != 0) {
+        return 0;
+    }
+    return mem;
+}
+#elif OS(WINDOWS)
+extern "C" uint64_t uv_get_total_memory(void);
+extern "C" uint64_t Bun__Os__getTotalMemory(void)
+{
+    return uv_get_total_memory();
+}
+#endif

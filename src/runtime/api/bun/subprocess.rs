@@ -688,10 +688,7 @@ impl Subprocess<'_> {
     /// `sp` is the `Subprocess` passed to `MaxBuf::create_for_subprocess`; it
     /// is live while the matching `*_maxbuf` slot is `Some` (cleared in
     /// `finalize` and below).
-    pub(crate) unsafe fn on_max_buffer_overflow(
-        sp: NonNull<()>,
-        maxbuf: NonNull<MaxBuf::MaxBuf>,
-    ) {
+    pub(crate) unsafe fn on_max_buffer_overflow(sp: NonNull<()>, maxbuf: NonNull<MaxBuf::MaxBuf>) {
         // SAFETY: caller contract; all accessed fields are `Cell<_>`.
         let sp = unsafe { sp.cast::<Subprocess<'static>>().as_ref() };
         let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {

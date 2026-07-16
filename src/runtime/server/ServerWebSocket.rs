@@ -426,8 +426,8 @@ impl ServerWebSocket {
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
+                // close() dispatches on_close, which owns the accounting decrement.
                 self.websocket().close();
-                handler.active_connections_saturating_sub(1);
                 this_value.unprotect();
             }
 
@@ -628,12 +628,12 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
-        let was_closed = self.is_closed();
         self.update_flags(|f| f.set_closed(true));
+        // uws fires the close callback exactly once per opened socket, so this
+        // balances on_open's increment even when close()/terminate() already
+        // set the closed flag (which used to skip it and leak the count).
         scopeguard::defer! {
-            if !was_closed {
-                handler.active_connections_saturating_sub(1);
-            }
+            handler.on_connection_closed();
         }
         let signal = self.signal.take();
 

@@ -3903,12 +3903,14 @@ it("http.Agent with proxyEnv does not write to a literal 'undefined' property", 
 // Spawned so the pre-fix hang surfaces as a watchdog exit instead of hanging
 // this test file.
 describe.each([1, 2, 8])("server.close() completes after res.socket.end() with %d MB upload in flight", mb => {
-  test.concurrent("net client", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.concurrent(
+    "net client",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           import { once } from "node:events";
           import http from "node:http";
           import net from "node:net";
@@ -3941,21 +3943,25 @@ describe.each([1, 2, 8])("server.close() completes after res.socket.end() with %
           clearTimeout(watchdog);
           process.stdout.write("closed destroyed=" + sock.destroyed + "\\n");
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
-  }, 15_000);
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
+    },
+    15_000,
+  );
 
-  test.concurrent("fetch client", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+  test.concurrent(
+    "fetch client",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
           import { once } from "node:events";
           import http from "node:http";
           let sock;
@@ -3979,14 +3985,16 @@ describe.each([1, 2, 8])("server.close() completes after res.socket.end() with %
           clearTimeout(watchdog);
           process.stdout.write("closed destroyed=" + sock.destroyed + "\\n");
         `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
-  }, 15_000);
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "closed destroyed=true\n", stderr: "", exitCode: 0 });
+    },
+    15_000,
+  );
 });
 
 it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () => {

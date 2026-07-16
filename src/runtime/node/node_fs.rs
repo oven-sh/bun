@@ -2847,10 +2847,7 @@ pub mod args {
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
                 if let Some(num) = pos_value.get_number() {
-                    if num >= 0.0
-                        && num <= bun_jsc::MAX_SAFE_INTEGER as f64
-                        && num.trunc() == num
-                    {
+                    if num >= 0.0 && num <= bun_jsc::MAX_SAFE_INTEGER as f64 && num.trunc() == num {
                         position = Some(num as u64);
                     }
                 }

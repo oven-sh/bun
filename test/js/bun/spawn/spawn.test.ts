@@ -397,6 +397,20 @@ for (let [gcTick, label] of [
         await prom;
       });
 
+      it("kill() rejects String objects", async () => {
+        const process = spawn({
+          cmd: [shellExe(), "-c", "sleep 1000"],
+          stdout: "pipe",
+        });
+        try {
+          expect(() => process.kill(String.prototype as any)).toThrow(TypeError);
+          expect(() => process.kill(new String("SIGKILL") as any)).toThrow(TypeError);
+        } finally {
+          process.kill();
+          await process.exited;
+        }
+      });
+
       it("stdin can be read and stdout can be written", async () => {
         const proc = spawn({
           cmd: ["node", "-e", "process.stdin.setRawMode?.(true); process.stdin.pipe(process.stdout)"],

@@ -292,6 +292,30 @@ describe("Bun.Terminal", () => {
 
       expect(() => terminal.setRawMode(true)).toThrow("Terminal is closed");
     });
+
+    // The mode and the saved termios used to be one process-wide pair, so once
+    // any terminal was raw, setRawMode(true) on a second one returned success
+    // without ever touching that terminal's own PTY.
+    test.skipIf(isWindows)("each terminal keeps its own raw mode", async () => {
+      const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+      const ECHO = 0x8;
+      const isRaw = (terminal: Bun.Terminal) => (terminal.localFlags & (ICANON | ECHO)) === 0;
+
+      await using first = new Bun.Terminal({});
+      await using second = new Bun.Terminal({});
+
+      first.setRawMode(true);
+      second.setRawMode(true);
+      const bothRaw = { first: isRaw(first), second: isRaw(second) };
+
+      second.setRawMode(false);
+      const afterSecondRestored = { first: isRaw(first), second: isRaw(second) };
+
+      expect({ bothRaw, afterSecondRestored }).toEqual({
+        bothRaw: { first: true, second: true },
+        afterSecondRestored: { first: true, second: false },
+      });
+    });
   });
 
   describe("termios flags", () => {

@@ -12,7 +12,7 @@
 
 import type { Dependency, DirectBuild } from "../source.ts";
 
-const MIMALLOC_COMMIT = "13eecae8f35a73c16bdcded9291d9b56b7fc0fca";
+const MIMALLOC_COMMIT = "24211c6e7610ae7c4ec06040758ec90bd21a1c83";
 
 export const mimalloc: Dependency = {
   name: "mimalloc",
@@ -23,6 +23,11 @@ export const mimalloc: Dependency = {
     repo: "oven-sh/mimalloc",
     commit: MIMALLOC_COMMIT,
   }),
+
+  // _mi_strnlen reads one byte past `max_len` on unterminated buffers
+  // (microsoft/mimalloc src/libc.c, still present on dev3) — ASan traps it
+  // intermittently in unix_detect_thp at startup. Drop when upstream fixes it.
+  patches: ["patches/mimalloc/strnlen-oob-read.patch"],
 
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───

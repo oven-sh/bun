@@ -182,6 +182,57 @@ nativeTests.test_get_property = () => {
   }
 };
 
+nativeTests.test_get_all_property_names_accessor = () => {
+  // napi_key_filter values
+  const napi_key_writable = 1;
+  const napi_key_configurable = 1 << 2;
+  // napi_key_collection_mode values
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  // napi_key_conversion values
+  const napi_key_keep_numbers = 0;
+
+  const filterStrings = keys => keys.filter(k => typeof k === "string").sort();
+
+  // own_only: object with an own accessor property alongside data properties
+  const ownAccessor = { data: 1 };
+  Object.defineProperty(ownAccessor, "acc_rw", {
+    get() {
+      return 1;
+    },
+    set(v) {},
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "acc_ro", {
+    get() {
+      return 1;
+    },
+    configurable: true,
+  });
+  Object.defineProperty(ownAccessor, "data_ro", { value: 2, writable: false, configurable: true });
+  for (const filter of [napi_key_writable, napi_key_configurable, napi_key_writable | napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      ownAccessor,
+      napi_key_own_only,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`own_only filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+
+  // include_prototypes: a plain object reaches Object.prototype.__proto__ (an accessor)
+  const plain = { a: 1 };
+  for (const filter of [napi_key_writable, napi_key_configurable]) {
+    const { status, keys } = nativeTests.get_all_property_names(
+      plain,
+      napi_key_include_prototypes,
+      filter,
+      napi_key_keep_numbers,
+    );
+    console.log(`include_prototypes filter=${filter}: status=${status}`, JSON.stringify(filterStrings(keys)));
+  }
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},
@@ -236,6 +287,123 @@ nativeTests.test_set_property = () => {
   }
 };
 
+nativeTests.test_define_properties = () => {
+  const statusNames = [
+    "napi_ok",
+    "napi_invalid_arg",
+    "napi_object_expected",
+    "napi_string_expected",
+    "napi_name_expected",
+    "napi_function_expected",
+    "napi_number_expected",
+    "napi_boolean_expected",
+    "napi_array_expected",
+    "napi_generic_failure",
+    "napi_pending_exception",
+  ];
+  const fmtStatus = s => statusNames[s] ?? String(s);
+  const fmtDesc = d =>
+    d === undefined
+      ? "undefined"
+      : JSON.stringify({
+          value: d.value,
+          get: typeof d.get,
+          set: typeof d.set,
+          writable: d.writable,
+          enumerable: d.enumerable,
+          configurable: d.configurable,
+        });
+
+  const run = (label, target, kind, name, inspectKey) => {
+    const { status, pending } = nativeTests.define_properties(target, kind, name);
+    let descText = "";
+    if (inspectKey !== null) {
+      descText = " desc=" + fmtDesc(Object.getOwnPropertyDescriptor(target, inspectKey));
+    }
+    console.log(`${label}: status=${fmtStatus(status)} pending=${pending}${descText}`);
+  };
+
+  for (const kind of ["value", "getter", "setter", "accessor", "method"]) {
+    // frozen target: [[DefineOwnProperty]] must fail
+    run(`frozen ${kind}`, Object.freeze({}), kind, undefined, "k");
+
+    // proxy whose defineProperty trap records calls and forwards
+    let trapCalls = 0;
+    const proxTarget = {};
+    const prox = new Proxy(proxTarget, {
+      defineProperty(t, k, d) {
+        trapCalls++;
+        return Reflect.defineProperty(t, k, d);
+      },
+    });
+    run(`proxy ${kind}`, prox, kind, undefined, null);
+    console.log(
+      `proxy ${kind}: trapCalls=${trapCalls} targetDesc=${fmtDesc(Object.getOwnPropertyDescriptor(proxTarget, "k"))}`,
+    );
+
+    // proxy with throwing trap
+    const throwing = new Proxy(
+      {},
+      {
+        defineProperty() {
+          throw new TypeError("boom");
+        },
+      },
+    );
+    run(`throwing-proxy ${kind}`, throwing, kind, undefined, "k");
+
+    // plain object: check descriptor shape (no synthetic getter for setter-only)
+    run(`plain ${kind}`, {}, kind, undefined, "k");
+  }
+
+  // setter-only/getter-only over an existing accessor: a missing side must
+  // leave that slot ABSENT in the descriptor (preserving the existing value),
+  // not present-undefined.
+  for (const kind of ["getter", "setter"]) {
+    const existing = {};
+    Object.defineProperty(existing, "k", {
+      get: () => 1,
+      set: () => {},
+      configurable: true,
+    });
+    run(`redefine ${kind}`, existing, kind, undefined, "k");
+
+    let trapDesc;
+    const prox = new Proxy(
+      {},
+      {
+        defineProperty(t, k, d) {
+          trapDesc = { hasGet: "get" in d, hasSet: "set" in d };
+          return Reflect.defineProperty(t, k, d);
+        },
+      },
+    );
+    nativeTests.define_properties(prox, kind, undefined);
+    console.log(`proxy-shape ${kind}:`, JSON.stringify(trapDesc));
+  }
+
+  // name as a napi_value string
+  run("name=string", {}, "value", "k", "k");
+  // name as a napi_value symbol
+  const sym = Symbol("s");
+  run("name=symbol", {}, "value", sym, sym);
+  // name as a napi_value number (not a valid property name)
+  run("name=number", {}, "value", 5, "5");
+  // name as a napi_value object (not a valid property name)
+  run("name=object", {}, "value", { toString: () => "x" }, "x");
+  // utf8name with invalid bytes: decoded with U+FFFD replacement
+  run("utf8name=invalid", {}, "value", null, "\ufffd");
+
+  // napi_define_class should also reject non-string/symbol property names
+  for (const [label, name] of [
+    ["string", "k"],
+    ["number", 5],
+  ]) {
+    const { status, pending } = nativeTests.define_properties({}, "method", name, true);
+    console.log(`define_class name=${label}: status=${fmtStatus(status)} pending=${pending}`);
+  }
+};
+
 nativeTests.test_property_names_cache_poisoning = () => {
   // napi_key_include_prototypes = 0, napi_key_own_only = 1
   // napi_key_all_properties = 0, napi_key_skip_symbols = 16
@@ -266,7 +434,7 @@ nativeTests.test_property_names_cache_poisoning = () => {
   console.log("Reflect.ownKeys after get_all_property_names(own_only):", Reflect.ownKeys(mkD()).join(","));
 
   // The napi result itself should still include inherited keys.
-  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0);
+  const apnResult = nativeTests.get_all_property_names(mkA(), 0, 0, 0).keys;
   console.log("napi include_prototypes result has own a,b:", apnResult.includes("a") && apnResult.includes("b"));
   console.log("napi include_prototypes result has inherited toString:", apnResult.includes("toString"));
   const gpnResult = nativeTests.get_property_names(mkB());
@@ -889,6 +1057,52 @@ nativeTests.test_ref_unref_underflow = () => {
       `❌ FAIL: Expected firstUnrefCount=0, secondUnrefStatus=1, got ${result.firstUnrefCount}, ${result.secondUnrefStatus}`,
     );
   }
+};
+
+nativeTests.test_napi_instanceof = () => {
+  function dump(label, r) {
+    const errName = r.exception && r.exception.constructor ? r.exception.constructor.name : undefined;
+    const errCode = r.exception ? r.exception.code : undefined;
+    console.log(
+      `${label}: status=${r.status} result=${r.result} pending=${r.pending} errName=${errName} errCode=${errCode}`,
+    );
+  }
+
+  class Base {}
+  const instance = new Base();
+  dump("class/instance", nativeTests.perform_instanceof(instance, Base));
+  dump("class/plain-obj", nativeTests.perform_instanceof({}, Base));
+
+  const arrow = () => 1;
+  Object.defineProperty(arrow, Symbol.hasInstance, { value: () => true });
+  dump("arrow+hasInstance", nativeTests.perform_instanceof({}, arrow));
+
+  const bound = function () {}.bind(null);
+  Object.defineProperty(bound, Symbol.hasInstance, { value: () => true });
+  dump("bound+hasInstance", nativeTests.perform_instanceof({}, bound));
+
+  const bareArrow = () => 1;
+  dump("bare-arrow ctor", nativeTests.perform_instanceof({}, bareArrow));
+
+  class Throws {
+    static [Symbol.hasInstance]() {
+      throw new RangeError("boom");
+    }
+  }
+  dump("hasInstance throws", nativeTests.perform_instanceof({}, Throws));
+
+  const proxy = new Proxy(Base, {
+    get(t, k) {
+      if (k === Symbol.hasInstance) throw new RangeError("proxy");
+      return Reflect.get(t, k);
+    },
+  });
+  dump("proxy get throws", nativeTests.perform_instanceof({}, proxy));
+
+  dump("number ctor", nativeTests.perform_instanceof({}, 5));
+  dump("plain-obj ctor", nativeTests.perform_instanceof({}, { x: 1 }));
+  dump("null ctor", nativeTests.perform_instanceof({}, null));
+  dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
 nativeTests.test_get_value_string = () => {

@@ -324,6 +324,18 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_version / node_api_create_external_string_*", () => {
+    it("reports Node-API v10 and accepts zero-length external strings", async () => {
+      const result = await checkSameOutput("test_napi_v10_surface", []);
+      expect(result).toContain("napi_get_version >= 10 = true");
+      expect(result).toContain("external latin1 empty: status=0 copied=0 finalized=1");
+      expect(result).toContain("external latin1 empty: length=0");
+      expect(result).toContain("external utf16 empty: status=0 copied=0 finalized=1");
+      expect(result).toContain("external utf16 empty: length=0");
+      expect(result).toContain("external utf16 nonempty: copied=0");
+    });
+  });
+
   describe("napi_create_external_buffer", () => {
     it("handles empty/null data without throwing", async () => {
       const result = await checkSameOutput("test_napi_create_external_buffer_empty", []);
@@ -371,6 +383,52 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(result).toContain("status=10");
       expect(result).toContain("PASS: caller retains ownership on failure with pending exception");
       expect(result).not.toContain("FAIL");
+    });
+  });
+
+  describe("pending-exception gate", () => {
+    it("refuses and performs no side effects while a napi exception is pending", async () => {
+      const result = await checkSameOutput("test_pending_exception_gate", []);
+      // every gated call must report napi_pending_exception (10)
+      for (const fn of [
+        "napi_object_freeze",
+        "napi_object_seal",
+        "napi_set_element",
+        "napi_run_script",
+        "napi_instanceof",
+        "napi_strict_equals",
+        "napi_wrap",
+        "napi_get_prototype",
+        "napi_get_date_value",
+        "napi_get_array_length",
+        "napi_create_date",
+        "napi_create_dataview",
+        "napi_create_promise",
+        "napi_resolve_deferred",
+      ]) {
+        expect(result).toContain(`${fn}: status=10`);
+      }
+      // functions Node.js does NOT gate (CHECK_ENV) must still succeed
+      for (const fn of [
+        "napi_get_global",
+        "napi_create_reference",
+        "napi_reference_unref",
+        "napi_get_reference_value",
+        "napi_create_bigint_int64",
+        "napi_create_symbol",
+        "napi_is_buffer",
+        "napi_is_typedarray",
+        "napi_get_instance_data",
+        "napi_get_value_bigint_uint64",
+        "napi_add_async_cleanup_hook",
+        "napi_remove_async_cleanup_hook",
+      ]) {
+        expect(result).toContain(`${fn}: status=0`);
+      }
+      // side effects must NOT have happened
+      expect(result).toContain("side_effect frozen=false");
+      expect(result).toContain("side_effect arr[7]=undefined");
+      expect(result).toContain("side_effect script_ran=false");
     });
   });
 
@@ -585,6 +643,19 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_adjust_external_memory", () => {
+    it("applies negative deltas and reports the running total", async () => {
+      const result = await checkSameOutput("test_napi_adjust_external_memory", []);
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(result.split(/\r?\n/)).toEqual([
+        "after_add-base=8192",
+        "after_sub-after_add=-8192",
+        "readback-after_sub=0",
+        "readback-base=0",
+      ]);
+    });
+  });
+
   describe("napi_run_script", () => {
     it("evaluates a basic expression", async () => {
       await checkSameOutput("test_napi_run_script", ["5 * (1 + 2)"]);
@@ -619,12 +690,21 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_define_properties", () => {
+    it("goes through [[DefineOwnProperty]] and validates the name", async () => {
+      await checkSameOutput("test_define_properties", []);
+    });
+  });
+
   describe("napi_get_property_names / napi_get_all_property_names", () => {
     it("does not poison JSC's per-Structure own-keys cache", async () => {
       const output = await checkSameOutput("test_property_names_cache_poisoning", []);
       expect(output).toContain("Reflect.ownKeys after get_all_property_names(include_prototypes): a,b");
       expect(output).toContain("Object.keys after get_property_names: w1,w2");
       expect(output).toContain("napi get_property_names result: w1,w2,pEnum");
+    });
+    it("handles accessor properties when filtering by napi_key_writable", async () => {
+      await checkSameOutput("test_get_all_property_names_accessor", []);
     });
   });
 
@@ -678,6 +758,33 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("node_api experimental", () => {
+    it("node_api_set_prototype sets [[Prototype]]", async () => {
+      const output = await checkSameOutput("test_node_api_set_prototype", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "set_prototype: proto_matches=true inherited=123",
+        "set_prototype: null_proto_type=1",
+      ]);
+    });
+    it("node_api_create_object_with_properties creates an object with the given prototype and properties", async () => {
+      const output = await checkSameOutput("test_node_api_create_object_with_properties", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_object_with_properties: proto_type=1 a=1 b=2 sym=3 idx0=4",
+        "create_object_with_properties: bad_name_status=4",
+        "create_object_with_properties: custom_proto_matches=true",
+      ]);
+    });
+    it("node_api_create_sharedarraybuffer / is_sharedarraybuffer / create_external_sharedarraybuffer", async () => {
+      const output = await checkSameOutput("test_node_api_sharedarraybuffer", []);
+      expect(output.split(/\r?\n/)).toEqual([
+        "create_sharedarraybuffer: data_nonnull=true is_sab=true is_ab=false",
+        "create_sharedarraybuffer: info_data_matches=true info_len=16",
+        "is_sharedarraybuffer: plain_ab=false number=false",
+        "create_external_sharedarraybuffer: is_sab=true data_matches=true len=8 first=176 finalized_early=false",
+      ]);
+    });
+  });
+
   describe("napi_get_typedarray_info", () => {
     it("reports a zero byte offset for a view over the whole buffer and the view's byte offset for an offset view", async () => {
       const whole = await checkSameOutput("test_typedarray_info_byte_offset", "[new Uint8Array(new ArrayBuffer(64))]");
@@ -711,6 +818,20 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toBe(
         "byte_offset=32 length=4 arraybuffer_byte_length=64 data_is_arraybuffer_data_plus_byte_offset=true",
       );
+    });
+
+    it("maps Float16Array to napi_float16_array in both napi_get_typedarray_info and napi_create_typedarray", async () => {
+      const output = await checkSameOutput(
+        "test_napi_float16_array",
+        "[(() => { const f = new Float16Array(new ArrayBuffer(16), 4, 4); f.set([1.5, 2, 3, 4]); return f; })()]",
+      );
+      // printf() via the Windows CRT emits \r\n, so split on either ending.
+      expect(output.split(/\r?\n/)).toEqual([
+        "is_typedarray=1 info_status=0 type=11 length=4 byte_offset=4 e0=0x3E00",
+        "arraybuffer_byte_length=16 data_is_ab_plus_offset=1",
+        "create_status=0 created_is_typedarray=1 created_type=11 created_length=4",
+        "created instanceof Float16Array=1",
+      ]);
     });
   });
 
@@ -1222,12 +1343,53 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_instanceof", () => {
+    it("honors Symbol.hasInstance and propagates exceptions", async () => {
+      const output = await checkSameOutput("test_napi_instanceof", []);
+      expect(output).toContain("class/instance: status=0 result=true pending=false");
+      expect(output).toContain("class/plain-obj: status=0 result=false pending=false");
+      expect(output).toContain("arrow+hasInstance: status=0 result=true pending=false");
+      expect(output).toContain("bound+hasInstance: status=0 result=true pending=false");
+      expect(output).toContain("bare-arrow ctor: status=9 result=false pending=true errName=TypeError");
+      expect(output).toContain("hasInstance throws: status=9 result=false pending=true errName=RangeError");
+      expect(output).toContain("proxy get throws: status=9 result=false pending=true errName=RangeError");
+      expect(output).toContain(
+        "number ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION",
+      );
+      expect(output).toContain(
+        "plain-obj ctor: status=5 result=false pending=true errName=TypeError errCode=ERR_NAPI_CONS_FUNCTION",
+      );
+      expect(output).toContain("null ctor: status=2 result=false pending=true errName=TypeError errCode=undefined");
+      expect(output).toContain(
+        "undefined ctor: status=2 result=false pending=true errName=TypeError errCode=undefined",
+      );
+    });
+  });
+
   describe("napi_call_function", () => {
     it("should handle null recv parameter consistently", async () => {
       const output = await checkSameOutput("test_napi_call_function_recv_null", []);
       expect(output).toContain("PASS");
       expect(output).toContain("napi_call_function with valid recv succeeded");
       expect(output).not.toContain("FAIL");
+    });
+  });
+
+  describe("napi_new_instance", () => {
+    it("returns the same status codes as Node.js for non-constructible targets", async () => {
+      const output = await checkSameOutput(
+        "test_napi_new_instance_status",
+        "[() => {}, (() => {}).bind(null), 42, null, {}, function () {}]",
+      );
+      // arrow + bound arrow: napi_pending_exception with a pending TypeError
+      expect(output).toContain("target 1: status=10 pending=1 type_error=1");
+      expect(output).toContain("target 2: status=10 pending=1 type_error=1");
+      // number / null / plain object: napi_invalid_arg, nothing thrown
+      expect(output).toContain("target 3: status=1 pending=0 type_error=0");
+      expect(output).toContain("target 4: status=1 pending=0 type_error=0");
+      expect(output).toContain("target 5: status=1 pending=0 type_error=0");
+      // regular function: napi_ok
+      expect(output).toContain("target 6: status=0 pending=0 type_error=0");
     });
   });
 
@@ -1245,6 +1407,24 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       const output = await checkSameOutput("test_napi_dataview_bounds_errors", []);
       expect(output).toContain("napi_create_dataview");
       // Check for proper bounds validation
+    });
+  });
+
+  describe("NULL napi_value arguments", () => {
+    it("returns napi_invalid_arg instead of crashing", async () => {
+      const output = await checkSameOutput("test_napi_null_value_args", []);
+      expect(output).toContain("napi_detach_arraybuffer(NULL) -> 1");
+      expect(output).toContain("node_api_create_buffer_from_arraybuffer(NULL) -> 1");
+      expect(output).toContain("napi_strict_equals(NULL, NULL) -> 1");
+      expect(output).toContain("napi_instanceof(NULL, NULL) -> 1");
+      expect(output).toContain("napi_new_instance(NULL) -> 1");
+      expect(output).toContain("napi_is_array(NULL) -> 1");
+      expect(output).toContain("napi_is_error(NULL) -> 1");
+      expect(output).toContain("napi_is_arraybuffer(NULL) -> 1");
+      expect(output).toContain("napi_is_dataview(NULL) -> 1");
+      expect(output).toContain("napi_is_date(NULL) -> 1");
+      expect(output).toContain("napi_get_array_length(NULL) -> 1");
+      expect(output).toContain("napi_get_dataview_info(NULL) -> 1");
     });
   });
 
@@ -1293,6 +1473,30 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("object API ToObject coercion", () => {
+    // The element/property-name/prototype family must coerce primitive targets
+    // via ToObject (succeeding for strings/numbers/booleans) and return
+    // napi_object_expected with a pending TypeError for null/undefined.
+    // napi_get_all_property_names must reject out-of-range enum arguments and
+    // honor napi_key_keep_numbers so index keys come back as numbers.
+    it("matches Node's CHECK_TO_OBJECT semantics and validates enums", async () => {
+      const output = await checkSameOutput("test_napi_object_coercion", []);
+      // Spot-check the lines that carry the most signal; checkSameOutput has
+      // already asserted full byte-for-byte parity with Node.
+      expect(output).toContain("set_element(number): status=0 pending=0");
+      expect(output).toContain("set_element(null): status=2 pending=1");
+      expect(output).toContain("get_element(string,1): status=0 pending=0");
+      expect(output).toContain("get_element(string,1) value=b");
+      expect(output).toContain("get_prototype(number): status=0 pending=0");
+      expect(output).toContain("get_prototype(number) is Number.prototype=1");
+      expect(output).toContain("get_prototype(null): status=2 pending=1");
+      expect(output).toContain("get_all_property_names(key_mode=99): status=1 pending=0");
+      expect(output).toContain("get_all_property_names(key_conversion=99): status=1 pending=0");
+      expect(output).toContain("keep_numbers key0 typeof=number");
+      expect(output).toContain("numbers_to_strings key0 typeof=string");
+    });
+  });
+
   describe("napi_object_freeze and napi_object_seal", () => {
     it("should handle arrays with indexed properties", async () => {
       const output = await checkSameOutput("test_napi_freeze_seal_indexed", []);
@@ -1319,6 +1523,27 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
         "napi_is_arraybuffer=true napi_get_arraybuffer_info=0",
         "napi_is_arraybuffer=false napi_get_arraybuffer_info=0",
         "napi_is_arraybuffer=false napi_get_arraybuffer_info=1",
+      ]);
+    });
+  });
+
+  describe("napi_detach_arraybuffer", () => {
+    it("rejects SharedArrayBuffer instead of returning napi_ok for a no-op detach", async () => {
+      // napi_ok on a SharedArrayBuffer is a memory-lifetime lie: the addon
+      // believes the backing store is neutralized while JS (and other threads)
+      // still read and write it. Node rejects a SharedArrayBuffer with
+      // napi_arraybuffer_expected (19) because V8's IsArrayBuffer() is false
+      // for a SharedArrayBuffer. The same ArrayBuffer is passed twice so the
+      // third row covers a second detach on an already-detached buffer.
+      const output = await checkSameOutput(
+        "test_detach_arraybuffer",
+        "(() => { const ab = new ArrayBuffer(8); return [new SharedArrayBuffer(8), ab, ab, new Uint8Array(8)]; })()",
+      );
+      expect(output.split(/\r?\n/)).toEqual([
+        "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=0 length=8",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=0 napi_is_detached_arraybuffer=0 is_detached=true napi_get_arraybuffer_info=0 length=0",
+        "napi_detach_arraybuffer=19 napi_is_detached_arraybuffer=0 is_detached=false napi_get_arraybuffer_info=1 length=0",
       ]);
     });
   });

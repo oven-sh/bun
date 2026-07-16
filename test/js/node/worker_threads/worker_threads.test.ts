@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -340,19 +340,26 @@ describe("execArgv option", async () => {
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
-test("eval does not leak source code", async () => {
-  const proc = Bun.spawn({
-    cmd: [bunExe(), "eval-source-leak-fixture.js"],
-    env: bunEnv,
-    cwd: __dirname,
-    stderr: "pipe",
-    stdout: "ignore",
-  });
-  await proc.exited;
-  const errors = await proc.stderr.text();
-  if (errors.length > 0) throw new Error(errors);
-  expect(proc.exitCode).toBe(0);
-});
+// The fixture creates and tears down six workers each with 100 MiB of
+// source; under debug and/or ASAN, worker VM startup/teardown is much
+// slower (~30s on CI), so the default 5s timeout reliably trips. Scale the
+// timeout the same way worker-terminate-lifetime.test.ts does.
+test(
+  "eval does not leak source code",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "eval-source-leak-fixture.js"],
+      env: bunEnv,
+      cwd: __dirname,
+      stderr: "pipe",
+      stdout: "ignore",
+    });
+    const [errors] = await Promise.all([proc.stderr.text(), proc.exited]);
+    if (errors.length > 0) throw new Error(errors);
+    expect(proc.exitCode).toBe(0);
+  },
+  isDebug || isASAN ? 60_000 : undefined,
+);
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
@@ -550,6 +557,73 @@ describe("error event", () => {
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
     expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
+  });
+
+  test.each([
+    [
+      "uncaught throw, Promise.resolve().then",
+      "Promise.resolve().then(() => parentPort.postMessage('LEAKED'));",
+      'throw new Error("validation-failed");',
+      "",
+      ["ERR:validation-failed"],
+    ],
+    [
+      "uncaught throw, queueMicrotask",
+      "queueMicrotask(() => parentPort.postMessage('LEAKED'));",
+      'throw new Error("validation-failed");',
+      "",
+      ["ERR:validation-failed"],
+    ],
+    [
+      "process.exit, Promise.resolve().then",
+      "Promise.resolve().then(() => parentPort.postMessage('LEAKED'));",
+      "process.exit(1);",
+      'process.on("exit", code => parentPort.postMessage("ONEXIT:" + code));',
+      ["MSG:ONEXIT:1"],
+    ],
+    [
+      "process.exit, queueMicrotask",
+      "queueMicrotask(() => parentPort.postMessage('LEAKED'));",
+      "process.exit(1);",
+      'process.on("exit", code => parentPort.postMessage("ONEXIT:" + code));',
+      ["MSG:ONEXIT:1"],
+    ],
+  ])("microtasks queued before %s do not run", async (_name, queueStmt, stopStmt, setupStmt, expected) => {
+    // A callback queues a microtask and then throws or calls process.exit.
+    // The worker has logically stopped at that point; the parent must not
+    // observe a message from a microtask that was queued-but-not-yet-run at
+    // stop time. On the process.exit path, process.on('exit') still fires
+    // (it runs synchronously inside process.exit before termination is
+    // armed). Matches Node.js. Run in a subprocess so the parent's event
+    // loop is independent of the test runner.
+    const fixture = /* js */ `
+      const { Worker } = require("node:worker_threads");
+      const w = new Worker(
+        \`const { parentPort } = require("node:worker_threads");
+         ${setupStmt}
+         setTimeout(() => {
+           ${queueStmt}
+           ${stopStmt}
+         }, 1);\`,
+        { eval: true },
+      );
+      const got = [];
+      w.on("message", m => got.push("MSG:" + m));
+      w.on("error", e => got.push("ERR:" + e.message));
+      w.on("exit", () => console.log(JSON.stringify(got)));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr }).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

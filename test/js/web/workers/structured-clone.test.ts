@@ -577,6 +577,30 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             expect(pinned.byteLength).toBe(1 << 16);
             await promise;
           });
+          test("a getter that pins the buffer during serialization still throws DataCloneError", async () => {
+            const ab = new ArrayBuffer(1 << 16);
+            const other = new ArrayBuffer(8);
+            const { promise, resolve } = Promise.withResolvers<void>();
+            const value = Object.defineProperty({ ab, other }, "p", {
+              enumerable: true,
+              get() {
+                zlib.gzip(new Uint8Array(ab), () => resolve());
+                return 1;
+              },
+            });
+            let error: unknown;
+            try {
+              structuredCloneFn(value, { transfer: [other, ab] });
+            } catch (e) {
+              error = e;
+            }
+            expect(error).toBeInstanceOf(DOMException);
+            expect((error as DOMException).name).toBe("DataCloneError");
+            // Re-checked after serialization, before any sibling is detached.
+            expect(ab.byteLength).toBe(1 << 16);
+            expect(other.byteLength).toBe(8);
+            await promise;
+          });
           test("randomFill does not block transfer (negative control)", () => {
             const ab = new ArrayBuffer(1 << 16);
             randomFill(new Uint8Array(ab), () => {});

@@ -232,7 +232,7 @@ pub fn load_config(
             let mut dir: &[u8] = &awd;
             while dir.len() > 1
                 && bun_paths::is_sep_native(dir[dir.len() - 1])
-                && dir[dir.len() - 2] != b':'
+                && (!cfg!(windows) || dir[dir.len() - 2] != b':')
             {
                 dir = &dir[..dir.len() - 1];
             }

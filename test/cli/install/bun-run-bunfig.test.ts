@@ -228,6 +228,9 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
 
     const cwd = tempDirWithFiles("run.where.node", {
       "my-home/.bunfig.toml": bunfig,
+      // Terminate the ancestor bunfig walk inside the tempdir so a stray
+      // bunfig.toml between tmpdir and / can't leak into this test.
+      "bunfig.toml": "",
       "package.json": JSON.stringify(
         {
           scripts: {

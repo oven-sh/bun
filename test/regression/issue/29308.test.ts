@@ -92,6 +92,64 @@ test.skipIf(process.platform === "win32")(
   },
 );
 
+// The walk must not escape a nested project into an unrelated parent: a
+// directory with its own lockfile or .git is that project's root, and a
+// bunfig.toml beyond it (e.g. in a repo that vendors the project) must not
+// apply. Covers both marker kinds.
+test.skipIf(process.platform === "win32").each([
+  { label: "lockfile", marker: { "vendor/app/bun.lock": "" } },
+  { label: ".git", marker: { "vendor/app/.git/HEAD": "" } },
+])("ancestor walk stops at a nested project boundary ($label)", async ({ marker }) => {
+  using dir = tempDir("bun-issue-29308-boundary", {
+    "bunfig.toml": `preload = ["./preload.ts"]\n`,
+    "preload.ts": `console.log("preload script executed!");\n`,
+    "vendor/app/package.json": `{"name":"app","version":"0.0.0"}\n`,
+    "vendor/app/index.ts": `console.log("hello from app");\n`,
+    ...marker,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: join(String(dir), "vendor", "app"),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("hello from app\n");
+  expect(exitCode).toBe(0);
+});
+
+// A lockfile at the project root must not hide a bunfig.toml sitting next to
+// it: within one directory the bunfig check wins over the boundary check.
+test.skipIf(process.platform === "win32")(
+  "bunfig.toml next to the lockfile at the project root still applies",
+  async () => {
+    using dir = tempDir("bun-issue-29308-root-lock", {
+      "bunfig.toml": `preload = ["./preload.ts"]\n`,
+      "preload.ts": `console.log("preload script executed!");\n`,
+      "bun.lock": "",
+      "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
+      "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "src/index.ts"],
+      env: bunEnv,
+      cwd: join(String(dir), "packages", "pkg1"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
+    expect(exitCode).toBe(0);
+  },
+);
+
 // Guard against the ancestor walk stopping at a DIRECTORY named bunfig.toml.
 // Without the regular-file check, existsZ would treat the directory as a hit
 // and the real bunfig.toml higher in the tree would be silently skipped.

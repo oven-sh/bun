@@ -133,6 +133,17 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     Global::crash();
 }
 
+/// Entries that mark a directory as the root of its own project, ending the
+/// ancestor bunfig.toml walk in `load_config`.
+const PROJECT_BOUNDARY_MARKERS: [&[u8]; 6] = [
+    b".git",
+    b"bun.lock",
+    b"bun.lockb",
+    b"package-lock.json",
+    b"yarn.lock",
+    b"pnpm-lock.yaml",
+];
+
 pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
@@ -234,10 +245,28 @@ pub fn load_config(
                     found_len = Some(joined_len);
                     break;
                 }
+                // A directory with its own lockfile or repository root is a
+                // separate project: don't inherit a bunfig.toml from beyond
+                // it (e.g. a package vendored inside a larger repo).
+                let at_project_boundary = PROJECT_BOUNDARY_MARKERS.iter().any(|marker| {
+                    let parts: [&[u8]; 2] = [dir, marker];
+                    let joined = resolve_path::join_abs_string_buf::<platform::Auto>(
+                        dir,
+                        &mut *config_buf,
+                        &parts,
+                    );
+                    let joined_len = joined.len();
+                    config_buf[joined_len] = 0;
+                    bun_sys::stat(ZStr::from_buf(&config_buf[..], joined_len)).is_ok()
+                });
+                if at_project_boundary {
+                    break;
+                }
                 let parent = resolve_path::dirname::<platform::Auto>(dir);
-                // Stop at the filesystem root. On Windows, dirname("C:\\")
-                // returns "C:" (drive-relative, not absolute), so also break
-                // when the parent is no longer absolute.
+                // Stop at the filesystem root. On Windows, dirname of a
+                // first-level directory ("C:\\Users") is the bare drive
+                // designator "C:" (not absolute), so the walk stops before
+                // the drive root and C:\bunfig.toml is never consulted.
                 if parent.is_empty()
                     || parent == dir
                     || !<platform::Auto as resolve_path::PlatformT>::P.is_absolute(parent)

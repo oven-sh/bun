@@ -1,4 +1,4 @@
-import { AsyncLocalStorage } from "async_hooks";
+import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
 import EventEmitter, { EventEmitterAsyncResource } from "events";
 
@@ -7,6 +7,21 @@ describe("EventEmitterAsyncResource", () => {
     const ee = new EventEmitterAsyncResource("test");
     expect(ee).toBeInstanceOf(EventEmitterAsyncResource);
     expect(ee).toBeInstanceOf(EventEmitter);
+  });
+  // triggerAsyncId echoes the constructor option like Node; Bun's default execution async id is 0.
+  test("triggerAsyncId reflects the option", () => {
+    expect(new EventEmitterAsyncResource({ name: "x", triggerAsyncId: 7 }).triggerAsyncId).toBe(7);
+    expect(new EventEmitterAsyncResource({ name: "x" }).triggerAsyncId).toBe(0);
+    expect(new AsyncResource("x", { triggerAsyncId: 7 }).triggerAsyncId()).toBe(7);
+    expect(new AsyncResource("x", 7).triggerAsyncId()).toBe(7);
+    expect(new AsyncResource("x").triggerAsyncId()).toBe(0);
+    let err;
+    try {
+      new EventEmitterAsyncResource({ name: "x", triggerAsyncId: -2 });
+    } catch (e) {
+      err = e;
+    }
+    expect(err?.code).toBe("ERR_INVALID_ASYNC_ID");
   });
   test("has context tracking", () => {
     let ee;

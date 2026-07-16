@@ -1042,9 +1042,13 @@ describe("async context passes through", () => {
          server.listen(0, () => {
            const client = http2.connect("http://127.0.0.1:" + server.address().port);
            let st;
-           // POST keeps the writable side open so destroy() emits 'aborted';
-           // GET/HEAD/DELETE force endStream and would skip the emit entirely.
-           als.run({ marker: true }, () => { st = client.request({ ":path": "/", ":method": "POST" }); st.resume(); });
+           // endStream:false keeps the writable side open: like Node, destroy()
+           // only emits 'aborted' for a stream whose writable side has not ended
+           // (a plain GET ends it up front, so 'aborted' would never fire).
+           als.run({ marker: true }, () => {
+             st = client.request({ ":path": "/" }, { endStream: false });
+             st.resume();
+           });
            st.on("aborted", () => { throw new Error("aborted boom"); });
            st.on("response", () => st.destroy());
            // The throw is swallowed into the stream's 'error' — that event IS

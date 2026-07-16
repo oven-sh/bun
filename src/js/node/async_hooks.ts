@@ -355,18 +355,16 @@ if (IS_BUN_DEVELOPMENT) {
 class AsyncResource {
   type;
   #snapshot;
+  #triggerAsyncId;
 
   constructor(type, opts?) {
     validateString(type, "type");
 
-    let triggerAsyncId = opts;
-    if (opts != null) {
-      if (typeof opts !== "number") {
-        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
-      }
-      if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
-        throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
-      }
+    // Node defaults to getDefaultTriggerAsyncId() (the current execution async
+    // id); Bun does not track async ids, so its executionAsyncId() is 0.
+    let triggerAsyncId = typeof opts === "number" ? opts : opts?.triggerAsyncId === undefined ? 0 : opts.triggerAsyncId;
+    if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
+      throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
     }
     if (hasEnabledCreateHook && type.length === 0) {
       throw $ERR_ASYNC_TYPE(type);
@@ -375,6 +373,7 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    this.#triggerAsyncId = triggerAsyncId;
   }
 
   emitBefore() {
@@ -390,7 +389,7 @@ class AsyncResource {
   }
 
   triggerAsyncId() {
-    return 0;
+    return this.#triggerAsyncId;
   }
 
   emitDestroy() {

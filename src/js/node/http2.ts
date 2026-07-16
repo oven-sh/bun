@@ -385,6 +385,10 @@ const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
 const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
+const bunHTTP2SessionTeardownFrame = Symbol("::bunhttp2sessionteardownframe::");
+// Sentinel for bunHTTP2SessionTeardownFrame: a captured frame can itself be
+// undefined (the root context), so "no teardown in progress" needs its own value.
+const kNoSessionTeardown = Symbol("::bunhttp2noteardown::");
 const runInFrame = require("internal/async_context_frame").run;
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
@@ -2097,6 +2101,7 @@ type Settings = {
 };
 
 class Http2Session extends EventEmitter {
+  [bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
   // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
@@ -2981,7 +2986,12 @@ class ClientHttp2Stream extends Http2Stream {}
 function withStreamFrame(handler) {
   return function (self, stream, a, b, c) {
     if (typeof stream !== "object" || stream === null) return handler(self, stream, a, b, c);
-    return runInFrame(stream[bunHTTP2AsyncContextFrame], handler, undefined, self, stream, a, b, c);
+    // A session mid-destroy() fans onStreamError out via emitErrorToAllStreams
+    // under the destroy() caller's captured frame (Node's teardown context),
+    // scoped to that session so a coincident dispatch elsewhere is unaffected.
+    const teardownFrame = self != null ? self[bunHTTP2SessionTeardownFrame] : kNoSessionTeardown;
+    const frame = teardownFrame !== kNoSessionTeardown ? teardownFrame : stream[bunHTTP2AsyncContextFrame];
+    return runInFrame(frame, handler, undefined, self, stream, a, b, c);
   };
 }
 function tryClose(fd) {
@@ -5769,7 +5779,12 @@ class ClientHttp2Session extends Http2Session {
         }
         // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
         // precedence over the destroy code when streams are torn down.
-        parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+        this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
+        try {
+          parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+        } finally {
+          this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
+        }
         parser.detach();
       }
     } catch (e) {
@@ -6015,17 +6030,23 @@ class ClientHttp2Session extends Http2Session {
 
       let rejectContentLengthOnNoPayload = false;
       if (NoPayloadMethods.has(method.toUpperCase())) {
+        // Like Node, a payload-meaningless method only defaults endStream to
+        // true when the caller expressed no preference; an explicit endStream
+        // (validated above) is honored, so { endStream: false } stays open.
         if (!options || !$isObject(options)) {
           options = { endStream: true };
-        } else {
+        } else if (options.endStream === undefined) {
           options = { ...options, endStream: true };
         }
-        // nghttp2 refuses content-length on a request that cannot carry a payload: the stream is
-        // reset with PROTOCOL_ERROR after creation (an async stream error, not a throw).
-        for (const key of Object.keys(headers)) {
-          if (key.toLowerCase() === "content-length") {
-            rejectContentLengthOnNoPayload = true;
-            break;
+        // nghttp2 refuses content-length on a request whose HEADERS carry END_STREAM (no payload
+        // can follow): reset with PROTOCOL_ERROR after creation (an async stream error, not a
+        // throw). An explicit endStream:false keeps the body legal, so only the ended case rejects.
+        if (options.endStream) {
+          for (const key of Object.keys(headers)) {
+            if (key.toLowerCase() === "content-length") {
+              rejectContentLengthOnNoPayload = true;
+              break;
+            }
           }
         }
       }

@@ -213,13 +213,7 @@ describe("randomUUIDv7", () => {
           // One far-future explicit call must not move the default path's
           // monotonic state; subsequent default calls still encode ~now.
           Bun.randomUUIDv7("hex", Date.now() + 86_400_000);
-          const before = Date.now();
-          const ts = tsOf(Bun.randomUUIDv7());
-          const after = Date.now();
-          // Allow for counter-rollover +1ms bumps; any value within the window
-          // is correct, 86_400_000 of skew is not.
-          const ok = ts >= before && ts <= after + 1000;
-          console.log(JSON.stringify({ ok, skew: ts - after }));
+          console.log(tsOf(Bun.randomUUIDv7()) - Date.now());
         `,
       ],
       env: bunEnv,
@@ -227,9 +221,10 @@ describe("randomUUIDv7", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    const out = JSON.parse(stdout);
-    // On the regression, skew is ~86_400_000.
-    expect(out).toEqual({ ok: true, skew: out.skew });
+    // On the regression this is ~86_400_000. A 60s bound absorbs clock-source
+    // jitter between JS Date.now() and the native millisecond clock on Windows.
+    const skew = Number(stdout.trim());
+    expect(Math.abs(skew)).toBeLessThan(60_000);
     expect(exitCode).toBe(0);
   });
 

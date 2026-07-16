@@ -560,7 +560,9 @@ size_t visibleLatin1Width(std::span<const uint8_t> input, bool ambiguousAsWide)
 // OSC payload bytes (which can be >= 0xA1) are excluded from the count.
 static size_t visibleLatin1WidthExcludeANSIAmbiguousWide(std::span<const uint8_t> input)
 {
-    enum class State : uint8_t { None, InCSI, InOSC };
+    enum class State : uint8_t { None,
+        InCSI,
+        InOSC };
     State state = State::None;
     size_t width = 0;
     size_t i = 0;

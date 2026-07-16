@@ -255,6 +255,92 @@ describe("FormData", () => {
     }
   });
 
+  // WHATWG Body mixin: formData() package-data failure must reject with TypeError.
+  // The serve path previously rejected with a plain Error.
+  it("malformed multipart body rejects with TypeError on every formData() path", async () => {
+    const boundary = "BX9";
+    const contentType = `multipart/form-data; boundary=${boundary}`;
+    const bad = `--${boundary}\r\nContent-Disposition: form-data; name="k"\r\n\r\nv`;
+
+    const classify = (e: any) => ({
+      name: e?.constructor?.name,
+      isTypeError: e instanceof TypeError,
+      code: e?.code,
+      message: e?.message,
+    });
+
+    let respErr: any;
+    await new Response(bad, { headers: { "content-type": contentType } })
+      .formData()
+      .then(() => {
+        throw new Error("Response.formData should have rejected");
+      })
+      .catch(e => (respErr = e));
+
+    let reqErr: any;
+    await new Request("http://x/", { method: "POST", body: bad, headers: { "content-type": contentType } })
+      .formData()
+      .then(() => {
+        throw new Error("Request.formData should have rejected");
+      })
+      .catch(e => (reqErr = e));
+
+    let streamErr: any;
+    await new Response(
+      new ReadableStream({
+        start(ctrl) {
+          ctrl.enqueue(new TextEncoder().encode(bad));
+          ctrl.close();
+        },
+      }),
+      { headers: { "content-type": contentType } },
+    )
+      .formData()
+      .then(() => {
+        throw new Error("Response(stream).formData should have rejected");
+      })
+      .catch(e => (streamErr = e));
+
+    let serveErr: any;
+    {
+      const { promise: handled, resolve: onHandled, reject: onHandleErr } = Promise.withResolvers<void>();
+      await using server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        async fetch(req) {
+          await req.formData().then(
+            () => onHandleErr(new Error("serve req.formData should have rejected")),
+            e => {
+              serveErr = e;
+              onHandled();
+            },
+          );
+          return new Response("done");
+        },
+      });
+      const res = await fetch(server.url, {
+        method: "POST",
+        body: bad,
+        headers: { "content-type": contentType },
+      });
+      await res.text();
+      await handled;
+    }
+
+    expect({
+      Response: classify(respErr),
+      Request: classify(reqErr),
+      stream: classify(streamErr),
+      serve: classify(serveErr),
+    }).toEqual({
+      Response: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
+      Request: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
+      stream: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
+      serve: { name: "TypeError", isTypeError: true, code: "ERR_FORMDATA_PARSE_ERROR", message: respErr.message },
+    });
+    expect(respErr.message).toContain("missing final boundary");
+  });
+
   // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter
   // attribute names are case-insensitive; the boundary VALUE is byte-exact.
   describe("Content-Type case-insensitivity", () => {

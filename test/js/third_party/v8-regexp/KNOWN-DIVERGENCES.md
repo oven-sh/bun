@@ -169,3 +169,29 @@ The regex grammar puts no upper bound on quantifier digits; V8's own history
 treats acceptance (with clamping) as the fix for an overflow bug. JSC rejects
 on overflow. Implementation-limit territory; recorded rather than asserted as a
 bug in either engine.
+
+## 15. Fixed on WebKit main (still shipping in bun 1.3.14): loop/backref/lookaround cases
+
+The overnight soak found ten further divergences (lazy counted loops with
+nested captures, over-matching with backrefs+lookahead, `\B`/lookbehind
+capture participation in `split`, and three catastrophic-backtracking cliffs
+where JSC 1.3.14 exceeds a 4s budget on inputs V8 handles instantly) that all
+reproduce on bun 1.3.14 but are FIXED on current WebKit main. Representative:
+
+```js
+"xxx00Ωc-100Ωc-18".match(/[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\w]+|\t{0}(?:.|(?:\1)x[ca])){0,2}?8/gi)
+// V8 + newer JSC: ["xxx00Ωc-100Ωc-18"];  bun 1.3.14: null  (only the LAZY {0,2}? fails)
+```
+
+These are strong evidence for the value of the WebKit bump; the pinned corpus
+(regressions.mjs) will confirm each is fixed when it lands.
+
+## 16. Live (WebKit main): named group + lazy nullable loop + \k backref (needs reduction)
+
+Reproduces only through the differential runner (transcription-sensitive
+combining character in the source):
+
+    node test/js/web/regex/differential/run.mjs --seed 460 --index 1117
+    bun  test/js/web/regex/differential/run.mjs --seed 460 --index 1117 --capabilities '<hdr>'
+    // pattern /(?:(?:(?<π>.?|́{1,3}|[^é](?:\k<π>){1,3}\W){2}||.7|){2}?)+?\S(?:a[9a-f]{0,2}?|\s+?\k<π>)|.?|/m
+    // input "prefix  suffix": V8 exec -> ["prefix ", ""] with groups {π:""}; JSC (all tiers, incl. main) -> null

@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import repl from "node:repl";
+import { inspect } from "node:util";
 
 const weirdInternalSpecifiers = [
   "_http_agent",
@@ -116,31 +118,14 @@ describe("v8.getHeapStatistics", () => {
 });
 
 describe("node:repl stub", () => {
-  const repl = require("node:repl");
-
   // The module export used to masquerade as a REPLServer instance with
   // `context: globalThis`, so libraries that feature-detect a REPL by probing
   // `repl.context` and writing to it would silently pollute the real global.
   test("does not expose REPLServer instance fields on the module", () => {
-    expect({
-      context: repl.context,
-      contextInRepl: "context" in repl,
-      terminal: repl.terminal,
-      useGlobal: repl.useGlobal,
-      lines: repl.lines,
-      history: repl.history,
-      input: repl.input,
-      output: repl.output,
-    }).toEqual({
-      context: undefined,
-      contextInRepl: false,
-      terminal: undefined,
-      useGlobal: undefined,
-      lines: undefined,
-      history: undefined,
-      input: undefined,
-      output: undefined,
-    });
+    const instanceFields = ["context", "terminal", "useGlobal", "lines", "history", "input", "output", "eval"];
+    expect(Object.fromEntries(instanceFields.map(k => [k, { in: k in repl, value: repl[k] }]))).toEqual(
+      Object.fromEntries(instanceFields.map(k => [k, { in: false, value: undefined }])),
+    );
   });
 
   test("writing through repl.context cannot pollute globalThis", async () => {
@@ -186,12 +171,12 @@ describe("node:repl stub", () => {
     expect(typeof repl.writer).toBe("function");
     expect(typeof repl.REPL_MODE_SLOPPY).toBe("symbol");
     expect(typeof repl.REPL_MODE_STRICT).toBe("symbol");
+    expect(repl.REPL_MODE_SLOPPY).not.toBe(repl.REPL_MODE_STRICT);
     expect(Array.isArray(repl._builtinLibs)).toBe(true);
     expect(Array.isArray(repl.builtinModules)).toBe(true);
   });
 
   test("writer() forwards to util.inspect with writer.options", () => {
-    const { inspect } = require("node:util");
     const value = { a: 1, b: [2, 3], c: { d: 4 } };
     expect(repl.writer.options).toEqual(inspect.replDefaults);
     expect(repl.writer(value)).toBe(inspect(value, repl.writer.options));

@@ -2849,29 +2849,6 @@ pub mod internal {
             return false;
         }
 
-        // Test hook: simulate a lost mach-port reply. The poll is created but
-        // never registered, so only the sweep can complete the request.
-        if env_var::feature_flag::BUN_INTERNAL_DNS_LIBINFO_SIMULATE_STALL
-            .get()
-            .unwrap_or(false)
-        {
-            let poll = FilePoll::init(
-                crate::api::bun::process::event_loop_handle_to_ctx(loop_),
-                sys::Fd::from_native(machport as i32),
-                Default::default(),
-                Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
-            );
-            // SAFETY: `req` is the live heap-allocated request owned by the caller.
-            unsafe {
-                (*req).libinfo = MacAsyncDNS {
-                    file_poll: NonNull::new(poll),
-                    machport,
-                    loop_: loop_.r#loop(),
-                };
-            }
-            return true;
-        }
-
         let poll = FilePoll::init(
             crate::api::bun::process::event_loop_handle_to_ctx(loop_),
             // bitcast u32 mach_port → i32 fd
@@ -2879,25 +2856,36 @@ pub mod internal {
             Default::default(),
             Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
         );
-        // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
-        let rc = unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
 
-        if rc.is_err() {
-            // SAFETY: `poll` is the freshly-allocated hive slot returned by
-            // `FilePoll::init` above; nothing else aliases it. Registration
-            // failed, so it was never armed — release the slot back to the hive.
-            unsafe { (*poll).deinit() };
-            // Release the port + async work unit so libinfo does not send to a
-            // port nobody watches.
-            if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
-                // SAFETY: `machport` is the receive right allocated above.
-                unsafe { cancel(machport) };
+        // Test hook: simulate a lost mach-port reply by never registering the
+        // poll; only the sweep can then complete the request.
+        let simulate_stall = env_var::feature_flag::BUN_INTERNAL_DNS_LIBINFO_SIMULATE_STALL
+            .get()
+            .unwrap_or(false);
+        if !simulate_stall {
+            // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
+            let rc =
+                unsafe { (*poll).register(&mut *loop_.r#loop(), Async::PollKind::Machport, true) };
+
+            if rc.is_err() {
+                // SAFETY: `poll` is the freshly-allocated hive slot returned by
+                // `FilePoll::init` above; nothing else aliases it. Registration
+                // failed, so it was never armed — release the slot back to the hive.
+                unsafe { (*poll).deinit() };
+                // Release the port + async work unit so libinfo does not send to a
+                // port nobody watches.
+                if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
+                    // SAFETY: `machport` is the receive right allocated above.
+                    unsafe { cancel(machport) };
+                }
+                return false;
             }
-            return false;
         }
 
+        // `libinfo.*` is read by other loops' `sweep_stale_libinfo` under the
+        // cache lock; take it here so those reads never see a torn store.
+        let _guard = global_cache().lock();
         // SAFETY: `req` is the live heap-allocated request owned by the caller.
-        #[cfg(target_os = "macos")]
         unsafe {
             (*req).libinfo = MacAsyncDNS {
                 file_poll: NonNull::new(poll),
@@ -2905,8 +2893,6 @@ pub mod internal {
                 loop_: loop_.r#loop(),
             };
         }
-        #[cfg(not(target_os = "macos"))]
-        let _ = poll;
 
         true
     }
@@ -2974,9 +2960,12 @@ pub mod internal {
                     // otherwise we'd never see the retry's reply.
                     #[cfg(target_os = "macos")]
                     {
-                        (*req).libinfo.machport = machport;
-                        // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
-                        let poll = (*req).libinfo.file_poll.unwrap().as_mut();
+                        let poll = {
+                            let _guard = global_cache().lock();
+                            (*req).libinfo.machport = machport;
+                            // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
+                            (*req).libinfo.file_poll.unwrap().as_mut()
+                        };
                         // `as i32` is the same-width bitcast of the u32 mach port.
                         poll.fd = sys::Fd::from_native(machport as i32);
                         match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
@@ -2993,14 +2982,20 @@ pub mod internal {
                 }
             }
         }
-        // SAFETY: `req` is live and we are on the JS thread (via `on_machport_change`);
-        // release the hive slot `lookup_libinfo` allocated (previously leaked).
-        unsafe {
-            if let Some(poll) = (*req).libinfo.file_poll.take() {
-                (*poll.as_ptr()).deinit();
+        // Release the hive slot `lookup_libinfo` allocated (previously leaked).
+        // Clear under the cache lock so other loops' sweeps see a consistent state.
+        let poll = {
+            let _guard = global_cache().lock();
+            // SAFETY: `req` is live; `libinfo.*` only mutated under this lock.
+            unsafe {
+                (*req).libinfo.machport = 0;
+                (*req).libinfo.loop_ = ptr::null_mut();
+                (*req).libinfo.file_poll.take()
             }
-            (*req).libinfo.machport = 0;
-            (*req).libinfo.loop_ = ptr::null_mut();
+        };
+        if let Some(poll) = poll {
+            // SAFETY: we are on the owning loop's thread (via `on_machport_change`).
+            unsafe { (*poll.as_ptr()).deinit() };
         }
         after_result(req, addr_info, status_int);
     }
@@ -3167,54 +3162,53 @@ pub mod internal {
     #[cfg(target_os = "macos")]
     fn sweep_stale_libinfo(loop_: *mut Loop) {
         let now = GlobalCache::get_cache_timestamp();
-        let mut stale: Vec<*mut Request> = Vec::new();
+        let mut stale: Vec<(*mut Request, NonNull<FilePoll>, mach_port)> = Vec::new();
         {
             let guard = global_cache().lock();
             for &entry in &guard.cache[..guard.len] {
-                // SAFETY: entries 0..len are live heap Requests while the lock is held.
+                // SAFETY: entries 0..len are live heap Requests while the lock
+                // is held; `libinfo.*` is only mutated under this lock.
                 unsafe {
                     if (*entry).result.is_none()
-                        && (*entry).libinfo.file_poll.is_some()
                         && (*entry).libinfo.loop_ == loop_
                         && now.saturating_sub((*entry).created_at) > LIBINFO_STALE_SECONDS
                     {
-                        stale.push(entry);
+                        if let Some(poll) = (*entry).libinfo.file_poll.take() {
+                            let machport = core::mem::take(&mut (*entry).libinfo.machport);
+                            (*entry).libinfo.loop_ = ptr::null_mut();
+                            stale.push((entry, poll, machport));
+                        }
                     }
                 }
             }
         }
-        for req in stale {
-            // SAFETY: `req` is still live — its in-flight refcount (released
-            // only by `after_result`) cannot drop on this thread between the
-            // scan above and this block, and we only run on `loop_`'s thread.
-            unsafe {
-                let Some(poll) = (*req).libinfo.file_poll.take() else {
-                    continue;
-                };
-                let machport = core::mem::take(&mut (*req).libinfo.machport);
-                (*req).libinfo.loop_ = ptr::null_mut();
-                if machport != 0 {
-                    if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
-                        cancel(machport);
-                    }
+        // Syscalls + deinit + scheduling outside the lock. `req` stays live:
+        // its in-flight refcount is released only by `after_result`, which we
+        // schedule below.
+        for (req, poll, machport) in stale {
+            if machport != 0 {
+                if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
+                    // SAFETY: `machport` is the receive right `lookup_libinfo` obtained.
+                    unsafe { cancel(machport) };
                 }
-                // Unregister the knote + return the hive slot; deferred-free
-                // protects against any event already queued for this poll.
-                (*poll.as_ptr()).deinit();
-
-                bun_output::scoped_log!(
-                    dns,
-                    "sweep_stale_libinfo: falling back to work pool for {}",
-                    bstr::BStr::new(
-                        (*req)
-                            .key
-                            .host
-                            .as_ref()
-                            .map(|h| h.as_bytes())
-                            .unwrap_or(b"")
-                    )
-                );
             }
+            // SAFETY: we run on the owning loop's thread; deferred-free handles
+            // any event already queued for this poll.
+            unsafe { (*poll.as_ptr()).deinit() };
+
+            // SAFETY: `req` is live (in-flight refcount held until `after_result`).
+            bun_output::scoped_log!(
+                dns,
+                "sweep_stale_libinfo: falling back to work pool for {}",
+                bstr::BStr::new(unsafe {
+                    (*req)
+                        .key
+                        .host
+                        .as_ref()
+                        .map(|h| h.as_bytes())
+                        .unwrap_or(b"")
+                })
+            );
             let _ = bun_threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| {
                 work_pool_callback(r.0)
             });

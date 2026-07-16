@@ -1108,6 +1108,20 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("unicorn", 0, 4, { ellipsis: "" })).toBe("unic");
     });
 
+    test("start-cut degenerate on non-ASCII returns ellipsis, not empty", () => {
+      // Streaming path (non-ASCII input, positive indices): start ellipsis
+      // budget pushes `start` past the string's width. The ellipsis must still
+      // be returned, matching the ASCII fast path and the end-cut degenerate.
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 4)).toBe("ЗИ");
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 4, { ellipsis: ">>" })).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 2, 5, { ellipsis: ">>" })).toBe(">>");
+      // Same shape via the ASCII fast path, for parity.
+      expect(Bun.sliceAnsi("abc", 1, 4, { ellipsis: ">>" })).toBe(">>");
+      // Original range empty (start >= totalW): still empty, no ellipsis.
+      expect(Bun.sliceAnsi("ЖЗИ", 3, 6, { ellipsis: ">>" })).toBe("");
+      expect(Bun.sliceAnsi("Ж", 1, 2, { ellipsis: ">>" })).toBe("");
+    });
+
     test("no ellipsis when not cut", () => {
       // short string, large range: no cut, no ellipsis
       expect(Bun.sliceAnsi("hi", 0, 100, { ellipsis: E })).toBe("hi");

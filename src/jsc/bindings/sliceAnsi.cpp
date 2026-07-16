@@ -886,6 +886,7 @@ static WTF::String emitSliceStreaming(
     bool needStartEllipsis = false;
     bool needEndEllipsis = false;
     size_t ellipsisEndBudget = 0; // how much we shrank `end` by for end ellipsis
+    const size_t startBeforeBudget = start;
     if (ellipsisWidth > 0) {
         if (cutStartForEllipsis && ellipsisWidth < (endUnbounded ? SIZE_MAX - start : end - start)) {
             needStartEllipsis = true;
@@ -1199,7 +1200,14 @@ walkDone:;
         if (include) flushPending(/*filterCloseOnly=*/trailingPastEnd);
     }
 
-    if (!include) return emptyString();
+    if (!include) {
+        // Start-side degenerate: the ellipsis budget pushed `start` past all
+        // content but the original range was non-empty. Match the cutEndKnown
+        // fallback above and the ASCII fast path: return the ellipsis.
+        if (ellipsisWidth > 0 && cutStartForEllipsis && position > startBeforeBudget)
+            return ellipsis.toString();
+        return emptyString();
+    }
 
     // Resolve lazy cutEnd: if we budgeted a spec zone and sawCutEnd → cut.
     // Otherwise (EOF reached without exceeding specEnd) → no cut, flush zone.

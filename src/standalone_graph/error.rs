@@ -10,6 +10,8 @@ pub enum Error {
     InvalidResponse,
     #[error("ExtractionFailed")]
     ExtractionFailed,
+    #[error("CacheWriteFailed")]
+    CacheWriteFailed(bun_errno::SystemErrno),
     #[error("UnsupportedTarget")]
     UnsupportedTarget,
     #[error("InvalidSourceMap")]
@@ -45,6 +47,7 @@ impl Error {
             Self::NetworkError => "NetworkError",
             Self::InvalidResponse => "InvalidResponse",
             Self::ExtractionFailed => "ExtractionFailed",
+            Self::CacheWriteFailed(e) => <&'static str>::from(e),
             Self::UnsupportedTarget => "UnsupportedTarget",
             Self::InvalidSourceMap => "InvalidSourceMap",
             Self::SourceMapTooLarge => "SourceMapTooLarge",

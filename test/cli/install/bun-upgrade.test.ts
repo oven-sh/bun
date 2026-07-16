@@ -99,84 +99,86 @@ describe.concurrent(() => {
   });
 
   it("zero arguments, should succeed", async () => {
-    const tagName = bunExe().includes("-debug") ? "canary" : `bun-v${Bun.version}`;
-    using server = Bun.serve({
-      tls: tls,
-      port: 0,
-      async fetch() {
-        return new Response(
-          JSON.stringify({
-            "tag_name": tagName,
-            "assets": [
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-windows-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-windows-aarch64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-linux-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-linux-aarch64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-x64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-x64-baseline.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-x64-baseline.zip`,
-              },
-              {
-                "url": "foo",
-                "content_type": "application/zip",
-                "name": "bun-darwin-aarch64.zip",
-                "browser_download_url": `https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases/${tagName}/bun-darwin-aarch64.zip`,
-              },
-            ],
-          }),
-        );
+    const cwd = tmpdirSync();
+    await using proc = spawn({
+      cmd: [bunExe(), "upgrade"],
+      cwd,
+      stdout: null,
+      stdin: "pipe",
+      stderr: "pipe",
+      env: {
+        ...env,
+        // Canary builds hard-code the github.com download URL and never
+        // consult GITHUB_API_DOMAIN, so point at a dead proxy to fail the
+        // download locally instead of depending on the live canary release.
+        HTTPS_PROXY: "http://127.0.0.1:1",
+        HTTP_PROXY: "http://127.0.0.1:1",
       },
     });
 
-    // On windows, open the temporary directory without FILE_SHARE_DELETE before spawning
-    // the upgrade process. This is to test for EBUSY errors
-    openTempDirWithoutSharingDelete();
-    const cwd = tmpdirSync();
-    const execPath = join(cwd, basename(bunExe()));
-    await copyFile(bunExe(), execPath);
+    const err = await proc.stderr.text();
+    // Should not contain error message
+    expect(err.split(/\r?\n/)).not.toContain(
+      "error: This command updates Bun itself, and does not take package names.",
+    );
+    await proc.exited;
+  });
+});
 
+// https://github.com/oven-sh/bun/pull/10387 : upgrading must not EBUSY on
+// Windows when another handle holds the OS temp dir without FILE_SHARE_DELETE.
+// The open/close helpers are no-ops on other platforms.
+it("completes the download when the OS temp dir is held open without FILE_SHARE_DELETE", async () => {
+  const tagName = "bun-v9.8.7";
+  const assetNames: string[] = [];
+  for (const os of ["windows", "linux", "darwin"]) {
+    for (const arch of ["x64", "aarch64"]) {
+      for (const abi of ["", "-musl"]) {
+        for (const cpu of ["", "-baseline"]) {
+          assetNames.push(`bun-${os}-${arch}${abi}${cpu}.zip`);
+        }
+      }
+    }
+  }
+
+  let apiHits = 0;
+  using server = Bun.serve({
+    tls: tls,
+    port: 0,
+    async fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname.startsWith("/releases/")) {
+        return new Response("this is not a real zip archive");
+      }
+      apiHits++;
+      return new Response(
+        JSON.stringify({
+          "tag_name": tagName,
+          "assets": assetNames.map(name => ({
+            "url": "foo",
+            "content_type": "application/zip",
+            "name": name,
+            "browser_download_url": `https://${server.hostname}:${server.port}/releases/${tagName}/${name}`,
+          })),
+        }),
+      );
+    },
+  });
+
+  const cwd = tmpdirSync();
+  const execPath = join(cwd, basename(bunExe()));
+  await copyFile(bunExe(), execPath);
+
+  // On Windows, hold a handle to the OS temp directory without FILE_SHARE_DELETE
+  // for the whole upgrade run so EBUSY handling is actually exercised.
+  openTempDirWithoutSharingDelete();
+  let stderr: string;
+  let exitCode: number;
+  try {
     await using proc = Bun.spawn({
-      cmd: [execPath, "upgrade"],
+      // --stable routes through GITHUB_API_DOMAIN (the canary path hard-codes
+      // github.com and would never touch this mock).
+      cmd: [execPath, "upgrade", "--stable"],
       cwd,
       stdout: null,
       stdin: "pipe",
@@ -185,18 +187,23 @@ describe.concurrent(() => {
         ...env,
         NODE_TLS_REJECT_UNAUTHORIZED: "0",
         GITHUB_API_DOMAIN: `${server.hostname}:${server.port}`,
+        ASAN_OPTIONS: [env.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
       },
     });
 
+    [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  } finally {
     closeTempDirHandle();
+  }
 
-    // Should not contain error message
-    expect(await proc.stderr.text()).not.toContain("error:");
-    // Reap the subprocess: stderr can close before the child exits, and an
-    // unreaped child is force-killed by the test runner at test end without
-    // draining the Subprocess refcount — LSan then flags it as a leak.
-    await proc.exited;
-  });
+  // The release metadata must have been served by the local mock.
+  expect(apiHits).toBeGreaterThan(0);
+  // The upgrade reached the download/temp-dir stage with our fake release.
+  expect(stderr).toContain("9.8.7");
+  // No EBUSY while staging into the temp directory.
+  expect(stderr).not.toContain("EBUSY");
+  // The payload is not a real zip, so extraction fails cleanly.
+  expect(exitCode).toBe(1);
 });
 
 it("recreates the staging directory in the temp dir instead of reusing a pre-existing one", async () => {

@@ -157,6 +157,12 @@ const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
+// libuv unrefs the handle at UV_EOF; mirror that so a socket that has received
+// FIN does not keep the process alive. Skip while a write is in flight or
+// allowHalfOpen may still write, so drain can complete.
+function maybeUnrefOnFIN(self, socket) {
+  if (!self[kwriteCallback] && (self.allowHalfOpen === false || self.writableFinished)) socket.unref();
+}
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
@@ -299,10 +305,7 @@ const SocketHandlers: SocketHandler = {
 
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
-    // libuv unrefs the handle at UV_EOF; mirror that so a socket that has
-    // received FIN does not keep the process alive. Skip while a write is
-    // in flight or allowHalfOpen may still write, so drain can complete.
-    if (!self[kwriteCallback] && (self.allowHalfOpen === false || self.writableFinished)) socket.unref();
+    maybeUnrefOnFIN(self, socket);
   },
   // A new resumable TLS session arrived (the peer's NewSessionTicket was just
   // processed). Mirrors Node's onnewsessionclient: emit once the handshake has
@@ -1054,10 +1057,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
-    // libuv unrefs the handle at UV_EOF; mirror that so a socket that has
-    // received FIN does not keep the process alive. Skip while a write is
-    // in flight or allowHalfOpen may still write, so drain can complete.
-    if (!self[kwriteCallback] && (self.allowHalfOpen === false || self.writableFinished)) socket.unref();
+    maybeUnrefOnFIN(self, socket);
   },
   // See SocketHandlers.session.
   session(socket, session) {

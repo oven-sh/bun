@@ -1,7 +1,7 @@
 import { Socket as _BunSocket, TCPSocketListener } from "bun";
 import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isLinux, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import {
@@ -976,8 +976,10 @@ describe("paused socket whose peer sends RST", () => {
   // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
   // close code, which the JS error path read as errno 8 and surfaced as a
   // bogus `Error: read ENOEXEC` when the socket was not actively reading.
-  // kqueue already normalized the flag to 0/1.
-  it("does not surface a bogus errno error", async () => {
+  // kqueue already normalized the flag to 0/1. Linux-only: epoll delivers
+  // EPOLLERR on a paused fd; on IOCP/kqueue a paused socket never observes
+  // the RST, so 'close' cannot fire.
+  it.skipIf(!isLinux)("does not surface a bogus errno error", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     const errors: NodeJS.ErrnoException[] = [];
     const server = createServer(c => {

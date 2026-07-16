@@ -257,6 +257,331 @@ function removeConsoleHooks() {
   hookedConsoleMethods.length = 0;
 }
 
+// --- Network domain -------------------------------------------------------
+// Mirrors src/inspector/network_agent.cc from Node: the public inspector.Network
+// entry points validate and buffer here, and only the commands below hand data
+// back to a frontend.
+
+// Node caps a single resource at 5MB and the whole buffer at 100MB, silently
+// dropping a blob that would exceed either.
+const kDefaultMaxResourceBufferSize = 5 * 1024 * 1024;
+const kDefaultMaxTotalBufferSize = 100 * 1024 * 1024;
+
+class NetworkRequestEntry {
+  isStreaming = false;
+  isRequestFinished: boolean;
+  isResponseFinished = false;
+  requestIsUTF8: boolean;
+  responseIsUTF8 = false;
+  requestDataBlobs: Uint8Array[] = [];
+  responseDataBlobs: Uint8Array[] = [];
+  bufferSize = 0;
+  maxResourceBufferSize: number;
+
+  constructor(hasPostData: boolean, requestIsUTF8: boolean, maxResourceBufferSize: number) {
+    // A request with no body is born finished; only hasPostData obliges the
+    // caller to send dataSent({ finished: true }).
+    this.isRequestFinished = !hasPostData;
+    this.requestIsUTF8 = requestIsUTF8;
+    // Captured per entry: a later enable() must not retroactively shrink it.
+    this.maxResourceBufferSize = maxResourceBufferSize;
+  }
+}
+
+// Node keeps the buffer on the per-session NetworkAgent, so one session's
+// enable()/disable() cannot disturb another's buffered requests.
+class NetworkState {
+  // Insertion-ordered: the oldest entry is evicted first once the total cap is hit.
+  requests = new Map<string, NetworkRequestEntry>();
+  maxResourceBufferSize = kDefaultMaxResourceBufferSize;
+  maxTotalBufferSize = kDefaultMaxTotalBufferSize;
+  totalBufferSize = 0;
+}
+
+const networkEnabledSessions = new Map<Session, NetworkState>();
+
+function pushNetworkBlob(state: NetworkState, entry: NetworkRequestEntry, blobs: Uint8Array[], blob: Uint8Array) {
+  if (entry.bufferSize + blob.byteLength > entry.maxResourceBufferSize) return;
+  // Copy: Node's Binary::fromUint8Array eagerly copies, so a caller that
+  // recycles its chunk buffer must not corrupt what we buffered.
+  blobs.push(new Uint8Array(blob));
+  entry.bufferSize += blob.byteLength;
+  state.totalBufferSize += blob.byteLength;
+  while (state.totalBufferSize > state.maxTotalBufferSize) {
+    let oldest: string | undefined;
+    let oldestEntry: NetworkRequestEntry | undefined;
+    for (const { 0: key, 1: value } of state.requests) {
+      oldest = key;
+      oldestEntry = value;
+      break;
+    }
+    if (oldest === undefined) break;
+    state.totalBufferSize -= oldestEntry!.bufferSize;
+    state.requests.$delete(oldest);
+  }
+}
+
+function dropNetworkEntry(state: NetworkState, requestId: string, entry: NetworkRequestEntry) {
+  state.totalBufferSize -= entry.bufferSize;
+  state.requests.$delete(requestId);
+}
+
+function concatBlobs(blobs: Uint8Array[]) {
+  let total = 0;
+  for (const blob of blobs) total += blob.byteLength;
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const blob of blobs) {
+    out.set(blob, offset);
+    offset += blob.byteLength;
+  }
+  return out;
+}
+
+// Node reports a missing property and a wrong-typed one identically; `label`
+// carries the dotted path it uses for nested fields ("request.url").
+function requireEventString(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "string") throw new TypeError(`Missing ${label} in event`);
+  return value;
+}
+
+// ObjectGetDouble: any JS number.
+function requireEventNumber(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "number") throw new TypeError(`Missing ${label} in event`);
+  return value;
+}
+
+// ObjectGetInt: Node requires a real Int32 here, not just a number.
+function requireEventInt(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "number" || !Number.isInteger(value) || value < -2147483648 || value > 2147483647) {
+    throw new TypeError(`Missing ${label} in event`);
+  }
+  return value;
+}
+
+function requireEventObject(params: any, key: string, label: string = key) {
+  const value = params[key];
+  if (typeof value !== "object" || value === null) throw new TypeError(`Missing ${label} in event`);
+  return value;
+}
+
+function requireEventUint8Array(params: any, key: string) {
+  requireEventObject(params, key);
+  const value = params[key];
+  if (!(value instanceof Uint8Array)) throw new TypeError("Expected data to be Uint8Array in event");
+  return value as Uint8Array;
+}
+
+// Header values must be protocol strings; Node rejects anything else outright.
+function headersFromObject(source: any, key: string, label: string) {
+  const raw = requireEventObject(source, key, label);
+  const headers: Record<string, string> = { __proto__: null } as any;
+  for (const name of Object.keys(raw)) {
+    const value = raw[name];
+    if (typeof value !== "string") throw new TypeError("Invalid header value in event");
+    headers[name] = value;
+  }
+  return headers;
+}
+
+function requestFromObject(params: any) {
+  const request = requireEventObject(params, "request");
+  const url = requireEventString(request, "url", "request.url");
+  const method = requireEventString(request, "method", "request.method");
+  const headers = headersFromObject(request, "headers", "request.headers");
+  // Node's ObjectGetBool yields false for any non-boolean, so `hasPostData: 1`
+  // must not arm the dataSent({ finished: true }) handshake.
+  // Extra properties are dropped: Node emits exactly this shape.
+  return { url, method, hasPostData: request.hasPostData === true, headers };
+}
+
+function responseFromObject(params: any, key: string, withUrl: boolean) {
+  const response = requireEventObject(params, key);
+  const status = requireEventInt(response, "status", "response.status");
+  const statusText = requireEventString(response, "statusText", "response.statusText");
+  const headers = headersFromObject(response, "headers", "response.headers");
+  if (!withUrl) return { status, statusText, headers };
+  const url = requireEventString(response, "url", "response.url");
+  return {
+    url,
+    status,
+    statusText,
+    headers,
+    mimeType: typeof response.mimeType === "string" ? response.mimeType : "",
+    charset: typeof response.charset === "string" ? response.charset : "",
+  };
+}
+
+function emitToSession(session: Session, method: string, params: object) {
+  const message = { method, params };
+  session.emit(method, message);
+  session.emit("inspectorNotification", message);
+}
+
+// Each enabled session owns its buffer, so the event is applied once per session.
+function forEachNetworkSession(fn: (session: Session, state: NetworkState) => void) {
+  for (const { 0: session, 1: state } of networkEnabledSessions) fn(session, state);
+}
+
+const Network = {
+  requestWillBeSent(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const wallTime = requireEventNumber(params, "wallTime");
+    const request = requestFromObject(params);
+    // The request charset sits at the top level, not inside `request`.
+    const requestIsUTF8 = params.charset === "utf-8";
+    forEachNetworkSession((session, state) => {
+      // A duplicate requestId drops the whole event for that session.
+      if (state.requests.$has(requestId)) return;
+      state.requests.$set(
+        requestId,
+        new NetworkRequestEntry(request.hasPostData, requestIsUTF8, state.maxResourceBufferSize),
+      );
+      emitToSession(session, "Network.requestWillBeSent", {
+        requestId,
+        request,
+        timestamp,
+        wallTime,
+        initiator: { type: "script" },
+      });
+    });
+  },
+
+  responseReceived(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const type = requireEventString(params, "type");
+    const response = responseFromObject(params, "response", true);
+    forEachNetworkSession((session, state) => {
+      const entry = state.requests.$get(requestId);
+      if (entry === undefined) return;
+      entry.responseIsUTF8 = response.charset === "utf-8";
+      emitToSession(session, "Network.responseReceived", { requestId, timestamp, type, response });
+    });
+  },
+
+  loadingFinished(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    forEachNetworkSession((session, state) => {
+      // Node emits before the lookup, so an unknown requestId still reaches the frontend.
+      emitToSession(session, "Network.loadingFinished", { requestId, timestamp });
+      const entry = state.requests.$get(requestId);
+      if (entry === undefined) return;
+      if (entry.isStreaming) dropNetworkEntry(state, requestId, entry);
+      else entry.isResponseFinished = true;
+    });
+  },
+
+  loadingFailed(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const type = requireEventString(params, "type");
+    const errorText = requireEventString(params, "errorText");
+    forEachNetworkSession((session, state) => {
+      emitToSession(session, "Network.loadingFailed", { requestId, timestamp, type, errorText });
+      const entry = state.requests.$get(requestId);
+      if (entry !== undefined) dropNetworkEntry(state, requestId, entry);
+    });
+  },
+
+  // dataSent is never emitted; it only feeds Network.getRequestPostData.
+  dataSent(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    // `finished` short-circuits before any other field is read.
+    const finished = params.finished === true;
+    if (!finished) {
+      requireEventNumber(params, "timestamp");
+      requireEventInt(params, "dataLength");
+      requireEventUint8Array(params, "data");
+    }
+    forEachNetworkSession((_session, state) => {
+      const entry = state.requests.$get(requestId);
+      if (entry === undefined) return;
+      if (finished) {
+        entry.isRequestFinished = true;
+        return;
+      }
+      pushNetworkBlob(state, entry, entry.requestDataBlobs, params.data);
+    });
+  },
+
+  dataReceived(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const dataLength = requireEventInt(params, "dataLength");
+    const encodedDataLength = requireEventInt(params, "encodedDataLength");
+    const data = requireEventUint8Array(params, "data");
+    forEachNetworkSession((session, state) => {
+      const entry = state.requests.$get(requestId);
+      if (entry === undefined) return;
+      // Buffer until a frontend asks to stream, then emit live.
+      if (entry.isStreaming) {
+        emitToSession(session, "Network.dataReceived", {
+          requestId,
+          timestamp,
+          dataLength,
+          encodedDataLength,
+          data: Buffer.from(data).toString("base64"),
+        });
+      } else {
+        pushNetworkBlob(state, entry, entry.responseDataBlobs, data);
+      }
+    });
+  },
+
+  webSocketCreated(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const url = requireEventString(params, "url");
+    forEachNetworkSession(session => {
+      emitToSession(session, "Network.webSocketCreated", { requestId, url, initiator: { type: "script" } });
+    });
+  },
+
+  webSocketClosed(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    forEachNetworkSession(session => {
+      emitToSession(session, "Network.webSocketClosed", { requestId, timestamp });
+    });
+  },
+
+  webSocketHandshakeResponseReceived(params: any) {
+    if (networkEnabledSessions.size === 0) return;
+    const requestId = requireEventString(params, "requestId");
+    const timestamp = requireEventNumber(params, "timestamp");
+    const response = responseFromObject(params, "response", false);
+    forEachNetworkSession(session => {
+      emitToSession(session, "Network.webSocketHandshakeResponseReceived", { requestId, timestamp, response });
+    });
+  },
+};
+
+// Node routes every entry point through broadcastToFrontend, which defaults a
+// missing params to {} and then validateObject()s it.
+for (const name of Object.keys(Network)) {
+  const original = Network[name];
+  Network[name] = function (params = {}) {
+    if (typeof params !== "object" || params === null || $isArray(params)) {
+      // Node's validateObject renders this type name lowercase.
+      throw $ERR_INVALID_ARG_TYPE("params", "object", params);
+    }
+    return original.$call(this, params);
+  };
+}
+
 // Reshapes the raw control-flow-profiler data from jsFunction_collectPreciseCoverage
 // ([{ url, scriptId, sourceLength, blocks: [[start, end, count]], functions: [[start, end, executed]] }])
 // into the V8 ScriptCoverage list returned by Profiler.takePreciseCoverage:
@@ -433,6 +758,7 @@ class Session extends EventEmitter {
     this.#connected = false;
     this.#coverageBaseline.$clear();
     runtimeEnabledSessions.$delete(this);
+    networkEnabledSessions.$delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
     // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
     // on the debugger thread; release it so a disconnected session cannot keep
@@ -507,6 +833,58 @@ class Session extends EventEmitter {
         runtimeEnabledSessions.$delete(this);
         if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
         return {};
+
+      case "Network.enable": {
+        // Node rebuilds this session's buffer on every enable, discarding prior state.
+        const state = new NetworkState();
+        const maxTotal = (params as any)?.maxTotalBufferSize;
+        const maxResource = (params as any)?.maxResourceBufferSize;
+        if (typeof maxTotal === "number") state.maxTotalBufferSize = maxTotal;
+        if (typeof maxResource === "number") state.maxResourceBufferSize = maxResource;
+        networkEnabledSessions.$set(this, state);
+        return {};
+      }
+
+      case "Network.disable":
+        networkEnabledSessions.$delete(this);
+        return {};
+
+      case "Network.streamResourceContent": {
+        const state = networkEnabledSessions.$get(this);
+        const requestId = (params as any)?.requestId;
+        const entry = state?.requests.$get(requestId);
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        entry.isStreaming = true;
+        const buffered = concatBlobs(entry.responseDataBlobs);
+        entry.bufferSize -= buffered.byteLength;
+        state.totalBufferSize -= buffered.byteLength;
+        entry.responseDataBlobs = [];
+        if (entry.isResponseFinished) dropNetworkEntry(state, requestId, entry);
+        return { bufferedData: Buffer.from(buffered).toString("base64") };
+      }
+
+      case "Network.getResponseBody": {
+        const state = networkEnabledSessions.$get(this);
+        const requestId = (params as any)?.requestId;
+        const entry = state?.requests.$get(requestId);
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        if (entry.isStreaming) return $ERR_INSPECTOR_COMMAND("-32602: Response body of the request is been streamed");
+        if (!entry.isResponseFinished) return $ERR_INSPECTOR_COMMAND("-32602: Response data is not finished yet");
+        const body = concatBlobs(entry.responseDataBlobs);
+        dropNetworkEntry(state, requestId, entry);
+        if (entry.responseIsUTF8) return { body: Buffer.from(body).toString("utf8"), base64Encoded: false };
+        return { body: Buffer.from(body).toString("base64"), base64Encoded: true };
+      }
+
+      case "Network.getRequestPostData": {
+        const state = networkEnabledSessions.$get(this);
+        const requestId = (params as any)?.requestId;
+        const entry = state?.requests.$get(requestId);
+        if (state === undefined || entry === undefined) return $ERR_INSPECTOR_COMMAND("-32602: Request not found");
+        if (!entry.isRequestFinished) return $ERR_INSPECTOR_COMMAND("-32602: Request data is not finished yet");
+        if (!entry.requestIsUTF8) return $ERR_INSPECTOR_COMMAND("-32000: Unable to serialize binary request body");
+        return { postData: Buffer.from(concatBlobs(entry.requestDataBlobs)).toString("utf8") };
+      }
 
       case "Profiler.enable":
         this.#profilerEnabled = true;
@@ -717,6 +1095,7 @@ export default {
   url,
   waitForDebugger,
   Session,
+  Network,
 };
 
 hideFromStack(open, close, url, waitForDebugger, Session.prototype.constructor);

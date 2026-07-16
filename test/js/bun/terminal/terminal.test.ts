@@ -1228,6 +1228,52 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     expect(output).toContain("hello");
   });
 
+  // An inline terminal must not keep the event loop alive after its subprocess
+  // exits: on_process_exit drives the reader to EOF and unrefs both polls, so a
+  // script that never calls terminal.close() still exits. Regression for #33882
+  // which deferred the reader's EOF to a later poll tick. POSIX-only: Windows
+  // delivers EOF via close_pseudoconsole off-thread and was not affected.
+  test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let out = "";
+          let exitCount = 0;
+          const child = Bun.spawn([process.execPath, "-e", "console.log('hi from pty')"], {
+            env: process.env,
+            terminal: {
+              data: (_t, d) => { out += Buffer.from(d).toString(); },
+              exit: () => { exitCount++; },
+            },
+          });
+          await child.exited;
+          const exitedSync = exitCount === 1;
+          // One macrotask barrier so the reader's still-armed one-shot poll
+          // fires its second EIO; the exit callback must stay at one.
+          await Bun.sleep(0);
+          process.stdout.write(JSON.stringify({
+            gotOutput: out.includes("hi from pty"),
+            exitedSync,
+            exitCount,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // On main this times out: the reader/writer polls kept loop.active > 0 and
+    // nothing triggered the GC that would finalize the Terminal.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ gotOutput: true, exitedSync: true, exitCount: 1 }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  });
+
   // https://github.com/oven-sh/bun/issues/33187
   // Not `test.concurrent`: spawns run concurrently inside the body; the serial
   // `Bun.spawn` loop must be the only contention to reproduce the race.

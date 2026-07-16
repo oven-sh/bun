@@ -6,7 +6,9 @@
 
 use bun_core::String as BunString;
 use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope, StringJsc as _, StrongOptional,
+};
 
 use crate::api::bun::subprocess::Subprocess;
 
@@ -49,20 +51,24 @@ fn child_singleton<'a>() -> &'a mut InternalMsgHolder {
     unsafe { (*CHILD_SINGLETON.get()).get_or_insert_with(Default::default) }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn send_helper_child<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
     bun_output::scoped_log!(IPC, "sendHelperChild");
 
-    let arguments = frame.arguments_old::<3>().ptr;
-    let message = arguments[0];
-    let handle = arguments[1];
-    let callback = arguments[2];
+    let arguments = frame.scoped_arguments::<3>(scope);
+    let message = arguments.ptr[0];
+    let handle = arguments.ptr[1];
+    let callback = arguments.ptr[2];
 
+    let global = scope.unscoped_global();
     let vm = global.bun_vm().as_mut();
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global; sole &mut on JS thread.
 
     if vm.ipc.is_none() {
-        return Ok(JSValue::FALSE);
+        return Ok(scope.local(JSValue::FALSE));
     }
     if message.is_undefined() {
         return Err(global.throw_missing_arguments_value(&["message"]));
@@ -71,19 +77,20 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         return Err(global.throw(format_args!("passing 'handle' not implemented yet")));
     }
     if !message.is_object() {
-        return Err(global.throw_invalid_argument_type_value("message", "object", message));
+        return Err(global.throw_invalid_argument_type_value("message", "object", message.raw()));
     }
     let singleton = child_singleton();
-    if callback.is_function() {
+    if callback.raw().is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
         let _ = singleton
             .callbacks
-            .put(singleton.seq, StrongOptional::create(callback, global));
+            .put(singleton.seq, StrongOptional::create(callback.raw(), global));
     }
 
     // sequence number for InternalMsgHolder
-    message.put(global, b"seq", JSValue::js_number(singleton.seq as f64));
+    let seq = scope.number(singleton.seq as f64);
+    message.put(scope, b"seq", seq);
     singleton.seq = singleton.seq.wrapping_add(1);
 
     // similar code as Bun__Process__send
@@ -93,7 +100,7 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
         bun_output::scoped_log!(
             IPC,
             "child: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message.raw())
         );
     }
 
@@ -101,56 +108,56 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     // SAFETY: `get_ipc_instance` returns a live owned IPCInstance pointer; sole &mut on JS thread.
     let ipc_instance = unsafe { &mut *ipc_instance };
 
-    #[bun_jsc::host_fn]
-    fn impl_(global_: &JSGlobalObject, frame_: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    fn impl_<'s>(scope: &mut Scope<'s>, frame_: &CallFrame) -> JsResult<Local<'s>> {
         let arguments_ = frame_.arguments_old::<1>();
         let arguments_ = arguments_.slice();
         let ex = arguments_[0];
-        Process__emitErrorEvent(global_, ex.to_error().unwrap_or(ex));
-        Ok(JSValue::UNDEFINED)
+        Process__emitErrorEvent(scope.unscoped_global(), ex.to_error().unwrap_or(ex));
+        Ok(scope.undefined())
     }
 
     let good = ipc_instance.data.serialize_and_send(
         global,
-        message,
+        message.raw(),
         IsInternal::Internal,
         JSValue::NULL,
         None,
     );
 
     if good == SerializeAndSendResult::Failure {
-        let ex = global.create_type_error_instance(format_args!("sendInternal() failed"));
-        ex.put(
-            global,
-            b"syscall",
-            BunString::static_str("write").to_js(global)?,
-        );
+        let ex = scope.local(global.create_type_error_instance(format_args!(
+            "sendInternal() failed"
+        )));
+        let syscall = scope.local(BunString::static_str("write").to_js(global)?);
+        ex.put(scope, b"syscall", syscall);
         let fnvalue =
             bun_jsc::JSFunction::create(global, "", __jsc_host_impl_, 1, Default::default());
-        JSValue::call_next_tick_1(fnvalue, global, ex)?;
-        return Ok(JSValue::FALSE);
+        JSValue::call_next_tick_1(fnvalue, global, ex.raw())?;
+        return Ok(scope.local(JSValue::FALSE));
     }
 
-    Ok(if good == SerializeAndSendResult::Success {
+    Ok(scope.local(if good == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {
         JSValue::FALSE
-    })
+    }))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn on_internal_message_child(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn on_internal_message_child<'s>(
+    scope: &mut Scope<'s>,
     frame: &CallFrame,
-) -> JsResult<JSValue> {
+) -> JsResult<Local<'s>> {
     bun_output::scoped_log!(IPC, "onInternalMessageChild");
-    let arguments = frame.arguments_old::<2>().ptr;
+    let arguments = frame.scoped_arguments::<2>(scope);
+    let global = scope.unscoped_global();
     let singleton = child_singleton();
     // TODO: we should not create two jsc.Strong.Optional here. If absolutely necessary, a single Array. should be all we use.
-    singleton.worker = StrongOptional::create(arguments[0], global);
-    singleton.cb = StrongOptional::create(arguments[1], global);
+    singleton.worker = StrongOptional::create(arguments.ptr[0].raw(), global);
+    singleton.cb = StrongOptional::create(arguments.ptr[1].raw(), global);
     singleton.flush(global)?;
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 pub(crate) fn handle_internal_message_child(
@@ -162,46 +169,47 @@ pub(crate) fn handle_internal_message_child(
     child_singleton().dispatch(message, global)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn send_helper_primary<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
     bun_output::scoped_log!(IPC, "sendHelperPrimary");
 
-    let arguments = frame.arguments_old::<4>().ptr;
+    let arguments = frame.scoped_arguments::<4>(scope);
     // `as_class_ref` is the safe shared-borrow downcast (centralised deref
     // proof in `JSValue`); `Subprocess::ipc(&self)` projects the `JsCell`.
     // `cluster.Worker({ process })` accepts any object, so `process[kHandle]`
     // is `undefined` unless `cluster.fork()` created the process; Node's
     // `sendHelper` returns false for a worker with no IPC channel.
-    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
-        return Ok(JSValue::FALSE);
+    let Some(subprocess) = arguments.ptr[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(scope.local(JSValue::FALSE));
     };
-    let message = arguments[1];
-    let handle = arguments[2];
-    let callback = arguments[3];
+    let message = arguments.ptr[1];
+    let handle = arguments.ptr[2];
+    let callback = arguments.ptr[3];
 
+    let global = scope.unscoped_global();
     let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(JSValue::FALSE);
+        return Ok(scope.local(JSValue::FALSE));
     };
 
     if message.is_undefined() {
         return Err(global.throw_missing_arguments_value(&["message"]));
     }
     if !message.is_object() {
-        return Err(global.throw_invalid_argument_type_value("message", "object", message));
+        return Err(global.throw_invalid_argument_type_value("message", "object", message.raw()));
     }
-    if callback.is_function() {
+    if callback.raw().is_function() {
         let _ = ipc_data.internal_msg_queue.callbacks.put(
             ipc_data.internal_msg_queue.seq,
-            StrongOptional::create(callback, global),
+            StrongOptional::create(callback.raw(), global),
         );
     }
 
     // sequence number for InternalMsgHolder
-    message.put(
-        global,
-        b"seq",
-        JSValue::js_number(ipc_data.internal_msg_queue.seq as f64),
-    );
+    let seq = scope.number(ipc_data.internal_msg_queue.seq as f64);
+    message.put(scope, b"seq", seq);
     ipc_data.internal_msg_queue.seq = ipc_data.internal_msg_queue.seq.wrapping_add(1);
 
     // similar code as bun.jsc.Subprocess.doSend
@@ -211,39 +219,45 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         bun_output::scoped_log!(
             IPC,
             "primary: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message.raw())
         );
     }
 
     let _ = handle;
-    let success =
-        ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
-    Ok(if success == SerializeAndSendResult::Success {
+    let success = ipc_data.serialize_and_send(
+        global,
+        message.raw(),
+        IsInternal::Internal,
+        JSValue::NULL,
+        None,
+    );
+    Ok(scope.local(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {
         JSValue::FALSE
-    })
+    }))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn on_internal_message_primary(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn on_internal_message_primary<'s>(
+    scope: &mut Scope<'s>,
     frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<3>().ptr;
+) -> JsResult<Local<'s>> {
+    let arguments = frame.scoped_arguments::<3>(scope);
     // `as_class_ref` is the safe shared-borrow downcast; `ipc()` takes `&self`.
     // Same guard as `send_helper_primary`: nothing to subscribe to when the
     // worker's process has no native child handle.
-    let Some(subprocess) = arguments[0].as_class_ref::<Subprocess<'_>>() else {
-        return Ok(JSValue::UNDEFINED);
+    let Some(subprocess) = arguments.ptr[0].as_class_ref::<Subprocess<'_>>() else {
+        return Ok(scope.undefined());
     };
     let Some(ipc_data) = subprocess.ipc() else {
-        return Ok(JSValue::UNDEFINED);
+        return Ok(scope.undefined());
     };
+    let global = scope.unscoped_global();
     // TODO: remove these strongs.
-    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments[1], global);
-    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments[2], global);
-    Ok(JSValue::UNDEFINED)
+    ipc_data.internal_msg_queue.worker = StrongOptional::create(arguments.ptr[1].raw(), global);
+    ipc_data.internal_msg_queue.cb = StrongOptional::create(arguments.ptr[2].raw(), global);
+    Ok(scope.undefined())
 }
 
 pub(crate) fn handle_internal_message_primary(
@@ -305,18 +319,25 @@ pub(crate) fn handle_internal_message_primary(
 //
 //
 
-#[bun_jsc::host_fn]
-pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>().ptr;
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn set_ref<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    // Note: `.ptr.len()` on a `[Local; 1]` is always 1, so the missing-argument
+    // branch is dead — preserved as-is from the unscoped version.
+    let arguments = frame.scoped_arguments::<1>(scope);
+    let global = scope.unscoped_global();
 
-    if arguments.len() == 0 {
+    if arguments.ptr.len() == 0 {
         return Err(global.throw_missing_arguments_value(&["enabled"]));
     }
-    if !arguments[0].is_boolean() {
-        return Err(global.throw_invalid_argument_type_value("enabled", "boolean", arguments[0]));
+    if !arguments.ptr[0].is_boolean() {
+        return Err(global.throw_invalid_argument_type_value(
+            "enabled",
+            "boolean",
+            arguments.ptr[0].raw(),
+        ));
     }
 
-    let enabled = arguments[0].to_boolean();
+    let enabled = arguments.ptr[0].to_boolean();
     let vm = global.bun_vm().as_mut();
     vm.channel_ref_overridden = true;
     if enabled {
@@ -324,7 +345,7 @@ pub(crate) fn set_ref(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
     } else {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
@@ -343,14 +364,14 @@ pub fn unref_channel_unless_overridden(global: &JSGlobalObject) {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn channel_ignore_one_disconnect_event_listener(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn channel_ignore_one_disconnect_event_listener<'s>(
+    scope: &mut Scope<'s>,
     _frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let vm = global.bun_vm().as_mut();
+) -> JsResult<Local<'s>> {
+    let vm = scope.unscoped_global().bun_vm().as_mut();
     vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
-    Ok(JSValue::FALSE)
+    Ok(scope.local(JSValue::FALSE))
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)

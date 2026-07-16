@@ -7,7 +7,9 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult, Local, Scope,
+};
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -106,8 +108,12 @@ where
     Ok(())
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn presign<'s>(
+    scope: &mut Scope<'s>,
+    callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
@@ -137,14 +143,17 @@ pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
             }
             let options = args.next_eat();
             let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
-            get_presign_url_from(&mut blob, global, options)
+            get_presign_url_from(&mut blob, global, options).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(mut blob) => get_presign_url_from(&mut blob, global, args.next_eat()),
+        PathOrBlob::Blob(mut blob) => {
+            get_presign_url_from(&mut blob, global, args.next_eat()).map(|v| scope.local(v))
+        }
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn unlink<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
@@ -175,17 +184,26 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
             let options = args.next_eat();
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
             let store = blob.store.get().as_ref().unwrap();
-            store.data.as_s3().unlink(store, global, options)
+            store
+                .data
+                .as_s3()
+                .unlink(store, global, options)
+                .map(|v| scope.local(v))
         }
         PathOrBlob::Blob(blob) => {
             let store = blob.store.get().as_ref().unwrap();
-            store.data.as_s3().unlink(store, global, args.next_eat())
+            store
+                .data
+                .as_s3()
+                .unlink(store, global, args.next_eat())
+                .map(|v| scope.local(v))
         }
     }
 }
 
-#[bun_jsc::host_fn]
-pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub fn write<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
@@ -236,6 +254,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
                     ..Default::default()
                 },
             )
+            .map(|v| scope.local(v))
         }
         PathOrBlob::Blob(blob) => {
             // Reshaped for borrowck — match consumes path_or_blob; rebuild to pass &mut PathOrBlob
@@ -250,12 +269,14 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
                     ..Default::default()
                 },
             )
+            .map(|v| scope.local(v))
         }
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn size<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
@@ -285,14 +306,15 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             }
             let mut blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::size(global, &mut blob)
+            S3BlobStatTask::size(global, &mut blob).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(blob) => Ok(blob.get_size(global)),
+        PathOrBlob::Blob(blob) => Ok(scope.local(blob.get_size(global))),
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn exists<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
@@ -323,9 +345,9 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
             }
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::exists(global, &blob)
+            S3BlobStatTask::exists(global, &blob).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(blob) => blob.get_exists(global, callframe),
+        PathOrBlob::Blob(blob) => blob.get_exists(global, callframe).map(|v| scope.local(v)),
     }
 }
 
@@ -812,8 +834,9 @@ pub(crate) fn get_stat(
     S3BlobStatTask::stat(global, this)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn stat<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
@@ -843,9 +866,9 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
             }
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
 
-            S3BlobStatTask::stat(global, &blob)
+            S3BlobStatTask::stat(global, &blob).map(|v| scope.local(v))
         }
-        PathOrBlob::Blob(blob) => S3BlobStatTask::stat(global, blob),
+        PathOrBlob::Blob(blob) => S3BlobStatTask::stat(global, blob).map(|v| scope.local(v)),
     }
 }
 
@@ -984,7 +1007,10 @@ bun_jsc::jsc_abi_extern! {
     ) -> JSValue;
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn create_js_s3_file(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
-    BUN__createJSS3File(global, callframe)
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn create_js_s3_file<'s>(
+    scope: &mut Scope<'s>,
+    callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
+    Ok(scope.local(BUN__createJSS3File(scope.unscoped_global(), callframe)))
 }

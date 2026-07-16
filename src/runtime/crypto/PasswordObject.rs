@@ -5,7 +5,8 @@ use std::io::Write as _;
 use bun_core::ZigString;
 use bun_io::KeepAlive;
 use bun_jsc::{
-    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope,
+    WorkPoolTask,
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
@@ -727,22 +728,24 @@ impl JSPasswordObject {
 // ─── host functions ───────────────────────────────────────────────────────
 
 // Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-pub(crate) fn js_password_object_hash(
-    global_object: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_password_object_hash<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+) -> JsResult<Local<'s>> {
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<2>(scope);
 
-    if arguments.len() < 1 {
+    if arguments.len < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
     }
 
     let mut algorithm = AlgorithmValue::DEFAULT;
 
-    if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
-        algorithm = AlgorithmValue::from_js(global_object, arguments[1])?;
+    if let Some(arg) = arguments.get(1) {
+        if !arg.is_undefined_or_null() {
+            algorithm = AlgorithmValue::from_js(global_object, arg.raw())?;
+        }
     }
 
     // TODO: this most likely should error like `hashSync` instead of stringifying.
@@ -750,7 +753,8 @@ pub(crate) fn js_password_object_hash(
     // fromJS(...) orelse {
     //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
     // }
-    let password_to_hash = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
+    let password_to_hash =
+        StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[0].raw())?;
     // errdefer bun.default_allocator.free(password_to_hash) — Box<[u8]> drops on `?`.
 
     if password_to_hash.is_empty() {
@@ -759,33 +763,36 @@ pub(crate) fn js_password_object_hash(
         );
     }
 
-    JSPasswordObject::hash::<false>(
+    let promise = JSPasswordObject::hash::<false>(
         global_object,
         password_to_hash.into_boxed_slice(),
         algorithm,
-    )
+    )?;
+    Ok(scope.local(promise))
 }
 
 // Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-pub(crate) fn js_password_object_hash_sync(
-    global_object: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_password_object_hash_sync<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<2>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+) -> JsResult<Local<'s>> {
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<2>(scope);
 
-    if arguments.len() < 1 {
+    if arguments.len < 1 {
         return Err(global_object.throw_not_enough_arguments("hash", 1, 0));
     }
 
     let mut algorithm = AlgorithmValue::DEFAULT;
 
-    if arguments.len() > 1 && !arguments[1].is_empty_or_undefined_or_null() {
-        algorithm = AlgorithmValue::from_js(global_object, arguments[1])?;
+    if let Some(arg) = arguments.get(1) {
+        if !arg.is_undefined_or_null() {
+            algorithm = AlgorithmValue::from_js(global_object, arg.raw())?;
+        }
     }
 
-    let Some(string_or_buffer) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    let Some(string_or_buffer) = StringOrBuffer::from_js_scoped(scope, arguments.ptr[0])? else {
         return Err(global_object.throw_invalid_argument_type(
             "hash",
             "password",
@@ -802,36 +809,37 @@ pub(crate) fn js_password_object_hash_sync(
 
     // The sync path only needs `&[u8]`; copy into a Box to share the async
     // signature.
-    JSPasswordObject::hash::<true>(
+    let result = JSPasswordObject::hash::<true>(
         global_object,
         Box::<[u8]>::from(string_or_buffer.slice()),
         algorithm,
-    )
+    )?;
+    Ok(scope.local(result))
 }
 
 // ─── verify host functions ────────────────────────────────────────────────
 
 // Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-pub(crate) fn js_password_object_verify(
-    global_object: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_password_object_verify<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+) -> JsResult<Local<'s>> {
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<3>(scope);
 
-    if arguments.len() < 2 {
+    if arguments.len < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
     }
 
     let mut algorithm: Option<Algorithm> = None;
 
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
+    if let Some(algorithm_value) = arguments.get(2).filter(|v| !v.is_undefined_or_null()) {
+        if !algorithm_value.is_string() {
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
+        let algorithm_string = algorithm_value.get_zig_string(scope)?;
 
         algorithm = match algorithm_from_zig_string(&algorithm_string) {
             Some(a) => Some(a),
@@ -853,66 +861,69 @@ pub(crate) fn js_password_object_verify(
     // fromJS(...) orelse {
     //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
     // }
-    let owned_password = StringOrBuffer::from_js_to_owned_slice(global_object, arguments[0])?;
+    let owned_password =
+        StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[0].raw())?;
 
     // TODO: this most likely should error like `verifySync` instead of stringifying.
     //
     // fromJS(...) orelse {
     //   return globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
     // }
-    let owned_hash = match StringOrBuffer::from_js_to_owned_slice(global_object, arguments[1]) {
-        Ok(h) => h,
-        Err(err) => {
-            drop(owned_password);
-            return Err(err);
-        }
-    };
+    let owned_hash =
+        match StringOrBuffer::from_js_to_owned_slice(global_object, arguments.ptr[1].raw()) {
+            Ok(h) => h,
+            Err(err) => {
+                drop(owned_password);
+                return Err(err);
+            }
+        };
 
     if owned_hash.is_empty() {
         drop(owned_password);
-        return Ok(JSPromise::resolved_promise_value(
+        return Ok(scope.local(JSPromise::resolved_promise_value(
             global_object,
             JSValue::FALSE,
-        ));
+        )));
     }
 
     if owned_password.is_empty() {
         drop(owned_hash);
-        return Ok(JSPromise::resolved_promise_value(
+        return Ok(scope.local(JSPromise::resolved_promise_value(
             global_object,
             JSValue::FALSE,
-        ));
+        )));
     }
 
-    JSPasswordObject::verify::<false>(
+    let promise = JSPasswordObject::verify::<false>(
         global_object,
         owned_password.into_boxed_slice(),
         owned_hash.into_boxed_slice(),
         algorithm,
-    )
+    )?;
+    Ok(scope.local(promise))
 }
 
 // Once we have bindings generator, this should be replaced with a generated function
-#[bun_jsc::host_fn]
-pub(crate) fn js_password_object_verify_sync(
-    global_object: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_password_object_verify_sync<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
-    let arguments_ = callframe.arguments_old::<3>();
-    let arguments = &arguments_.ptr[..arguments_.len];
+) -> JsResult<Local<'s>> {
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<3>(scope);
 
-    if arguments.len() < 2 {
+    if arguments.len < 2 {
         return Err(global_object.throw_not_enough_arguments("verify", 2, 0));
     }
 
     let mut algorithm: Option<Algorithm> = None;
 
-    if arguments.len() > 2 && !arguments[2].is_empty_or_undefined_or_null() {
-        if !arguments[2].is_string() {
+    if let Some(algorithm_value) = arguments.get(2).filter(|v| !v.is_undefined_or_null()) {
+        if !algorithm_value.is_string() {
             return Err(global_object.throw_invalid_argument_type("verify", "algorithm", "string"));
         }
 
-        let algorithm_string = arguments[2].get_zig_string(global_object)?;
+        let algorithm_string = algorithm_value.get_zig_string(scope)?;
 
         algorithm = match algorithm_from_zig_string(&algorithm_string) {
             Some(a) => Some(a),
@@ -924,12 +935,14 @@ pub(crate) fn js_password_object_verify_sync(
                         UNKNOWN_PASSWORD_ALGORITHM_MESSAGE,
                     ));
                 }
-                return Ok(JSValue::ZERO);
+                // Was `Ok(JSValue::ZERO)` with a pending exception — identical
+                // ABI result (`to_js_host_call` maps `Thrown` to `.zero`).
+                return Err(JsError::Thrown);
             }
         };
     }
 
-    let Some(password) = StringOrBuffer::from_js(global_object, arguments[0])? else {
+    let Some(password) = StringOrBuffer::from_js_scoped(scope, arguments.ptr[0])? else {
         return Err(global_object.throw_invalid_argument_type(
             "verify",
             "password",
@@ -937,7 +950,7 @@ pub(crate) fn js_password_object_verify_sync(
         ));
     };
 
-    let Some(hash_) = StringOrBuffer::from_js(global_object, arguments[1])? else {
+    let Some(hash_) = StringOrBuffer::from_js_scoped(scope, arguments.ptr[1])? else {
         drop(password);
         return Err(global_object.throw_invalid_argument_type(
             "verify",
@@ -949,21 +962,22 @@ pub(crate) fn js_password_object_verify_sync(
     // defer password.deinit() / hash_.deinit() — Drop at scope exit.
 
     if hash_.slice().is_empty() {
-        return Ok(JSValue::FALSE);
+        return Ok(scope.boolean(false));
     }
 
     if password.slice().is_empty() {
-        return Ok(JSValue::FALSE);
+        return Ok(scope.boolean(false));
     }
 
     // The sync path only needs `&[u8]`; copy into Boxes to share the async
     // signature.
-    JSPasswordObject::verify::<true>(
+    let result = JSPasswordObject::verify::<true>(
         global_object,
         Box::<[u8]>::from(password.slice()),
         Box::<[u8]>::from(hash_.slice()),
         algorithm,
-    )
+    )?;
+    Ok(scope.local(result))
 }
 
 const UNKNOWN_PASSWORD_ALGORITHM_MESSAGE: &str = "unknown algorithm, expected one of: \"bcrypt\", \"argon2id\", \"argon2d\", \"argon2i\" (default is \"argon2id\")";

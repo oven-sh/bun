@@ -1,42 +1,50 @@
 use bun_core::strings::EncodingNonAscii;
 use bun_core::{self as bstr, OwnedString, String as BunString, ZigString, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope, StringJsc as _, bun_string_jsc,
+};
 use bun_sys::UV_E;
 
 use crate::node::types::Encoding;
 use crate::node::util::validators;
 use bun_dotenv::env_loader as envloader;
 
-#[bun_jsc::host_fn]
-pub(crate) fn internal_error_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let arguments = frame.arguments_old::<1>();
-    let arguments = arguments.slice();
-    if arguments.is_empty() {
-        return Err(global.throw_not_enough_arguments("internalErrorName", 1, arguments.len()));
-    }
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn internal_error_name<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let arguments = frame.scoped_arguments::<1>(scope);
+    let Some(arg) = arguments.get(0) else {
+        return Err(scope
+            .unscoped_global()
+            .throw_not_enough_arguments("internalErrorName", 1, 0));
+    };
 
-    let err_int = arguments[0].to_int32();
+    let err_int = arg.to_int32(scope);
     if let Some(name) = UV_E::name(err_int) {
-        return BunString::static_(name).to_js(global);
+        let v = BunString::static_(name).to_js(scope.unscoped_global())?;
+        return Ok(scope.local(v));
     }
     let mut fmtstring = BunString::create_format(format_args!("Unknown system error {}", err_int));
-    fmtstring.transfer_to_js(global)
+    let v = fmtstring.transfer_to_js(scope.unscoped_global())?;
+    Ok(scope.local(v))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn etimedout_error_code(
-    _global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn etimedout_error_code<'s>(
+    scope: &mut Scope<'s>,
     _frame: &CallFrame,
-) -> JsResult<JSValue> {
-    Ok(JSValue::js_number_from_int32(-UV_E::TIMEDOUT))
+) -> JsResult<Local<'s>> {
+    Ok(scope.number_from_int32(-UV_E::TIMEDOUT))
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn enobufs_error_code(
-    _global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn enobufs_error_code<'s>(
+    scope: &mut Scope<'s>,
     _frame: &CallFrame,
-) -> JsResult<JSValue> {
-    Ok(JSValue::js_number_from_int32(-UV_E::NOBUFS))
+) -> JsResult<Local<'s>> {
+    Ok(scope.number_from_int32(-UV_E::NOBUFS))
 }
 
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
@@ -47,30 +55,32 @@ pub(crate) fn enobufs_error_code(
 /// const extractedNewLineRe = new RegExp("(?<=\\n)");
 /// extractedSplitNewLines = value => RegExpPrototypeSymbolSplit(extractedNewLineRe, value);
 /// ```
-#[bun_jsc::host_fn]
-pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn extracted_split_new_lines_fast_path_strings_only<'s>(
+    scope: &mut Scope<'s>,
     frame: &CallFrame,
-) -> JsResult<JSValue> {
+) -> JsResult<Local<'s>> {
     debug_assert!(frame.arguments_count() == 1);
-    let value = frame.argument(0);
+    let value = frame.scoped_argument(scope, 0);
     debug_assert!(value.is_string());
 
     // `defer str.deref()` — `to_bun_string` returns +1; `OwnedString`'s Drop
     // releases it on every exit path (bun_core::String itself is Copy, no Drop).
-    let str = OwnedString::new(value.to_bun_string(global)?);
+    let str = OwnedString::new(value.to_bun_string(scope)?);
 
-    match str.encoding() {
-        EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, &str),
-        EncodingNonAscii::Latin1 => split(EncodingNonAscii::Latin1, global, &str),
+    let global = scope.unscoped_global();
+    let v = match str.encoding() {
+        EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, &str)?,
+        EncodingNonAscii::Latin1 => split(EncodingNonAscii::Latin1, global, &str)?,
         EncodingNonAscii::Utf8 => {
             if strings::is_all_ascii(str.byte_slice()) {
-                split(EncodingNonAscii::Utf8, global, &str)
+                split(EncodingNonAscii::Utf8, global, &str)?
             } else {
-                Ok(JSValue::UNDEFINED)
+                return Ok(scope.undefined());
             }
         }
-    }
+    };
+    Ok(scope.local(v))
 }
 
 // PERF: `encoding` is a runtime parameter
@@ -148,30 +158,35 @@ impl<'a, T: Copy + PartialEq + From<u8>> SplitNewlineIterator<'a, T> {
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn normalize_encoding(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let input = frame.argument(0);
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn normalize_encoding<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let input = frame.scoped_argument(scope, 0);
+    let global = scope.unscoped_global();
     // `defer str.deref()` — `from_js` returns +1; OwnedString releases on Drop.
-    let str = OwnedString::new(BunString::from_js(input, global)?);
+    let str = OwnedString::new(BunString::from_js(input.raw(), global)?);
     debug_assert!(str.tag() != bstr::Tag::Dead);
     if str.length() == 0 {
-        return Ok(Encoding::Utf8.to_js(global));
+        return Ok(scope.local(Encoding::Utf8.to_js(global)));
     }
     if let Some(enc) = Encoding::from_bun_string(&str) {
-        return Ok(enc.to_js(global));
+        return Ok(scope.local(enc.to_js(global)));
     }
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn]
-pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let content = frame.argument(0);
-    validators::validate_string(global, content, "content")?;
+#[bun_jsc::host_fn(scoped)]
+pub fn parse_env<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let content = frame.scoped_argument(scope, 0);
+    let global = scope.unscoped_global();
+    validators::validate_string(global, content.raw(), "content")?;
 
     // `validate_string` above guarantees `content.is_string()`, so
     // `as_string()` returns a non-null live JSString*. `JSString` is an
     // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
-    let str = bun_jsc::JSString::opaque_ref(content.as_string()).to_slice(global);
+    let str = bun_jsc::JSString::opaque_ref(content.raw().as_string()).to_slice(global);
 
     let mut map = envloader::Map::init();
     let mut p = envloader::Loader::init(&mut map);
@@ -186,5 +201,5 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             bun_string_jsc::create_utf8_for_js(global, &v.value)?,
         );
     }
-    Ok(obj)
+    Ok(scope.local(obj))
 }

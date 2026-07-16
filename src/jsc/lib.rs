@@ -89,6 +89,7 @@ pub mod marked_argument_buffer;
 pub mod regular_expression;
 #[path = "scope.rs"]
 pub mod scope;
+pub use self::scope::{Local, LocalArguments, Scope};
 #[path = "ScriptExecutionStatus.rs"]
 pub mod script_execution_status;
 #[path = "sizes.rs"]
@@ -884,6 +885,18 @@ pub mod __macro_support {
     /// `to_js_host_call`'s `catch_unwind` barrier — a `panic!` in the body
     /// becomes a JS exception instead of unwinding out of the `extern "C"`
     /// thunk (UB).
+    /// Scoped host-fn body adapter: opens a [`crate::scope::Scope`] for the
+    /// call and unbrands the returned [`crate::scope::Local`].
+    #[inline]
+    pub fn host_fn_scoped(
+        global: &JSGlobalObject,
+        f: impl for<'t> FnOnce(
+            &mut crate::scope::Scope<'t>,
+        ) -> JsResult<crate::scope::Local<'t>>,
+    ) -> JsResult<JSValue> {
+        crate::scope::Scope::with(global, |scope| f(scope).map(|v| v.raw()))
+    }
+
     #[inline]
     #[track_caller]
     pub fn host_fn_result<R: IntoHostFnResult>(

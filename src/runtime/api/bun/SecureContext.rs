@@ -18,7 +18,7 @@ use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
 use bun_jsc::JsClass as _;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 use bun_uws as uws;
 
 /// Re-export the codegen-emitted module so
@@ -45,11 +45,14 @@ pub struct SecureContext {
 
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
-#[bun_jsc::host_fn]
-pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_live_count<'s>(
+    scope: &mut Scope<'s>,
+    _callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
     // `us_ssl_ctx_live_count` is declared `safe fn` (reads a global atomic
     // counter, no preconditions).
-    Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
+    Ok(scope.number(c::us_ssl_ctx_live_count() as f64))
 }
 
 impl SecureContext {
@@ -342,19 +345,20 @@ impl SecureContext {
     /// `secureContext.context.addCACert(pem)` — appends the certificates in
     /// the given PEM string or buffer to this context's trust store, the way
     /// Node's SecureContext exposes it.
-    #[bun_jsc::host_fn(method)]
-    pub fn add_ca_cert(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn add_ca_cert<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = frame.arguments();
-        if args.is_empty() {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let args = frame.scoped_arguments::<1>(scope);
+        let Some(pem_arg) = args.get(0) else {
             return Err(
                 global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
             );
-        }
-        let pem = args[0].to_slice(global)?;
+        };
+        let pem = pem_arg.raw().to_slice(global)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
             return Err(
@@ -372,7 +376,7 @@ impl SecureContext {
         if ok == 0 {
             return Err(global.throw(format_args!("Invalid CA certificate")));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     // Codegen's `host_fn_finalize` calls this via `|b| SecureContext::finalize(b)`

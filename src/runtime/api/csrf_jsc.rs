@@ -4,7 +4,7 @@
 use bun_boringssl_sys as boring;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_csrf as csrf;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, Scope};
 
 use crate::api::crypto::evp::Algorithm as EvpAlgorithm;
 use crate::crypto::evp;
@@ -50,8 +50,9 @@ fn get_optional_int_u64(
 
 /// JS binding function for generating CSRF tokens
 /// First argument is secret (required), second is options (optional)
-#[bun_jsc::host_fn]
-pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn csrf__generate<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     bun_analytics::features::csrf_generate.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
     // We should have at least one argument (secret)
@@ -186,13 +187,19 @@ pub(crate) fn csrf__generate(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         csrf::TokenFormat::Base64Url => NodeEncoding::Base64url,
         csrf::TokenFormat::Hex => NodeEncoding::Hex,
     };
-    node_encoding.encode_with_max_size(global, boring::EVP_MAX_MD_SIZE as usize + 32, token_bytes)
+    let v = node_encoding.encode_with_max_size(
+        global,
+        boring::EVP_MAX_MD_SIZE as usize + 32,
+        token_bytes,
+    )?;
+    Ok(scope.local(v))
 }
 
 /// JS binding function for verifying CSRF tokens
 /// First argument is token (required), second is options (optional)
-#[bun_jsc::host_fn]
-pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn csrf__verify<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     bun_analytics::features::csrf_verify.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     // We should have at least one argument (token)
     let args = frame.arguments();
@@ -315,5 +322,5 @@ pub(crate) fn csrf__verify(global: &JSGlobalObject, frame: &CallFrame) -> JsResu
         algorithm,
     });
 
-    Ok(JSValue::from(is_valid))
+    Ok(scope.boolean(is_valid))
 }

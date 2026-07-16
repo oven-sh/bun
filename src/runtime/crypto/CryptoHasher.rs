@@ -6,7 +6,8 @@ use bun_boringssl_sys as boring_ssl;
 use bun_core::ZigString;
 use bun_jsc::{
     ArrayBuffer, CallFrame, ErrorCode, JSGlobalObject, JSObject, JSValue, JsCell, JsClass as _,
-    JsError, JsResult, scope::Scope,
+    JsError, JsResult,
+    scope::{Local, Scope},
 };
 
 use crate::crypto::evp::{AlgorithmExt as _, EVP};
@@ -317,29 +318,30 @@ impl CryptoHasher {
         ))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::js_number(match this {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_byte_length<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(match this {
             CryptoHasher::Evp(inner) => inner.get().size() as f64,
             CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.size() as f64,
-                None => return Err(Self::throw_hmac_consumed(global)),
+                None => return Err(Self::throw_hmac_consumed(scope.unscoped_global())),
             },
             CryptoHasher::Zig(inner) => inner.get().digest_length as f64,
         }))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_algorithm<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let tag: &'static [u8] = match this {
             CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
             CryptoHasher::Hmac(inner) => match inner.get() {
                 Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
-                None => return Err(Self::throw_hmac_consumed(global)),
+                None => return Err(Self::throw_hmac_consumed(scope.unscoped_global())),
             },
         };
-        bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
+        let v = bun_jsc::bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), tag)?;
+        Ok(scope.local(v))
     }
 
     // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
@@ -576,33 +578,36 @@ impl CryptoHasher {
         bun_jsc::codegen::js::get_constructor::<CryptoHasher>(global)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn update(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn update<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let this_value = callframe.this();
-        let arguments = callframe.arguments_old::<2>();
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let this_value = callframe.scoped_this(scope);
+        let arguments = callframe.scoped_arguments::<2>(scope);
         let input = arguments.ptr[0];
-        if input.is_empty_or_undefined_or_null() {
+        if input.is_undefined_or_null() {
             return Err(
                 global.throw_invalid_arguments(format_args!("expected blob, string or buffer"))
             );
         }
         let encoding = arguments.ptr[1];
-        let buffer =
-            match BlobOrStringOrBuffer::from_js_with_encoding_value(global, input, encoding)? {
-                Some(b) => b,
-                None => {
-                    if !global.has_exception() {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "expected blob, string or buffer"
-                        )));
-                    }
-                    return Err(JsError::Thrown);
+        let buffer = match BlobOrStringOrBuffer::from_js_with_encoding_value(
+            global,
+            input.raw(),
+            encoding.raw(),
+        )? {
+            Some(b) => b,
+            None => {
+                if !global.has_exception() {
+                    return Err(global
+                        .throw_invalid_arguments(format_args!("expected blob, string or buffer")));
                 }
-            };
+                return Err(JsError::Thrown);
+            }
+        };
         // `defer buffer.deinit()` — handled by Drop.
         if is_bun_file_blob(&buffer) {
             return Err(global.throw(format_args!(
@@ -644,8 +649,9 @@ impl CryptoHasher {
         Ok(this_value)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn copy<'s>(this: &Self, scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         let copied: CryptoHasher = match this {
             CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(
                 inner
@@ -674,7 +680,7 @@ impl CryptoHasher {
             }
             CryptoHasher::Zig(inner) => CryptoHasher::Zig(JsCell::new(inner.get().copy())),
         };
-        Ok(copied.to_js(global))
+        Ok(scope.local(copied.to_js(global)))
     }
 
     pub fn digest_(
@@ -1419,12 +1425,13 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         H::get_constructor(global)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn update(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn update<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         if this.digested.get() {
             return Err(global
                 .err(
@@ -1436,9 +1443,9 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
                 )
                 .throw());
         }
-        let this_value = callframe.this();
-        let input = callframe.argument(0);
-        let buffer = match BlobOrStringOrBuffer::from_js(global, input)? {
+        let this_value = callframe.scoped_this(scope);
+        let input = callframe.scoped_argument(scope, 0);
+        let buffer = match BlobOrStringOrBuffer::from_js(global, input.raw())? {
             Some(b) => b,
             None => {
                 return Err(global

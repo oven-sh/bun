@@ -1,15 +1,16 @@
 use bun_core::String as BunString;
 use bun_js_printer as js_printer;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, Local, LogJsc, Scope, StringJsc};
 use bun_parsers::toml::TOML;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(global, &[("parse", __jsc_host_parse, 1)])
 }
 
-#[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(
+#[bun_jsc::host_fn(scoped)]
+pub fn parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let v = super::with_text_format_source(
         global,
         frame,
         b"input.toml",
@@ -53,5 +54,6 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
             out.to_js_by_parse_json(global)
         },
-    )
+    )?;
+    Ok(scope.local(v))
 }

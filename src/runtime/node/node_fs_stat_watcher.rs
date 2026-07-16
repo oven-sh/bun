@@ -14,8 +14,8 @@ use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool,
-    WorkPoolTask,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, Local, Scope,
+    WorkPool, WorkPoolTask,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
@@ -767,32 +767,32 @@ impl StatWatcher {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_ref<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if !this.closed.load(Ordering::Relaxed) && !this.persistent.get() {
             this.persistent.set(true);
             let el_ctx = this.ctx_el_ctx();
             this.poll_ref.with_mut(|p| p.ref_(el_ctx));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_unref<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if this.persistent.get() {
             this.persistent.set(false);
             let el_ctx = this.ctx_el_ctx();
             this.poll_ref.with_mut(|p| p.unref(el_ctx));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     /// Stops file watching but does not free the instance.
@@ -819,14 +819,14 @@ impl StatWatcher {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_close(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub(crate) fn do_close<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         this.close();
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.

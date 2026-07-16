@@ -52,7 +52,10 @@
 use core::marker::PhantomData;
 use core::ops::Deref;
 
-use crate::{ArrayBuffer, JSGlobalObject, JSValue, JsResult, Strong};
+use crate::js_value::PutKey;
+use crate::{
+    ArrayBuffer, CallFrame, JSGlobalObject, JSString, JSType, JSValue, JsClass, JsResult, Strong,
+};
 
 /// Capability token for one JS entry frame. A newtype over
 /// `&JSGlobalObject` — construction compiles to nothing.
@@ -105,6 +108,26 @@ impl<'s> Scope<'s> {
         }
     }
 
+    #[inline(always)]
+    pub fn null(&self) -> Local<'s> {
+        self.local(JSValue::NULL)
+    }
+
+    #[inline(always)]
+    pub fn boolean(&self, b: bool) -> Local<'s> {
+        self.local(JSValue::js_boolean(b))
+    }
+
+    #[inline(always)]
+    pub fn number(&self, n: f64) -> Local<'s> {
+        self.local(JSValue::js_number(n))
+    }
+
+    #[inline(always)]
+    pub fn number_from_int32(&self, n: i32) -> Local<'s> {
+        self.local(JSValue::js_number_from_int32(n))
+    }
+
     /// The only way a value outlives its scope: an owning GC root.
     pub fn persist(&self, value: Local<'s>) -> Strong {
         Strong::create(value.raw, self.global)
@@ -153,6 +176,82 @@ impl<'s> Local<'s> {
         self.raw.is_callable()
     }
 
+    #[inline(always)]
+    pub fn is_object(self) -> bool {
+        self.raw.is_object()
+    }
+
+    #[inline(always)]
+    pub fn is_cell(self) -> bool {
+        self.raw.is_cell()
+    }
+
+    #[inline(always)]
+    pub fn is_boolean(self) -> bool {
+        self.raw.is_boolean()
+    }
+
+    #[inline(always)]
+    pub fn is_int32(self) -> bool {
+        self.raw.is_int32()
+    }
+
+    #[inline(always)]
+    pub fn is_any_int(self) -> bool {
+        self.raw.is_any_int()
+    }
+
+    #[inline(always)]
+    pub fn is_undefined(self) -> bool {
+        self.raw.is_undefined()
+    }
+
+    #[inline(always)]
+    pub fn is_null(self) -> bool {
+        self.raw.is_null()
+    }
+
+    #[inline(always)]
+    pub fn is_undefined_or_null(self) -> bool {
+        self.raw.is_undefined_or_null()
+    }
+
+    #[inline(always)]
+    pub fn js_type(self) -> JSType {
+        self.raw.js_type()
+    }
+
+    /// Non-coercing read; caller must have checked [`Self::is_boolean`].
+    #[inline(always)]
+    pub fn as_boolean(self) -> bool {
+        self.raw.as_boolean()
+    }
+
+    /// Non-coercing read; caller must have checked [`Self::is_int32`].
+    #[inline(always)]
+    pub fn as_int32(self) -> i32 {
+        self.raw.as_int32()
+    }
+
+    /// Non-coercing read; caller must have checked [`Self::is_number`].
+    #[inline(always)]
+    pub fn as_number(self) -> f64 {
+        self.raw.as_number()
+    }
+
+    /// ECMA `ToBoolean` — never runs user code.
+    #[inline(always)]
+    pub fn to_boolean(self) -> bool {
+        self.raw.to_boolean()
+    }
+
+    /// Downcast to a `.classes.ts` payload. Pure FFI type check; the JS
+    /// wrapper roots the payload while this `Local` is live.
+    #[inline(always)]
+    pub fn as_class_ref<T: JsClass>(self) -> Option<&'static T> {
+        self.raw.as_class_ref::<T>()
+    }
+
     // ── Operations that can re-enter user JavaScript. ────────────────────
     // `&mut Scope` is the effect: it conflicts with any outstanding borrow
     // derived from `&Scope` (heap views), which is exactly the R-2 hazard.
@@ -161,6 +260,49 @@ impl<'s> Local<'s> {
     #[inline(always)]
     pub fn to_number(self, scope: &mut Scope<'s>) -> JsResult<f64> {
         self.raw.to_number(scope.global)
+    }
+
+    /// Truncating int conversion; falls through to `toInt32` (ToNumber →
+    /// `valueOf`) for non-number objects.
+    #[inline(always)]
+    pub fn to_int32(self, _scope: &mut Scope<'s>) -> i32 {
+        self.raw.to_int32()
+    }
+
+    /// See [`Self::to_int32`].
+    #[inline(always)]
+    pub fn to_int64(self, _scope: &mut Scope<'s>) -> i64 {
+        self.raw.to_int64()
+    }
+
+    /// See [`Self::to_int32`] — saturating `[0, u32::MAX]` clamp.
+    #[inline(always)]
+    pub fn to_u32(self, _scope: &mut Scope<'s>) -> u32 {
+        self.raw.to_u32()
+    }
+
+    /// Node `validatePort` semantics; may coerce via ToNumber.
+    #[inline(always)]
+    pub fn to_port_number(self, scope: &mut Scope<'s>) -> JsResult<u16> {
+        self.raw.to_port_number(scope.global)
+    }
+
+    /// String coercion; may run a String subclass's `toString`.
+    #[inline(always)]
+    pub fn to_js_string(self, scope: &mut Scope<'s>) -> JsResult<&'s JSString> {
+        self.raw.to_js_string(scope.global)
+    }
+
+    /// String coercion; may run a String subclass's `toString`.
+    #[inline(always)]
+    pub fn to_bun_string(self, scope: &mut Scope<'s>) -> JsResult<bun_core::String> {
+        self.raw.to_bun_string(scope.global)
+    }
+
+    /// String coercion; may run a String subclass's `toString`.
+    #[inline(always)]
+    pub fn get_zig_string(self, scope: &mut Scope<'s>) -> JsResult<bun_core::ZigString> {
+        self.raw.get_zig_string(scope.global)
     }
 
     /// Property get; may run getters and Proxy traps.
@@ -174,6 +316,25 @@ impl<'s> Local<'s> {
             .raw
             .get(scope.global, property)?
             .map(|v| scope.local(v)))
+    }
+
+    /// [`Self::get`] filtered to truthy values; may run getters and Proxy traps.
+    #[inline(always)]
+    pub fn get_truthy(
+        self,
+        scope: &mut Scope<'s>,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<Local<'s>>> {
+        Ok(self
+            .raw
+            .get_truthy(scope.global, property)?
+            .map(|v| scope.local(v)))
+    }
+
+    /// Property put; may run setters and Proxy traps.
+    #[inline(always)]
+    pub fn put<K: PutKey>(self, scope: &mut Scope<'s>, key: K, value: Local<'s>) {
+        self.raw.put(scope.global, key, value.raw);
     }
 
     /// Call this value as a function.
@@ -222,5 +383,49 @@ impl Deref for ArrayBufferBytes<'_, '_> {
     #[inline(always)]
     fn deref(&self) -> &[u8] {
         self.ab.byte_slice()
+    }
+}
+
+impl CallFrame {
+    /// `this` (or `new.target` in constructors), branded.
+    #[inline(always)]
+    pub fn scoped_this<'s>(&self, scope: &Scope<'s>) -> Local<'s> {
+        scope.local(self.this())
+    }
+
+    /// Argument `i`, `undefined` when absent.
+    #[inline(always)]
+    pub fn scoped_argument<'s>(&self, scope: &Scope<'s>, i: usize) -> Local<'s> {
+        scope.local(self.argument(i))
+    }
+
+    /// First `MAX` arguments, `undefined`-filled (the [`Self::arguments_undef`]
+    /// contract), branded.
+    #[inline(always)]
+    pub fn scoped_arguments<'s, const MAX: usize>(
+        &self,
+        scope: &Scope<'s>,
+    ) -> LocalArguments<'s, MAX> {
+        let args = self.arguments_undef::<MAX>();
+        LocalArguments {
+            ptr: args.ptr.map(|v| scope.local(v)),
+            len: args.len,
+        }
+    }
+}
+
+/// Branded mirror of [`crate::call_frame::Arguments`]: `ptr` is
+/// `undefined`-filled past `len`.
+pub struct LocalArguments<'s, const MAX: usize> {
+    pub ptr: [Local<'s>; MAX],
+    pub len: usize,
+}
+
+impl<'s, const MAX: usize> LocalArguments<'s, MAX> {
+    /// `None` for arguments the caller did not pass (unlike indexing `ptr`,
+    /// which yields the `undefined` filler).
+    #[inline(always)]
+    pub fn get(&self, i: usize) -> Option<Local<'s>> {
+        (i < self.len).then(|| self.ptr[i])
     }
 }

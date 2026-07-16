@@ -2,7 +2,7 @@ use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, Local, Scope};
 use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
@@ -87,74 +87,89 @@ pub mod strings {
 }
 
 impl ScopeFunctions {
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_skip(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", strings::SKIP())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_skip<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = this.generic_extend(scope.unscoped_global(), BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"get .skip", strings::SKIP())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_todo(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_todo<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = this.generic_extend(scope.unscoped_global(), BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_failing(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", strings::FAILING())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_failing<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = this.generic_extend(scope.unscoped_global(), BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"get .failing", strings::FAILING())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_concurrent(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", strings::CONCURRENT())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_concurrent<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = this.generic_extend(scope.unscoped_global(), BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"get .concurrent", strings::CONCURRENT())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_serial(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", strings::SERIAL())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_serial<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = this.generic_extend(scope.unscoped_global(), BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"get .serial", strings::SERIAL())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_only(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        this.generic_extend(global, BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", strings::ONLY())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_only<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = this.generic_extend(scope.unscoped_global(), BaseScopeCfg { self_only: true, ..Default::default() }, b"get .only", strings::ONLY())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn fn_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, strings::IF())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn fn_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.generic_if(scope.unscoped_global(), frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .if()", true, strings::IF())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn fn_skip_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, strings::SKIP_IF())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn fn_skip_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.generic_if(scope.unscoped_global(), frame, BaseScopeCfg { self_mode: SelfMode::Skip, ..Default::default() }, b"call .skipIf()", false, strings::SKIP_IF())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn fn_todo_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn fn_todo_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.generic_if(scope.unscoped_global(), frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn fn_failing_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, strings::FAILING_IF())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn fn_failing_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.generic_if(scope.unscoped_global(), frame, BaseScopeCfg { self_mode: SelfMode::Failing, ..Default::default() }, b"call .failingIf()", false, strings::FAILING_IF())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn fn_concurrent_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, strings::CONCURRENT_IF())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn fn_concurrent_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.generic_if(scope.unscoped_global(), frame, BaseScopeCfg { self_concurrent: SelfConcurrent::Yes, ..Default::default() }, b"call .concurrentIf()", false, strings::CONCURRENT_IF())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn fn_serial_if(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        this.generic_if(global, frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, strings::SERIAL_IF())
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn fn_serial_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let v = this.generic_if(scope.unscoped_global(), frame, BaseScopeCfg { self_concurrent: SelfConcurrent::No, ..Default::default() }, b"call .serialIf()", false, strings::SERIAL_IF())?;
+        Ok(scope.local(v))
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn fn_each(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn fn_each<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
         let _g = group_log::begin();
+        let global = scope.unscoped_global();
 
-        let [array] = frame.arguments_as_array::<1>();
-        if array.is_undefined_or_null() || !array.is_array() {
+        let array = frame.scoped_argument(scope, 0);
+        if array.is_undefined_or_null() || !array.raw().is_array() {
             let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
-            return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
+            return Err(global.throw(format_args!("Expected array, got {}", array.raw().to_fmt(&mut formatter))));
         }
 
         if !this.each.is_empty() {
             return Err(global.throw(format_args!("Cannot {} on {}", "each", this)));
         }
-        create_bound(global, this.mode, array, this.cfg, strings::EACH())
+        let v = create_bound(global, this.mode, array.raw(), this.cfg, strings::EACH())?;
+        Ok(scope.local(v))
     }
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn call_as_function<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     let _g = group_log::begin();
+    let global = scope.unscoped_global();
 
     let Some(this_ptr) = ScopeFunctions::from_js(frame.this()) else {
         return Err(global.throw(format_args!("Expected callee to be ScopeFunctions")));
@@ -266,7 +281,7 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
         )?;
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 trait WriteEnd {

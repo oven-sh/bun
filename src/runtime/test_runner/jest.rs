@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, Local, RegularExpression, Scope,
 };
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
@@ -487,20 +487,21 @@ pub mod Jest {
         pub(crate) fn JSMock__jsSpyOn(global: *mut JSGlobalObject, frame: *mut CallFrame) -> JSValue;
     }
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    pub(crate) fn call<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+        let global_object = scope.unscoped_global();
         let vm = global_object.bun_vm();
 
         if vm.is_in_preload || runner().is_none() {
             // in preload, no arguments needed
         } else {
-            let arguments = callframe.arguments_old::<2>();
-            let arguments = arguments.slice();
+            let arguments = callframe.scoped_arguments::<2>(scope);
 
-            if arguments.len() < 1 || !arguments[0].is_string() {
+            let filename = arguments.get(0);
+            if !filename.is_some_and(|f| f.is_string()) {
                 return Err(global_object.throw(format_args!("Bun.jest() expects a string filename")));
             }
-            let str = arguments[0].to_slice(global_object)?;
+            let str = filename.unwrap().raw().to_slice(global_object)?;
             let slice = str.slice();
 
             if !bun_paths::is_absolute(slice) {
@@ -511,28 +512,29 @@ pub mod Jest {
             }
         }
 
-        jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))
+        let v = jsc::from_js_host_call(global_object, || Bun__Jest__testModuleObject(global_object))?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn]
-    fn js_set_default_timeout(
-        global_object: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    fn js_set_default_timeout<'s>(
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments_old::<1>();
-        let arguments = arguments.slice();
-        if arguments.len() < 1 || !arguments[0].is_number() {
+    ) -> JsResult<Local<'s>> {
+        let global_object = scope.unscoped_global();
+        let arguments = callframe.scoped_arguments::<1>(scope);
+        let Some(ms) = arguments.get(0).filter(|a| a.is_number()) else {
             return Err(global_object.throw(format_args!("setTimeout() expects a number (milliseconds)")));
-        }
+        };
 
         let timeout_ms: u32 =
-            u32::try_from(arguments[0].coerce::<i32>(global_object)?.max(0)).unwrap();
+            u32::try_from(ms.raw().coerce::<i32>(global_object)?.max(0)).unwrap();
 
         if let Some(test_runner) = runner() {
             test_runner.default_timeout_override = timeout_ms;
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 }
 

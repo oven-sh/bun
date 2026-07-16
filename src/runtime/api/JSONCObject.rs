@@ -2,16 +2,17 @@
 
 use bun_ast::ToJSError;
 use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Local, LogJsc, Scope};
 use bun_parsers::json;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     bun_jsc::create_host_function_object(global, &[("parse", __jsc_host_parse, 1)])
 }
 
-#[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    super::with_text_format_source(
+#[bun_jsc::host_fn(scoped)]
+pub fn parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
+    let v = super::with_text_format_source(
         global,
         frame,
         b"input.jsonc",
@@ -37,5 +38,6 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 Err(_) => unreachable!(),
             }
         },
-    )
+    )?;
+    Ok(scope.local(v))
 }

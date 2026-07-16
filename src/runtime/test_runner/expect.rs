@@ -4,7 +4,7 @@ use core::fmt;
 
 use bun_core::Output;
 use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
+    CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
@@ -1695,9 +1695,9 @@ impl Expect {
         Err(global_this.throw(format_args!("Not implemented")))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn not_implemented_jsc_prop(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Err(global_this.throw(format_args!("Not implemented")))
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn not_implemented_jsc_prop<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Err(scope.unscoped_global().throw(format_args!("Not implemented")))
     }
 
     // `not_implemented_static_prop` is a static-prop getter
@@ -2742,30 +2742,33 @@ pub struct ExpectMatcherContext {
 }
 
 impl ExpectMatcherContext {
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_utils(_this: &Self, global_this: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_utils<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // SAFETY: FFI call with valid &JSGlobalObject
-        unsafe { ExpectMatcherUtils__getSingleton(global_this) }
+        let v = unsafe { ExpectMatcherUtils__getSingleton(scope.unscoped_global()) };
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_is_not(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.flags.not())
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_is_not<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.boolean(this.flags.not()))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_promise(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        match this.flags.promise() {
-            Promise::Rejects => bun_core::String::static_("rejects").to_js(global_this),
-            Promise::Resolves => bun_core::String::static_("resolves").to_js(global_this),
-            _ => bun_core::String::empty().to_js(global_this),
-        }
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_promise<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let v = match this.flags.promise() {
+            Promise::Rejects => bun_core::String::static_("rejects").to_js(global),
+            Promise::Resolves => bun_core::String::static_("resolves").to_js(global),
+            _ => bun_core::String::empty().to_js(global),
+        }?;
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_expand(_this: &Self, _global_this: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_expand<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // TODO: this should return whether running tests in verbose mode or not (jest flag --expand), but bun currently doesn't have this switch
-        JSValue::FALSE
+        Ok(scope.boolean(false))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2970,9 +2973,10 @@ impl ExpectTypeOf {
     pub fn fn_one_argument_returns_expect_type_of(&self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         Self::create(global_this)
     }
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_returns_expect_type_of(_this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        Self::create(global_this)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_returns_expect_type_of<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        let v = Self::create(scope.unscoped_global())?;
+        Ok(scope.local(v))
     }
 
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.

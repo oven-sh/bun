@@ -22,7 +22,7 @@ use bun_io::{KeepAlive, Loop as AsyncLoop};
 use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
-    JSValue, JsCell, JsRef, JsResult,
+    JSValue, JsCell, JsRef, JsResult, Local, Scope,
 };
 #[cfg(not(target_os = "macos"))]
 use bun_paths::PathBuffer;
@@ -680,13 +680,15 @@ impl CronRegisterJob {
 
 // -- JS entry point -- (free fn: `#[host_fn]` Free shim calls bare `cron_register(..)`)
 
-#[bun_jsc::host_fn]
-pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<3>();
+#[bun_jsc::host_fn(scoped)]
+pub fn cron_register<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let args = frame.scoped_arguments::<3>(scope).ptr;
+    let global = scope.unscoped_global();
 
     // In-process callback cron: Bun.cron(schedule, handler)
     if args[1].is_callable() {
-        return CronJob::register(global, args[0], args[1]);
+        let v = CronJob::register(global, args[0].raw(), args[1].raw())?;
+        return Ok(scope.local(v));
     }
     if args[0].is_string() && args[2].is_undefined() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -710,9 +712,9 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         )));
     }
 
-    let path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
-    let schedule_str = bun_core::OwnedString::new(args[1].to_bun_string(global)?);
-    let title_str = bun_core::OwnedString::new(args[2].to_bun_string(global)?);
+    let path_str = bun_core::OwnedString::new(args[0].to_bun_string(scope)?);
+    let schedule_str = bun_core::OwnedString::new(args[1].to_bun_string(scope)?);
+    let title_str = bun_core::OwnedString::new(args[2].to_bun_string(scope)?);
 
     let path_slice = path_str.to_utf8();
     let schedule_slice = schedule_str.to_utf8();
@@ -824,7 +826,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         CronRegisterJob::start_linux(job)
     };
 
-    Ok(promise_value)
+    Ok(scope.local(promise_value))
 }
 
 #[cfg(windows)]
@@ -1287,15 +1289,16 @@ impl CronRemoveJob {
 }
 
 // free fn: `#[host_fn]` Free shim calls bare `cron_remove(..)`
-#[bun_jsc::host_fn]
-pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<1>();
+#[bun_jsc::host_fn(scoped)]
+pub fn cron_remove<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let args = frame.scoped_arguments::<1>(scope).ptr;
+    let global = scope.unscoped_global();
     if !args[0].is_string() {
         return Err(global
             .throw_invalid_arguments(format_args!("Bun.cron.remove() expects a string title")));
     }
 
-    let title_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    let title_str = bun_core::OwnedString::new(args[0].to_bun_string(scope)?);
     let title_slice = title_str.to_utf8();
 
     if !validate_title(title_slice.slice()) {
@@ -1344,7 +1347,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
     unsafe {
         CronRemoveJob::start_linux(job)
     };
-    Ok(promise_value)
+    Ok(scope.local(promise_value))
 }
 
 #[cfg(windows)]
@@ -1826,9 +1829,9 @@ impl CronJob {
         Ok(frame.this())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_cron(_this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED) // unreachable — register() pre-populates the cache via cronSetCached
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_cron<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.undefined()) // unreachable — register() pre-populates the cache via cronSetCached
     }
 
     pub fn register(
@@ -2012,9 +2015,10 @@ pub fn get_cron_object(global_this: &JSGlobalObject, _obj: &JSObject) -> JSValue
     cron_fn
 }
 
-#[bun_jsc::host_fn]
-pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let args = frame.arguments_as_array::<2>();
+#[bun_jsc::host_fn(scoped)]
+pub fn cron_parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+    let args = frame.scoped_arguments::<2>(scope).ptr;
+    let global = scope.unscoped_global();
 
     if !args[0].is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
@@ -2022,7 +2026,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         )));
     }
 
-    let expr_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    let expr_str = bun_core::OwnedString::new(args[0].to_bun_string(scope)?);
     let expr_slice = expr_str.to_utf8();
 
     let parsed = match CronExpression::parse(expr_slice.slice()) {
@@ -2035,10 +2039,12 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
         }
     };
 
-    let from_ms: f64 = if !args[1].is_empty() && !args[1].is_undefined() && args[1] != JSValue::NULL
+    let from_ms: f64 = if !args[1].raw().is_empty()
+        && !args[1].is_undefined()
+        && args[1].raw() != JSValue::NULL
     {
         if args[1].is_number() || args[1].js_type() == jsc::JSType::JSDate {
-            args[1].to_number(global)?
+            args[1].to_number(scope)?
         } else {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Bun.cron.parse() expects the second argument to be a Date or number (ms since epoch)"
@@ -2053,9 +2059,9 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     }
 
     let Some(next_ms) = parsed.next(global, from_ms)? else {
-        return Ok(JSValue::NULL);
+        return Ok(scope.null());
     };
-    Ok(JSValue::from_date_number(global, next_ms))
+    Ok(scope.local(JSValue::from_date_number(global, next_ms)))
 }
 
 // ============================================================================

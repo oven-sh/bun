@@ -4071,21 +4071,21 @@ pub mod bindings {
     use super::*;
     use bun_core::String as BunString;
     use bun_jsc::{
-        CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
+        CallFrame, JSArray, JSValue, JsResult, Local, Scope, StringJsc as _, bun_string_jsc,
     };
 
-    #[bun_jsc::host_fn]
-    pub(crate) fn js_read_tarball(
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub(crate) fn js_read_tarball<'s>(
+        scope: &mut Scope<'s>,
         call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = call_frame.arguments_old::<1>();
-        let args = arguments.slice();
-        if args.len() < 1 || !args[0].is_string() {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let arguments = call_frame.scoped_arguments::<1>(scope);
+        let Some(path_arg) = arguments.get(0).filter(|a| a.is_string()) else {
             return Err(global.throw(format_args!("expected tarball path string argument")));
-        }
+        };
 
-        let tarball_path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+        let tarball_path_str = bun_core::OwnedString::new(path_arg.to_bun_string(scope)?);
 
         let tarball_path = tarball_path_str.to_utf8();
 
@@ -4294,6 +4294,6 @@ pub mod bindings {
         result.put(global, b"shasum", shasum_str.to_js(global)?);
         result.put(global, b"integrity", integrity_value);
 
-        Ok(result)
+        Ok(scope.local(result))
     }
 }

@@ -15,7 +15,9 @@ use bun_ptr::IntrusiveRc;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, Local, Scope, SystemError,
+};
 // `err.to_js(global)` on `sys::Error` (the `SysErrorJsc` trait method) is only
 // reached from `#[cfg(not(windows))]` / `#[cfg(unix)]` blocks below.
 #[cfg(not(windows))]
@@ -672,59 +674,59 @@ impl<const SSL: bool> NewSocket<SSL> {
         Err(global.throw(format_args!("Cannot construct Socket")))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn resume_from_js(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn resume_from_js<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         log!("resume");
         // The raw half of an upgradeTLS pair is an observation tap; flow
         // control belongs to the TLS half. Pausing the shared fd here would
         // wedge the TLS read path (#15438).
         if this.flags.get().contains(Flags::BYPASS_TLS) {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         if this.flags.get().contains(Flags::IS_PAUSED) {
             let resumed = this.socket.get().resume_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, !resumed));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn pause_from_js(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn pause_from_js<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         log!("pause");
         if this.flags.get().contains(Flags::BYPASS_TLS) {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         if !this.flags.get().contains(Flags::IS_PAUSED) {
             let paused = this.socket.get().pause_stream();
             this.update_flags(|f| f.set(Flags::IS_PAUSED, paused));
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn set_keep_alive(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_keep_alive<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<2>();
+        let args = callframe.scoped_arguments::<2>(scope);
 
         let enabled: bool = if args.len >= 1 {
             args.ptr[0].to_boolean()
@@ -733,8 +735,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
 
         let initial_delay: u32 = if args.len > 1 {
-            u32::try_from(global.validate_integer_range(
-                args.ptr[1],
+            u32::try_from(scope.unscoped_global().validate_integer_range(
+                args.ptr[1].raw(),
                 0i32,
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
@@ -748,19 +750,19 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         log!("setKeepAlive({}, {})", enabled, initial_delay);
 
-        Ok(JSValue::from(
+        Ok(scope.local(JSValue::from(
             this.socket.get().set_keep_alive(enabled, initial_delay),
-        ))
+        )))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn set_no_delay(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_no_delay<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
+        let args = callframe.scoped_arguments::<1>(scope);
         let enabled: bool = if args.len >= 1 {
             args.ptr[0].to_boolean()
         } else {
@@ -768,29 +770,33 @@ impl<const SSL: bool> NewSocket<SSL> {
         };
         log!("setNoDelay({})", enabled);
 
-        Ok(JSValue::from(this.socket.get().set_no_delay(enabled)))
+        Ok(scope.local(JSValue::from(this.socket.get().set_no_delay(enabled))))
     }
 
     /// `_handle.setTypeOfService(tos)` - returns 0 on success or a negative
     /// platform errno (Node's TCPWrap::SetTypeOfService convention, so the JS
     /// layer can hand it to ErrnoException).
-    #[bun_jsc::host_fn(method)]
-    pub fn set_type_of_service(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_type_of_service<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
+        let args = callframe.scoped_arguments::<1>(scope);
         let tos: i32 = if args.len >= 1 {
             let arg = args.ptr[0];
             // validate_integer_range maps NaN to the default; node:net rejects
             // it with ERR_INVALID_ARG_TYPE, so do that explicitly here.
             if arg.is_number() && arg.as_number().is_nan() {
-                return Err(global.throw_invalid_property_type_value(b"tos", b"integer", arg));
+                return Err(scope.unscoped_global().throw_invalid_property_type_value(
+                    b"tos",
+                    b"integer",
+                    arg.raw(),
+                ));
             }
-            global.validate_integer_range(
-                arg,
+            scope.unscoped_global().validate_integer_range(
+                arg.raw(),
                 0i32,
                 bun_sql_jsc::jsc::IntegerRange {
                     min: 0,
@@ -803,37 +809,37 @@ impl<const SSL: bool> NewSocket<SSL> {
             0
         };
         log!("setTypeOfService({})", tos);
-        Ok(JSValue::from(this.socket.get().set_tos(tos)))
+        Ok(scope.local(JSValue::from(this.socket.get().set_tos(tos))))
     }
 
     /// `_handle.getTypeOfService()` - returns the value (>= 0) or a negative
     /// platform errno.
-    #[bun_jsc::host_fn(method)]
-    pub fn get_type_of_service(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_type_of_service<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         log!("getTypeOfService()");
-        Ok(JSValue::from(this.socket.get().get_tos()))
+        Ok(scope.local(JSValue::from(this.socket.get().get_tos())))
     }
 
     /// `handle.resumeSNI(secureContextOrNull, isError)` - resumes a server
     /// handshake suspended by an asynchronous SNICallback. A no-op when the
     /// socket already closed (the resolution outlived the connection).
-    #[bun_jsc::host_fn(method)]
-    pub fn resume_sni(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn resume_sni<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<2>();
+        let args = callframe.scoped_arguments::<2>(scope);
         log!("resumeSNI");
         let socket = this.socket.get();
         if socket.is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         let is_error = args.len > 1 && args.ptr[1].to_boolean();
         // The selected context: a native SecureContext (borrow() hands back an
@@ -851,7 +857,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             core::ptr::null_mut()
         };
         socket.sni_resolve(ctx_ptr.cast(), is_error);
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     pub fn handle_error(&self, err_value: JSValue) {
@@ -2088,10 +2094,10 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.exit_scope(scope);
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_data(_this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_data<'s>(_this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         log!("getData()");
-        JSValue::UNDEFINED
+        Ok(scope.undefined())
     }
 
     #[bun_jsc::host_fn(setter)]
@@ -2101,65 +2107,71 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(true)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_listener(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_listener<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let Some(handlers) = this.handlers.get() else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
 
         if handlers.mode != super::SocketMode::Server || this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         }
 
         let Some(listener) = handlers.listener() else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
-        listener
-            .this_value
-            .get()
-            .try_get()
-            .unwrap_or(JSValue::UNDEFINED)
+        Ok(scope.local(
+            listener
+                .this_value
+                .get()
+                .try_get()
+                .unwrap_or(JSValue::UNDEFINED),
+        ))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_ready_state(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_ready_state<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let socket = this.socket.get();
-        if socket.is_detached() {
-            JSValue::js_number_from_int32(-1)
+        Ok(if socket.is_detached() {
+            scope.number_from_int32(-1)
         } else if socket.is_closed() {
-            JSValue::js_number_from_int32(0)
+            scope.number_from_int32(0)
         } else if socket.is_established() {
-            JSValue::js_number_from_int32(1)
+            scope.number_from_int32(1)
         } else if socket.is_shutdown() {
-            JSValue::js_number_from_int32(-2)
+            scope.number_from_int32(-2)
         } else {
-            JSValue::js_number_from_int32(2)
-        }
+            scope.number_from_int32(2)
+        })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_authorized(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_authorized<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         log!("getAuthorized()");
-        JSValue::from(this.flags.get().contains(Flags::AUTHORIZED))
+        Ok(scope.local(JSValue::from(this.flags.get().contains(Flags::AUTHORIZED))))
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn timeout(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn timeout<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
+        let args = callframe.scoped_arguments::<1>(scope);
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         if args.len == 0 {
-            return Err(global.throw(format_args!("Expected 1 argument, got 0")));
+            return Err(scope
+                .unscoped_global()
+                .throw(format_args!("Expected 1 argument, got 0")));
         }
-        let t = args.ptr[0].coerce::<i32>(global)?;
+        let t = args.ptr[0].raw().coerce::<i32>(scope.unscoped_global())?;
         if t < 0 {
-            return Err(global.throw(format_args!("Timeout must be a positive integer")));
+            return Err(scope
+                .unscoped_global()
+                .throw(format_args!("Timeout must be a positive integer")));
         }
         log!("timeout({})", t);
 
@@ -2167,7 +2179,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             .get()
             .set_timeout(c_uint::try_from(t).expect("int cast"));
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     fn stored_verify_error_to_js(&self, global: &JSGlobalObject) -> Option<JSValue> {
@@ -2186,28 +2198,31 @@ impl<const SSL: bool> NewSocket<SSL> {
         })
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn get_authorization_error(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_authorization_error<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
+        let global = scope.unscoped_global();
 
         if this.socket.get().is_detached() {
             // The verdict must survive the forced close.
-            return Ok(this
-                .stored_verify_error_to_js(global)
-                .unwrap_or(JSValue::NULL));
+            return Ok(scope.local(
+                this.stored_verify_error_to_js(global)
+                    .unwrap_or(JSValue::NULL),
+            ));
         }
 
         // this error can change if called in different stages of hanshake
         // is very usefull to have this feature depending on the user workflow
         let ssl_error = this.socket.get().get_verify_error();
         if ssl_error.error_no == 0 {
-            return Ok(this
-                .stored_verify_error_to_js(global)
-                .unwrap_or(JSValue::NULL));
+            return Ok(scope.local(
+                this.stored_verify_error_to_js(global)
+                    .unwrap_or(JSValue::NULL),
+            ));
         }
 
         let code: &[u8] = ssl_error.code_bytes();
@@ -2224,7 +2239,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             dest: BunString::EMPTY,
         };
 
-        Ok(fallback.to_error_instance(global))
+        Ok(scope.local(fallback.to_error_instance(global)))
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2245,34 +2260,34 @@ impl<const SSL: bool> NewSocket<SSL> {
         )
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_local_family(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_local_family<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
 
         let mut buf = [0u8; 64];
         let Some(address_bytes) = this.socket.get().local_address(&mut buf) else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         };
         Ok(match address_bytes.len() {
-            4 => global.common_strings().ipv4(),
-            16 => global.common_strings().ipv6(),
-            _ => JSValue::UNDEFINED,
+            4 => scope.local(scope.unscoped_global().common_strings().ipv4()),
+            16 => scope.local(scope.unscoped_global().common_strings().ipv6()),
+            _ => scope.undefined(),
         })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_local_address(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_local_address<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
 
         let Some(address_bytes) = this.socket.get().local_address(&mut buf) else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         };
         // `format_ip` expects `addr:port` / `[addr]:port` shape (it strips
         // `:port` and brackets), so pass a `SocketAddr` — bare `IpAddr` corrupts IPv6.
@@ -2289,50 +2304,53 @@ impl<const SSL: bool> NewSocket<SSL> {
                 0,
             )
             .into(),
-            _ => return Ok(JSValue::UNDEFINED),
+            _ => return Ok(scope.undefined()),
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        jsc::bun_string_jsc::create_utf8_for_js(global, text)
+        Ok(scope.local(jsc::bun_string_jsc::create_utf8_for_js(
+            scope.unscoped_global(),
+            text,
+        )?))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_local_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_local_port<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         }
 
-        JSValue::js_number_from_int32(this.socket.get().local_port())
+        Ok(scope.number_from_int32(this.socket.get().local_port()))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_remote_family(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_remote_family<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
 
         let mut buf = [0u8; 64];
         let Some(address_bytes) = this.socket.get().remote_address(&mut buf) else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         };
         Ok(match address_bytes.len() {
-            4 => global.common_strings().ipv4(),
-            16 => global.common_strings().ipv6(),
-            _ => JSValue::UNDEFINED,
+            4 => scope.local(scope.unscoped_global().common_strings().ipv4()),
+            16 => scope.local(scope.unscoped_global().common_strings().ipv6()),
+            _ => scope.undefined(),
         })
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_remote_address(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_remote_address<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
 
         let mut buf = [0u8; 64];
         let mut text_buf = [0u8; 512];
 
         let Some(address_bytes) = this.socket.get().remote_address(&mut buf) else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         };
         let address: std::net::SocketAddr = match address_bytes.len() {
             4 => std::net::SocketAddrV4::new(
@@ -2347,20 +2365,23 @@ impl<const SSL: bool> NewSocket<SSL> {
                 0,
             )
             .into(),
-            _ => return Ok(JSValue::UNDEFINED),
+            _ => return Ok(scope.undefined()),
         };
 
         let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        jsc::bun_string_jsc::create_utf8_for_js(global, text)
+        Ok(scope.local(jsc::bun_string_jsc::create_utf8_for_js(
+            scope.unscoped_global(),
+            text,
+        )?))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_remote_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_remote_port<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if this.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         }
 
-        JSValue::js_number_from_int32(this.socket.get().remote_port())
+        Ok(scope.number_from_int32(this.socket.get().remote_port()))
     }
 
     #[inline]
@@ -2962,8 +2983,12 @@ impl<const SSL: bool> NewSocket<SSL> {
         true
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn flush(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn flush<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         // `end()` → `internalFlush` → `markInactive` → `closeAndDetach(.normal)`
         // detaches `this.socket` and, for TLS, defers the raw close until the
@@ -2974,18 +2999,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the deferred `onClose` then underflows it. Every other
         // `internalFlush` caller already has this check.
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         let _ = this.internal_flush();
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn terminate(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn terminate<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         // Capture the in-flight-connect state before close_and_detach() sets
         // DETACHED. Resetting a SEMI_SOCKET (Connected arm, handshake not yet
@@ -3007,32 +3032,32 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             this.deref();
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn shutdown(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn shutdown<'s>(
         this: &Self,
-        _global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
+        let args = callframe.scoped_arguments::<1>(scope);
         if args.len > 0 && args.ptr[0].to_boolean() {
             this.socket.get().shutdown_read();
         } else {
             this.socket.get().shutdown();
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn close(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn close<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         let socket = this.socket.get();
         // An in-flight `connect()` whose `on_open` has not fired yet is a
@@ -3061,7 +3086,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
         socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
-        let _ = global;
         this.poll_ref.with_mut(|p| {
             p.unref(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
@@ -3076,7 +3100,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // stays ≥ 1 across this call.
             this.deref();
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3105,37 +3129,43 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(result)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn js_ref(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn js_ref<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
             this.ref_pollref_on_connect.set(true);
         }
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
-        let _ = global;
         this.poll_ref.with_mut(|p| {
             p.ref_(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
             ))
         });
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn js_unref(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn js_unref<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
         if this.socket.get().is_detached() {
             this.ref_pollref_on_connect.set(false);
         }
-        let _ = global;
         this.poll_ref.with_mut(|p| {
             p.unref(bun_io::posix_event_loop::get_vm_ctx(
                 bun_io::AllocatorType::Js,
             ))
         });
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     /// Called when refcount reaches zero. NOT `impl Drop` — this struct is the
@@ -3196,60 +3226,66 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_ref.deref();
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn reload(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn reload<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = callframe.arguments_old::<1>();
+    ) -> JsResult<Local<'s>> {
+        let args = callframe.scoped_arguments::<1>(scope);
 
         if args.len < 1 {
-            return Err(global.throw(format_args!("Expected 1 argument")));
+            return Err(scope
+                .unscoped_global()
+                .throw(format_args!("Expected 1 argument")));
         }
 
         if this.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
 
         let opts = args.ptr[0];
-        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
-            return Err(global.throw(format_args!("Expected options object")));
+        if opts.raw().is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+            return Err(scope
+                .unscoped_global()
+                .throw(format_args!("Expected options object")));
         }
 
-        let socket_obj = opts
-            .get(global, "socket")?
-            .ok_or_else(|| global.throw(format_args!("Expected \"socket\" option")))?;
+        let socket_obj = opts.get(scope, "socket")?.ok_or_else(|| {
+            scope
+                .unscoped_global()
+                .throw(format_args!("Expected \"socket\" option"))
+        })?;
 
         let handlers = this.get_handlers();
         // Parse and validate first: the option getters run user JS that can
         // close this socket and repoint its `Handlers`.
-        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
+        let reloaded = Handlers::prepare_reload(scope.unscoped_global(), socket_obj.raw())?;
         if !this.handlers_are(&handlers) {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         // Update the callbacks of the existing cell in place, so the listener
         // and every socket sharing it observe them; nothing else about the
         // shared `Handlers` (mode, active_connections) is touched.
-        handlers.apply_reload(global, &reloaded);
+        handlers.apply_reload(scope.unscoped_global(), &reloaded);
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_fd<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         // On Windows the fd is a system-kind SOCKET handle; routing it through
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
         // kind (system→u64, uv→i32, posix→i32).
         use bun_sys_jsc::FdJsc as _;
-        this.socket.get().fd().to_js_without_making_lib_uv_owned()
+        Ok(scope.local(this.socket.get().fd().to_js_without_making_lib_uv_owned()))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_bytes_written(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_bytes_written<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(
             (this.bytes_written.get() + this.buffered_data_for_node_net.get().len() as u64) as f64,
-        )
+        ))
     }
 
     /// In-place TCP→TLS upgrade. The underlying `us_socket_t` is
@@ -3259,18 +3295,21 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// owns dispatch; `raw` has `bypass_tls` set so node:net's
     /// `socket._handle` can pipe pre-handshake/tunnelled bytes via
     /// `us_socket_raw_write`. No second context, no `Handlers.clone()`.
-    #[bun_jsc::host_fn(method)]
-    pub fn upgrade_tls(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn upgrade_tls<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
-        let args = callframe.arguments_old::<1>();
+        let args = callframe.scoped_arguments::<1>(scope);
         if args.len < 1 {
-            return Err(global.throw(format_args!("Expected 1 arguments")));
+            return Err(scope
+                .unscoped_global()
+                .throw(format_args!("Expected 1 arguments")));
         }
-        Self::upgrade_tls_impl(this, global, args.ptr[0], false)
+        let v = Self::upgrade_tls_impl(this, scope.unscoped_global(), args.ptr[0].raw(), false)?;
+        Ok(scope.local(v))
     }
 
     /// `defers_server_identity`: node:tls owns hostname policy in its JS layer
@@ -3646,224 +3685,375 @@ impl<const SSL: bool> NewSocket<SSL> {
         unsafe { &*std::ptr::from_ref::<Self>(this).cast::<TLSSocket>() }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn disable_renegotiation(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn disable_renegotiation<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::disable_renegotiation(Self::as_tls(this), g, f)
+            let v = tls_socket_functions::disable_renegotiation(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn is_session_reused(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::is_session_reused(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::FALSE)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn set_verify_mode(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::set_verify_mode(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn renegotiate(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::renegotiate(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_tls_ticket(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::get_tls_ticket(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn set_session(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::set_session(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_session(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::get_session(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_alpn_protocol(this: &Self, g: &JSGlobalObject) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::get_alpn_protocol(Self::as_tls(this), g)
-        } else {
-            Ok(JSValue::FALSE)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn set_key_cert(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::set_key_cert(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn export_keying_material(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn is_session_reused<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::export_keying_material(Self::as_tls(this), g, f)
+            let v = tls_socket_functions::is_session_reused(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.boolean(false))
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_ephemeral_key_info(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_verify_mode<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_ephemeral_key_info(Self::as_tls(this), g, f)
+            let v = tls_socket_functions::set_verify_mode(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::NULL)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_cipher(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::get_cipher(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_tls_peer_finished_message(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn renegotiate<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_tls_peer_finished_message(Self::as_tls(this), g, f)
+            let v =
+                tls_socket_functions::renegotiate(Self::as_tls(this), scope.unscoped_global(), f)?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_tls_finished_message(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_tls_ticket<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_tls_finished_message(Self::as_tls(this), g, f)
+            let v = tls_socket_functions::get_tls_ticket(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_shared_sigalgs(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::get_shared_sigalgs(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::UNDEFINED)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_tls_version(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
-        if SSL {
-            tls_socket_functions::get_tls_version(Self::as_tls(this), g, f)
-        } else {
-            Ok(JSValue::NULL)
-        }
-    }
-    #[bun_jsc::host_fn(method)]
-    pub fn set_max_send_fragment(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_session<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::set_max_send_fragment(Self::as_tls(this), g, f)
+            let v =
+                tls_socket_functions::set_session(Self::as_tls(this), scope.unscoped_global(), f)?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::FALSE)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_peer_certificate(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_session<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_peer_certificate(Self::as_tls(this), g, f)
+            let v =
+                tls_socket_functions::get_session(Self::as_tls(this), scope.unscoped_global(), f)?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::NULL)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_certificate(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_alpn_protocol<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_certificate(Self::as_tls(this), g, f)
+            let v = tls_socket_functions::get_alpn_protocol(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+            )?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.boolean(false))
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_peer_x509_certificate(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_key_cert<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_peer_x509_certificate(Self::as_tls(this), g, f)
+            let v =
+                tls_socket_functions::set_key_cert(Self::as_tls(this), scope.unscoped_global(), f)?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_x509_certificate(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn export_keying_material<'s>(
         this: &Self,
-        g: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         f: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_x509_certificate(Self::as_tls(this), g, f)
+            let v = tls_socket_functions::export_keying_material(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn get_servername(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_ephemeral_key_info<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::get_servername(Self::as_tls(this), g, f)
+            let v = tls_socket_functions::get_ephemeral_key_info(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.null())
         }
     }
-    #[bun_jsc::host_fn(method)]
-    pub fn set_servername(this: &Self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_cipher<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         if SSL {
-            tls_socket_functions::set_servername(Self::as_tls(this), g, f)
+            let v =
+                tls_socket_functions::get_cipher(Self::as_tls(this), scope.unscoped_global(), f)?;
+            Ok(scope.local(v))
         } else {
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_tls_peer_finished_message<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_tls_peer_finished_message(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_tls_finished_message<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_tls_finished_message(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_shared_sigalgs<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_shared_sigalgs(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_tls_version<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_tls_version(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.null())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_max_send_fragment<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::set_max_send_fragment(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.boolean(false))
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_peer_certificate<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_peer_certificate(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.null())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_certificate<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_certificate(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_peer_x509_certificate<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_peer_x509_certificate(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_x509_certificate<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_x509_certificate(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn get_servername<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::get_servername(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
+        }
+    }
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn set_servername<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        f: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        if SSL {
+            let v = tls_socket_functions::set_servername(
+                Self::as_tls(this),
+                scope.unscoped_global(),
+                f,
+            )?;
+            Ok(scope.local(v))
+        } else {
+            Ok(scope.undefined())
         }
     }
 }
@@ -4342,28 +4532,42 @@ impl DuplexUpgradeContext {
 
 /// node:tls's `tls.connect({ socket })` entry point: same upgrade as the
 /// public `upgradeTLS`, but hostname policy stays with node's JS layer.
-#[bun_jsc::host_fn]
-pub fn js_upgrade_tls_deferred(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+// The macro's renamed `__scoped_*` inner fn inherits `pub` but only the
+// wrapper is re-exported for js2native (see Cargo.toml on `unreachable_pub`).
+#[allow(unreachable_pub)]
+pub fn js_upgrade_tls_deferred<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
+) -> JsResult<Local<'s>> {
     jsc::mark_binding!();
-    let [socket, opts] = callframe.arguments_as_array::<2>();
+    let args = callframe.scoped_arguments::<2>(scope);
+    let [socket, opts] = args.ptr;
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, true);
+        let v =
+            NewSocket::<false>::upgrade_tls_impl(this, scope.unscoped_global(), opts.raw(), true)?;
+        return Ok(scope.local(v));
     }
     if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
+        let v =
+            NewSocket::<true>::upgrade_tls_impl(this, scope.unscoped_global(), opts.raw(), true)?;
+        return Ok(scope.local(v));
     }
-    Err(global.throw(format_args!("Expected a socket instance")))
+    Err(scope
+        .unscoped_global()
+        .throw(format_args!("Expected a socket instance")))
 }
 
-#[bun_jsc::host_fn]
-pub fn js_upgrade_duplex_to_tls(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+// The macro's renamed `__scoped_*` inner fn inherits `pub` but only the
+// wrapper is re-exported for js2native (see Cargo.toml on `unreachable_pub`).
+#[allow(unreachable_pub)]
+pub fn js_upgrade_duplex_to_tls<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
+) -> JsResult<Local<'s>> {
     jsc::mark_binding!();
+    let global = scope.unscoped_global();
 
     let args = callframe.arguments_old::<2>();
     if args.len < 2 {
@@ -4627,53 +4831,70 @@ pub fn js_upgrade_duplex_to_tls(
     // data, end, drain and close events must be reported
     array.put_index(global, 1, dc.upgrade.get_js_handlers(global)?)?;
 
-    Ok(array)
+    Ok(scope.local(array))
 }
 
-#[bun_jsc::host_fn]
-pub fn js_is_named_pipe_socket(
-    global: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped)]
+// The macro's renamed `__scoped_*` inner fn inherits `pub` but only the
+// wrapper is re-exported for js2native (see Cargo.toml on `unreachable_pub`).
+#[allow(unreachable_pub)]
+pub fn js_is_named_pipe_socket<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JsResult<JSValue> {
+) -> JsResult<Local<'s>> {
     jsc::mark_binding!();
 
-    let arguments = callframe.arguments_old::<3>();
+    let arguments = callframe.scoped_arguments::<3>(scope);
     if arguments.len < 1 {
-        return Err(global.throw_not_enough_arguments("isNamedPipeSocket", 1, arguments.len));
+        return Err(scope.unscoped_global().throw_not_enough_arguments(
+            "isNamedPipeSocket",
+            1,
+            arguments.len,
+        ));
     }
     let socket = arguments.ptr[0];
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
+        return Ok(scope.local(JSValue::from(this.socket.get().is_named_pipe())));
     } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::from(this.socket.get().is_named_pipe()));
+        return Ok(scope.local(JSValue::from(this.socket.get().is_named_pipe())));
     }
-    Ok(JSValue::FALSE)
+    Ok(scope.boolean(false))
 }
 
-#[bun_jsc::host_fn]
-pub fn js_get_buffered_amount(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+// The macro's renamed `__scoped_*` inner fn inherits `pub` but only the
+// wrapper is re-exported for js2native (see Cargo.toml on `unreachable_pub`).
+#[allow(unreachable_pub)]
+pub fn js_get_buffered_amount<'s>(
+    scope: &mut Scope<'s>,
+    callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
     jsc::mark_binding!();
 
-    let arguments = callframe.arguments_old::<3>();
+    let arguments = callframe.scoped_arguments::<3>(scope);
     if arguments.len < 1 {
-        return Err(global.throw_not_enough_arguments("getBufferedAmount", 1, arguments.len));
+        return Err(scope.unscoped_global().throw_not_enough_arguments(
+            "getBufferedAmount",
+            1,
+            arguments.len,
+        ));
     }
     let socket = arguments.ptr[0];
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
+        return Ok(scope.number(this.buffered_data_for_node_net.get().len() as f64));
     } else if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return Ok(JSValue::js_number(
-            this.buffered_data_for_node_net.get().len() as f64,
-        ));
+        return Ok(scope.number(this.buffered_data_for_node_net.get().len() as f64));
     }
-    Ok(JSValue::js_number(0.0))
+    Ok(scope.number(0.0))
 }
 
-#[bun_jsc::host_fn]
-pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+// The macro's renamed `__scoped_*` inner fn inherits `pub` but only the
+// wrapper is re-exported for js2native (see Cargo.toml on `unreachable_pub`).
+#[allow(unreachable_pub)]
+pub fn js_create_socket_pair<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
     jsc::mark_binding!();
+    let global = scope.unscoped_global();
 
     #[cfg(windows)]
     {
@@ -4697,12 +4918,19 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, JSValue::js_number(fds_[0] as f64))?;
         array.put_index(global, 1, JSValue::js_number(fds_[1] as f64))?;
-        Ok(array)
+        Ok(scope.local(array))
     }
 }
 
-#[bun_jsc::host_fn]
-pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+// The macro's renamed `__scoped_*` inner fn inherits `pub` but only the
+// wrapper is re-exported for js2native (see Cargo.toml on `unreachable_pub`).
+#[allow(unreachable_pub)]
+pub fn js_set_socket_options<'s>(
+    scope: &mut Scope<'s>,
+    callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
+    let global = scope.unscoped_global();
     let arguments = callframe.arguments();
 
     if arguments.len() < 3 {
@@ -4762,30 +4990,31 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
         );
     }
 
-    Ok(JSValue::UNDEFINED)
+    Ok(scope.undefined())
 }
 
 pub mod testing_apis {
     use super::*;
 
-    #[bun_jsc::host_fn]
-    pub fn js_socket_fault_injection_available(
-        _global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub fn js_socket_fault_injection_available<'s>(
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        Ok(JSValue::from(cfg!(socket_fault_injection)))
+    ) -> JsResult<Local<'s>> {
+        Ok(scope.boolean(cfg!(socket_fault_injection)))
     }
 
-    #[bun_jsc::host_fn]
-    pub fn js_clear_socket_faults(
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub fn js_clear_socket_faults<'s>(
+        scope: &mut Scope<'s>,
         _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         #[cfg(socket_fault_injection)]
         {
             let _ = global;
             bun_uws_sys::fault_inject::us_fault_clear_all();
-            Ok(JSValue::UNDEFINED)
+            Ok(scope.undefined())
         }
         #[cfg(not(socket_fault_injection))]
         Err(global.throw(format_args!(
@@ -4793,9 +5022,13 @@ pub mod testing_apis {
         )))
     }
 
-    #[bun_jsc::host_fn]
-    pub fn js_set_socket_fault(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(scoped)]
+    pub fn js_set_socket_fault<'s>(
+        scope: &mut Scope<'s>,
+        frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         jsc::mark_binding!();
+        let global = scope.unscoped_global();
         #[cfg(not(socket_fault_injection))]
         {
             let _ = frame;
@@ -4949,7 +5182,7 @@ pub mod testing_apis {
 
             // SAFETY: rule is a valid stack pointer for the duration of the call.
             unsafe { fi::us_fault_set(syscall, &rule) };
-            Ok(JSValue::TRUE)
+            Ok(scope.boolean(true))
         }
     }
 

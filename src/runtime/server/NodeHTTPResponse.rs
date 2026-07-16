@@ -9,7 +9,7 @@ use bun_collections::VecExt;
 use bun_core::scoped_log;
 use bun_core::{ZigString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
-use bun_jsc::JsCell;
+use bun_jsc::{JsCell, Local, Scope};
 use bun_ptr::AsCtxPtr;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -1097,13 +1097,14 @@ impl NodeHTTPResponse {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onResolve")]
-pub(crate) fn node_http_request_on_resolve(
-    global_object: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped, export = "Bun__NodeHTTPRequest__onResolve")]
+pub(crate) fn node_http_request_on_resolve<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JSValue {
+) -> JsResult<Local<'s>> {
     scoped_log!(NodeHTTPResponse, "onResolve");
-    let arguments = callframe.arguments_old::<2>();
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<2>(scope);
     // arguments[1] is the JSNodeHTTPResponse cell from the resolve callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
     let this: &NodeHTTPResponse = arguments.ptr[1].as_class_ref::<NodeHTTPResponse>().unwrap();
@@ -1115,7 +1116,7 @@ pub(crate) fn node_http_request_on_resolve(
         had
     });
     // defer this.deref(); — moved to tail.
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].raw());
 
     let flags = this.flags.get();
     if !flags.contains(Flags::REQUEST_HAS_COMPLETED) && !flags.contains(Flags::SOCKET_CLOSED) {
@@ -1138,15 +1139,16 @@ pub(crate) fn node_http_request_on_resolve(
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
+    Ok(scope.undefined())
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeHTTPRequest__onReject")]
-pub(crate) fn node_http_request_on_reject(
-    global_object: &JSGlobalObject,
+#[bun_jsc::host_fn(scoped, export = "Bun__NodeHTTPRequest__onReject")]
+pub(crate) fn node_http_request_on_reject<'s>(
+    scope: &mut Scope<'s>,
     callframe: &CallFrame,
-) -> JSValue {
-    let arguments = callframe.arguments_old::<2>();
+) -> JsResult<Local<'s>> {
+    let global_object = scope.unscoped_global();
+    let arguments = callframe.scoped_arguments::<2>(scope);
     let err = arguments.ptr[0];
     // arguments[1] is the JSNodeHTTPResponse cell from the reject callback.
     // R-2: deref shared — `maybe_stop_reading_body`/`on_request_complete` re-enter.
@@ -1158,7 +1160,7 @@ pub(crate) fn node_http_request_on_reject(
         p.deinit();
         had
     });
-    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1]);
+    this.maybe_stop_reading_body(bun_vm_mut(global_object), arguments.ptr[1].raw());
 
     // defer this.deref(); — moved to tail.
 
@@ -1185,11 +1187,11 @@ pub(crate) fn node_http_request_on_reject(
         this.on_request_complete();
     }
 
-    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err, true);
+    let _ = bun_vm_mut(global_object).uncaught_exception(global_object, err.raw(), true);
     if had_promise {
         this.deref();
     }
-    JSValue::UNDEFINED
+    Ok(scope.undefined())
 }
 
 impl NodeHTTPResponse {

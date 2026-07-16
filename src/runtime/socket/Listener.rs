@@ -12,7 +12,9 @@ use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::zig_string::ZigString;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
+use bun_jsc::{
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, Local, Scope,
+};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -110,10 +112,13 @@ pub enum ListenerType {
 }
 
 impl Listener {
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_data(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_data<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         log!("getData()");
-        this.strong_data.get().get().unwrap_or(JSValue::UNDEFINED)
+        Ok(match this.strong_data.get().get() {
+            Some(v) => scope.local(v),
+            None => scope.undefined(),
+        })
     }
 
     #[bun_jsc::host_fn(setter)]
@@ -136,9 +141,14 @@ impl UnixOrHost {
 }
 
 impl Listener {
-    #[bun_jsc::host_fn(method)]
-    pub fn reload(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = frame.arguments_old::<1>();
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn reload<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
+        let args = frame.scoped_arguments::<1>(scope);
 
         if args.len < 1
             || (matches!(this.listener.get(), ListenerType::None)
@@ -148,11 +158,11 @@ impl Listener {
         }
 
         let opts = args.ptr[0];
-        if opts.is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
+        if opts.raw().is_empty_or_undefined_or_null() || opts.is_boolean() || !opts.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected options object")));
         }
 
-        let socket_obj = match opts.get(global, "socket")? {
+        let socket_obj = match opts.get(scope, "socket")? {
             Some(v) => v,
             None => return Err(global.throw(format_args!("Expected \"socket\" object"))),
         };
@@ -161,10 +171,10 @@ impl Listener {
         // updates the callbacks of the existing cell in place, so the
         // listener and every live socket sharing it pick them up with no swap
         // of the `Handlers` itself.
-        let reloaded = Handlers::prepare_reload(global, socket_obj)?;
+        let reloaded = Handlers::prepare_reload(global, socket_obj.raw())?;
         this.handlers.apply_reload(global, &reloaded);
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
@@ -733,15 +743,19 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn dispose(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn dispose<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         Self::do_stop(this, true);
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn stop(this: &Self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let arguments = frame.arguments_old::<1>();
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn stop<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let arguments = frame.scoped_arguments::<1>(scope);
         log!("close");
 
         Self::do_stop(
@@ -753,7 +767,7 @@ impl Listener {
             },
         );
 
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     fn do_stop(this: &Self, force_close: bool) {
@@ -864,38 +878,44 @@ impl Listener {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.active_connections.get() as f64)
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_connections_count<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(scope.number(this.handlers.active_connections.get() as f64))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_unix(this: &Self, global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_unix<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let UnixOrHost::Unix(unix) = &this.connection else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
-        ZigString::init(unix).with_encoding().to_js(global)
+        let v = ZigString::init(unix)
+            .with_encoding()
+            .to_js(scope.unscoped_global());
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_hostname(this: &Self, global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_hostname<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let UnixOrHost::Host { host, .. } = &this.connection else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
-        ZigString::init(host).with_encoding().to_js(global)
+        let v = ZigString::init(host)
+            .with_encoding()
+            .to_js(scope.unscoped_global());
+        Ok(scope.local(v))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_port(this: &Self, _global: &JSGlobalObject) -> JSValue {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_port<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         let UnixOrHost::Host { port, .. } = &this.connection else {
-            return JSValue::UNDEFINED;
+            return Ok(scope.undefined());
         };
-        JSValue::js_number(*port as f64)
+        Ok(scope.number(*port as f64))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub fn get_fd(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        match this.listener.get() {
+    #[bun_jsc::host_fn(getter, scoped)]
+    pub fn get_fd<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
+        Ok(match this.listener.get() {
             ListenerType::Uws(uws_listener) => {
                 // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let socket = bun_opaque::opaque_deref_mut(uws_listener).socket::<false>();
@@ -904,22 +924,22 @@ impl Listener {
                 // stdio. The sys_jsc helper branches on kind
                 // (system→u64, uv→i32, posix→i32).
                 use bun_sys_jsc::FdJsc as _;
-                socket.fd().to_js_without_making_lib_uv_owned()
+                scope.local(socket.fd().to_js_without_making_lib_uv_owned())
             }
-            _ => JSValue::js_number(-1.0),
-        }
+            _ => scope.number(-1.0),
+        })
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn ref_(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let this_value = frame.this();
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn ref_<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
+        let this_value = frame.scoped_this(scope);
         if matches!(this.listener.get(), ListenerType::None) {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         }
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         this.this_value
-            .with_mut(|r| r.set_strong(this_value, global));
-        Ok(JSValue::UNDEFINED)
+            .with_mut(|r| r.set_strong(this_value.raw(), scope.unscoped_global()));
+        Ok(scope.undefined())
     }
 
     /// Codegen calls `Listener::r#ref` (raw-ident lowering of the JS `ref`
@@ -930,13 +950,17 @@ impl Listener {
         Self::ref_(this, global, frame)
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn unref<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
             this.this_value.with_mut(|r| r.downgrade());
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(scope.undefined())
     }
 
     // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
@@ -1336,17 +1360,18 @@ impl Listener {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub fn getsockname(
+    #[bun_jsc::host_fn(method, scoped)]
+    pub fn getsockname<'s>(
         this: &Self,
-        global: &JSGlobalObject,
+        scope: &mut Scope<'s>,
         frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
+        let global = scope.unscoped_global();
         let ListenerType::Uws(socket) = this.listener.get() else {
-            return Ok(JSValue::UNDEFINED);
+            return Ok(scope.undefined());
         };
 
-        let out = frame.arguments_as_array::<1>()[0];
+        let out = frame.scoped_argument(scope, 0);
         if !out.is_object() {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
@@ -1357,12 +1382,12 @@ impl Listener {
         let socket_ref = bun_opaque::opaque_deref_mut(socket);
         let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
             Ok(b) => b,
-            Err(_) => return Ok(JSValue::UNDEFINED),
+            Err(_) => return Ok(scope.undefined()),
         };
         let family_js = match address_bytes.len() {
-            4 => global.common_strings().ipv4(),
-            16 => global.common_strings().ipv6(),
-            _ => return Ok(JSValue::UNDEFINED),
+            4 => scope.local(global.common_strings().ipv4()),
+            16 => scope.local(global.common_strings().ipv6()),
+            _ => return Ok(scope.undefined()),
         };
         // Format with `SocketAddrV{4,6}` so `format_ip`'s strip logic sees the
         // expected `addr:port` / `[addr]:port` shape.
@@ -1385,15 +1410,15 @@ impl Listener {
                 &mut text_buf,
             )
             .unwrap(),
-            _ => return Ok(JSValue::UNDEFINED),
+            _ => return Ok(scope.undefined()),
         };
-        let address_js = ZigString::init(formatted).to_js(global);
-        let port_js = JSValue::js_number(socket_ref.get_local_port() as f64);
+        let address_js = scope.local(ZigString::init(formatted).to_js(global));
+        let port_js = scope.number(socket_ref.get_local_port() as f64);
 
-        out.put(global, b"family", family_js);
-        out.put(global, b"address", address_js);
-        out.put(global, b"port", port_js);
-        Ok(JSValue::UNDEFINED)
+        out.put(scope, b"family", family_js);
+        out.put(scope, b"address", address_js);
+        out.put(scope, b"port", port_js);
+        Ok(scope.undefined())
     }
 }
 
@@ -1544,17 +1569,27 @@ fn connect_finish<const IS_SSL: bool>(
     Ok(promise_value)
 }
 
-#[bun_jsc::host_fn]
-pub(crate) fn js_add_server_name(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn js_add_server_name<'s>(
+    scope: &mut Scope<'s>,
+    frame: &CallFrame,
+) -> JsResult<Local<'s>> {
     jsc::mark_binding!();
 
-    let arguments = frame.arguments_old::<3>();
+    let global = scope.unscoped_global();
+    let arguments = frame.scoped_arguments::<3>(scope);
     if arguments.len < 3 {
         return Err(global.throw_not_enough_arguments("addServerName", 3, arguments.len));
     }
     let listener = arguments.ptr[0];
     if let Some(this) = listener.as_class_ref::<Listener>() {
-        return Listener::add_server_name(this, global, arguments.ptr[1], arguments.ptr[2]);
+        let v = Listener::add_server_name(
+            this,
+            global,
+            arguments.ptr[1].raw(),
+            arguments.ptr[2].raw(),
+        )?;
+        return Ok(scope.local(v));
     }
     Err(global.throw(format_args!("Expected a Listener instance")))
 }

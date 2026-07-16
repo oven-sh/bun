@@ -12,7 +12,9 @@
 use bun_core::String as BunString;
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, Local, Scope, StringJsc as _,
+};
 use bun_uws::Loop as UwsLoop;
 
 use super::{
@@ -584,16 +586,15 @@ pub mod internal_bindings {
     /// thinking that the timing is wrong (this also happens when I run the modified test in
     /// Node.js). So the best course of action is for Bun to also expose a function that reveals the
     /// clock that is used to schedule timers.
-    #[bun_jsc::host_fn]
-    pub(crate) fn timer_clock_ms(
-        global_this: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub(crate) fn timer_clock_ms<'s>(
+        scope: &mut Scope<'s>,
         call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let _ = global_this;
+    ) -> JsResult<Local<'s>> {
         let _ = call_frame;
         let now = Timespec::now(TimespecMockMode::AllowMockedTime).ms();
         // bun_jsc::JSValue has no `js_number_from_int64`; route via
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
-        Ok(JSValue::js_number(now as f64))
+        Ok(scope.number(now as f64))
     }
 }

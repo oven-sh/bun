@@ -110,7 +110,7 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__preExecutionBootstrap(Zig::GlobalOb
 
 // Set up require(), module, __filename, __dirname on globalThis for the REPL.
 // Creates a CommonJS module object rooted at the given directory so require() resolves correctly.
-extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
+extern "C" [[ZIG_EXPORT(check_slow, no_user_js)]] void Bun__REPL__setupGlobalRequire(
     Zig::GlobalObject* globalObject,
     const unsigned char* cwdPtr,
     size_t cwdLen)

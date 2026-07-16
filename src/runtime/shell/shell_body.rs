@@ -7,8 +7,8 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_jsc::{
-    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
-    MarkedArgumentBuffer, PlatformEventLoop,
+    self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult, Local,
+    MarkedArgumentBuffer, PlatformEventLoop, Scope,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 // `VirtualMachine`/`MiniEventLoop` are re-exported as *modules* by bun_jsc; pull the inner types.
@@ -1068,18 +1068,19 @@ impl<'a> ShellSrcBuilder<'a> {
 pub mod testing_apis {
     use super::*;
 
-    #[bun_jsc::host_fn]
-    pub fn disabled_on_this_platform(
-        global: &JSGlobalObject,
+    #[bun_jsc::host_fn(scoped)]
+    pub fn disabled_on_this_platform<'s>(
+        scope: &mut Scope<'s>,
         callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+    ) -> JsResult<Local<'s>> {
         #[cfg(windows)]
         {
-            let _ = (global, callframe);
-            return Ok(JSValue::FALSE);
+            let _ = callframe;
+            return Ok(scope.boolean(false));
         }
         #[cfg(not(windows))]
         {
+            let global = scope.unscoped_global();
             let arguments_ = callframe.arguments_old::<1>();
             // SAFETY: bun_vm() is non-null for a Bun-owned global.
             let vm = global.bun_vm();
@@ -1100,10 +1101,10 @@ pub mod testing_apis {
                 // `strum::IntoStaticStr` would yield the PascalCase variant name
                 // ("Cp"), so use `Kind::as_str` for the lowercase name.
                 if utf8str.slice() == disabled.as_str().as_bytes() {
-                    return Ok(JSValue::TRUE);
+                    return Ok(scope.boolean(true));
                 }
             }
-            Ok(JSValue::FALSE)
+            Ok(scope.boolean(false))
         }
     }
 

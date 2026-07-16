@@ -13,7 +13,6 @@ const cluster = new EventEmitter();
 const handles = new Map();
 const indexes = new Map();
 const noop = FunctionPrototype;
-const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
 const owner_symbol = Symbol("owner_symbol");
 
@@ -51,9 +50,8 @@ cluster._setupWorker = function () {
   onInternalMessage(worker, onmessage);
   send({ act: "online" });
 
-  function onmessage(message, handle) {
-    if (message.act === "newconn") onconnection(message, handle);
-    else if (message.act === "disconnect") worker._disconnect(true);
+  function onmessage(message) {
+    if (message.act === "disconnect") worker._disconnect(true);
   }
 };
 
@@ -88,6 +86,9 @@ cluster._getServer = function (obj, options, cb) {
   if (obj._getServerData) message.data = obj._getServerData();
 
   send(message, (reply, handle) => {
+    // The `listening` notification below carries the primary-side handle key
+    // so the primary can record which port a listen(0) worker ended up on.
+    message.key = reply.key;
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
     if (handle) {
@@ -95,7 +96,7 @@ cluster._getServer = function (obj, options, cb) {
       shared(reply, { handle, indexesKey, index }, cb);
     } else {
       // Round-robin.
-      rr(reply, { indexesKey, index }, cb);
+      rr(reply, { obj, indexesKey, index }, cb);
     }
   });
 
@@ -142,27 +143,16 @@ function shared(message, { handle, indexesKey, index }, cb) {
   cb(message.errno, handle);
 }
 
-// Round-robin. Master distributes handles across workers.
-function rr(message, { indexesKey, index }, cb) {
+// Resolves a cluster server that the primary answered without a real handle
+// (always, in Bun). `obj` goes on to bind its own SO_REUSEPORT socket on the
+// port the primary picked, so unlike Node this faux handle is never assigned
+// to `obj._handle`; it only carries that port (getsockname) and tells the
+// primary when the server goes away (close).
+function rr(message, { obj, indexesKey, index }, cb) {
   const errno = message.errno;
   if (errno) return cb(errno, null);
 
   let key = message.key;
-
-  let fakeHandle: Timer | null = null;
-
-  function ref() {
-    if (!fakeHandle) {
-      fakeHandle = setInterval(noop, TIMEOUT_MAX);
-    }
-  }
-
-  function unref() {
-    if (fakeHandle) {
-      clearInterval(fakeHandle);
-      fakeHandle = null;
-    }
-  }
 
   function listen(_backlog) {
     // TODO(bnoordhuis) Send a message to the primary that tells it to
@@ -172,13 +162,7 @@ function rr(message, { indexesKey, index }, cb) {
   }
 
   function close() {
-    // lib/net.js treats server._handle.close() as effectively synchronous.
-    // That means there is a time window between the call to close() and
-    // the ack by the primary process in which we can still receive handles.
-    // onconnection() below handles that by sending those handles back to
-    // the primary.
     if (key === undefined) return;
-    unref();
     // If the handle is the last handle in process,
     // the parent process will delete the handle when worker process exits.
     // So it is ok if the close message get lost.
@@ -195,36 +179,21 @@ function rr(message, { indexesKey, index }, cb) {
     return 0;
   }
 
-  // Faux handle. net.Server is not associated with handle,
-  // so we control its state(ref or unref) by setInterval.
-  const handle = { close, listen, ref, unref };
-  handle.ref();
+  // The real listening socket owns the event-loop ref, so ref/unref are noops
+  // here like in Node.
+  const handle = { close, listen, ref: noop, unref: noop };
   if (message.sockname) {
     handle.getsockname = getsockname; // TCP handles only.
   }
 
+  // Worker.prototype._disconnect closes cluster servers through this link;
+  // Node gets it for free by making the faux handle the server's _handle.
+  handle[owner_symbol] = obj;
+  obj.once("close", close);
+
   $assert(handles.has(key) === false);
   handles.set(key, handle);
   cb(0, handle);
-}
-
-// Round-robin connection.
-function onconnection(message, handle) {
-  const key = message.key;
-  const server = handles.get(key);
-  let accepted = server !== undefined;
-
-  if (accepted && server[owner_symbol]) {
-    const self = server[owner_symbol];
-    if (self.maxConnections != null && self._connections >= self.maxConnections) {
-      accepted = false;
-    }
-  }
-
-  send({ ack: message.seq, accepted });
-
-  if (accepted) server.onconnection(0, handle);
-  else handle.close();
 }
 
 function send(message, cb?) {

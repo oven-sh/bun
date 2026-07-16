@@ -779,8 +779,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const self = socket.data as any as NetServer;
     if (!self) return;
     // Dispatch through the listener handle's onconnection hook so user code
-    // (and node:cluster RoundRobinHandle) can intercept accepted sockets the
-    // same way Node.js exposes TCP/Pipe wrap onconnection.
+    // can intercept accepted sockets the same way Node.js exposes TCP/Pipe
+    // wrap onconnection.
     // For a standalone server-side wrap (new TLSSocket(duplex, { isServer })),
     // `self` is the wrapping socket - not a Server - and its handle has no
     // onconnection; throwing here would tear the brand-new TLS engine down
@@ -3756,8 +3756,11 @@ function listenInCluster(
   }
 
   const serverQuery = {
-    address: address,
-    port: port,
+    // Node keys pipe servers on the resolved path with port -1; that keeps a
+    // worker's pipe and TCP listen(0) servers on distinct primary-side
+    // handles and tells the primary there is no port to arbitrate.
+    address: path != null ? path : address,
+    port: path != null ? -1 : port,
     addressType: addressType,
     fd: fd,
     flags,
@@ -3767,22 +3770,43 @@ function listenInCluster(
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
     err = checkBindError(err, port, handle);
     if (err) {
-      throw new ExceptionWithHostPort(err, "bind", address, port);
+      server.emit("error", new ExceptionWithHostPort(err, "bind", address, port));
+      return;
     }
-    server[kRealListen](
-      path,
-      port,
-      hostname,
-      exclusive,
-      ipv6Only,
-      reusePort,
-      readableAll,
-      writableAll,
-      tls,
-      contexts,
-      onListen,
-      fd,
-    );
+
+    // Bun's cluster primary never binds (it cannot hand connections to workers
+    // over IPC); every worker binds its own SO_REUSEPORT socket on the port
+    // the primary resolved for this key: see internal/cluster/ReusePortHandle.ts.
+    const out = {};
+    if (handle.getsockname) handle.getsockname(out);
+    const clusterPort = out.port ?? port;
+    try {
+      server[kRealListen](
+        path,
+        clusterPort,
+        hostname,
+        exclusive,
+        ipv6Only,
+        path == null && fd == null ? true : reusePort,
+        readableAll,
+        writableAll,
+        tls,
+        contexts,
+        onListen,
+        fd,
+      );
+    } catch (listenErr) {
+      // Deregister from the primary (it may be waiting on this worker for a
+      // port) and surface the bind failure like a non-cluster listen() does.
+      handle.close();
+      const isUnix = path != null;
+      setTimeout(
+        emitErrorNextTick,
+        1,
+        server,
+        formatListenError(listenErr, isUnix ? path : hostname, isUnix ? undefined : clusterPort),
+      );
+    }
   });
 }
 

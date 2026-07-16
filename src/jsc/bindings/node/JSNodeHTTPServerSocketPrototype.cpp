@@ -213,12 +213,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
 
     thisObject->ended = true;
-    // onNodeHTTPRequest pauses the socket before the user handler so the
-    // request body buffers. HttpContext::onData discards everything once
-    // shut down, so undo that pause here or the peer's FIN is never drained.
-    if (thisObject->socket && !thisObject->upgraded) {
-        us_socket_resume(thisObject->socket);
-    }
     // The response's buffered body must reach the kernel before the FIN; uWS
     // performs the shutdown after its send buffer drains.
     if (thisObject->shutdownAfterResponseDrains()) {
@@ -226,7 +220,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();
     if (bufferedSize == 0) {
-        return us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        auto result = us_socket_buffered_js_write(thisObject->socket, thisObject->is_ssl, thisObject->ended, &thisObject->streamBuffer, globalObject, JSValue::encode(JSC::jsUndefined()), JSValue::encode(JSC::jsUndefined()));
+        // Undo onNodeHTTPRequest's body-buffering pause after the shutdown so
+        // the unread body drains and kqueue's one-shot EVFILT_WRITE (which
+        // delivers EV_EOF on SHUT_WR) is not deleted by a W -> R|W -> R step.
+        if (thisObject->socket && !thisObject->upgraded) {
+            us_socket_resume(thisObject->socket);
+        }
+        return result;
     }
     return JSValue::encode(JSC::jsUndefined());
 }

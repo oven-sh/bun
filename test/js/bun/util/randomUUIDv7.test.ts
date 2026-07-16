@@ -31,18 +31,72 @@ describe("randomUUIDv7", () => {
     expect(sorted).toEqual(input);
   });
 
-  test("monotonic across 12-bit counter rollover", () => {
-    // 10000 UUIDs at a pinned millisecond forces at least two rollovers of the
-    // 12-bit rand_a counter. The sequence must still be strictly increasing.
-    const ts = 1750000000000;
+  test("zero-arg calls are strictly increasing", () => {
+    // The implicit (Date.now()) path carries the RFC 9562 §6.2 monotonic clamp
+    // and counter-rollover bump. Every call must sort after the previous one.
     let prev = "";
     let firstBreak = -1;
     for (let i = 0; i < 10000; i++) {
-      const u = Bun.randomUUIDv7("hex", ts);
+      const u = Bun.randomUUIDv7();
       if (i > 0 && u <= prev && firstBreak === -1) firstBreak = i;
       prev = u;
     }
     expect(firstBreak).toBe(-1);
+  });
+
+  test("explicit timestamp is embedded verbatim regardless of call order", async () => {
+    // Backfill scenario: historical timestamps processed out of order. Each UUID
+    // must encode the caller's timestamp exactly, never a process high-water mark.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+          const stamps = [
+            Date.parse("2023-03-01T00:00:00Z"),
+            Date.parse("2021-01-01T00:00:00Z"),
+            Date.parse("2022-02-01T00:00:00Z"),
+            Date.parse("2021-01-01T00:00:00Z"),
+          ];
+          console.log(JSON.stringify(stamps.map(t => tsOf(Bun.randomUUIDv7("hex", t)) - t)));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual([0, 0, 0, 0]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("explicit and implicit calls do not share monotonic state", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const tsOf = u => parseInt(u.replaceAll("-", "").slice(0, 12), 16);
+          // Park the implicit generator at "now", then ask for a 2021 timestamp.
+          Bun.randomUUIDv7();
+          const explicit = 1625097600000; // 2021-07-01T00:00:00.000Z
+          const got = tsOf(Bun.randomUUIDv7("hex", explicit));
+          // And a far-future explicit call must not drag zero-arg calls into the future.
+          Bun.randomUUIDv7("hex", 4_500_000_000_000);
+          const before = Date.now();
+          const now = tsOf(Bun.randomUUIDv7());
+          const after = Date.now();
+          console.log(JSON.stringify({ got, explicit, nowOk: now >= before && now <= after }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ got: 1625097600000, explicit: 1625097600000, nowOk: true });
+    expect(exitCode).toBe(0);
   });
 
   describe("timestamp range validation", () => {
@@ -101,9 +155,9 @@ describe("randomUUIDv7", () => {
       expect(exitCode).toBe(0);
     });
 
-    test("counter rollover at 2**48-1 clamps instead of wrapping to epoch 0", async () => {
-      // 5000 calls at the max 48-bit timestamp forces the 12-bit counter to roll
-      // over at least once; the bumped timestamp must clamp at 2**48-1, not wrap.
+    test("explicit 2**48-1 stays at 2**48-1 across many calls", async () => {
+      // An explicit timestamp is embedded verbatim, so 5000 calls at the max
+      // 48-bit value must all encode exactly that value.
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -128,9 +182,9 @@ describe("randomUUIDv7", () => {
     });
   });
 
-  // The remaining tests pass far-future timestamps. UUID_V7_LAST_TIMESTAMP is a
-  // process-global that never moves backward, so run each in a fresh subprocess
-  // to avoid leaving the test process parked in the year 2100+.
+  // The remaining tests pass far-future explicit timestamps. Explicit calls
+  // maintain their own process-global counter state, so run each in a fresh
+  // subprocess to keep that state pristine.
 
   test("custom timestamp", async () => {
     await using proc = Bun.spawn({
@@ -154,7 +208,7 @@ describe("randomUUIDv7", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("older explicit timestamps do not move UUIDs backward", async () => {
+  test("older explicit timestamp after a newer one is still embedded verbatim", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -163,7 +217,6 @@ describe("randomUUIDv7", () => {
           const latest = Bun.randomUUIDv7("hex", 4_500_000_000_000);
           const stale  = Bun.randomUUIDv7("hex", 1);
           console.log(JSON.stringify({
-            increasing: stale > latest,
             latestPrefix: latest.slice(0, 13),
             stalePrefix:  stale.slice(0, 13),
           }));
@@ -175,9 +228,8 @@ describe("randomUUIDv7", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
-      increasing: true,
       latestPrefix: "0417bce6-c800",
-      stalePrefix: "0417bce6-c800",
+      stalePrefix: "00000000-0001",
     });
     expect(exitCode).toBe(0);
   });

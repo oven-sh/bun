@@ -110,17 +110,48 @@ pub struct UUID7 {
 static UUID_V7_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
 static UUID_V7_LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_COUNTER: AtomicU32 = AtomicU32::new(0);
+// Separate state for calls that pass an explicit timestamp, so a backfill with
+// historical timestamps never perturbs the monotonic `Date.now()` generator.
+static UUID_V7_EXPLICIT_LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
+static UUID_V7_EXPLICIT_COUNTER: AtomicU32 = AtomicU32::new(0);
+
+/// Where the `timestamp` argument to `UUID7::init` came from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum TimestampSource {
+    /// No `timestamp` argument was passed; Bun supplied `Date.now()`.
+    /// RFC 9562 §6.2 monotonicity applies: the emitted timestamp is clamped
+    /// up to the process high-water mark and bumped on counter rollover.
+    Clock,
+    /// The caller passed a `timestamp` argument. Embed it verbatim.
+    Explicit,
+}
 
 impl UUID7 {
     // Returns the (possibly adjusted) timestamp and the 12-bit rand_a counter.
-    // RFC 9562 §6.2: on counter rollover, increment the timestamp rather than
-    // wrapping the counter, so the output stays monotonic.
-    fn next(timestamp: u64, seed: u16) -> (u64, u32) {
+    fn next(timestamp: u64, seed: u16, source: TimestampSource) -> (u64, u32) {
         // The high bit of the 12-bit counter is reserved as a rollover guard so
         // a freshly seeded millisecond always has at least 2048 increments left.
         let seed = (seed & 0x07FF) as u32;
 
         let _guard = UUID_V7_LOCK.lock();
+
+        if source == TimestampSource::Explicit {
+            // The caller asked for this exact instant; never substitute another.
+            // Counter is reseeded whenever the timestamp changes and otherwise
+            // increments, wrapping within the 12-bit field.
+            let last = UUID_V7_EXPLICIT_LAST_TIMESTAMP.load(Ordering::Relaxed);
+            let count = if timestamp == last {
+                (UUID_V7_EXPLICIT_COUNTER.load(Ordering::Relaxed) + 1) & 0x0FFF
+            } else {
+                seed
+            };
+            UUID_V7_EXPLICIT_LAST_TIMESTAMP.store(timestamp, Ordering::Relaxed);
+            UUID_V7_EXPLICIT_COUNTER.store(count, Ordering::Relaxed);
+            return (timestamp, count);
+        }
+
+        // RFC 9562 §6.2: on counter rollover, increment the timestamp rather
+        // than wrapping the counter, so the output stays monotonic.
         let last = UUID_V7_LAST_TIMESTAMP.load(Ordering::Relaxed);
 
         let (mut ts, mut count) = if timestamp > last {
@@ -140,11 +171,11 @@ impl UUID7 {
         (ts, count)
     }
 
-    pub fn init(timestamp: u64, random: [u8; 10]) -> UUID7 {
+    pub fn init(timestamp: u64, random: [u8; 10], source: TimestampSource) -> UUID7 {
         // random[0..8] supplies rand_b; random[8..10] seeds the rand_a counter
         // so the seeded counter value is independent of the visible random bits.
         let seed = u16::from_le_bytes([random[8], random[9]]);
-        let (timestamp, count) = Self::next(timestamp, seed);
+        let (timestamp, count) = Self::next(timestamp, seed, source);
 
         let mut bytes = [0u8; 16];
 

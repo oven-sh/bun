@@ -7,7 +7,9 @@ use std::borrow::Cow;
 use bun_ast::{Data, Location, Log, Metadata, Msg};
 use bun_core::ZigString;
 
-use bun_jsc::{self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage};
+use bun_jsc::{
+    self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage, ZigStringJsc as _,
+};
 
 pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) -> JsResult<Msg> {
     let mut zig_exception_holder = jsc::zig_exception::Holder::init();
@@ -51,7 +53,7 @@ pub fn log_to_js(this: &Log, global: &JSGlobalObject, message: &[u8]) -> JsResul
 
     let count = u16::try_from(msgs.len().min(errors_stack.len())).unwrap();
     match count {
-        0 => Ok(JSValue::UNDEFINED),
+        0 => Ok(ZigString::init(message).to_error_instance(global)),
         1 => {
             let msg = msgs[0].clone();
             Ok(match msg.metadata {

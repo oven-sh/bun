@@ -972,11 +972,27 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // slot (libuv named pipe); only POSIX can dup2 the socketpair onto
     // stdin/out/err.
     #[cfg(unix)]
-    let ipc_stdio_index: i32 = stdio
-        .iter()
-        .position(|s| matches!(s, Stdio::Ipc))
-        .map(|i| i as i32)
-        .unwrap_or(-1);
+    let ipc_stdio_index: i32 = {
+        let idx = stdio
+            .iter()
+            .position(|s| matches!(s, Stdio::Ipc))
+            .map(|i| i as i32)
+            .unwrap_or(-1);
+        if idx != -1 && (IS_SYNC || maybe_ipc_mode.is_none()) {
+            // spawnSync / Bun.spawn without an ipc callback: nothing will read
+            // spawned.ipc, so creating a socketpair would leave the child with
+            // a broken-peer socket and its first write() raises SIGPIPE. Fall
+            // back to /dev/null (the pre-existing behaviour for this slot).
+            for s in stdio.iter_mut() {
+                if matches!(s, Stdio::Ipc) {
+                    *s = Stdio::Ignore;
+                }
+            }
+            -1
+        } else {
+            idx
+        }
+    };
     #[cfg(not(unix))]
     let ipc_stdio_index: i32 = -1;
 
@@ -1303,12 +1319,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             spawned_extra_pipes[usize::try_from(ipc_channel).expect("int cast")].fd()
         }
     } else {
-        // No ipc callback: spawn_process_posix still created a socketpair for
-        // 'ipc' at stdin/stdout/stderr; close the parent end so it isn't leaked
-        // (the extra_fds path would close it via stdio_pipes/finalize_streams).
-        if let Some(fd) = spawned_ipc {
-            fd.close();
-        }
+        // The ipc_stdio_index scan above rewrote Stdio::Ipc at 0-2 to Ignore
+        // when there is no IPC consumer, so spawn_process_posix never populated
+        // spawned.ipc on this branch.
+        debug_assert!(spawned_ipc.is_none());
         Fd::INVALID
     };
 

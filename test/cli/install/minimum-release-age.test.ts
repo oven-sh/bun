@@ -2575,23 +2575,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(exitCode).not.toBe(0);
     });
 
-    // Value validation must happen in `Options::parse`, matching `bun add`'s
-    // validation at `CommandLineArguments.rs` exactly, BEFORE bunx does any
-    // filesystem mutation or cache-execution decisions.
-    //
-    // Pre-fix, `has_active_age_gate()` had two leaky edge cases:
-    //   - Unparseable values (`=abc`) returned true via `Err(_) => true`, so
-    //     a fresh mismatched-bin cache got `force_stale`-wiped before
-    //     `bun add` surfaced the parse error.
-    //   - Negative values (`=-5`) parsed to `Ok(-5.0)` and returned false, so
-    //     on a warm cache the cached binary ran and the flag was silently
-    //     ignored — a supply-chain footgun for a typo'd sign. Cold cache
-    //     rejected the same input via `bun add`, yielding state-dependent
-    //     error reporting.
-    //
-    // Both are now rejected up-front in `Options::parse` with the same error
-    // text `bun add` uses. The warm cache must survive (no side effect) and
-    // the cached binary must not run.
+    // Invalid values must be rejected up-front with `bun add`'s error text,
+    // BEFORE any filesystem mutation: the warm cache must survive untouched
+    // and the cached binary must not run.
     test.skipIf(isWindows).each([
       ["abc", "non-numeric"],
       ["-5", "negative integer"],
@@ -2651,16 +2637,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
     // vacuously via the cold-install path, providing no coverage of the
     // `age_gate_forces_refresh` short-circuit.
     test.skipIf(isWindows)("warm bunx cache does not bypass --minimum-release-age", async () => {
-      // bunx caches successful installs under $TMPDIR/bunx-<uid>-<pkg>@latest
-      // and re-runs the cached binary on the next invocation if it's less than
-      // 24h old. Without the age-gate refresh, a fresh cache from an earlier
-      // unrestricted run would let a later `--minimum-release-age=<big>`
-      // invocation silently execute the cached (possibly too-new) binary.
-      //
-      // Simulate a warm cache by pre-creating the expected cache path with a
-      // fake executable at <cache>/node_modules/.bin/<pkg>, then invoke bunx
-      // with a 100-year gate. The gate must force re-resolution via the
-      // spawned `bun add`, which errors out (no version satisfies 100 years).
+      // Simulate a warm cache (fake executable at the expected cache path),
+      // then invoke bunx with a 100-year gate: it must force re-resolution
+      // via `bun add` instead of running the cached binary.
       using dir = tempDir("bunx-min-age-warm", {});
       using cacheDir = tempDir("bunx-min-age-cache-warm", {});
       using tmp = tempDir("bunx-min-age-tmp-warm", {});
@@ -2693,10 +2672,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
 
     // Same unix-only fake-cache layout as the warm-cache test above.
     test.skipIf(isWindows)("--no-install + --minimum-release-age refuses to run cached binary", async () => {
-      // When both flags are set on a warm cache, the normal `--no-install`
-      // fallback (warn and run the stale cached binary) would silently bypass
-      // the age gate — `--no-install` opts out of the re-resolution where
-      // the filter is applied. bunx must error out instead.
+      // On a warm cache, `--no-install`'s run-the-stale-binary fallback
+      // would bypass the age gate (re-resolution is what the flag opts out
+      // of); bunx must error instead.
       using dir = tempDir("bunx-min-age-noinstall", {});
       using cacheDir = tempDir("bunx-min-age-cache-noinstall", {});
       using tmp = tempDir("bunx-min-age-tmp-noinstall", {});
@@ -2727,17 +2705,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
 
     // Same unix-only fake-cache layout as the other warm-cache tests above.
     test.skipIf(isWindows)("warm cache with mismatched bin name does not bypass --minimum-release-age", async () => {
-      // Regression: for scoped packages like `@angular/cli` (bin `ng`), bunx's
-      // first cache probe looks for `.bin/<initial_bin_name>` where the guess
-      // comes from the last path segment — here `cli`. That probe misses
-      // because the real bin is `ng`. Execution falls through to
-      // `get_bin_name_from_temp_directory` which reads the cached
-      // package.json's `bin` field, rewrites the probe path, and a second
-      // `which` call hits `.bin/ng` → `Run::run_binary`.
-      //
-      // Without threading the age gate into the cached-package.json
-      // staleness check, this path never sees `--minimum-release-age` and
-      // silently runs the cached (possibly-too-new) binary.
+      // Mismatched bin name (`@fake-scope/bin-mismatch` → bin `mytool`): the
+      // first cache probe misses and bin discovery reads the cached
+      // package.json; that path must also honor the age gate.
       using dir = tempDir("bunx-min-age-bin-mismatch", {});
       using cacheDir = tempDir("bunx-min-age-cache-bin-mismatch", {});
       using tmp = tempDir("bunx-min-age-tmp-bin-mismatch", {});
@@ -2780,11 +2750,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
       expect(exitCode).not.toBe(0);
     });
 
-    // `--minimum-release-age=0` is the documented disable spelling (see
-    // `handles 0 value to disable` above). bunx must honor that for the
-    // cache-bypass checks — otherwise `=0` unnecessarily forces re-resolution
-    // on a warm cache, and `--no-install --minimum-release-age=0` hard-errors
-    // instead of running the cached binary.
+    // `=0` is the documented disable spelling: it must NOT force
+    // re-resolution on a warm cache, and `--no-install` + `=0` must run the
+    // cached binary instead of hard-erroring.
     test.skipIf(isWindows)("--minimum-release-age=0 honors cached binary (disable semantics)", async () => {
       using dir = tempDir("bunx-min-age-zero", {});
       using cacheDir = tempDir("bunx-min-age-cache-zero", {});
@@ -2831,13 +2799,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
     test.skipIf(isWindows)(
       "warm cache with local project install + version literal does not bypass --minimum-release-age",
       async () => {
-        // Regression: when the project has a local `node_modules/<pkg>` install
-        // AND the user passes an explicit version (e.g. `bunx pkg@^1`),
-        // `get_bin_name` succeeds via `get_bin_name_from_project_directory`
-        // without consulting `force_stale`, then `'find2`'s local-bin probe
-        // is skipped (gated on `version.literal.is_empty()`), so execution
-        // hits the bunx-cache probe and `Run::run_binary` would run the
-        // cached binary with no age check.
+        // Local `node_modules/<pkg>` install + explicit version literal:
+        // bin discovery succeeds via the project directory and execution
+        // reaches the bunx-cache probe; the age gate must still apply.
         using dir = tempDir("bunx-min-age-local-install", {});
         using cacheDir = tempDir("bunx-min-age-cache-local-install", {});
         using tmp = tempDir("bunx-min-age-tmp-local-install", {});
@@ -2890,14 +2854,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
 
     // Same unix-only fake-cache layout as the other warm-cache tests.
     test.skipIf(isWindows)("--no-install + --minimum-release-age + mismatched bin name: specific error", async () => {
-      // UX regression guard: when the bin name differs from the initial
-      // guess, bunx falls into `get_bin_name_from_temp_directory` with
-      // `force_stale=true` and returns `NeedToInstall`. The catch-all
-      // `if opts.no_install` that follows must surface the same specific
-      // "Cannot use --no-install with --minimum-release-age…" error the
-      // matched-bin `'find` path emits — not the generic "Could not find
-      // an existing '<initial-bin-name>' binary to run" message, which
-      // doesn't hint that the flag combination is the real problem.
+      // With a mismatched bin name, the `--no-install` catch-all must emit
+      // the specific "Cannot use --no-install with --minimum-release-age"
+      // error, not the generic could-not-find message.
       using dir = tempDir("bunx-min-age-noinstall-mismatched", {});
       using cacheDir = tempDir("bunx-min-age-cache-noinstall-mismatched", {});
       using tmp = tempDir("bunx-min-age-tmp-noinstall-mismatched", {});
@@ -2941,19 +2900,9 @@ minimumReleaseAgeExcludes = ["regular-package"]
     });
 
     test.skipIf(isWindows)("warm cache bun.lock is cleared before age-gated install", async () => {
-      // Regression: `--no-cache --force` to `bun add` is insufficient to
-      // force re-resolution under an active age gate when a `bun.lock`
-      // from a previous run survives in the bunx cache dir — `bun add`
-      // reuses the locked version even with `--force` for ranged
-      // specifiers like `pkg@^N`. The install path must wipe the tree
-      // before spawning `bun add` when an age gate is active.
-      //
-      // Seeds the warm cache (at a version-literal key) with a sentinel
-      // `bun.lock` and verifies the file is gone after the bunx
-      // invocation — the `delete_tree(bunx_cache_dir)` at the top of the
-      // install path ran. Uses `regular-package` (matched bin name, so
-      // the `'find` branch fires) and a range specifier so the final
-      // install step reaches `bun add` with `--no-cache --force`.
+      // A surviving `bun.lock` pins resolution even under `--no-cache
+      // --force`, so the install path must wipe the cache dir when the age
+      // gate is active. Seeds a sentinel lockfile and asserts it's gone.
       using dir = tempDir("bunx-min-age-lockfile", {});
       using cacheDir = tempDir("bunx-min-age-cache-lockfile", {});
       using tmp = tempDir("bunx-min-age-tmp-lockfile", {});

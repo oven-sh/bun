@@ -1681,6 +1681,12 @@ mod draft {
                 }
             }
 
+            // `configs` accumulates across .npmrc files and is re-iterated in
+            // full each call, so rebuild tarball_url_auth from scratch: an
+            // entry that was unmatched in an earlier file may now match a
+            // scoped registry introduced by this file.
+            install.tarball_url_auth.clear();
+
             for conf_item in configs.iter() {
                 let conf_item_url = URL::parse(&conf_item.registry_url);
                 let mut matched_any_registry = false;

@@ -13,7 +13,6 @@
 #include <openssl/rand.h>
 #include <openssl/x509v3.h>
 #include <algorithm>
-#include <array>
 #include <cstring>
 #if OPENSSL_VERSION_MAJOR >= 3
 #include <openssl/provider.h>
@@ -1206,10 +1205,10 @@ std::optional<std::string> X509View::getSignatureAlgorithmOID() const
     const ASN1_OBJECT* obj = nullptr;
     X509_ALGOR_get0(&obj, nullptr, nullptr, alg);
     if (obj == nullptr) return std::nullopt;
-    std::array<char, 128> buf {};
-    int len = OBJ_obj2txt(buf.data(), buf.size(), obj, 1);
-    if (len < 0 || static_cast<size_t>(len) >= buf.size()) return std::nullopt;
-    return std::string(buf.data(), static_cast<size_t>(len));
+    char buf[128] {};
+    int len = OBJ_obj2txt(buf, sizeof(buf), obj, 1);
+    if (len < 0 || static_cast<size_t>(len) >= sizeof(buf)) return std::nullopt;
+    return std::string(buf, static_cast<size_t>(len));
 }
 
 int64_t X509View::getValidToTime() const

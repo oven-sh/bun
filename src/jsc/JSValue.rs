@@ -954,10 +954,11 @@ impl JSValue {
     /// `as_array_buffer`, but pins the backing `JSC::ArrayBuffer` first so it
     /// cannot be detached. The pin does not prevent collection.
     ///
-    /// While pinned, a JS `transfer()`, `structuredClone(v, { transfer: [ab] })`
-    /// or `postMessage(v, [ab])` hands the destination a copy and leaves the
-    /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
-    /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
+    /// While pinned, JS `ab.transfer()` hands the destination a copy and leaves
+    /// the source attached; `structuredClone(v, { transfer: [ab] })` and
+    /// `postMessage(v, [ab])` throw a `DataCloneError` DOMException. See
+    /// `JSC__JSValue__pinArrayBuffer` in bindings.cpp for the full picture.
+    /// Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
         if !JSC__JSValue__pinArrayBuffer(self) {
             return None;

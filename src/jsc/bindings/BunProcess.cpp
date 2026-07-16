@@ -2175,6 +2175,7 @@ JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, 
             return {};
         for (const auto& name : names) {
             if (name == vm.propertyNames->stack || name == vm.propertyNames->message) continue;
+            if (parseIndex(name)) continue;
             JSValue v = errorObject->get(globalObject, name);
             if (catchScope.exception()) {
                 if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
@@ -2543,8 +2544,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObje
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue err = callFrame->argument(0);
-    if (!err.isUndefined() && (err.isNull() || !err.isObject())) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "err"_s, "Object"_s, err);
+    if (!err.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, err, "err"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, defaultGlobalObject(globalObject), String(), err)));
@@ -2558,7 +2560,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     JSValue file = callFrame->argument(0);
     JSValue err = callFrame->argument(1);
 
-    if (!file.isNull() && file.isObject()) {
+    if (!file.isNull() && file.isObject() && !file.isCallable()) {
         err = file;
         file = jsUndefined();
     } else if (!file.isUndefined()) {
@@ -2566,8 +2568,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    if (!err.isUndefined() && (err.isNull() || !err.isObject())) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "err"_s, "Object"_s, err);
+    if (!err.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, err, "err"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSValue::encode(file);

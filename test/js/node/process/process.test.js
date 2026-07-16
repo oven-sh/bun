@@ -1070,6 +1070,15 @@ describe.concurrent(() => {
       });
     });
 
+    it("getReport(err) skips integer-index own properties in errorProperties", () => {
+      const o = { stack: "head\n  at frame\n", 0: "x", 1: "y", named: "z" };
+      expect(process.report.getReport(o).javascriptStack).toEqual({
+        message: "head",
+        stack: ["at frame"],
+        errorProperties: { named: "z" },
+      });
+    });
+
     it("getReport(err) swallows a Proxy ownKeys trap that throws", () => {
       const p = new Proxy(
         { stack: "head\n  at frame\n" },
@@ -1112,7 +1121,7 @@ describe.concurrent(() => {
     });
 
     it("getReport(err) validates the argument type", () => {
-      for (const v of [42, "x", true, null]) {
+      for (const v of [42, "x", true, null, [], () => {}]) {
         expect(() => process.report.getReport(v)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
       }
       expect(() => process.report.getReport(undefined)).not.toThrow();
@@ -1120,7 +1129,15 @@ describe.concurrent(() => {
     });
 
     it("writeReport validates its arguments", () => {
-      expect(() => process.report.writeReport(42)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+      for (const [arg, argName] of [
+        [42, "file"],
+        [() => {}, "file"],
+        [[], "err"],
+      ]) {
+        expect(() => process.report.writeReport(arg)).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE", message: expect.stringContaining(`"${argName}"`) }),
+        );
+      }
       expect(() => process.report.writeReport("file", 42)).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
       );

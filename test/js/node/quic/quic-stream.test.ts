@@ -116,4 +116,66 @@ describe("HTTP/3 header encoding", () => {
     expect(await echoed.promise).toBe(VALUE);
     client.close();
   });
+
+  // U+0100 truncates to 0x00 under that same latin1 write, so a plain
+  // `value.indexOf("\0")` guard never fires: the encoded value carries the
+  // `name\0value\0flags` delimiters itself and splices an extra header out of
+  // one user-supplied string. The declared pair count is what rejects it
+  // (node/src/node_http_common-inl.h bails the same way on `n >= count_`).
+  test("rejects a value whose latin1 encoding splices in an extra header", async () => {
+    const seen: Record<string, string>[] = [];
+    await using server = await listen(
+      async serverSession => {
+        serverSession.onstream = (stream: any) => {
+          stream.closed.catch(() => {});
+        };
+        await serverSession.closed.catch(() => {});
+      },
+      {
+        sni: { "*": { keys: [key], certs: [cert] } },
+        transportParams: { maxIdleTimeout: 1 },
+        onheaders(this: any, headers: Record<string, string>) {
+          seen.push(headers);
+          this.sendHeaders({ ":status": "200" });
+          this.writer.endSync();
+        },
+      },
+    );
+
+    const client = await connect(server.address, {
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { maxIdleTimeout: 1 },
+    });
+    await client.opened;
+
+    const attacker = await client.createBidirectionalStream();
+    expect(
+      attacker.sendHeaders({
+        ":method": "GET",
+        ":path": "/",
+        ":scheme": "https",
+        ":authority": "localhost",
+        // Each Ā becomes a delimiter; the Z is eaten as the first field's
+        // flags byte, aligning `authorization` onto a name boundary.
+        "x-name": "safeĀZauthorizationĀBearer stolenĀ",
+      }),
+    ).toBe(false);
+
+    // A benign request on the same connection proves the guard is narrow and
+    // orders the assertion below: h3 delivers it after anything the attacker
+    // stream managed to put on the wire.
+    const answered = Promise.withResolvers<void>();
+    await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders() {
+        answered.resolve();
+      },
+    });
+    await answered.promise;
+    client.close();
+
+    expect(seen.length).toBe(1);
+    expect(Object.keys(seen[0])).not.toContain("authorization");
+  });
 });

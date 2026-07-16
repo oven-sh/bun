@@ -293,12 +293,17 @@ void us_nq_hset_free(void *hset) { nq_hsi_discard_header_set(hset); }
 
 #define US_NQ_MAX_HEADERS 128
 int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
-                              int eos) {
+                              int expected, int eos) {
     struct lsxpack_header hdrs[US_NQ_MAX_HEADERS];
     int count = 0;
     size_t i = 0;
+    if (expected < 0 || expected > US_NQ_MAX_HEADERS) return -1;
     while (i < len) {
-        if (count >= US_NQ_MAX_HEADERS) return -1;
+        /* The caller's pair count is authoritative: latin1 encoding of the
+         * NUL-joined buffer maps U+0100-style code points onto the delimiter,
+         * which would otherwise splice extra headers out of one user value
+         * (node/src/node_http_common-inl.h bails the same way on n >= count_). */
+        if (count >= expected) return -1;
         size_t name_off = i;
         while (i < len && buf[i]) i++;
         size_t name_len = i - name_off;
@@ -320,6 +325,7 @@ int us_nq_stream_send_headers(lsquic_stream_t *s, const char *buf, size_t len,
         }
         count++;
     }
+    if (count != expected) return -1;
     lsquic_http_headers_t list = { count, hdrs };
     return lsquic_stream_send_headers(s, &list, eos);
 }

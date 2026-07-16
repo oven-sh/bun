@@ -116,7 +116,7 @@ pub struct QuicStream {
     headers_received: Cell<bool>,
     /// RFC 9218 (urgency, incremental).
     priority: Cell<(u8, bool)>,
-    pending_headers: JsCell<Vec<(Vec<u8>, bool)>>,
+    pending_headers: JsCell<Vec<(Vec<u8>, c_int, bool)>>,
     trailers_requested: Cell<bool>,
     blocked_reported: Cell<bool>,
     announce_suppressed: Cell<bool>,
@@ -225,9 +225,9 @@ impl QuicStream {
         if (urgency, incremental) != DEFAULT_PRIORITY {
             let _ = s.set_http_prio(urgency, incremental);
         }
-        for (bytes, eos) in self.pending_headers.with_mut(core::mem::take) {
+        for (bytes, count, eos) in self.pending_headers.with_mut(core::mem::take) {
             self.wrote_to_lsquic.set(true);
-            if s.send_headers(&bytes, eos) == 0 && eos {
+            if s.send_headers(&bytes, count, eos) == 0 && eos {
                 self.with_state(|st| {
                     st.fin_sent = 1;
                     st.write_ended = 1;
@@ -906,11 +906,10 @@ impl QuicStream {
             return Ok(JSValue::js_boolean(false));
         }
         let [kind_arg, header_tuple, flags] = frame.arguments_as_array::<3>();
-        let header_string = if header_tuple.is_string() {
-            header_tuple
-        } else {
-            header_tuple.get_index(global, 0)?
-        };
+        // `buildNgHeaderString` returns [nul-joined string, pair count]; the
+        // count is what keeps the latin1 encode below unspliceable.
+        let header_string = header_tuple.get_index(global, 0)?;
+        let header_count = header_tuple.get_index(global, 1)?.coerce_to_i32(global)?;
         // Latin-1 on the wire, as node does (`StringBytes::Write(.., LATIN1)`).
         use crate::webcore::encoding::BunStringEncode as _;
         let bytes = bun_core::String::from_js(header_string, global)?
@@ -920,11 +919,12 @@ impl QuicStream {
         let eos = is_trailing
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {
-            self.pending_headers.with_mut(|q| q.push((bytes, eos)));
+            self.pending_headers
+                .with_mut(|q| q.push((bytes, header_count, eos)));
             self.with_state(|s| s.has_outbound = 1);
             return Ok(JSValue::js_boolean(true));
         };
-        let rv = s.send_headers(&bytes, eos);
+        let rv = s.send_headers(&bytes, header_count, eos);
         if rv == 0 {
             self.wrote_to_lsquic.set(true);
             self.with_state(|s| s.has_outbound = 1);

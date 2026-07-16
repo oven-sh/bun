@@ -229,6 +229,7 @@ unsafe extern "C" {
         s: *mut lsquic_stream,
         buf: *const c_char,
         len: usize,
+        expected: c_int,
         eos: c_int,
     ) -> c_int;
     pub fn lsquic_stream_get_hset(s: *mut lsquic_stream) -> *mut c_void;
@@ -722,13 +723,16 @@ impl Stream {
         let raw = unsafe { lsquic_stream_get_hset(self.0) };
         (!raw.is_null()).then_some(HeaderSet(raw))
     }
-    pub fn send_headers(&self, nul_joined: &[u8], eos: bool) -> c_int {
+    /// `expected` is the caller's header-pair count; the shim rejects a buffer
+    /// that does not parse to exactly that many pairs.
+    pub fn send_headers(&self, nul_joined: &[u8], expected: c_int, eos: bool) -> c_int {
         // SAFETY: as above; lsquic copies the buffer before returning.
         unsafe {
             us_nq_stream_send_headers(
                 self.0,
                 nul_joined.as_ptr().cast(),
                 nul_joined.len(),
+                expected,
                 eos as c_int,
             )
         }

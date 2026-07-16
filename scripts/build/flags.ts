@@ -428,16 +428,28 @@ export const globalFlags: Flag[] = [
 
   // ─── Windows-specific codegen ───
   {
-    // Not under ASAN: `/GF` emits each string literal as a SELECT_ANY
-    // COMDAT so identical literals merge at link time. That places
-    // ASAN-instrumented literals (from bun's own TUs) at the same address
-    // as uninstrumented ones (from ICU in the WebKit prebuilt), and reads
-    // through the uninstrumented pointer land in the instrumented copy's
-    // redzone. Observed as a global-buffer-overflow from ICU's
-    // `u_getTimeZoneFilesDirectory` on first VM init.
     flag: "/GF",
     when: c => c.windows && !c.asan,
     desc: "String pooling (merge identical string literals)",
+  },
+  {
+    // `/O2` implies `/GF`, so it has to be explicitly disabled. With `/GF`
+    // on, each string literal is a SELECT_ANY COMDAT named by content
+    // (`??_C@_00...`), so an ASAN-instrumented `""` from bun's TUs and an
+    // uninstrumented `""` from ICU (shipped uninstrumented inside the
+    // WebKit -asan prebuilt) share a name and the linker keeps one copy.
+    // The ASAN descriptor for the instrumented copy still registers and
+    // poisons `[size, size_with_redzone)` past the kept section's end, so
+    // ICU's first read of its own `""` trips global-buffer-overflow in
+    // `u_getTimeZoneFilesDirectory` on first VM init. With `/GF-`, bun's
+    // literals are private unnamed constants that never share a COMDAT with
+    // ICU's. (WTF/JSC inside the prebuilt were also compiled with `/GF`,
+    // but `jsc.exe` from the same tarball runs clean, so the WTF/ICU
+    // pairing alone is benign; it's the three-way merge with bun's
+    // descriptors that poisons the wrong region.)
+    flag: "/GF-",
+    when: c => c.windows && c.asan,
+    desc: "Windows ASAN: keep string literals private so they can't COMDAT-merge with uninstrumented ICU",
   },
   {
     flag: "/GA",

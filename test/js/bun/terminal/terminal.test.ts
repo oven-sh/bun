@@ -292,6 +292,30 @@ describe("Bun.Terminal", () => {
 
       expect(() => terminal.setRawMode(true)).toThrow("Terminal is closed");
     });
+
+    // The mode and the saved termios used to be one process-wide pair, so once
+    // any terminal was raw, setRawMode(true) on a second one returned success
+    // without ever touching that terminal's own PTY.
+    test.skipIf(isWindows)("each terminal keeps its own raw mode", async () => {
+      const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+      const ECHO = 0x8;
+      const isRaw = (terminal: Bun.Terminal) => (terminal.localFlags & (ICANON | ECHO)) === 0;
+
+      await using first = new Bun.Terminal({});
+      await using second = new Bun.Terminal({});
+
+      first.setRawMode(true);
+      second.setRawMode(true);
+      const bothRaw = { first: isRaw(first), second: isRaw(second) };
+
+      second.setRawMode(false);
+      const afterSecondRestored = { first: isRaw(first), second: isRaw(second) };
+
+      expect({ bothRaw, afterSecondRestored }).toEqual({
+        bothRaw: { first: true, second: true },
+        afterSecondRestored: { first: true, second: false },
+      });
+    });
   });
 
   describe("termios flags", () => {
@@ -1226,6 +1250,52 @@ describe.concurrent("Bun.spawn with terminal option", () => {
     await gotData;
     const output = Buffer.concat(dataChunks).toString();
     expect(output).toContain("hello");
+  });
+
+  // An inline terminal must not keep the event loop alive after its subprocess
+  // exits: on_process_exit drives the reader to EOF and unrefs both polls, so a
+  // script that never calls terminal.close() still exits. Regression for #33882
+  // which deferred the reader's EOF to a later poll tick. POSIX-only: Windows
+  // delivers EOF via close_pseudoconsole off-thread and was not affected.
+  test.skipIf(isWindows)("process exits after subprocess with inline terminal (no terminal.close)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          let out = "";
+          let exitCount = 0;
+          const child = Bun.spawn([process.execPath, "-e", "console.log('hi from pty')"], {
+            env: process.env,
+            terminal: {
+              data: (_t, d) => { out += Buffer.from(d).toString(); },
+              exit: () => { exitCount++; },
+            },
+          });
+          await child.exited;
+          const exitedSync = exitCount === 1;
+          // One macrotask barrier so the reader's still-armed one-shot poll
+          // fires its second EIO; the exit callback must stay at one.
+          await Bun.sleep(0);
+          process.stdout.write(JSON.stringify({
+            gotOutput: out.includes("hi from pty"),
+            exitedSync,
+            exitCount,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // On main this times out: the reader/writer polls kept loop.active > 0 and
+    // nothing triggered the GC that would finalize the Terminal.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ gotOutput: true, exitedSync: true, exitCount: 1 }),
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
   });
 
   // https://github.com/oven-sh/bun/issues/33187

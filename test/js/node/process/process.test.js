@@ -1078,6 +1078,150 @@ describe.concurrent(() => {
     expect(exitCode).toBe(0);
   });
 
+  describe("process.report.writeReport", () => {
+    it.concurrent("writes a report file and returns its filename", async () => {
+      using dir = tempDir("writeReport", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+const fs = require("fs");
+const r = process.report;
+const err = new Error("marker");
+
+const f1 = r.writeReport();
+console.log(typeof f1 === "string" && /^report\\.\\d{8}\\.\\d{6}\\.\\d+\\.\\d+\\.\\d{3}\\.json$/.test(f1));
+
+const f2 = r.writeReport(err);
+console.log(typeof f2 === "string" && f2 !== f1);
+console.log(f2 === err);
+
+const f3 = r.writeReport("out.json");
+console.log(f3);
+console.log(fs.existsSync("out.json"));
+
+const files = fs.readdirSync(".").filter(f => f.endsWith(".json")).sort();
+console.log(files.length);
+
+const body = JSON.parse(fs.readFileSync("out.json", "utf8"));
+console.log(body.header.filename);
+console.log(typeof body.header.processId);
+`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split("\n")).toEqual([
+        "true",
+        "true",
+        "false",
+        "out.json",
+        "true",
+        "3",
+        "out.json",
+        "number",
+      ]);
+      expect(stderr).toContain("Writing Node.js report to file: out.json");
+      expect(stderr).toContain("Node.js report completed");
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("validates file and err arguments", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+try { process.report.writeReport(123); } catch (e) { console.log(e.code, /file/.test(e.message)); }
+try { process.report.writeReport("x.json", "notErr"); } catch (e) { console.log(e.code); }
+try { process.report.writeReport("x.json", null); } catch (e) { console.log(e.code); }
+`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split("\n")).toEqual([
+        "ERR_INVALID_ARG_TYPE true",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("honors directory, compact, and filename config", async () => {
+      using dir = tempDir("writeReport-cfg", { "sub/.keep": "" });
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+const fs = require("fs");
+const r = process.report;
+r.directory = "sub";
+r.compact = true;
+r.filename = "cfg.json";
+const out = r.writeReport();
+console.log(out);
+console.log(fs.existsSync("sub/cfg.json"));
+const text = fs.readFileSync("sub/cfg.json", "utf8");
+console.log(text.indexOf("\\n") === text.length - 1);
+`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim().split("\n")).toEqual(["cfg.json", "true", "true"]);
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("returns empty string and writes to stderr on open failure", async () => {
+      using dir = tempDir("writeReport-fail", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+process.report.directory = ${JSON.stringify(join(String(dir), "does", "not", "exist"))};
+const out = process.report.writeReport("fail.json");
+console.log(JSON.stringify(out));
+`,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe('""');
+      expect(stderr).toContain("Failed to open Node.js report file: fail.json");
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("filename 'stdout' writes the report to stdout", async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", `process.report.compact = true; process.report.writeReport("stdout");`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const body = JSON.parse(stdout);
+      expect(body.header.filename).toBe("stdout");
+      expect(typeof body.header.processId).toBe("number");
+      expect(stderr).not.toContain("Writing Node.js report");
+      expect(exitCode).toBe(0);
+    });
+  });
+
   it("process.exit with jsDoubleNumber that is an integer", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "./process-exit-decimal-fixture.js")],

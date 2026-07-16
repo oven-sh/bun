@@ -42,6 +42,7 @@
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
+#include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/JSSet.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -2517,8 +2518,157 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // TODO:
-    return JSValue::encode(callFrame->argument(0));
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+
+    JSValue arg0 = callFrame->argument(0);
+    JSValue arg1 = callFrame->argument(1);
+
+    // writeReport([filename][, err])
+    JSValue fileArg;
+    JSValue errArg;
+    if (arg0.isObject()) {
+        errArg = arg0;
+        fileArg = jsUndefined();
+    } else {
+        fileArg = arg0;
+        errArg = arg1;
+    }
+
+    String file;
+    if (!fileArg.isUndefined()) {
+        Bun::V::validateString(scope, globalObject, fileArg, "file"_s);
+        RETURN_IF_EXCEPTION(scope, {});
+        file = fileArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!errArg.isUndefined()) {
+        if (errArg.isNull() || !errArg.isObject()) {
+            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "err"_s, "Object"_s, errArg);
+        }
+    }
+
+    bool compact = false;
+    bool excludeEnv = false;
+    bool excludeNetwork = false;
+    String directory;
+    String configFilename;
+    if (JSObject* thisObj = callFrame->thisValue().getObject()) {
+        JSValue v;
+        v = thisObj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "compact"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!v.isEmpty()) compact = v.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        v = thisObj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "excludeEnv"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!v.isEmpty()) excludeEnv = v.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        v = thisObj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "excludeNetwork"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!v.isEmpty()) excludeNetwork = v.toBoolean(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        v = thisObj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "directory"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!v.isEmpty() && v.isString()) {
+            directory = v.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+
+        v = thisObj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "filename"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!v.isEmpty() && v.isString()) {
+            configFilename = v.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    if (file.isEmpty() && !configFilename.isEmpty()) {
+        file = configFilename;
+    }
+
+    FILE* stream = nullptr;
+    if (file == "stdout"_s) {
+        stream = stdout;
+    } else if (file == "stderr"_s) {
+        stream = stderr;
+    }
+
+    if (file.isEmpty()) {
+        static std::atomic<uint32_t> reportSeq { 0 };
+        uint32_t seq = ++reportSeq;
+#if OS(WINDOWS)
+        int pid = _getpid();
+#else
+        int pid = getpid();
+#endif
+        time_t now = time(nullptr);
+        struct tm t;
+#if OS(WINDOWS)
+        localtime_s(&t, &now);
+#else
+        localtime_r(&now, &t);
+#endif
+        char buf[128];
+        snprintf(buf, sizeof(buf), "report.%04d%02d%02d.%02d%02d%02d.%d.0.%03u.json",
+            t.tm_year + 1900, t.tm_mon + 1, t.tm_mday,
+            t.tm_hour, t.tm_min, t.tm_sec,
+            pid, seq);
+        file = String::fromLatin1(buf);
+    }
+
+    JSValue reportValue = constructReportObjectComplete(vm, zigGlobal, file, excludeEnv, excludeNetwork);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    String json = JSC::JSONStringify(globalObject, reportValue, compact ? 0 : 2);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    CString jsonUtf8 = json.utf8();
+
+    if (stream) {
+        fwrite(jsonUtf8.data(), 1, jsonUtf8.length(), stream);
+        fputc('\n', stream);
+        fflush(stream);
+        return JSValue::encode(jsString(vm, file));
+    }
+
+    String fullPath;
+    if (!directory.isEmpty()) {
+#if OS(WINDOWS)
+        fullPath = makeString(directory, '\\', file);
+#else
+        fullPath = makeString(directory, '/', file);
+#endif
+    } else {
+        fullPath = file;
+    }
+
+    CString fileUtf8 = file.utf8();
+    CString pathUtf8 = fullPath.utf8();
+
+    FILE* fp = fopen(pathUtf8.data(), "wb");
+    if (!fp) {
+        int err = errno;
+        if (!directory.isEmpty()) {
+            CString dirUtf8 = directory.utf8();
+            fprintf(stderr, "\nFailed to open Node.js report file: %s directory: %s (errno: %d)\n",
+                fileUtf8.data(), dirUtf8.data(), err);
+        } else {
+            fprintf(stderr, "\nFailed to open Node.js report file: %s (errno: %d)\n",
+                fileUtf8.data(), err);
+        }
+        return JSValue::encode(jsEmptyString(vm));
+    }
+
+    fprintf(stderr, "\nWriting Node.js report to file: %s\n", fileUtf8.data());
+    fwrite(jsonUtf8.data(), 1, jsonUtf8.length(), fp);
+    fputc('\n', fp);
+    fclose(fp);
+    fprintf(stderr, "Node.js report completed\n");
+
+    return JSValue::encode(jsString(vm, file));
 }
 
 static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)

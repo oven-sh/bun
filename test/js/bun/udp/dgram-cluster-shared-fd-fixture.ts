@@ -17,8 +17,14 @@ const NUM_WORKERS = 4;
 const SEND_INTERVAL_MS = 2;
 
 if (cluster.isPrimary) {
+  const t0 = Date.now();
   let listening = 0;
   let received = false;
+  let msToAdopted = -1;
+  let port = 0;
+  let sent = 0;
+  let sendOk = 0;
+  let sendErr = "";
   const workers: cluster.Worker[] = [];
   for (let i = 0; i < NUM_WORKERS; i++) workers.push(cluster.fork());
 
@@ -27,7 +33,12 @@ if (cluster.isPrimary) {
   const watchdog = setTimeout(() => {
     stopSending();
     for (const w of workers) w.process.kill("SIGKILL");
-    console.error(`timed out: ${listening}/${NUM_WORKERS} workers adopted, traffic received: ${received}`);
+    // Name every quantity needed to tell the failure modes apart: slow adoption
+    // vs the sender never running vs sends failing vs datagrams vanishing.
+    console.error(
+      `timed out: adopted=${listening}/${NUM_WORKERS} msToAdopted=${msToAdopted} port=${port} ` +
+        `sent=${sent} sendOk=${sendOk} received=${received} sendErr=${sendErr || "(none)"}`,
+    );
     process.exit(1);
   }, 20_000);
   watchdog.unref();
@@ -36,10 +47,22 @@ if (cluster.isPrimary) {
     // Send only once all four hold the descriptor, so teardown exercises four
     // adopted copies of it.
     if (++listening < NUM_WORKERS) return;
+    msToAdopted = Date.now() - t0;
+    port = address.port;
     // All workers share one fd; send everything at that port. The shared fd
     // binds INADDR_ANY, but sending to 0.0.0.0 is not portably deliverable.
     const sender = dgram.createSocket("udp4");
-    const timer = setInterval(() => sender.send("hello", address.port, "127.0.0.1"), SEND_INTERVAL_MS);
+    // Callback form: doSend discards a send error when there is no callback,
+    // and only completes a backpressure-queued send through one -- so without
+    // it both a failure and a stuck queue look identical to the watchdog.
+    const onSent = (err?: Error | null) => {
+      if (err) sendErr ||= String(err.message ?? err);
+      else sendOk++;
+    };
+    const timer = setInterval(() => {
+      sent++;
+      sender.send("hello", port, "127.0.0.1", onSent);
+    }, SEND_INTERVAL_MS);
     stopSending = () => {
       stopSending = () => {};
       clearInterval(timer);

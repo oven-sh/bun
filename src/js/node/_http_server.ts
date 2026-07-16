@@ -809,24 +809,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
         socket[kEnableStreaming](false);
 
-        // Node.js (llhttp) only flags a request as an upgrade when it carries
-        // both an Upgrade header and a Connection header with the "upgrade"
-        // token; the server then consults shouldUpgradeCallback (default: an
-        // 'upgrade' listener is installed) and otherwise dispatches the
-        // request normally.
-        let is_upgrade = false;
-        if (
-          !isPipelined &&
-          (dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 &&
-          (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0
-        ) {
-          is_upgrade = !!server.shouldUpgradeCallback(http_req);
-        }
-        // Like Node.js's parserOnIncoming: req.upgrade is true inside the
-        // 'upgrade' listener and false for a declined upgrade that falls
-        // through to 'request'.
-        http_req.upgrade = is_upgrade;
-
         // The builtin ServerResponse consumes its options synchronously, so a
         // reusable scratch object avoids one allocation per request. User
         // subclasses (options.ServerResponse) might retain options, so they
@@ -855,20 +837,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // response for a value renderNativeHeaders treats as absent anyway.
         const uniqueHeaders = server[kUniqueHeaders];
         if (uniqueHeaders != null) http_res[kUniqueHeaders] = uniqueHeaders;
-
-        if (!is_upgrade) {
-          if (onServerRequestStartChannel.hasSubscribers) {
-            onServerRequestStartChannel.publish({
-              request: http_req,
-              response: http_res,
-              socket,
-              server,
-            });
-          }
-          // Node's resOnFinish is always attached and checks hasSubscribers at
-          // 'finish' time, so a subscriber added mid-request still observes it.
-          http_res.once("finish", publishServerResponseFinish.bind(undefined, http_req, http_res, socket, server));
-        }
 
         // The request itself forbids connection reuse (HTTP/1.0, or the
         // client sent Connection: close): end the server's writable side as
@@ -935,6 +903,47 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!isPipelined) {
           socket[kRequest] = http_req;
         }
+        // Node.js (llhttp) only flags a request as an upgrade when it carries
+        // both an Upgrade header and a Connection header with the "upgrade"
+        // token; the server then consults shouldUpgradeCallback (default: an
+        // 'upgrade' listener is installed) and otherwise dispatches the
+        // request normally.
+        let is_upgrade = false;
+        if (
+          !isPipelined &&
+          (dispatchBits & DISPATCH_HAS_UPGRADE) !== 0 &&
+          (dispatchBits & DISPATCH_CONN_UPGRADE) !== 0
+        ) {
+          is_upgrade = !!server.shouldUpgradeCallback(http_req);
+        }
+        // Like Node.js's parserOnIncoming: req.upgrade is true inside the
+        // 'upgrade' listener and false for a declined upgrade that falls
+        // through to 'request'.
+        http_req.upgrade = is_upgrade;
+
+        if (!is_upgrade) {
+          // Node publishes response.created from the ServerResponse constructor,
+          // which it only reaches after the upgrade check; Bun constructs the
+          // response unconditionally, so publish here instead.
+          if (onServerResponseCreatedChannel.hasSubscribers) {
+            onServerResponseCreatedChannel.publish({
+              request: http_req,
+              response: http_res,
+            });
+          }
+          if (onServerRequestStartChannel.hasSubscribers) {
+            onServerRequestStartChannel.publish({
+              request: http_req,
+              response: http_res,
+              socket,
+              server,
+            });
+          }
+          // Node's resOnFinish is always attached and checks hasSubscribers at
+          // 'finish' time, so a subscriber added mid-request still observes it.
+          http_res.once("finish", publishServerResponseFinish.bind(undefined, http_req, http_res, socket, server));
+        }
+
         if (isPipelined) {
           // A previous response on this connection has not finished yet: like
           // Node.js, this response is queued (res.socket === null) and its
@@ -2216,15 +2225,6 @@ function ServerResponse(req, options): void {
   this.statusCode = 200;
   this.statusMessage = undefined;
   this.chunkedEncoding = false;
-
-  // Node never constructs a ServerResponse for an accepted upgrade
-  // (parserOnIncoming returns early); Bun does, so skip the publish for it.
-  if (onServerResponseCreatedChannel.hasSubscribers && !req?.upgrade) {
-    onServerResponseCreatedChannel.publish({
-      request: req,
-      response: this,
-    });
-  }
 }
 $toClass(ServerResponse, "ServerResponse", OutgoingMessage);
 

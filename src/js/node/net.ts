@@ -115,6 +115,10 @@ const upgradeTLSDeferred = $newRustFunction("runtime/socket/socket.rs", "jsUpgra
 const isNamedPipeSocket = $newRustFunction("runtime/socket/socket.rs", "jsIsNamedPipeSocket", 1);
 const getBufferedAmount = $newRustFunction("runtime/socket/socket.rs", "jsGetBufferedAmount", 1);
 
+// process.binding("uv").UV_EALREADY cannot be used here: on Windows it is the
+// MSVC CRT errno, which util.getSystemErrorName (the UV_E table) rejects.
+const ealreadyErrorCode = $newRustFunction("node_util_binding.rs", "ealreadyErrorCode", 0);
+
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const owner_symbol = Symbol("owner_symbol");
@@ -1409,11 +1413,18 @@ function kConnectPipe(self, req, address) {
 }
 
 function kConnectDispatch(self, req, opts) {
+  const handle = self._handle;
+  // libuv's uv_tcp_connect rejects a handle whose connect_req is already in
+  // flight. readyState 2 is that state natively; without this, doConnect
+  // tears the in-flight attempt down and silently starts over.
+  if (handle.readyState === 2) {
+    return ealreadyErrorCode();
+  }
   // Node's TCPWrap returns errno for sync uv_*_connect failure and defers
   // oncomplete; doConnect instead fires connectError inside this call. Bracket
   // it so connectError hands the errno back here instead of re-entering.
   req.dispatching = true;
-  const promise = doConnect(self._handle, opts);
+  const promise = doConnect(handle, opts);
   req.dispatching = false;
   promise.catch(_reason => {
     // eat this so there's no unhandledRejection

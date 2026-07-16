@@ -199,16 +199,15 @@ it("should create template from local folder", async () => {
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
 // CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
 // during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.
+function githubUnavailableReason(stderr: string): string | null {
+  if (stderr.includes("GitHub is rate limiting")) return "GitHub API rate limit reached. Set GITHUB_TOKEN to avoid this.";
+  if (stderr.includes("GitHub returned a server error")) return "GitHub API returned a 5xx server error.";
+  return null;
+}
 function isGithubUnavailable(stderr: string): boolean {
-  if (stderr.includes("GitHub is rate limiting")) {
-    console.warn("Skipping: GitHub API rate limit reached. Set GITHUB_TOKEN to avoid this.");
-    return true;
-  }
-  if (stderr.includes("GitHub returned a server error")) {
-    console.warn("Skipping: GitHub API returned a 5xx server error.");
-    return true;
-  }
-  return false;
+  const reason = githubUnavailableReason(stderr);
+  if (reason) console.warn(`Skipping: ${reason}`);
+  return reason !== null;
 }
 
 for (const [status, expected] of [
@@ -239,7 +238,7 @@ for (const [status, expected] of [
 
     const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(err).toContain(expected);
-    expect(isGithubUnavailable(err)).toBe(true);
+    expect(githubUnavailableReason(err)).not.toBeNull();
     expect(err).not.toContain("NPMIsDown");
     expect(err).not.toContain("An internal error occurred");
     expect(exitCode).toBe(1);

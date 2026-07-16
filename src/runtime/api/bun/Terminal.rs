@@ -267,7 +267,7 @@ impl Options {
                     Self::MAX_TERM_NAME_LEN
                 )));
             }
-            if slice.slice().contains(&0) {
+            if bun_core::strings::index_of_char(slice.slice(), 0).is_some() {
                 drop(slice);
                 return Err(
                     global_object.throw(format_args!("Terminal name must not contain null bytes"))

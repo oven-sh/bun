@@ -598,8 +598,30 @@ test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 function before(arg0: unknown, arg1: unknown) {
-  const { fn } = createHook(arg0, arg1);
   const { beforeAll } = bunTest();
+  if (ctx === undefined) {
+    // Node's root test is already executing while the module body runs, so a
+    // root-level before() hook fires at registration time rather than after
+    // collection. Tests generated from state such a hook builds depend on this.
+    const { fn } = parseHookOptions(arg0, arg1);
+    let result: unknown;
+    try {
+      result = fn();
+    } catch (error) {
+      beforeAll(() => {
+        throw error;
+      });
+      return;
+    }
+    if (result instanceof Promise) {
+      const pending = result as Promise<unknown>;
+      // Surface rejection via beforeAll, not as an unhandled rejection.
+      pending.catch(() => {});
+      beforeAll(() => pending);
+    }
+    return;
+  }
+  const { fn } = createHook(arg0, arg1);
   beforeAll(fn);
 }
 
@@ -706,11 +728,30 @@ function createDescribe(arg0: unknown, arg1: unknown, arg2: unknown) {
       ctx = originalContext;
     };
 
+    let result: unknown;
     try {
-      return fn(context);
-    } finally {
+      result = fn(context);
+    } catch (error) {
       endDescribe();
+      throw error;
     }
+    if (result instanceof Promise) {
+      // bun:test awaits an async describe body before collecting the next
+      // sibling; keep ctx set until it settles so before() inside the
+      // continuation is still recognised as suite-level.
+      return (result as Promise<unknown>).then(
+        value => {
+          endDescribe();
+          return value;
+        },
+        error => {
+          endDescribe();
+          throw error;
+        },
+      );
+    }
+    endDescribe();
+    return result;
   };
 
   return { name, options, fn: runDescribe };

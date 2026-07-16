@@ -226,7 +226,16 @@ pub fn load_config(
                 .unwrap()
                 .to_vec()
                 .into_boxed_slice();
+            // `--cwd some/dir/` preserves the trailing separator; strip it
+            // (keeping root forms like "/" and "C:\") so the root check
+            // below only fires on `bun_paths::dirname` outputs.
             let mut dir: &[u8] = &awd;
+            while dir.len() > 1
+                && bun_paths::is_sep_native(dir[dir.len() - 1])
+                && dir[dir.len() - 2] != b':'
+            {
+                dir = &dir[..dir.len() - 1];
+            }
             // `bun_paths::dirname` yields root directories ("/", "C:\\",
             // "\\\\server\\share\\") with a trailing separator and None above
             // them, so a parent ending in a separator is the last to check;

@@ -79,6 +79,30 @@ test.concurrent("CLI --preload is merged with ancestor bunfig.toml preload entri
   expect(exitCode).toBe(0);
 });
 
+// --cwd may carry a trailing separator (shell tab-completion); the walk must
+// still ascend from it.
+test.concurrent("--cwd with a trailing slash still finds the ancestor bunfig.toml", async () => {
+  using dir = tempDir("bun-issue-29308-cwd-slash", {
+    "bunfig.toml": `preload = ["./preload.ts"]\n`,
+    "preload.ts": `console.log("preload script executed!");\n`,
+    "packages/pkg1/package.json": `{"name":"pkg1","version":"0.0.0"}\n`,
+    "packages/pkg1/src/index.ts": `console.log("hello from pkg1");\n`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run", "--cwd", "packages/pkg1/", "src/index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, _stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("preload script executed!\nhello from pkg1\n");
+  expect(exitCode).toBe(0);
+});
+
 // The walk must not escape a nested project into an unrelated parent: a
 // directory with its own lockfile or .git is that project's root, and a
 // bunfig.toml beyond it (e.g. in a repo that vendors the project) must not

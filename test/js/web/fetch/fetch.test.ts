@@ -3068,6 +3068,8 @@ describe("fetch network errors expose a node-style `cause`", () => {
       cause: { code: "ECONNREFUSED", syscall: "connect" },
     });
     expect(err.cause.errno).toBeLessThan(0);
+    // `cause` is non-enumerable, like the ES `new Error(msg, { cause })` shape.
+    expect(Object.getOwnPropertyDescriptor(err, "cause")?.enumerable).toBe(false);
   });
 
   it("connection closed mid-response has cause.code ECONNRESET", async () => {

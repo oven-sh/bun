@@ -1327,7 +1327,7 @@ impl FetchTasklet {
                 let global_this = self.global_this;
                 let cause = err.dupe();
                 let js_err = err.to_error_instance(&global_this);
-                js_err.put(&global_this, "cause", cause.to_error_instance(&global_this));
+                js_err.put_dont_enum(&global_this, "cause", cause.to_error_instance(&global_this));
                 return BodyValueError::JSValue(StrongOptional::create(js_err, &global_this));
             }
         }
@@ -1594,7 +1594,7 @@ impl FetchTasklet {
 
         let global_this = self.global_this;
         let js_err = fetch_error.to_error_instance(&global_this);
-        js_err.put(&global_this, "cause", cause.to_error_instance(&global_this));
+        js_err.put_dont_enum(&global_this, "cause", cause.to_error_instance(&global_this));
         BodyValueError::JSValue(StrongOptional::create(js_err, &global_this))
     }
 

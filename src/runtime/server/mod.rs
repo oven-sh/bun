@@ -1906,6 +1906,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             h3_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
             listen_callback: jsc::AnyTask::AnyTask {
+                // Owned by the server object, not the queue.
+                dispose: None,
                 ctx: None,
                 callback: |_| Ok(()),
             },

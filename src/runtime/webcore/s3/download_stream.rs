@@ -18,12 +18,18 @@ pub struct S3HttpDownloadStreamingTask {
     // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
     // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
-    /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
-    /// the inert `Default` placeholder (overwritten before the task escapes).
+    /// JSC_BORROW: kept alive across the transfer by `vm_pin` below (worker
+    /// terminate waits for the pin). `None` only in the inert `Default`
+    /// placeholder (overwritten before the task escapes).
     pub vm: Option<bun_ptr::BackRef<VirtualMachine>>,
+    /// Holds the VM's shutdown gate open for the whole transfer (set at
+    /// creation, dropped on the HTTP thread at the final enqueue). Terminate
+    /// aborts the transfer via the abort registry, so the wait is bounded.
+    pub vm_pin: Option<bun_threading::GateGuest>,
     pub sign_result: SignResult,
     pub headers: Headers,
     pub callback_context: NonNull<()>,
+    pub callback_context_release: crate::webcore::s3::simple_request::ContextRelease,
     pub callback: fn(chunk: &MutableString, has_more: bool, err: Option<S3Error>, ctx: *mut c_void),
     pub has_schedule_callback: AtomicBool,
     pub signal_store: bun_http::signals::Store,
@@ -62,9 +68,11 @@ impl Default for S3HttpDownloadStreamingTask {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
             vm: None,
+            vm_pin: None,
             sign_result: SignResult::default(),
             headers: Headers::default(),
             callback_context: NonNull::dangling(),
+            callback_context_release: crate::webcore::s3::simple_request::ContextRelease::NONE,
             callback: |_, _, _, _| {},
             range: None,
             proxy_url: Box::default(),
@@ -196,6 +204,12 @@ impl S3HttpDownloadStreamingTask {
         // the state is atomic let's load it once
         let state = self_.get_state();
         let has_more = state.has_more();
+        if !has_more {
+            VirtualMachine::get()
+                .terminate_abort_registry
+                .borrow_mut()
+                .unregister(this);
+        }
         // Use a scopeguard so any future early-exit / unwind through
         // `report_progress` still unlocks + deinits.
         let this_ptr = this;
@@ -339,21 +353,26 @@ impl S3HttpDownloadStreamingTask {
         let self_ = unsafe { &mut *this };
         // SAFETY: `async_http` is the live HTTP-thread copy; non-null for the callback's duration.
         let async_http = unsafe { &mut *async_http };
+        let is_final = !result.has_more;
+        // Take the pin out FIRST on the final chunk: the enqueue publishes
+        // the task and the JS thread may free it before we return.
+        let final_pin = if is_final { self_.vm_pin.take() } else { None };
         if self_.process_http_callback(async_http, result) {
             // we are always unlocked here and its safe to enqueue
+            debug_assert!(
+                final_pin.is_some() || self_.vm_pin.is_some(),
+                "pin held until the final chunk"
+            );
+            let vm = self_.vm.expect("vm set at task creation");
             let task = core::ptr::NonNull::from(
                 self_.concurrent_task.from(this, AutoDeinit::ManualDeinit),
             );
-            // `vm` is the live per-thread VM BackRef captured at task creation; event_loop
-            // is initialized for the request's lifetime and enqueue is thread-safe (`&self`).
-            // `task` is the inline `concurrent_task` field of this heap request;
-            // the queue takes ownership of its `next` link.
-            self_
-                .vm
-                .expect("vm set at task creation")
-                .event_loop_shared()
-                .enqueue_task_concurrent(task);
+            // `vm` is the VM BackRef captured at task creation, kept alive by
+            // the pin (in `final_pin` or still in the task); enqueue is
+            // thread-safe (`&self`).
+            vm.event_loop_shared().enqueue_task_concurrent(task);
         }
+        drop(final_pin);
     }
 }
 

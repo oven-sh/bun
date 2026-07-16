@@ -718,6 +718,13 @@ impl ErrorDeferred {
             }
         }
 
+        // Reclaim for a rejection still queued at worker terminate: the
+        // drain runs this on the JS thread with the VM alive.
+        fn cleanup(p: *mut Context) {
+            // SAFETY: `p` is the queue-owned heap `Context`, sole owner.
+            drop(unsafe { bun_core::heap::take(p) });
+        }
+
         let context = bun_core::heap::into_raw(Box::new(Context {
             deferred: self,
             global_this: bun_ptr::BackRef::new(global_this),
@@ -725,13 +732,13 @@ impl ErrorDeferred {
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
-        global_this
-            .bun_vm()
-            .as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+        global_this.bun_vm().as_mut().enqueue_task(
+            bun_jsc::ManagedTask::ManagedTask::new_with_cleanup(
                 context,
                 Context::callback,
-            ));
+                cleanup,
+            ),
+        );
     }
 }
 

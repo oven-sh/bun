@@ -1245,6 +1245,9 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<A>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// Holds the VM's shutdown gate open until the completion is
+        /// enqueued (dropped on the pool thread).
+        pub vm_pin: Option<bun_threading::GateGuest>,
         pub task: WorkPoolTask,
         pub result: Maybe<R>,
         pub r#ref: KeepAlive,
@@ -1289,14 +1292,15 @@ mod _async_tasks {
                 // niche-optimised; never construct an all-zero `Result` value.
                 result: Err(sys::Error::default()),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm_pin: None,
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
             });
+            task.vm_pin = Some(vm.pin());
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            let _ = vm;
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -1316,13 +1320,17 @@ mod _async_tasks {
             // documented accessor for off-thread (work-pool) callers; the
             // event-loop's concurrent queue is MPSC-safe.
             let vm = this.global_object().bun_vm_concurrently();
-            // SAFETY: VirtualMachine and its event loop are process-static
-            // (LIFETIMES.tsv); the concurrent queue is MPSC-safe.
+            // Take the pin (held since `create`) into a local first — the
+            // enqueue hands the task to the JS thread, which may free it.
+            let pin = this.vm_pin.take();
+            // SAFETY: the VM is kept alive by `pin`; the concurrent queue is
+            // MPSC-safe.
             unsafe {
                 (*(*vm).event_loop()).enqueue_task_concurrent(ConcurrentTask::create_from(
                     std::ptr::from_mut::<Self>(this),
                 ));
             }
+            drop(pin);
         }
 
         pub fn run_from_js_thread(&mut self) -> Result<(), bun_jsc::JsTerminated> {
@@ -1412,6 +1420,10 @@ mod _async_tasks {
         /// read), not by `Cell` itself — `Cell` is `repr(transparent)` over
         /// `UnsafeCell` and `set()` is exactly the prior `*ptr = val` open-coded.
         pub result: core::cell::Cell<Maybe<ret::Cp>>,
+        /// Holds the VM's shutdown gate open until the final completion is
+        /// enqueued. Taken by the subtask that drops `subtask_count` to zero
+        /// (exclusive access — same argument as `result` above).
+        pub vm_pin: core::cell::Cell<Option<bun_threading::GateGuest>>,
         /// If this task is called by the shell then we shouldn't call this as
         /// it is not threadsafe and is unnecessary as the process will be kept
         /// alive by the shell instance.
@@ -1598,6 +1610,7 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
+                vm_pin: core::cell::Cell::new(Some(vm.pin())),
                 // `vm.event_loop` is the live per-thread `jsc::EventLoop` field.
                 evtloop: EventLoopHandle::init(vm.event_loop.cast()),
                 task: work_pool_task(Self::work_pool_callback),
@@ -1632,6 +1645,8 @@ mod _async_tasks {
                 // Sentinel — overwritten by `finish_concurrently` (gated by the
                 // `has_result` CAS) before any read on the JS thread.
                 result: core::cell::Cell::new(Ok(())),
+                // Mini loops have no VM/gate to pin.
+                vm_pin: core::cell::Cell::new(None),
                 evtloop: EventLoopHandle::init_mini(mini),
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
@@ -1707,6 +1722,9 @@ mod _async_tasks {
             // Count reached zero ⇒ exclusive access. `this` carries mutable
             // provenance from `Box::leak`, so the enqueued callback may safely
             // form `&mut *this` on the JS thread.
+            // Take the pin into a local first — the enqueue hands the task
+            // to the JS thread, which may free it before this thread returns.
+            let pin = this_ref.vm_pin.take();
             if matches!(this_ref.evtloop, EventLoopHandle::Js { .. }) {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     js: ConcurrentTask::from_callback(this, |p| {
@@ -1716,6 +1734,7 @@ mod _async_tasks {
                     })
                     .as_ptr(),
                 });
+                drop(pin);
             } else {
                 this_ref.evtloop.enqueue_task_concurrent(EventLoopTaskPtr {
                     mini: AnyTaskWithExtraContext::from_callback_auto_deinit(
@@ -2181,6 +2200,9 @@ mod _async_tasks {
         /// Wrapped in [`ThreadSafe`] so the paired `unprotect()` runs on drop.
         pub args: ThreadSafe<args::Readdir>,
         pub global_object: bun_ptr::BackRef<JSGlobalObject>,
+        /// Holds the VM's shutdown gate open until the completion is
+        /// enqueued (dropped on the pool thread).
+        pub vm_pin: Option<bun_threading::GateGuest>,
         pub task: WorkPoolTask,
         pub r#ref: KeepAlive,
         pub tracker: AsyncTaskTracker,
@@ -2376,6 +2398,7 @@ mod _async_tasks {
                 args: FsArgument::into_thread_safe(args),
                 has_result: AtomicBool::new(false),
                 global_object: bun_ptr::BackRef::new(global_object),
+                vm_pin: None,
                 task: work_pool_task(Self::work_pool_callback),
                 r#ref: KeepAlive::default(),
                 tracker: AsyncTaskTracker::init(vm),
@@ -2388,6 +2411,7 @@ mod _async_tasks {
                 pending_err: None,
                 pending_err_mutex: bun_threading::Mutex::default(),
             });
+            task.vm_pin = Some(vm.pin());
             task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
@@ -2553,14 +2577,18 @@ mod _async_tasks {
 
             // `bun_vm_concurrently()` skips the JS-thread debug assert and is the
             // documented accessor for off-thread (work-pool) callers.
-            // SAFETY: `bun_vm_concurrently()` returns the process-singleton VM;
-            // sole `&mut` borrow at this point on the work-pool thread.
+            // SAFETY: the VM is kept alive by the pin taken below; sole
+            // `&mut` borrow at this point on the work-pool thread.
             let vm = unsafe { &mut *self.global_object().bun_vm_concurrently() };
+            // Take the pin (held since creation) into a local first — the
+            // enqueue hands the task to the JS thread, which may free it.
+            let pin = self.vm_pin.take();
             // `ConcurrentTask::create` heap-allocates a fresh task; the
             // queue takes ownership of it.
             vm.enqueue_task_concurrent(ConcurrentTask::create(Task::init(std::ptr::from_mut::<
                 Self,
             >(self))));
+            drop(pin);
         }
 
         fn clear_result_list(&mut self) {

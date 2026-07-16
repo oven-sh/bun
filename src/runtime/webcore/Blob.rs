@@ -611,6 +611,7 @@ impl BlobExt for Blob {
                     }
                     Ok(())
                 }
+
             }
             let mut t = Box::new(Task::<H> {
                 ctx,
@@ -652,6 +653,7 @@ impl BlobExt for Blob {
                     len,
                     Task::<H>::cb,
                     t_ptr,
+                    crate::webcore::s3::simple_request::ContextRelease::drop_box::<Task<H>>(),
                     proxy.as_deref(),
                     payer,
                 )?;
@@ -661,6 +663,7 @@ impl BlobExt for Blob {
                     path,
                     Task::<H>::cb,
                     t_ptr,
+                    crate::webcore::s3::simple_request::ContextRelease::drop_box::<Task<H>>(),
                     proxy.as_deref(),
                     payer,
                 )?;
@@ -4678,6 +4681,7 @@ fn write_file_with_empty_source_to_destination(
                     }
                     Ok(())
                 }
+
             }
 
             let promise = jsc::JSPromiseStrong::init(ctx);
@@ -4704,6 +4708,7 @@ fn write_file_with_empty_source_to_destination(
                     global: bun_ptr::BackRef::new(ctx),
                 }))
                 .cast::<c_void>(),
+                crate::webcore::s3::simple_request::ContextRelease::drop_box::<Wrapper>(),
             )?;
             return Ok(promise_value);
         }
@@ -4962,6 +4967,7 @@ pub fn write_file_with_source_destination(
                             }
                             Ok(())
                         }
+
                     }
                     let promise = jsc::JSPromiseStrong::init(ctx);
                     let promise_value = promise.value();
@@ -4985,6 +4991,7 @@ pub fn write_file_with_source_destination(
                             global: bun_ptr::BackRef::new(ctx),
                         }))
                         .cast::<c_void>(),
+                        crate::webcore::s3::simple_request::ContextRelease::drop_box::<Wrapper>(),
                     )?;
                     return Ok(promise_value);
                 }
@@ -5900,6 +5907,7 @@ impl S3BlobDownloadTask {
         Ok(())
     }
 
+
     pub fn init(
         global_this: &JSGlobalObject,
         blob: &Blob,
@@ -5956,6 +5964,7 @@ impl S3BlobDownloadTask {
                 len,
                 s3_cb,
                 this.cast::<c_void>(),
+                crate::webcore::s3::simple_request::ContextRelease::drop_box::<Self>(),
                 proxy,
                 s3_store.request_payer,
             )?;
@@ -5965,6 +5974,7 @@ impl S3BlobDownloadTask {
                 path,
                 s3_cb,
                 this.cast::<c_void>(),
+                crate::webcore::s3::simple_request::ContextRelease::drop_box::<Self>(),
                 proxy,
                 s3_store.request_payer,
             )?;
@@ -5978,6 +5988,7 @@ impl S3BlobDownloadTask {
                 Some(len),
                 s3_cb,
                 this.cast::<c_void>(),
+                crate::webcore::s3::simple_request::ContextRelease::drop_box::<Self>(),
                 proxy,
                 s3_store.request_payer,
             )?;

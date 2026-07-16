@@ -1150,6 +1150,8 @@ pub mod bv2_impl {
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
                         ),
                         callback: Self::run_on_js_thread_wrap,
+                        // Owned by the bundler dispatch chain, not the queue.
+                        dispose: None,
                     };
                     let task =
                         bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
@@ -1292,6 +1294,8 @@ pub mod bv2_impl {
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
                         ),
                         callback: Self::run_on_js_thread_wrap,
+                        // Owned by the bundler dispatch chain, not the queue.
+                        dispose: None,
                     };
                     let concurrent_task =
                         bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
@@ -1558,7 +1562,7 @@ pub mod bv2_impl {
         ) {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
-                // From Bun.build — `completion.jsc_event_loop.enqueueTaskConcurrent(task)`.
+                // From Bun.build — `completion.vm.enqueue_task_concurrent(task)`.
                 completion.enqueue_task_concurrent(task);
                 return;
             }

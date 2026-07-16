@@ -95,6 +95,7 @@ pub mod sizes;
 pub mod source_provider;
 #[path = "SourceType.rs"]
 pub mod source_type;
+pub mod terminate_abort;
 #[path = "TextCodec.rs"]
 pub mod text_codec;
 #[path = "URLSearchParams.rs"]

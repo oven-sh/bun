@@ -1756,12 +1756,20 @@ test("worker.performance.eventLoopUtilization() reports the worker's activity", 
 
 // https://github.com/oven-sh/bun/issues/32609
 test("worker.performance.eventLoopUtilization() returns zeros before 'online' fires", async () => {
-  const worker = new Worker("require('worker_threads').parentPort.on('message', () => {})", { eval: true });
+  // 'online' only fires after the worker's entry script finishes evaluating,
+  // so an Atomics.wait barrier inside the entry pins the worker pre-online
+  // while the parent samples; Node gates on kIsOnline and reports zeros here.
+  const sab = new SharedArrayBuffer(4);
+  const gate = new Int32Array(sab);
+  const worker = new Worker(
+    "const { workerData } = require('worker_threads'); Atomics.wait(new Int32Array(workerData.sab), 0, 0, 30_000);",
+    { eval: true, workerData: { sab } },
+  );
   try {
-    // Sampled in the same tick as construction, the worker VM cannot have come
-    // online yet; Node gates on kIsOnline and reports zeros here.
     expect(worker.performance.eventLoopUtilization()).toEqual({ idle: 0, active: 0, utilization: 0 });
   } finally {
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
     await worker.terminate();
   }
 });

@@ -214,8 +214,7 @@ impl Handlers {
     // corker: Corker = .{},
 
     pub fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
+        if self.cannot_enter_js() {
             return Ok(());
         }
 
@@ -230,8 +229,7 @@ impl Handlers {
     }
 
     pub fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
+        if self.cannot_enter_js() {
             return Ok(true);
         }
 
@@ -275,9 +273,18 @@ impl Handlers {
         false
     }
 
+    /// Whether a socket dispatch may enter JS. `is_shutting_down()` alone misses a
+    /// terminated worker, whose pending exception JSC will not clear; dispatching
+    /// again then asserts. Same guard as `H2FrameParser::read_bytes`.
+    #[inline]
+    pub fn cannot_enter_js(&self) -> bool {
+        self.vm.is_shutting_down() || self.global_object.has_exception()
+    }
+
     pub fn call_error_handler(&self, this_value: JSValue, args: &[JSValue; 2]) -> bool {
-        let vm = self.vm;
-        if vm.is_shutting_down() {
+        // `take_error`/`take_exception` hand a termination back without clearing it,
+        // so it is still pending here.
+        if self.cannot_enter_js() {
             return false;
         }
 

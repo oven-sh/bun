@@ -226,3 +226,33 @@ describe("brace expansion drops empty argv words", () => {
     expect(out).toBe("a\n");
   });
 });
+
+// A quoted empty word as argv[0] is a real (empty) command name and fails,
+// rather than silently exiting 0 or shifting to the next arg. An unquoted
+// `$(...)` producing no output leaves argv empty and keeps the POSIX rule.
+describe("empty argv[0] is command-not-found", () => {
+  const run = async (s: string) => {
+    const r = await $`${{ raw: s }}`.nothrow().quiet();
+    return { stdout: r.stdout.toString(), stderr: r.stderr.toString(), exitCode: r.exitCode };
+  };
+
+  for (const s of ['""', '"$(true)"', '"" echo hi', '"$(true)" echo hi']) {
+    test(s, async () => {
+      expect(await run(s)).toEqual({
+        stdout: "",
+        stderr: "bun: command not found: \n",
+        exitCode: 1,
+      });
+    });
+  }
+
+  test("$(true) alone exits 0", async () => {
+    expect(await run("$(true)")).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+  });
+  test("$(false) alone exits 1", async () => {
+    expect(await run("$(false)")).toEqual({ stdout: "", stderr: "", exitCode: 1 });
+  });
+  test("$(true) echo hi runs echo", async () => {
+    expect(await run("$(true) echo hi")).toEqual({ stdout: "hi\n", stderr: "", exitCode: 0 });
+  });
+});

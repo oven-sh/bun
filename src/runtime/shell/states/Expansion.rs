@@ -337,9 +337,9 @@ impl Expansion {
         }
         drop(arena);
 
-        // Push each variant as its own word; word boundaries are recorded via
-        // `bounds`. An unquoted empty variant is dropped (bash null argument
-        // removal); `has_quoted_empty` is word-level so `{,""}` over-keeps.
+        // Push each variant as its own word. Unquoted empty variants are
+        // dropped (bash null-argument removal). `has_quoted_empty` is
+        // word-level: `{,""}` over-keeps, `"$VAR"` (no quoted flag) under-keeps.
         let mut pushed_any = !me.out.buf.is_empty();
         for s in expanded {
             if s.is_empty() && !me.has_quoted_empty {

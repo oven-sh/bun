@@ -34,6 +34,7 @@
 #include "JSDOMConvertNullable.h"
 #include "JSDOMConvertStrings.h"
 #include "JSDOMExceptionHandling.h"
+#include "ErrorCode.h"
 #include "JSDOMGlobalObject.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMOperation.h"
@@ -162,9 +163,12 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     EnsureStillAliveScope argument1 = callFrame->argument(1);
     auto base = argument1.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, {});
-    auto object = base.isEmpty() ? DOMURL::create(WTF::move(url)) : DOMURL::create(WTF::move(url), WTF::move(base));
-    if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, {});
+    auto object = base.isEmpty() ? DOMURL::create(url) : DOMURL::create(url, base);
+    if (object.hasException()) [[unlikely]] {
+        if (argument1.value().isUndefined())
+            return Bun::ERR::INVALID_URL(throwScope, lexicalGlobalObject, url);
+        return Bun::ERR::INVALID_URL(throwScope, lexicalGlobalObject, url, base);
+    }
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<DOMURL>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTF::move(object));
     if constexpr (IsExceptionOr<decltype(object)>)
@@ -299,9 +303,11 @@ static inline bool setJSDOMURL_hrefSetter(JSGlobalObject& lexicalGlobalObject, J
     auto& impl = thisObject.wrapped();
     auto nativeValue = convert<IDLUSVString>(lexicalGlobalObject, value);
     RETURN_IF_EXCEPTION(throwScope, false);
-    invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
-        return impl.setHref(WTF::move(nativeValue));
-    });
+    auto result = impl.setHref(nativeValue);
+    if (result.hasException()) [[unlikely]] {
+        Bun::ERR::INVALID_URL(throwScope, &lexicalGlobalObject, nativeValue);
+        return false;
+    }
     return true;
 }
 

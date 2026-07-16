@@ -1151,6 +1151,26 @@ JSC::EncodedJSValue INVALID_ARG_VALUE(JSC::ThrowScope& throwScope, JSC::JSGlobal
     return {};
 }
 
+JSC::EncodedJSValue INVALID_URL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& input)
+{
+    auto& vm = JSC::getVM(globalObject);
+    // Don't include URL in message. (See https://github.com/nodejs/node/pull/38614)
+    auto* err = createError(globalObject, ErrorCode::ERR_INVALID_URL, "Invalid URL"_s);
+    err->putDirect(vm, vm.propertyNames->input, JSC::jsString(vm, input));
+    throwScope.throwException(globalObject, err);
+    throwScope.release();
+    return {};
+}
+JSC::EncodedJSValue INVALID_URL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& input, const WTF::String& base)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto* err = createError(globalObject, ErrorCode::ERR_INVALID_URL, "Invalid URL"_s);
+    err->putDirect(vm, vm.propertyNames->input, JSC::jsString(vm, input));
+    err->putDirect(vm, Identifier::fromString(vm, "base"_s), JSC::jsString(vm, base));
+    throwScope.throwException(globalObject, err);
+    throwScope.release();
+    return {};
+}
 JSC::EncodedJSValue INVALID_URL_SCHEME(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& expectedScheme)
 {
     auto message = makeString("The URL must be of scheme "_s, expectedScheme);

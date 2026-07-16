@@ -3954,10 +3954,15 @@ bool EVPKeyCtxPointer::setDsaParameters(uint32_t bits,
 bool EVPKeyCtxPointer::setEcParameters(int curve, int encoding)
 {
     if (!ctx_) return false;
+    if (EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx_.get(), curve) != 1) return false;
+#ifdef OPENSSL_IS_BORINGSSL
     // BoringSSL's EVP_PKEY_CTX_set_ec_param_enc rejects OPENSSL_EC_EXPLICIT_CURVE and is a no-op
     // for OPENSSL_EC_NAMED_CURVE, so skip it; EC keys are always serialized with a named curve.
     (void)encoding;
-    return EVP_PKEY_CTX_set_ec_paramgen_curve_nid(ctx_.get(), curve) == 1;
+    return true;
+#else
+    return EVP_PKEY_CTX_set_ec_param_enc(ctx_.get(), encoding) == 1;
+#endif
 }
 
 bool EVPKeyCtxPointer::setRsaOaepMd(const Digest& md)

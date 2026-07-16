@@ -1529,3 +1529,36 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
     });
   });
 });
+
+// https://github.com/oven-sh/bun/issues/34158
+it.each(["server", "client"] as const)(
+  "server.stop() promise resolves after the last websocket closes (%s-initiated close)",
+  async initiator => {
+    const server = serve({
+      port: 0,
+      fetch(req, srv) {
+        if (srv.upgrade(req)) return;
+        return new Response("x");
+      },
+      websocket: {
+        open(ws) {
+          if (initiator === "server") queueMicrotask(() => ws.close());
+        },
+        message() {},
+        close() {},
+      },
+    });
+    const ws = new WebSocket(server.url.href.replace("http", "ws"));
+    const { promise: wsClosed, resolve: onWsClosed, reject: onWsError } = Promise.withResolvers<void>();
+    ws.onerror = e => onWsError(new Error(`ws error: ${e}`));
+    ws.onclose = () => onWsClosed();
+    if (initiator === "client") {
+      const { promise: opened, resolve: onOpen } = Promise.withResolvers<void>();
+      ws.onopen = () => onOpen();
+      await opened;
+      ws.close();
+    }
+    await wsClosed;
+    await server.stop();
+  },
+);

@@ -289,7 +289,8 @@ impl<'a> Loader<'a> {
         self.aws_credentials.as_ref().unwrap()
     }
 
-    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
+    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` (matching
+    /// Node's `=== '0'` check exactly).
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
     pub fn get_tls_reject_unauthorized(&mut self) -> bool {
@@ -298,10 +299,6 @@ impl<'a> Loader<'a> {
         }
         if let Some(reject) = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") {
             if reject == b"0" {
-                self.reject_unauthorized = Some(false);
-                return false;
-            }
-            if reject == b"false" {
                 self.reject_unauthorized = Some(false);
                 return false;
             }

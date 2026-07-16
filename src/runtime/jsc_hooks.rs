@@ -339,15 +339,21 @@ unsafe fn init_runtime_state(
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
         body_value_pool: {
-            let mut pool =
-                Box::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>::new_uninit();
-            // SAFETY: fresh heap allocation — non-null, aligned for the pool and
-            // valid for `size_of::<HiveAllocator>()` writes. `init_in_place`
-            // writes only the occupancy bitset; the slot buffer is `MaybeUninit`,
-            // for which uninitialized bytes are a valid representation.
+            // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
+            // ~100 KB pool in a stack temporary before moving it into the box (see
+            // `HiveArray::new_boxed`). Allocate it on the heap and initialize it in
+            // place instead — only the occupancy bitset is written.
+            let pool = crate::webcore::body::HiveAllocator::new_boxed();
+            // SAFETY: `new_boxed` leaks a `Box<HiveAllocator>`; reclaim ownership of
+            // that same allocation. `ManuallyDrop` is `repr(transparent)`, so
+            // `Box<ManuallyDrop<T>>` and `Box<T>` have identical layout — the wrapper
+            // only suppresses the inner drop, which is the behavior documented on the
+            // field.
             unsafe {
-                crate::webcore::body::HiveAllocator::init_in_place(pool.as_mut_ptr().cast());
-                pool.assume_init()
+                Box::from_raw(
+                    pool.as_ptr()
+                        .cast::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>(),
+                )
             }
         },
         isolation_handles: IsolationHandles::default(),

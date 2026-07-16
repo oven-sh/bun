@@ -1022,7 +1022,7 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     // pipelined request in the same read may have corked the Duplex for its
     // ServerResponse, which would buffer this write and drop it on destroy.
     const handle = socket as any;
-    if (handle && !handle.closed && (!nodeSocket._httpMessage || !nodeSocket._httpMessage._headerSent)) {
+    if (handle && !handle.closed && (!nodeSocket._httpMessage || !nodeSocket._httpMessage.headersSent)) {
       let response;
       switch (errorCode) {
         case HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:

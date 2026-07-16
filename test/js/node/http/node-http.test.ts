@@ -3058,6 +3058,50 @@ describe("clientError listener owns the response and socket", () => {
       server.close();
     }
   });
+
+  it("does not inject a 400 mid-stream when the in-flight response already sent headers", async () => {
+    const server = createServer((req, res) => {
+      res.write("partial-");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { closed, data } = await raw(port, "GET / HTTP/1.1\r\nHost: a\r\n\r\n*");
+      await closed;
+      // The handler's 200 may or may not reach the wire before the socket is
+      // destroyed; either way the canned 400 must not be spliced in after it.
+      expect(data()).not.toInclude("400 Bad Request");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("does not leave the socket in CONNECT-tunnel mode after a failed CONNECT", async () => {
+    // A CONNECT whose request-line parses but whose headers fail latched
+    // isConnectRequest=true; with the socket kept open, a subsequent byte
+    // would be routed as tunnel data (silently swallowed) instead of
+    // reaching the parser. Node.js reports a second clientError for it.
+    const errors: string[] = [];
+    const server = createServer(() => {});
+    server.on("clientError", (err: any) => errors.push(err.code));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { socket, closed } = await raw(port, "CONNECT h:443 HTTP/1.1\r\nContent-Length: x\r\n\r\n");
+      while (errors.length < 1) await new Promise(r => setImmediate(r));
+      socket.write("*");
+      while (errors.length < 2) await new Promise(r => setImmediate(r));
+      socket.end();
+      await closed;
+      // Two errors: the failed CONNECT, then the '*' reached the parser.
+      expect(errors.length).toBe(2);
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
 });
 
 it("clientError after a kept-alive request reuses the connection's socket and untracks it on close", async () => {

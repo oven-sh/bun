@@ -419,6 +419,7 @@ private:
                  * the parser for any further bytes, flush corked responses (JS
                  * writes bypass the cork buffer), then hand off. */
                 httpResponseData->resetParserState();
+                httpResponseData->isConnectRequest = false;
                 ((AsyncSocket<SSL> *) s)->uncork();
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
                 us_socket_unref(s);

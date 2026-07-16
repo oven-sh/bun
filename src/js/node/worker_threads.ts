@@ -5,8 +5,10 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
-const Readable = require("internal/streams/readable");
-const Writable = require("internal/streams/writable");
+// Readable/Writable are loaded lazily: this module is preloaded in every
+// node:worker_threads worker, and the streams graph is several ms cold.
+let Readable;
+let Writable;
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
   validateString,
@@ -26,8 +28,6 @@ function normalizeWorkerName(rawName) {
   return "";
 }
 
-const { isAbsolute: pathIsAbsolute } = require("node:path");
-
 // node's filename validation for non-eval workers: absolute or "./"/"../"-relative
 // paths and file: URL objects; bare specifiers and string URLs are rejected.
 function validateWorkerFilename(filename) {
@@ -41,7 +41,7 @@ function validateWorkerFilename(filename) {
     // throws the canonical ERR_INVALID_ARG_TYPE with the exact node message.
     return filename;
   }
-  if (pathIsAbsolute(filename) || /^\.\.?[\\/]/.test(filename)) {
+  if (require("node:path").isAbsolute(filename) || /^\.\.?[\\/]/.test(filename)) {
     return filename;
   }
   let message =
@@ -334,6 +334,7 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 // Readable fed by a control MessagePort (worker.stdout/stderr on the parent,
 // process.stdin in the worker). The peer posts arrays of Buffers; null signals EOF.
 function makePortReadable(port) {
+  Readable ??= require("internal/streams/readable");
   let attached = false;
   let ended = false;
   function onMessage(payload) {
@@ -380,6 +381,7 @@ function makePortReadable(port) {
 // Writable that forwards chunks over a control MessagePort (worker.stdin on the
 // parent, process.stdout/stderr in the worker). final() posts null as EOF.
 function makePortWritable(port) {
+  Writable ??= require("internal/streams/writable");
   // Reader-side acks complete the in-flight writev. The listener refs the
   // event loop; release that immediately — the port is re-ref'd only while a
   // batch is awaiting its ack, so unflushed data keeps the writer alive
@@ -435,44 +437,54 @@ function makePortWritable(port) {
   });
 }
 
+// Install a self-replacing accessor: the first get() builds the value and
+// rewrites the slot to a plain writable data property, so later reads are
+// direct and identity-stable; set() does the same rewrite so assignment works.
+function defineLazy(obj, name, enumerable, make) {
+  Object.defineProperty(obj, name, {
+    configurable: true,
+    enumerable,
+    get() {
+      const value = make();
+      Object.defineProperty(obj, name, { value, writable: true, configurable: true, enumerable });
+      return value;
+    },
+    set(value) {
+      Object.defineProperty(obj, name, { value, writable: true, configurable: true, enumerable });
+    },
+  });
+}
+
 function setupWorkerStdio(stdio) {
+  const proc: any = process;
   const { stdin, stdout, stderr } = stdio;
-  if (stdout) {
-    Object.defineProperty(process, "stdout", {
-      value: makePortWritable(stdout),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
-  }
-  if (stderr) {
-    Object.defineProperty(process, "stderr", {
-      value: makePortWritable(stderr),
-      writable: true,
-      configurable: true,
-      enumerable: true,
-    });
-  }
+  // Shadow the native PropertyCallback slots via plain [[Set]] first: defineProperty
+  // on one reifies the process static table and invokes constructStdout/Stderr/Stdin,
+  // cold-loading node:stream just to build fd streams we then discard.
+  proc.stdin = proc.stdout = proc.stderr = undefined;
+  // Lazy: the streams graph + Console constructor are several ms cold, and most
+  // workers never touch process.stdout/stderr/stdin directly.
+  if (stdout) defineLazy(process, "stdout", true, () => makePortWritable(stdout));
+  if (stderr) defineLazy(process, "stderr", true, () => makePortWritable(stderr));
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
-  Object.defineProperty(process, "stdin", {
-    value: stdin
+  defineLazy(process, "stdin", true, () =>
+    stdin
       ? makePortReadable(stdin)
-      : new Readable({
+      : new (Readable ??= require("internal/streams/readable"))({
           read() {
             this.push(null);
           },
         }),
-    writable: true,
-    configurable: true,
-    enumerable: true,
-  });
+  );
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly, so rebind it to the captured streams when present.
+  // Capture the native console object first: require("node:console") is
+  // `export default globalThis.console`, which would re-enter this getter.
   if (stdout || stderr) {
-    const { Console } = require("node:console");
-    globalThis.console = new Console(process.stdout, process.stderr);
+    const nativeConsole = globalThis.console as typeof globalThis.console & { Console: any };
+    defineLazy(globalThis, "console", false, () => new nativeConsole.Console(process.stdout, process.stderr));
   }
 }
 
@@ -1199,7 +1211,7 @@ class Worker extends EventEmitter {
 
   getHeapSnapshot(options: unknown) {
     const stringPromise = this.#worker.getHeapSnapshot(options);
-    return stringPromise.then(s => new HeapSnapshotStream(s));
+    return stringPromise.then(s => makeHeapSnapshotStream(s));
   }
 
   getHeapStatistics() {
@@ -1351,21 +1363,24 @@ class Worker extends EventEmitter {
   }
 }
 
-class HeapSnapshotStream extends Readable {
-  #json: string | undefined;
-
-  constructor(json: string) {
-    super();
-    this.#json = json;
-  }
-
-  _read() {
-    if (this.#json !== undefined) {
-      this.push(this.#json);
-      this.push(null);
-      this.#json = undefined;
+let _HeapSnapshotStream;
+function makeHeapSnapshotStream(json: string) {
+  Readable ??= require("internal/streams/readable");
+  _HeapSnapshotStream ??= class HeapSnapshotStream extends Readable {
+    #json: string | undefined;
+    constructor(json: string) {
+      super();
+      this.#json = json;
     }
-  }
+    _read() {
+      if (this.#json !== undefined) {
+        this.push(this.#json);
+        this.push(null);
+        this.#json = undefined;
+      }
+    }
+  };
+  return new _HeapSnapshotStream(json);
 }
 
 export default {

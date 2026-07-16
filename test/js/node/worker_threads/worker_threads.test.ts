@@ -354,6 +354,45 @@ test("eval does not leak source code", async () => {
   expect(proc.exitCode).toBe(0);
 });
 
+// Regression: the stdio rebind used to run eagerly in every worker's preload,
+// cold-loading node:stream + Console and reifying the process static table on
+// every spawn even when the worker never touched stdio.
+test("worker process.stdio and console are installed as lazy accessors", async () => {
+  const worker = new Worker(
+    `
+    const { parentPort } = require("worker_threads");
+    const d = (obj, k) => {
+      const desc = Object.getOwnPropertyDescriptor(obj, k);
+      return desc ? (desc.get ? "accessor" : "value") : "none";
+    };
+    const before = {
+      stdout: d(process, "stdout"),
+      stderr: d(process, "stderr"),
+      stdin: d(process, "stdin"),
+      console: d(globalThis, "console"),
+    };
+    // first read materializes the stream; second read must be the same object
+    const s1 = process.stdout;
+    const s2 = process.stdout;
+    parentPort.postMessage({
+      before,
+      afterStdout: d(process, "stdout"),
+      sameInstance: s1 === s2,
+      isWritable: typeof s1.write === "function",
+    });
+    `,
+    { eval: true },
+  );
+  const [msg] = await once(worker, "message");
+  expect(msg).toEqual({
+    before: { stdout: "accessor", stderr: "accessor", stdin: "accessor", console: "accessor" },
+    afterStdout: "value",
+    sameInstance: true,
+    isWritable: true,
+  });
+  await worker.terminate();
+});
+
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
   // withheld until the reader acks (STDIO_WANTS_MORE_DATA), so 'drain' must not

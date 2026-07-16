@@ -41,7 +41,7 @@ using namespace JSC;
 // External functions
 extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
-JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
+JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process, bool excludeEnv, bool excludeNetwork)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -183,7 +183,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         // Network interfaces using libuv
         uv_interface_address_t* interfaces;
-        if (uv_interface_addresses(&interfaces, &count) == 0) {
+        if (excludeNetwork) {
+            // omit header.networkInterfaces entirely
+        } else if (uv_interface_addresses(&interfaces, &count) == 0) {
             auto freeInterfaces = WTF::makeScopeExit([&] { uv_free_interface_addresses(interfaces, count); });
             JSArray* interfacesArray = constructEmptyArray(globalObject, nullptr, count);
             RETURN_IF_EXCEPTION(scope, {});
@@ -396,8 +398,10 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
     RETURN_IF_EXCEPTION(scope, {});
 
     // Environment variables
-    report->putDirect(vm, Identifier::fromString(vm, "environmentVariables"_s), globalObject->processEnvObject(), 0);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (!excludeEnv) {
+        report->putDirect(vm, Identifier::fromString(vm, "environmentVariables"_s), globalObject->processEnvObject(), 0);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return report;
 }

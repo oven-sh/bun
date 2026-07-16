@@ -1003,6 +1003,81 @@ describe.concurrent(() => {
     JSON.stringify(process.report.getReport(), null, 2);
   });
 
+  it("process.report property shape", () => {
+    const r = process.report;
+    expect({
+      excludeEnv: r.excludeEnv,
+      excludeNetwork: r.excludeNetwork,
+      signal: r.signal,
+    }).toEqual({
+      excludeEnv: false,
+      excludeNetwork: false,
+      signal: "SIGUSR2",
+    });
+    expect(typeof r.excludeEnv).toBe("boolean");
+  });
+
+  it("process.report.excludeEnv omits environmentVariables from getReport()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.env.PRPT_SECRET_MARKER = "hunter2";
+          const before = process.report.getReport();
+          const envBefore = before.environmentVariables;
+          process.report.excludeEnv = true;
+          const after = process.report.getReport();
+          process.stdout.write(JSON.stringify({
+            beforeHasEnv: "environmentVariables" in before,
+            beforeSecret: envBefore?.PRPT_SECRET_MARKER,
+            afterHasEnv: "environmentVariables" in after,
+            afterEnv: after.environmentVariables,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      beforeHasEnv: true,
+      beforeSecret: "hunter2",
+      afterHasEnv: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("process.report.excludeNetwork omits networkInterfaces from getReport()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const before = process.report.getReport();
+          process.report.excludeNetwork = true;
+          const after = process.report.getReport();
+          process.stdout.write(JSON.stringify({
+            beforeHeaderHasNet: "networkInterfaces" in before.header,
+            afterHeaderHasNet: "networkInterfaces" in after.header,
+            afterHasNet: "networkInterfaces" in after,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout)).toEqual({
+      beforeHeaderHasNet: true,
+      afterHeaderHasNet: false,
+      afterHasNet: false,
+    });
+    expect(exitCode).toBe(0);
+  });
+
   it("process.exit with jsDoubleNumber that is an integer", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "./process-exit-decimal-fixture.js")],

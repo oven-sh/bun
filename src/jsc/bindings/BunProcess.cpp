@@ -2094,7 +2094,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlob
     return false;
 }
 
-static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName)
+static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName, bool excludeEnv, bool excludeNetwork)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if !OS(WINDOWS)
@@ -2264,8 +2264,10 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         header->putDirect(vm, Identifier::fromString(vm, "cpus"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
         RETURN_IF_EXCEPTION(scope, {});
-        header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!excludeNetwork) {
+            header->putDirect(vm, Identifier::fromString(vm, "networkInterfaces"_s), JSC::constructEmptyArray(globalObject, nullptr), 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         return header;
     };
@@ -2457,35 +2459,58 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, {});
         report->putDirect(vm, JSC::Identifier::fromString(vm, "workers"_s), constructWorkers(), 0);
         RETURN_IF_EXCEPTION(scope, {});
-        report->putDirect(vm, JSC::Identifier::fromString(vm, "environmentVariables"_s), constructEnvironmentVariables(), 0);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!excludeEnv) {
+            report->putDirect(vm, JSC::Identifier::fromString(vm, "environmentVariables"_s), constructEnvironmentVariables(), 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         report->putDirect(vm, JSC::Identifier::fromString(vm, "userLimits"_s), constructUserLimits(), 0);
         RETURN_IF_EXCEPTION(scope, {});
         report->putDirect(vm, JSC::Identifier::fromString(vm, "sharedObjects"_s), constructSharedObjects(), 0);
         RETURN_IF_EXCEPTION(scope, {});
         report->putDirect(vm, JSC::Identifier::fromString(vm, "cpus"_s), constructCpus(), 0);
         RETURN_IF_EXCEPTION(scope, {});
-        report->putDirect(vm, JSC::Identifier::fromString(vm, "networkInterfaces"_s), constructNetworkInterfaces(), 0);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!excludeNetwork) {
+            report->putDirect(vm, JSC::Identifier::fromString(vm, "networkInterfaces"_s), constructNetworkInterfaces(), 0);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
 
         return report;
     }
 #else // OS(WINDOWS)
     // Forward declaration - implemented in BunProcessReportObjectWindows.cpp
-    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process);
+    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process, bool excludeEnv, bool excludeNetwork);
 
     // Get the Process object - needed for accessing report settings
     Process* process = globalObject->processObject();
 
-    return constructReportObjectWindows(vm, globalObject, process);
+    return constructReportObjectWindows(vm, globalObject, process, excludeEnv, excludeNetwork);
 #endif
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+
+    bool excludeEnv = false;
+    bool excludeNetwork = false;
+
+    auto* process = zigGlobal->processObject();
+    JSValue reportValue = process->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "report"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (reportValue && reportValue.isObject()) {
+        JSObject* reportObj = reportValue.getObject();
+        JSValue excludeEnvValue = reportObj->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "excludeEnv"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (excludeEnvValue) excludeEnv = excludeEnvValue.toBoolean(globalObject);
+        JSValue excludeNetworkValue = reportObj->getIfPropertyExists(globalObject, JSC::Identifier::fromString(vm, "excludeNetwork"_s));
+        RETURN_IF_EXCEPTION(scope, {});
+        if (excludeNetworkValue) excludeNetwork = excludeNetworkValue.toBoolean(globalObject);
+    }
+
     // TODO: node:vm
-    return JSValue::encode(constructReportObjectComplete(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject), String()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, zigGlobal, String(), excludeEnv, excludeNetwork)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2502,7 +2527,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     auto process = uncheckedDowncast<Process>(processObject);
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
+    auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), JSC::jsEmptyString(vm), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::jsEmptyString(vm), 0);
@@ -2511,7 +2536,8 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnSignal"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "reportOnUncaughtException"_s), JSC::jsBoolean(process->m_reportOnUncaughtException), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsBoolean(false), 0);
-    report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsString(vm, String("SIGUSR2"_s)), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeNetwork"_s), JSC::jsBoolean(false), 0);
+    report->putDirect(vm, JSC::Identifier::fromString(vm, "signal"_s), JSC::jsString(vm, String("SIGUSR2"_s)), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "writeReport"_s), JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public), 0);
     RETURN_IF_EXCEPTION(scope, {});
     return report;

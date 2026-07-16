@@ -1944,7 +1944,9 @@ impl LogJsc for bun_ast::Log {
         // Cap at 256 — the consumer's stack buffer holds at most 256 JSValues.
         let count = msgs.len().min(256);
         match count {
-            0 => Ok(JSValue::UNDEFINED),
+            // Every caller throws the result, so an empty log must still yield
+            // a real Error; returning UNDEFINED here surfaces as `throw undefined`.
+            0 => Ok(global.create_error_instance(format_args!("{}", message))),
             1 => msg_to_js(&msgs[0], global),
             _ => {
                 // On-stack array: conservative GC stack scan keeps these

@@ -33,7 +33,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // for now...
             let buffer_writer = js_printer::BufferWriter::init();
             let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-            if js_printer::print_json(
+            if let Err(err) = js_printer::print_json(
                 &mut writer,
                 parse_result,
                 source,
@@ -42,10 +42,14 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     mangled_props: None,
                     ..Default::default()
                 },
-            )
-            .is_err()
-            {
-                return Err(global.throw_value(log.to_js(global, "Failed to print toml")?));
+            ) {
+                // The printer never writes to `log`; throwing `log.to_js(...)`
+                // here produced a literal `throw undefined` in JS.
+                return Err(match err {
+                    js_printer::Error::StackOverflow => global.throw_stack_overflow(),
+                    js_printer::Error::Alloc(_) => global.throw_out_of_memory(),
+                    _ => global.throw(format_args!("Failed to print toml: {}", err)),
+                });
             }
 
             let slice = writer.ctx.buffer.slice();

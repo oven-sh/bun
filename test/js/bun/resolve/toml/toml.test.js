@@ -112,3 +112,41 @@ it("Bun.TOML.parse throws on deeply nested inline tables instead of crashing", (
     "a = " + Buffer.alloc(depth * 6, "{ b = ").toString() + "1" + Buffer.alloc(depth * 2, " }").toString();
   expect(() => Bun.TOML.parse(deepToml)).toThrow(RangeError);
 });
+
+it("Bun.TOML.parse never throws undefined for deeply nested inline tables", () => {
+  // In a depth window the parser's stack guard stays quiet but the printer's
+  // trips; the printer logs nothing, so the old error path did `throw undefined`.
+  // The window moves with frame size, so calibrate by doubling, then sweep.
+  const thrown = d => {
+    const s = "a = " + Buffer.alloc(d * 6, "{ b = ").toString() + "1" + Buffer.alloc(d * 2, " }").toString();
+    try {
+      Bun.TOML.parse(s);
+      return null;
+    } catch (e) {
+      return { e };
+    }
+  };
+
+  let hi = 0;
+  for (let d = 500; d <= 200_000; d *= 2) {
+    if (thrown(d) !== null) {
+      hi = d;
+      break;
+    }
+  }
+  expect(hi).toBeGreaterThan(0);
+
+  const lo = hi >> 1;
+  const step = Math.max(1, lo >> 2);
+  let threw = 0;
+  for (let d = lo + step; d <= hi * 4; d += step) {
+    const r = thrown(d);
+    if (r === null) continue;
+    threw++;
+    if (!(r.e instanceof Error)) {
+      throw new Error(`depth ${d}: Bun.TOML.parse threw a non-Error value: ${String(r.e)}`);
+    }
+    expect(r.e).toBeInstanceOf(RangeError);
+  }
+  expect(threw).toBeGreaterThan(0);
+});

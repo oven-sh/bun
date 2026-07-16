@@ -275,8 +275,11 @@ function eventLoopUtilization(getRaw: () => { idle: number; active: number }, ut
     return { idle, active, utilization: total === 0 ? 0 : active / total };
   }
 
-  const idleDelta = idle - util1.idle;
-  const activeDelta = active - util1.active;
+  // Clamp: a cross-thread prior sample taken mid-wait can exceed a later read
+  // that lands between the writer's entry-clear and idle-credit stores; a
+  // negative delta would otherwise surface as utilization > 1.
+  const idleDelta = Math.max(0, idle - util1.idle);
+  const activeDelta = Math.max(0, active - util1.active);
   const total = idleDelta + activeDelta;
   return { idle: idleDelta, active: activeDelta, utilization: total === 0 ? 0 : activeDelta / total };
 }

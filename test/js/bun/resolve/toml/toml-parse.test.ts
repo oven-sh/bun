@@ -124,9 +124,14 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
 // Error::StackOverflow without logging a message; the empty log used to convert
 // to JSValue::UNDEFINED and get thrown verbatim.
 test("Bun.TOML.parse throws RangeError (not undefined) on deeply nested inline tables", async () => {
+  // Dense ladder: the depth band where the parser succeeds but the printer's stack
+  // check fires varies with frame size (debug vs release vs ASAN), so probe a
+  // geometric range rather than a single depth.
   const fixture = `
     const results = [];
-    for (const d of [2000, 4000, 8000, 12000, 16000, 20000, 28000, 40000, 100000]) {
+    const depths = [];
+    for (let d = 500; d <= 200000; d = Math.ceil(d * 1.25)) depths.push(d);
+    for (const d of depths) {
       const src = "a = " + Buffer.alloc(d * 6).fill("{ b = ").toString() + "1" + Buffer.alloc(d * 2).fill(" }").toString();
       try {
         Bun.TOML.parse(src);

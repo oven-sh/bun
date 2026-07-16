@@ -467,13 +467,17 @@ afterAll(async () => {
     await write(doneGatePath, "go");
 
     const exitCode = await proc.exited;
-    expect(exitCode).toBe(0);
 
     // The core assertion: every `found` id handed out across the
     // retroactive path (suite A + suite B's describe) and the live path
     // (test B1) is unique.
     expect(rawFoundIds.length).toBe(5);
     expect(new Set(rawFoundIds).size).toBe(5);
+
+    if (exitCode !== 0) {
+      expect(await proc.stderr.text()).toBe("");
+    }
+    expect(exitCode).toBe(0);
 
     // Every `end` event's id must correspond to an actual `test` (not a
     // `describe`). Note: `foundTests` is a Map keyed by id, so it keeps

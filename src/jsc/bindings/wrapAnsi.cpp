@@ -435,6 +435,8 @@ static std::optional<uint32_t> getCloseCode(uint32_t code)
         return 28;
     case 9:
         return 29;
+    case 53:
+        return 55;
     }
 
     if (code >= 30 && code <= 37)

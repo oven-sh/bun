@@ -96,10 +96,10 @@ describe("Bun.wrapAnsi", () => {
       expect(Bun.wrapAnsi(input, 2)).toBe(input);
     });
 
-    // SGR close codes (22-29, 49) and unknown codes have no close mapping in
-    // ansi-styles' codes map, so npm wrap-ansi never re-emits them after a line
-    // break. Only open codes with a known close code are closed-then-reopened.
-    test.each([22, 23, 24, 25, 27, 28, 29, 49, 39, 0, 200])(
+    // SGR close codes (22-29, 49, 55) and unknown codes have no close mapping
+    // in ansi-styles' codes map, so npm wrap-ansi never re-emits them after a
+    // line break. Only open codes with a known close code are closed-then-reopened.
+    test.each([22, 23, 24, 25, 27, 28, 29, 49, 55, 39, 0, 200])(
       "does not re-open SGR close/unknown code %p after line break",
       code => {
         expect(Bun.wrapAnsi(`\x1b[${code}mabc def`, 3)).toBe(`\x1b[${code}mabc\ndef`);
@@ -111,6 +111,7 @@ describe("Bun.wrapAnsi", () => {
       [4, 24],
       [31, 39],
       [42, 49],
+      [53, 55],
       [100, 49],
     ])("re-opens SGR open code %p after line break", (open, close) => {
       expect(Bun.wrapAnsi(`\x1b[${open}mabc def`, 3)).toBe(`\x1b[${open}mabc\x1b[${close}m\n\x1b[${open}mdef`);

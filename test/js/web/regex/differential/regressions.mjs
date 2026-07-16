@@ -216,6 +216,19 @@ export const cases = [
 // an engine fix produces an unexpected pass and the case gets promoted above.
 export const knownBunFailures = [
   {
+    // Fixed in WebKit main; wrong in bun's currently-pinned JSC (JIT tier):
+    // a `+`-repeated alternation whose first alternative is a bounded
+    // quantified class followed by \b, and whose second alternative holds a
+    // capturing group under a counted quantifier, spuriously fails.
+    name: "plus-loop-quantified-class-boundary-with-counted-capture",
+    source: "(?:\\D{0,2}\\b|(.){2,})+f",
+    flags: "i",
+    input: "f-",
+    op: "exec",
+    expected: { match: ["f", null], index: 0 },
+    currentBun: null,
+  },
+  {
     // Fixed in WebKit main; still present in bun's currently-pinned JSC.
     name: "empty-iteration-clears-capture",
     source: "(.*){0,2}\\1",

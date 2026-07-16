@@ -84,3 +84,15 @@ Stock bun 1.3.14 keeps a stale empty capture; newer JSC (WebKit main as of
 ```js
 /(.*){0,2}\1/.exec("ab")   // bun 1.3.14: ["",""];  V8 + newer JSC: ["",undefined]
 ```
+
+## 8. (Fixed upstream) `+` loop over alternation with quantified class + boundary, counted capture
+
+Wrong in bun's currently-pinned JSC (JIT tier), correct in WebKit main and V8.
+Found by the differential harness (case reduced from a generated pattern):
+
+```js
+/(?:\D{0,2}\b|(.){2,})+f/i.exec("f-")   // V8 + newer JSC: ["f", undefined];  bun 1.3.14: null
+```
+
+The counted capture `(.){2,}` in the second alternative is essential; a plain
+`(y)` there does not trigger it.

@@ -627,11 +627,9 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
 
 const writablePrototypeWrite = Writable.prototype.write;
 
-// Lives on WriteStream.prototype (not the instance) so that
-// `stream.write === stream.constructor.prototype.write` stays true, matching
-// Node.js. Libraries such as pino use that equality to detect whether a stream
-// has been monkey-patched; installing the fast path on the instance broke the
-// check and forced them onto a slow unbatched path.
+// Lives on WriteStream.prototype so `stream.write === stream.constructor.prototype.write`
+// holds (matching Node). Libraries like pino/sonic-boom use that equality to detect
+// monkey-patching; an own-instance `write` would force them onto a slow unbatched path.
 function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
   const fileSink = this[kWriteStreamFastPath];
 

@@ -875,10 +875,11 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       } else {
         err = tlsHandshakeError(verifyError);
       }
+      self.servername = socket.getServername();
       self[kerrorEmitted] = true;
       self.emit("_tlsError", err);
       if (server) server.emit("tlsClientError", err, self);
-      else self.emit("error", err);
+      else if (self.listenerCount("error") > 0) self.emit("error", err);
       self._hadError = true;
       self.destroy();
       return;
@@ -939,12 +940,12 @@ const ServerHandlers: SocketHandler<NetSocket> = {
 
     if (data._hadError) return;
     data._hadError = true;
-    const bunTLS = this[bunTlsSymbol];
+    const bunTLS = data[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
       // Destroy socket if error happened before handshake's finish
       if (!data._secureEstablished) {
-        data.destroy(error);
+        data.destroy(data.listenerCount("error") > 0 ? error : undefined);
       } else if (
         data.isServer &&
         data._rejectUnauthorized &&
@@ -953,18 +954,16 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         // Ignore server's authorization errors
         data.destroy();
       } else {
-        // Emit error
-        data._emitTLSError(error);
-        this.emit("_tlsError", error);
+        data.emit("_tlsError", error);
         if (!data[kerrorEmitted]) {
           data[kerrorEmitted] = true;
-          this.server.emit("tlsClientError", error, data);
+          data.server?.emit("tlsClientError", error, data);
         }
         SocketHandlers.error(socket, error, true);
         return;
       }
       SocketHandlers.error(socket, error, true);
-      this.server?.emit("clientError", error, data);
+      data.server?.emit("clientError", error, data);
       return;
     }
     // Plain TCP: the delegation above is a no-op (_hadError was just set and

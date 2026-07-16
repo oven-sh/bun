@@ -489,8 +489,8 @@ describe("tls.createServer events", () => {
       mustNotCall("drop not called")();
     };
 
-    //should be faster than 100ms
-    timeout = setTimeout(closeAndFail, 100);
+    //should be faster than 100ms (debug + asan needs more headroom for the cold listen)
+    timeout = setTimeout(closeAndFail, isDebug ? 2000 : 100);
     let connection_called = false;
     server
       .on(

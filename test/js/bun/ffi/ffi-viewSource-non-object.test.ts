@@ -1,4 +1,4 @@
-import { viewSource } from "bun:ffi";
+import { JSCallback, viewSource } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { isArm64, isWindows } from "harness";
 
@@ -17,10 +17,8 @@ function thrown(fn: () => unknown): unknown {
 }
 
 describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
-  // Each symbol descriptor must be an object like { args: [...], returns: "void" }.
-  // Previously, non-object values like numbers or strings would cause a debug
-  // assertion failure (crash) in generateSymbolForFunction; after that crash
-  // was fixed, viewSource returned the TypeError instead of throwing it.
+  // Descriptor values must be objects like { args: [...], returns: "void" }.
+  // https://github.com/oven-sh/bun/pull/28361, https://github.com/oven-sh/bun/pull/34396
   test.each([42, "not_an_object", true])("throws on non-object symbol descriptor value %p", value => {
     const err = thrown(() => viewSource({ myFunc: value as any }));
     expect(err).toBeInstanceOf(TypeError);
@@ -53,5 +51,31 @@ describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
     const cbSrc = viewSource({ args: ["i32"], returns: "i32" }, true);
     expect(typeof cbSrc).toBe("string");
     expect(cbSrc).toContain("my_callback_function");
+  });
+});
+
+describe.skipIf(isFFIUnavailable)("FFI JSCallback", () => {
+  test.each([null, undefined, 42, "str", true])("throws on non-object options %p", value => {
+    const err = thrown(() => new JSCallback(() => {}, value as any));
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as TypeError).message).toContain("Expected object");
+  });
+
+  test.each([null, undefined, 42, "str", {}])("throws on non-callable callback %p", value => {
+    const err = thrown(() => new JSCallback(value as any, { returns: "void" }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as TypeError).message).toContain("Expected callback function");
+  });
+
+  test("throws on an unknown FFI type", () => {
+    const err = thrown(() => new JSCallback(() => {}, { args: ["bogus_type" as any], returns: "void" }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as TypeError).message).toContain("bogus_type");
+  });
+
+  test("constructs with a valid descriptor", () => {
+    using cb = new JSCallback(() => {}, { args: ["i32"], returns: "void" });
+    expect(typeof cb.ptr).toBe("number");
+    expect(cb.ptr).not.toBe(0);
   });
 });

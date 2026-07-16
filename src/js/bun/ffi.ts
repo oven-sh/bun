@@ -81,7 +81,9 @@ delete ffi.closeCallback;
 
 class JSCallback {
   constructor(cb, options) {
-    const { ctx, ptr } = nativeCallback(options, cb);
+    const result = nativeCallback(options, cb);
+    if (Error.isError(result)) throw result;
+    const { ctx, ptr } = result;
     this.#ctx = ctx;
     this.ptr = ptr;
     this.#threadsafe = !!options?.threadsafe;

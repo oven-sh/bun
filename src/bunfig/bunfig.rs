@@ -332,13 +332,14 @@ impl<'a> Parser<'a> {
     }
 
     fn resolve_bunfig_relative(&self, entry: Box<[u8]>) -> Box<[u8]> {
-        let bunfig_dir = resolve_path::dirname::<platform::Auto>(self.source.path.text);
-        // Skip the join when the dirname isn't itself an absolute path
-        // (e.g. Windows dirname("C:\\bunfig.toml") == "C:", which would
-        // trip the isAbsoluteWindows assert in join_abs_string_buf).
-        if bunfig_dir.is_empty()
-            || !<platform::Auto as resolve_path::PlatformT>::P.is_absolute(bunfig_dir)
-        {
+        // `bun_paths::dirname` keeps root forms joinable ("C:\\bunfig.toml"
+        // -> "C:\\"). Skip the join when there is no absolute parent (e.g. a
+        // relative bunfig path), which would trip the isAbsoluteWindows
+        // assert in join_abs_string_buf.
+        let Some(bunfig_dir) = bun_paths::dirname(self.source.path.text) else {
+            return entry;
+        };
+        if !<platform::Auto as resolve_path::PlatformT>::P.is_absolute(bunfig_dir) {
             return entry;
         }
         let mut buf = PathBuffer::uninit();

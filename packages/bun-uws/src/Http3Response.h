@@ -114,7 +114,6 @@ struct Http3Response {
         if (d->state & Http3ResponseData::HTTP_WRITE_CALLED) {
             us_quic_stream_shutdown((us_quic_stream_t *) this);
         } else {
-            writeStatus("200 OK");
             sendBufferedHeaders(d, true);
         }
         markDone(d);

@@ -1160,7 +1160,7 @@ describe.concurrent(() => {
           });
           const reason = new Error("boom");
           Promise.reject(reason);
-          process.on("beforeExit", () => console.log(JSON.stringify(result)));
+          process.on("beforeExit", () => console.log(JSON.stringify(result ?? null)));
         `,
       ],
       env: bunEnv,
@@ -1168,7 +1168,7 @@ describe.concurrent(() => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ result: JSON.parse(stdout.trim()), exitCode }).toEqual({
+    expect({ result: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
       result: {
         keysIncludesStack: false,
         forInHasStack: false,

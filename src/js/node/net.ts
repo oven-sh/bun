@@ -157,19 +157,25 @@ const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
-// libuv deactivates the handle at UV_EOF and a pending uv_write() holds the
-// loop via active_reqs; mirror that: unref once FIN is in and no native write
-// is pending. _write re-refs on backpressure so a post-FIN write still holds.
-function maybeUnrefOnFIN(self, socket) {
-  if (self[kended] && !self[kwriteCallback] && !self[kUserUnrefed]) socket.unref();
+// Whether the native handle's poll_ref should be touched for this socket: a
+// TLS wrapper over a generic Duplex has no fd-backed poll_ref; re-refing it
+// would newly pin the process (see Socket.prototype.pause).
+function hasNativeLoopHold(self) {
+  const upgraded = self[kupgraded];
+  return !upgraded || upgraded instanceof Socket;
 }
-// Node's readStop deactivates the handle; mirror Socket.prototype.pause's
-// unref when the data handler applies read backpressure so an idle unread
-// connection does not hold the loop. _read/resume re-ref via kPausedUnref.
+// libuv deactivates the handle at UV_EOF/readStop and a pending uv_write
+// holds the loop via active_reqs; mirror that: unref once reading has stopped
+// (kended or kPausedUnref) and no native write is pending. Called from FIN,
+// read backpressure, and drain. _write re-refs so a post-FIN write still holds.
+function maybeUnrefIdle(self, socket) {
+  if ((self[kended] || self[kPausedUnref]) && !self[kwriteCallback] && !self[kUserUnrefed]) socket.unref();
+}
 function pauseOnBackpressure(self, socket) {
   socket.pause();
-  socket.unref();
+  if (!hasNativeLoopHold(self)) return;
   self[kPausedUnref] = true;
+  maybeUnrefIdle(self, socket);
 }
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
@@ -300,7 +306,7 @@ const SocketHandlers: SocketHandler = {
       if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
-        maybeUnrefOnFIN(self, socket);
+        maybeUnrefIdle(self, socket);
       } else {
         self._pendingData = null;
       }
@@ -314,7 +320,7 @@ const SocketHandlers: SocketHandler = {
 
     // we just reuse the same code but we can push null or enqueue right away
     SocketEmitEndNT(self);
-    maybeUnrefOnFIN(self, socket);
+    maybeUnrefIdle(self, socket);
   },
   // A new resumable TLS session arrived (the peer's NewSessionTicket was just
   // processed). Mirrors Node's onnewsessionclient: emit once the handshake has
@@ -1052,7 +1058,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
-        maybeUnrefOnFIN(self, socket);
+        maybeUnrefIdle(self, socket);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
@@ -1067,7 +1073,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
-    maybeUnrefOnFIN(self, socket);
+    maybeUnrefIdle(self, socket);
   },
   // See SocketHandlers.session.
   session(socket, session) {
@@ -2452,8 +2458,8 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     this[kwriteCallback] = callback;
     // A pending native write holds the loop the way a libuv uv_write request
     // does, so a write issued after FIN (handle already unref'd) still
-    // flushes. maybeUnrefOnFIN releases it once drain clears the callback.
-    if (!this[kUserUnrefed]) socket.ref();
+    // flushes. maybeUnrefIdle releases it once drain clears the callback.
+    if (!this[kUserUnrefed] && hasNativeLoopHold(this)) socket.ref();
   }
 };
 

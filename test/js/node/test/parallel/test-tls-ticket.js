@@ -55,7 +55,7 @@ function createServer() {
     ticketKeys: keys
   }, common.mustCallAtLeast(function(c) {
     serverLog.push(id);
-    // TODO(@sam-github) Triggers close_notify before NewSessionTicket bug.
+    // Upstream note (@sam-github): triggers close_notify before NewSessionTicket bug.
     // c.end();
     c.end('x');
 

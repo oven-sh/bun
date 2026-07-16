@@ -865,3 +865,38 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+devTest("module with strict-mode restricted basename (#34357)", {
+  // https://github.com/oven-sh/bun/issues/34357
+  // A module whose generated namespace symbol is named "arguments" or "eval"
+  // must not produce `var [arguments, eval] = hmr.imports;` in the chunk;
+  // those names are invalid binding targets in strict mode (browsers load the
+  // chunk with <script type="module">).
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { Arguments, Eval } from './lib';
+      console.log('PASS ' + Arguments + ' ' + Eval);
+    `,
+    "lib.ts": `
+      export * from './arguments/index.mjs';
+      export * from './eval/index.mjs';
+    `,
+    "arguments/index.mjs": `export const Arguments = 1;`,
+    "eval/index.mjs": `export const Eval = 2;`,
+  },
+  async test(dev) {
+    // The test client evaluates scripts with indirect eval (sloppy mode),
+    // which accepts bindings browsers reject in module code, so additionally
+    // assert the chunk parses in strict mode.
+    const html = await dev.fetch("/").text();
+    const src = html.match(/<script type="module" .*?src="(.*?)"/)?.[1];
+    expect(src).toBeDefined();
+    const chunk = await dev.fetch(src!).text();
+    expect(() => new Function(`"use strict";\n${chunk}`)).not.toThrow();
+
+    await using c = await dev.client();
+    await c.expectMessage("PASS 1 2");
+  },
+});

@@ -925,6 +925,37 @@ impl All {
         }
     }
 
+    #[inline]
+    fn peek_deadline(heap: &TimerHeap) -> Option<Timespec> {
+        heap.peek().map(|min| {
+            // SAFETY: `peek` returns a live heap node.
+            let next = unsafe { &(*min).next };
+            Timespec {
+                sec: next.sec,
+                nsec: next.nsec,
+            }
+        })
+    }
+
+    /// Side-effect-free peek of the soonest deadline across both heaps as a
+    /// relative `epoll_pwait2` timeout in ns (0 if already due, -1 if empty).
+    /// Called from `us_loop_run_bun_tick` after `Bun__JSC_onBeforeWait` so a
+    /// timer armed by `heap.stopIfNecessary()` bounds the park. JS-thread only.
+    pub fn poll_timeout_ns(&self) -> i64 {
+        self.assert_js_thread();
+        let reg = Self::peek_deadline(&self.timers);
+        let wtf = Self::peek_deadline(&self.wtf_timers.lock());
+        let Some(next) = Self::soonest(reg, wtf) else {
+            return -1;
+        };
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
+        if now.greater(&next) {
+            return 0;
+        }
+        let d = next.duration(&now);
+        d.sec.saturating_mul(NS_PER_S).saturating_add(d.nsec)
+    }
+
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written. `now_out` receives the monotonic reading this
     /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
@@ -1319,3 +1350,4 @@ impl ID {
 
 const US_PER_S: i64 = bun_core::time::US_PER_S as i64;
 const NS_PER_US: i64 = bun_core::time::NS_PER_US as i64;
+const NS_PER_S: i64 = bun_core::time::NS_PER_S as i64;

@@ -355,6 +355,27 @@ void us_loop_run(struct us_loop_t *loop) {
 }
 
 extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
+extern long long Bun__timerHeapTimeoutNs(void);
+
+/* Bound `timeout` by the bun timer heap's soonest deadline. Called after
+ * Bun__JSC_onBeforeWait so a timer armed by heap.stopIfNecessary() (or by a
+ * cross-thread WTFTimer arm that landed since get_timeout() ran) bounds the
+ * park. JS-thread only. */
+static const struct timespec *us_internal_clamp_to_timer_heap(const struct timespec *timeout, struct timespec *storage) {
+    long long ns = Bun__timerHeapTimeoutNs();
+    if (ns < 0) {
+        return timeout;
+    }
+    long long heap_sec = ns / 1000000000LL;
+    long long heap_nsec = ns % 1000000000LL;
+    if (timeout && (timeout->tv_sec < heap_sec ||
+                    (timeout->tv_sec == heap_sec && timeout->tv_nsec <= heap_nsec))) {
+        return timeout;
+    }
+    storage->tv_sec = (time_t) heap_sec;
+    storage->tv_nsec = (long) heap_nsec;
+    return storage;
+}
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
@@ -388,8 +409,11 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
     /* `now_ns` is the reading the JS side took to pick `timeout`
      * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
      * if it had none to share. Nothing measures a deadline against it. */
-    if (will_idle_inside_event_loop && loop->data.jsc_vm)
+    struct timespec heap_ts;
+    if (will_idle_inside_event_loop && loop->data.jsc_vm) {
         Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
+        timeout = us_internal_clamp_to_timer_heap(timeout, &heap_ts);
+    }
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL

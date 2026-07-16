@@ -1156,6 +1156,38 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     unsafe { (*vm).on_after_event_loop() };
 }
 
+/// Re-derive the epoll/kqueue poll timeout from the timer heap's soonest
+/// deadline. Called from `us_loop_run_bun_tick` after `Bun__JSC_onBeforeWait`
+/// (`heap.stopIfNecessary()`), which can arm `WTFTimer` nodes after the Rust
+/// side already returned from `get_timeout()` with a stale value. JS-thread
+/// only (gated on `loop->data.jsc_vm` in the caller). Returns relative ns
+/// from now, or -1 for no deadline.
+#[unsafe(no_mangle)]
+#[cfg(unix)]
+extern "C" fn Bun__timerHeapTimeoutNs() -> i64 {
+    let state = runtime_state();
+    if state.is_null() {
+        return -1;
+    }
+    // An imminent WTF timer (seconds <= 0) is not in the heap; it is run by
+    // `run_imminent_gc_timer` on the next tick. Force a non-blocking poll so
+    // that tick happens now.
+    if let Some(vm) = VirtualMachine::get_or_null() {
+        // SAFETY: `vm` is the live per-thread VM.
+        let el: *const bun_jsc::event_loop::EventLoop = unsafe { &*vm }.event_loop;
+        // SAFETY: `el` is the live per-thread event loop (field of `*vm`).
+        if !unsafe { &*el }
+            .imminent_gc_timer
+            .load(core::sync::atomic::Ordering::Relaxed)
+            .is_null()
+        {
+            return 0;
+        }
+    }
+    // SAFETY: `state` is the live per-thread `RuntimeState`; JS thread.
+    unsafe { &(*state).timer }.poll_timeout_ns()
+}
+
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via
 /// `ConsoleObject::Formatter`. Dispatched here so the high tier owns the
 /// formatter.

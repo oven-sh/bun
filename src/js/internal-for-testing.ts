@@ -250,6 +250,7 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 
 export const timerInternals = {
   timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  armWTFTimerOnNextBeforeWait: $newCppFunction("BunJSCEventLoop.cpp", "jsFunctionArmWTFTimerOnNextBeforeWait", 1),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(

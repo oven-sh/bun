@@ -5,6 +5,9 @@
 
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/StrongInlines.h>
+#include <wtf/RunLoop.h>
 
 #if USE(MIMALLOC)
 // Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
@@ -22,6 +25,25 @@ extern "C" uint64_t us_internal_monotonic_ns(void);
 // int32_t, but Rust writes it (env parsing) while this thread reads it, so read
 // it as an atomic rather than through a plain `int`.
 extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+
+// bun:internal-for-testing hook (timerInternals.armWTFTimerOnNextBeforeWait):
+// arms a RunLoop::DispatchTimer from inside Bun__JSC_onBeforeWait, the same way
+// heap.stopIfNecessary() can, so the us_internal_clamp_to_timer_heap path in
+// epoll_kqueue.c is JS-observable.
+static thread_local double s_testArmSeconds = -1.0;
+static thread_local JSC::JSGlobalObject* s_testArmGlobal = nullptr;
+static thread_local JSC::Strong<JSC::JSPromise> s_testArmPromise;
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionArmWTFTimerOnNextBeforeWait, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    double ms = callFrame->argument(0).toNumber(globalObject);
+    JSC::JSPromise* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    s_testArmSeconds = ms / 1000.0;
+    s_testArmGlobal = globalObject;
+    s_testArmPromise.set(vm, promise);
+    return JSC::JSValue::encode(promise);
+}
 
 extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {
@@ -98,5 +120,17 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
             }
 #endif
         }
+    }
+
+    if (s_testArmSeconds >= 0.0) [[unlikely]] {
+        double seconds = s_testArmSeconds;
+        s_testArmSeconds = -1.0;
+        JSC::JSGlobalObject* global = s_testArmGlobal;
+        s_testArmGlobal = nullptr;
+        JSC::Strong<JSC::JSPromise> promise = WTF::move(s_testArmPromise);
+        WTF::RunLoop::currentSingleton().dispatchAfter(WTF::Seconds(seconds), [global, promise = WTF::move(promise)]() mutable {
+            promise->resolve(global, global->vm(), JSC::jsUndefined());
+            promise.clear();
+        });
     }
 }

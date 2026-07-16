@@ -79,16 +79,16 @@ describe("Bun.wrapAnsi", () => {
         ["CSI then SGR", "\x1b[2J\x1b[31m\tab cd", 2, "\x1b[2J\x1b[31mab\x1b[39m\n\x1b[31mcd"],
       ];
 
-      test.each(trimCases)("trims leading tab after %s", (_, input, columns, expected) => {
-        expect(Bun.wrapAnsi(input, columns)).toBe(expected);
-      });
-
-      test.each(trimCases)("stripANSI composes with wrapAnsi after %s", (_, input, columns) => {
-        expect(Bun.stripANSI(Bun.wrapAnsi(input, columns))).toBe(Bun.wrapAnsi(Bun.stripANSI(input), columns));
-      });
-
-      test.each(trimCases)("trim:false preserves leading tab after %s", (_, input, columns) => {
-        expect(Bun.wrapAnsi(input, columns, { trim: false })).toContain("\t");
+      describe.each(trimCases)("%s", (_, input, columns, expected) => {
+        test("trims leading tab", () => {
+          expect(Bun.wrapAnsi(input, columns)).toBe(expected);
+        });
+        test("stripANSI composes with wrapAnsi", () => {
+          expect(Bun.stripANSI(Bun.wrapAnsi(input, columns))).toBe(Bun.wrapAnsi(Bun.stripANSI(input), columns));
+        });
+        test("trim:false preserves leading tab", () => {
+          expect(Bun.wrapAnsi(input, columns, { trim: false })).toContain("\t");
+        });
       });
     });
   });

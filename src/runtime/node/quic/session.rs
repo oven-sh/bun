@@ -1893,6 +1893,10 @@ impl QuicSession {
                     o.data.extend(buf.byte_slice().iter().copied());
                     o.fin_pending = true;
                 });
+                // As attach_source/init_streaming_source/send_headers do: this
+                // is what makes a later setOutbound() throw instead of
+                // appending a second body.
+                (*qs).with_state(|s| s.has_outbound = 1);
             }
         }
         // SAFETY: `conn` is non-null (checked above) and live.

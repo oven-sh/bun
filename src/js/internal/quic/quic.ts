@@ -50,6 +50,7 @@ function wrapCertificate(der) {
 // Stand-ins for the Node.js primordials used by the original source.
 const ArrayIsArray = Array.isArray;
 const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
+const StringPrototypeIncludes = uncurryThis(String.prototype.includes);
 const NumberIsInteger = Number.isInteger;
 const NumberIsNaN = Number.isNaN;
 const ArrayPrototypePush = uncurryThis(Array.prototype.push);
@@ -1535,6 +1536,15 @@ async function consumeSyncSource(handle, stream, source) {
     } else {
       throw err;
     }
+  } finally {
+    // The early returns above skip the IteratorClose that `for await..of`
+    // performs for consumeAsyncSource, so a user generator's `finally` would
+    // never run. Route a throwing return() the same way the catch above does.
+    try {
+      iter.return?.();
+    } catch (err) {
+      if (!stream.destroyed) stream.destroy(err);
+    }
   }
 }
 
@@ -2465,7 +2475,9 @@ class QuicStream {
     inner.stats?.[kFinishClose]();
     inner.earlySnapshot = inner.state?.early;
     inner.state?.[kFinishClose]();
-    inner.session[kRemoveStream](this);
+    // A `quic.stream.closed` subscriber can re-enter and destroy this stream,
+    // clearing `inner.session` before this line runs.
+    inner.session?.[kRemoveStream](this);
     inner.writer?.fail(error);
     inner.reader ??= this.#handle?.getReader();
     inner.session = undefined;
@@ -4816,7 +4828,9 @@ function processTlsOptions(tls, forServer) {
         throw new ERR_MISSING_ARGS(`options.sni['${hostname}'].certs`);
       }
       const { port, authoritative } = sni[hostname];
-      if (authoritative !== false) {
+      // A wildcard key (`*.example.com`, which match_sni serves) has no valid
+      // RFC 6454 origin serialization, so it is served but never advertised.
+      if (authoritative !== false && !StringPrototypeIncludes(hostname, "*")) {
         ArrayPrototypePush(origins, `https://${hostname}${port !== undefined && port !== 443 ? `:${port}` : ""}`);
       }
       sniEntries[hostname] = {

@@ -1200,10 +1200,18 @@ walkDone:;
         if (include) flushPending(/*filterCloseOnly=*/trailingPastEnd);
     }
 
+    // Lazy-path degenerate: a cut happened but neither ellipsis was budgeted
+    // (range too small for the ellipsis). Match the cutEndKnown fallback above
+    // and the ASCII fast path: return the bare ellipsis.
+    if (ellipsisWidth > 0 && !needStartEllipsis && !needEndEllipsis) {
+        bool startActuallyCut = cutStartForEllipsis && position > startBeforeBudget;
+        if (startActuallyCut || sawCutEnd)
+            return ellipsis.toString();
+    }
+
     if (!include) {
-        // Start-side degenerate: the ellipsis budget pushed `start` past all
-        // content but the original range was non-empty. Match the cutEndKnown
-        // fallback above and the ASCII fast path: return the ellipsis.
+        // Start-ellipsis budget pushed `start` past all content but the
+        // original range was non-empty: return the budgeted ellipsis.
         if (ellipsisWidth > 0 && cutStartForEllipsis && position > startBeforeBudget)
             return ellipsis.toString();
         return emptyString();

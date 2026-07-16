@@ -1122,6 +1122,27 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("Ж", 1, 2, { ellipsis: ">>" })).toBe("");
     });
 
+    test("lazy-path degenerate (ellipsis wider than range) matches ASCII fast path", () => {
+      // Ellipsis wider than the requested range, on the lazy-cutEnd streaming
+      // path: neither ellipsis budget applies. If a cut occurs, return the
+      // bare ellipsis (parity with the ASCII fast path).
+      const e = { ellipsis: ">>" };
+      // End-cut only.
+      expect(Bun.sliceAnsi("ЖЗИ", 0, 1, e)).toBe(">>");
+      expect(Bun.sliceAnsi("abc", 0, 1, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 0, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("abc", 0, 2, e)).toBe(">>");
+      // Both sides cut.
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("abc", 1, 2, e)).toBe(">>");
+      // Start-cut only (no end cut: string ends at the range end).
+      expect(Bun.sliceAnsi("ЖЗ", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ab", 1, 2, e)).toBe(">>");
+      // No cut on either side: content returned, no ellipsis.
+      expect(Bun.sliceAnsi("Ж", 0, 1, e)).toBe("Ж");
+      expect(Bun.sliceAnsi("ЖЗ", 0, 2, e)).toBe("ЖЗ");
+    });
+
     test("no ellipsis when not cut", () => {
       // short string, large range: no cut, no ellipsis
       expect(Bun.sliceAnsi("hi", 0, 100, { ellipsis: E })).toBe("hi");

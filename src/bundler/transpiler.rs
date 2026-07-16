@@ -2257,7 +2257,7 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 // `format` is a runtime arg rather than a const generic —
 // `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
 // from this crate). All callers pass a literal anyway; the inner
-// `print_ast::<_, ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both const-generic
+// `print_ast::<_, IS_BUN_PLATFORM, ENABLE_SOURCE_MAP>` keeps both const-generic
 // bools, so codegen monomorphizes the printer body identically.
 // PERF: outer `match format` is one extra branch — profile if hot.
 // ══════════════════════════════════════════════════════════════════════════

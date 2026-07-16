@@ -1012,12 +1012,12 @@ where
     }
 
     while i < n {
-        let width: u8 = match ENCODING {
+        let mut width: u8 = match ENCODING {
             Encoding::Latin1 | Encoding::Ascii => 1,
             Encoding::Utf8 => strings::wtf8_byte_sequence_length_with_invalid(text[i]),
             Encoding::Utf16 => 1,
         };
-        let clamped_width = (width as usize).min(n.saturating_sub(i));
+        let mut clamped_width = (width as usize).min(n.saturating_sub(i));
         let c: i32 = match ENCODING {
             Encoding::Utf8 => {
                 let bytes: [u8; 4] = match clamped_width {
@@ -1035,10 +1035,19 @@ where
             }
             Encoding::Latin1 => text[i] as i32,
             Encoding::Utf16 => {
-                // TODO: if this is a part of a surrogate pair, we could parse the whole codepoint in order
-                // to emit it as a single \u{result} rather than two paired \uLOW\uHIGH.
-                // eg: "\u{10334}" will convert to "𐌴" without this.
-                code_unit_at!(i)
+                let unit = code_unit_at!(i);
+                if strings::u16_is_lead(unit as u16) && i + 1 < n {
+                    let trail = code_unit_at!(i + 1);
+                    if strings::u16_is_trail(trail as u16) {
+                        width = 2;
+                        clamped_width = 2;
+                        strings::u16_get_supplementary(unit as u16, trail as u16) as i32
+                    } else {
+                        unit
+                    }
+                } else {
+                    unit
+                }
             }
         };
 
@@ -4597,7 +4606,7 @@ pub mod __gated_printer {
                 self.print(b" ");
             }
 
-            if IS_BUN_PLATFORM {
+            if ASCII_ONLY {
                 // Translate any non-ASCII to unicode escape sequences
                 let mut ascii_start: usize = 0;
                 let mut is_ascii = false;
@@ -7795,11 +7804,10 @@ pub type BufferPrinter = Writer<BufferWriter>;
 pub enum Format {
     Esm,
     Cjs,
-    // bun.js must escape non-latin1 identifiers in the output This is because
-    // we load JavaScript as a UTF-8 buffer instead of a UTF-16 buffer
-    // JavaScriptCore does not support UTF-8 identifiers when the source code
-    // string is loaded as const char* We don't want to double the size of code
-    // in memory...
+    // Runtime-transpiler path. The printer now emits UTF-8 for this variant and
+    // consumers call `String::clone_utf8`, so non-ASCII source text is preserved
+    // verbatim (observable via `Function.prototype.toString`, `RegExp#source`,
+    // tagged-template `.raw`). The name is kept for churn avoidance.
     EsmAscii,
     CjsAscii,
 }
@@ -7904,7 +7912,12 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
 // Top-level print entry points
 // ───────────────────────────────────────────────────────────────────────────
 
-pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOURCE_MAP: bool>(
+pub fn print_ast<
+    'a,
+    W: WriterTrait,
+    const IS_BUN_PLATFORM: bool,
+    const GENERATE_SOURCE_MAP: bool,
+>(
     _writer: W,
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
@@ -8016,9 +8029,11 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
 
     // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
 
-    // `is_bun_platform = ascii_only` for printAst.
-    type PrinterType<'a, W, const A: bool, const G: bool> =
-        Printer<'a, W, A, false, /*IS_BUN_PLATFORM=*/ A, false, G>;
+    // Runtime-transpiler path: emit UTF-8 so `Function.prototype.toString`,
+    // `RegExp#source` and tagged-template `.raw` reflect the author's source
+    // text. Consumers pass the output through `String::clone_utf8`.
+    type PrinterType<'a, W, const B: bool, const G: bool> =
+        Printer<'a, W, /*ASCII_ONLY=*/ false, false, /*IS_BUN_PLATFORM=*/ B, false, G>;
     let mut writer = _writer;
     // Pre-size the output buffer ~proportional to the source. Transpiled output
     // is almost always within a small factor of the input, so reserving up front
@@ -8027,13 +8042,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     let _ = writer.reserve(source.contents().len() as u64);
 
     let mut opts = opts;
-    let source_map_builder = get_source_map_builder::<ASCII_ONLY>(
+    let source_map_builder = get_source_map_builder::<IS_BUN_PLATFORM>(
         GenerateSourceMap::lazy_if(GENERATE_SOURCE_MAP),
         &mut opts,
         source,
         tree,
     );
-    let mut printer = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::init(
+    let mut printer = PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAP>::init(
         writer,
         bump,
         tree.import_records.as_slice(),
@@ -8051,7 +8066,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // Borrowck: `opts` was moved into `Printer::init`; populate
     // `printer.module_info` by taking it back out of `printer.options`
     // (see `print_with_writer_and_platform`).
-    if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+    if PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
         printer.module_info = printer.options.module_info.take();
     }
     printer.binary_expression_stack = Vec::new();
@@ -8071,7 +8086,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         // `require` must be an unbound variable.
         printer.print(b"var {require}=import.meta;");
 
-        if PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
+        if PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO {
             if let Some(mi) = printer.module_info.as_deref_mut() {
                 mi.flags.contains_import_meta = true;
                 let s = mi.str(b"require");
@@ -8089,8 +8104,9 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     }
     printer.check_stack_overflow()?;
 
-    let have_module_info = PrinterType::<W, ASCII_ONLY, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
-        && printer.module_info.is_some();
+    let have_module_info =
+        PrinterType::<W, IS_BUN_PLATFORM, GENERATE_SOURCE_MAP>::MAY_HAVE_MODULE_INFO
+            && printer.module_info.is_some();
     if have_module_info {
         printer
             .module_info

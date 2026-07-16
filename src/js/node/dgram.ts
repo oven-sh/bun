@@ -55,6 +55,8 @@ const {
 
 const { isIP } = require("internal/net/isIP");
 
+const BlockList = $rust("node_net_binding.rs", "BlockList");
+
 const EventEmitter = require("node:events");
 
 const { deprecate } = require("internal/util/deprecate");
@@ -133,6 +135,9 @@ function onMessage(nread, handle, buf, rinfo) {
       }),
     );
   }
+  if (self[kStateSymbol]?.receiveBlockList?.check(rinfo.address, rinfo.family)) {
+    return;
+  }
   rinfo.size = buf.length; // compatibility
   self.emit("message", buf, rinfo);
 }
@@ -144,6 +149,8 @@ function Socket(type, listener) {
   let lookup;
   let recvBufferSize;
   let sendBufferSize;
+  let receiveBlockList;
+  let sendBlockList;
 
   let options;
   if (type !== null && typeof type === "object") {
@@ -152,6 +159,20 @@ function Socket(type, listener) {
     lookup = options.lookup;
     recvBufferSize = options.recvBufferSize;
     sendBufferSize = options.sendBufferSize;
+    const optionsReceiveBlockList = options.receiveBlockList;
+    if (optionsReceiveBlockList) {
+      if (!BlockList.isBlockList(optionsReceiveBlockList)) {
+        throw $ERR_INVALID_ARG_TYPE("options.receiveBlockList", "net.BlockList", optionsReceiveBlockList);
+      }
+      receiveBlockList = optionsReceiveBlockList;
+    }
+    const optionsSendBlockList = options.sendBlockList;
+    if (optionsSendBlockList) {
+      if (!BlockList.isBlockList(optionsSendBlockList)) {
+        throw $ERR_INVALID_ARG_TYPE("options.sendBlockList", "net.BlockList", optionsSendBlockList);
+      }
+      sendBlockList = optionsSendBlockList;
+    }
   }
 
   const handle = newHandle(type, lookup);
@@ -173,6 +194,8 @@ function Socket(type, listener) {
     ipv6Only: options && options.ipv6Only,
     recvBufferSize,
     sendBufferSize,
+    receiveBlockList,
+    sendBlockList,
     unrefOnBind: false,
   };
 
@@ -315,6 +338,7 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
 
     // TODO flags
     const family = this.type === "udp4" ? "IPv4" : "IPv6";
+    const receiveBlockList = state.receiveBlockList;
     try {
       Bun.udpSocket({
         hostname: ip,
@@ -322,6 +346,9 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
         flags,
         socket: {
           data: (_socket, data, port, address) => {
+            if (receiveBlockList?.check(address, family)) {
+              return;
+            }
             this.emit("message", data, {
               port: port,
               address: address,
@@ -402,6 +429,10 @@ const connectFn = $newRustFunction("udp_socket.rs", "UDPSocket.jsConnect", 2);
 function doConnect(ex, self, ip, address, port, callback) {
   const state = self[kStateSymbol];
   if (!state.handle) return;
+
+  if (!ex && ip && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
+    ex = $ERR_IP_BLOCKED(ip);
+  }
 
   if (!ex) {
     try {
@@ -615,6 +646,12 @@ function doSend(ex, self, ip, list, address, port, callback) {
     return;
   }
   if (!state.handle) {
+    return;
+  }
+  if (ip && state.sendBlockList?.check(ip, `ipv${isIP(ip)}`)) {
+    if (typeof callback === "function") {
+      process.nextTick(callback, $ERR_IP_BLOCKED(ip));
+    }
     return;
   }
   const socket = state.handle.socket;

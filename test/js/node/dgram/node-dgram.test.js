@@ -1,6 +1,8 @@
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isIPv6, isMacOS, isWindows } from "harness";
 import * as dgram from "node:dgram";
+import { once } from "node:events";
+import * as net from "node:net";
 
 // close() from inside a 'message' handler must stop delivery of the remaining
 // datagrams in the current recvmmsg batch. Node guarantees no 'message' fires
@@ -54,6 +56,103 @@ test("node:dgram close() inside 'message' handler stops remaining batch datagram
     trace: ["message:0", "closeEvent", "closeCallback"],
   });
   expect(exitCode).toBe(0);
+});
+
+describe("node:dgram blockList options", () => {
+  test("createSocket validates receiveBlockList / sendBlockList type", () => {
+    expect(() => dgram.createSocket({ type: "udp4", receiveBlockList: 42 })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    expect(() => dgram.createSocket({ type: "udp4", sendBlockList: "nope" })).toThrow(
+      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
+    );
+    // Falsy values are ignored, a real BlockList is accepted.
+    const ok = dgram.createSocket({
+      type: "udp4",
+      receiveBlockList: undefined,
+      sendBlockList: new net.BlockList(),
+    });
+    ok.close();
+  });
+
+  test("receiveBlockList drops matching inbound datagrams before 'message'", async () => {
+    const blockList = new net.BlockList();
+    blockList.addAddress("127.0.0.1");
+    // Barrier: the filter runs synchronously in the receive path, so once
+    // check() has been called the 'message' emit has either happened or been
+    // skipped in the same frame.
+    const { promise: checked, resolve: onChecked } = Promise.withResolvers();
+    const realCheck = blockList.check.bind(blockList);
+    blockList.check = (addr, family) => {
+      const r = realCheck(addr, family);
+      onChecked({ addr, family, result: r });
+      return r;
+    };
+
+    await using rx = dgram.createSocket({ type: "udp4", receiveBlockList: blockList });
+    await using tx = dgram.createSocket("udp4");
+    const received = [];
+    const gotMessage = once(rx, "message");
+    rx.on("message", (d, rinfo) => received.push({ msg: String(d), from: rinfo.address }));
+    await new Promise((resolve, reject) => {
+      rx.once("error", reject);
+      rx.bind(0, "127.0.0.1", resolve);
+    });
+    const port = rx.address().port;
+    await new Promise((resolve, reject) => tx.send("blocked", port, "127.0.0.1", e => (e ? reject(e) : resolve())));
+    await Promise.race([checked, gotMessage]);
+    expect(received).toEqual([]);
+    const checkCall = await checked;
+    expect({ addr: checkCall.addr, result: checkCall.result }).toEqual({ addr: "127.0.0.1", result: true });
+  });
+
+  test("sendBlockList: send() to blocked destination fails with ERR_IP_BLOCKED and nothing is sent", async () => {
+    const blockList = new net.BlockList();
+    blockList.addAddress("127.0.0.1");
+    await using rx = dgram.createSocket("udp4");
+    await using tx = dgram.createSocket({ type: "udp4", sendBlockList: blockList });
+    const received = [];
+    rx.on("message", d => received.push(String(d)));
+    await new Promise((resolve, reject) => {
+      rx.once("error", reject);
+      rx.bind(0, "127.0.0.1", resolve);
+    });
+    const port = rx.address().port;
+
+    const cbErr = await new Promise(resolve => tx.send("blocked-out", port, "127.0.0.1", e => resolve(e)));
+    expect(cbErr).toBeInstanceOf(Error);
+    expect(cbErr.code).toBe("ERR_IP_BLOCKED");
+
+    // Without a callback Node drops the datagram silently (no 'error' event).
+    const txErrors = [];
+    tx.on("error", e => txErrors.push(e));
+    tx.send("blocked-out-2", port, "127.0.0.1");
+
+    // An allowed send reaches rx; once it arrives, rx has processed everything
+    // addressed to it (the blocked sends never hit the wire).
+    const allow = new net.BlockList();
+    allow.addAddress("10.0.0.1");
+    await using tx2 = dgram.createSocket({ type: "udp4", sendBlockList: allow });
+    const gotAllowed = once(rx, "message");
+    await new Promise((resolve, reject) => tx2.send("allowed", port, "127.0.0.1", e => (e ? reject(e) : resolve())));
+    await gotAllowed;
+    expect({ received, txErrors }).toEqual({ received: ["allowed"], txErrors: [] });
+  });
+
+  test("sendBlockList: connect() to blocked destination fails with ERR_IP_BLOCKED", async () => {
+    const blockList = new net.BlockList();
+    blockList.addAddress("127.0.0.1");
+    await using rx = dgram.createSocket("udp4");
+    await using tx = dgram.createSocket({ type: "udp4", sendBlockList: blockList });
+    await new Promise((resolve, reject) => {
+      rx.once("error", reject);
+      rx.bind(0, "127.0.0.1", resolve);
+    });
+    const port = rx.address().port;
+    const err = await new Promise(resolve => tx.connect(port, "127.0.0.1", e => resolve(e)));
+    expect(err).toBeInstanceOf(Error);
+    expect(err.code).toBe("ERR_IP_BLOCKED");
+  });
 });
 
 describe.skipIf(!isIPv6())("node:dgram", () => {

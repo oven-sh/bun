@@ -9,6 +9,10 @@ const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
 const kDefaultOptions = kEmptyObject;
 
+// Whether `bun test --only` was passed. Node only applies `only` filtering
+// when its equivalent flag (--test-only) is set; otherwise `only` is ignored.
+const kOnlyEnabled: boolean = $rust("jest.rs", "isOnlyEnabled");
+
 function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
@@ -499,25 +503,15 @@ class TestContext {
 
     this.#checkNotInsideTest("test");
 
-    const { test } = bunTest();
-    if (options.only) {
-      test.only(name, fn);
-    } else if (options.todo) {
-      test.todo(name, fn);
-    } else if (options.skip) {
-      test.skip(name, fn);
-    } else {
-      test(name, fn);
-    }
+    addTest(name, fn, options);
   }
 
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-    const { name, fn } = createDescribe(arg0, arg1, arg2);
+    const { name, fn, options } = createDescribe(arg0, arg1, arg2);
 
     this.#checkNotInsideTest("describe");
 
-    const { describe } = bunTest();
-    describe(name, fn);
+    addDescribe(name, fn, options);
   }
 
   #checkNotInsideTest(fn: string) {
@@ -538,12 +532,39 @@ function bunTest() {
   return jest(Bun.main);
 }
 
+// Node runs `only` tests exclusively when --test-only (Bun: --only) is
+// passed; without the flag, the `only` mark has no effect.
+function addTest(name: string, fn: (done: (error?: unknown) => void) => void, options: TestOptions) {
+  const { test } = bunTest();
+  if (options.todo) {
+    test.todo(name, fn, options);
+  } else if (options.skip) {
+    test.skip(name, fn, options);
+  } else if (options.only && kOnlyEnabled) {
+    test.only(name, fn, options);
+  } else {
+    test(name, fn, options);
+  }
+}
+
+function addDescribe(name: string, fn: () => unknown, options: TestOptions) {
+  const { describe } = bunTest();
+  if (options.todo) {
+    describe.todo(name, fn);
+  } else if (options.skip) {
+    describe.skip(name, fn);
+  } else if (options.only && kOnlyEnabled) {
+    describe.only(name, fn);
+  } else {
+    describe(name, fn);
+  }
+}
+
 let ctx: TestContext | undefined = undefined;
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest();
-  describe(name, fn);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  addDescribe(name, fn, options);
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -559,24 +580,13 @@ describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
-  const { describe } = bunTest();
-  describe.only(name, fn);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
+  addDescribe(name, fn, { ...options, only: true });
 };
 
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest();
-  // Node's {only: true} is intentionally not routed to test.only() here:
-  // in Node it is a no-op unless --test-only is passed, whereas bun:test's
-  // test.only() unconditionally skips siblings.
-  if (options.todo) {
-    test.todo(name, fn, options);
-  } else if (options.skip) {
-    test.skip(name, fn, options);
-  } else {
-    test(name, fn, options);
-  }
+  addTest(name, fn, options);
 }
 
 test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -593,8 +603,7 @@ test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
-  const { test } = bunTest();
-  test.only(name, fn, options);
+  addTest(name, fn, { ...options, only: true });
 };
 
 function before(arg0: unknown, arg1: unknown) {

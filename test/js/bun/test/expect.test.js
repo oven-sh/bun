@@ -2562,6 +2562,38 @@ describe("expect()", () => {
     expect(value).not.toContainEqual(expected);
   });
 
+  describe("failure messages include label text and blank-line separator", () => {
+    function messageOf(fn) {
+      try {
+        fn();
+      } catch (e) {
+        return ANY(e).message;
+      }
+      throw new Error("expected to throw");
+    }
+
+    test("toContainEqual", () => {
+      const msg = messageOf(() => expect([{ a: 1 }]).toContainEqual({ a: 2 }));
+      expect(msg).toStartWith("expect(received).toContainEqual(expected)\n\nExpected to contain: ");
+      expect(msg).toContain("\nReceived: ");
+    });
+
+    test("not.toContainEqual", () => {
+      const msg = messageOf(() => expect([{ a: 1 }]).not.toContainEqual({ a: 1 }));
+      expect(msg).toStartWith("expect(received).not.toContainEqual(expected)\n\nExpected to not contain: ");
+    });
+
+    test("toBeArrayOfSize", () => {
+      const msg = messageOf(() => expect([1]).toBeArrayOfSize(2));
+      expect(msg).toStartWith("expect(received).toBeArrayOfSize()\n\nReceived: ");
+    });
+
+    test("not.toBeArrayOfSize", () => {
+      const msg = messageOf(() => expect([1]).not.toBeArrayOfSize(1));
+      expect(msg).toStartWith("expect(received).not.toBeArrayOfSize()\n\nReceived: ");
+    });
+  });
+
   test("toContainKey", () => {
     const o = { a: "foo", b: "bar", c: "baz" };
     expect(o).toContainKey("a");

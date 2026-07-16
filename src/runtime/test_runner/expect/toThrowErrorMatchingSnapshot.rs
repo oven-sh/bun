@@ -22,20 +22,18 @@ pub(crate) fn to_throw_error_matching_snapshot(
     let not = this.flags.get().not();
     if not {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            "",
             format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used with <b>not<r>\n"),
         );
     }
 
     let Some(bun_test_strong) = this.bun_test() else {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            "",
             format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"),
         );
     };
@@ -48,18 +46,16 @@ pub(crate) fn to_throw_error_matching_snapshot(
             if arguments[0].is_string() {
                 arguments[0].to_zig_string(&mut hint_string, global)?;
             } else {
-                return this.throw_fmt(
+                return this.throw(
                     global,
-                    "",
                     "",
                     format_args!("\n\nMatcher error: Expected first argument to be a string\n"),
                 );
             }
         }
         _ => {
-            return this.throw_fmt(
+            return this.throw(
                 global,
-                "",
                 "",
                 format_args!("\n\nMatcher error: Expected zero or one arguments\n"),
             );
@@ -79,10 +75,9 @@ pub(crate) fn to_throw_error_matching_snapshot(
     )?
     else {
         let signature = get_signature("toThrowErrorMatchingSnapshot", "", false);
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            "",
             format_args!("\n\n<b>Matcher error<r>: Received function did not throw\n"),
         );
     };

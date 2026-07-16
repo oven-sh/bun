@@ -685,28 +685,6 @@ impl Expect {
         })
     }
 
-    /// Legacy 4-arg form used by a handful of internal call sites in this file
-    /// (snapshot/mock helpers) that take a separate `fmt` literal.
-    /// Folds `fmt` into `args` and delegates.
-    #[inline]
-    pub fn throw_fmt(
-        &self,
-        global_this: &JSGlobalObject,
-        signature: &'static str,
-        _fmt: &'static str,
-        args: fmt::Arguments<'_>,
-    ) -> JsResult<JSValue> {
-        // Rust cannot interpolate a runtime-literal format string, so every
-        // caller bakes the rendered tail (literal text + substitutions) into
-        // `args`; `_fmt` is kept only for documentation.
-        // If `args` is empty but `_fmt` is not, a caller forgot to migrate.
-        debug_assert!(
-            _fmt.is_empty() || args.as_str() != Some(""),
-            "throw_fmt: caller passed non-empty fmt tail {_fmt:?} but empty args — message body would be dropped",
-        );
-        self.throw(global_this, signature, args)
-    }
-
     // extern shim emitted by `#[bun_jsc::JsClass]` codegen (TypeClass__construct/__call); bare `#[host_fn]` cannot target an associated fn without a receiver.
     pub fn constructor(global_this: &JSGlobalObject, _frame: &CallFrame) -> JsResult<*mut Expect> {
         Err(global_this.throw(format_args!("expect() cannot be called with new")))
@@ -753,7 +731,7 @@ impl Expect {
 
         if not {
             let signature = Self::get_signature("pass", "", true);
-            return this.throw_fmt(global_this, signature, "\n\n{s}\n", format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())));
+            return this.throw(global_this, signature, format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())));
         }
 
         // should never reach here
@@ -799,7 +777,7 @@ impl Expect {
         let msg = _msg.to_slice();
 
         let signature = Self::get_signature("fail", "", true);
-        this.throw_fmt(global_this, signature, "\n\n{s}\n", format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())))
+        this.throw(global_this, signature, format_args!("\n\n{}\n", bstr::BStr::new(msg.slice())))
     }
 }
 
@@ -1006,7 +984,7 @@ impl Expect {
         // jest counts inline snapshots towards the snapshot counter for some reason
         let Some(runner) = Jest::runner() else {
             let signature = Self::get_signature(fn_name, "", false);
-            return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
+            return this.throw(global_this, signature, format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
         };
         match runner.snapshots.add_count(this, b"") {
             Ok(_) => {}
@@ -1057,10 +1035,9 @@ impl Expect {
                 if !update {
                     let signature = Self::get_signature(fn_name, "", false);
                     // Only creating new snapshots can reach here (updating with mismatches errors earlier with diff)
-                    return this.throw_fmt(
+                    return this.throw(
                         global_this,
                         signature,
-                        "",
                         format_args!(
                             "\n\n<b>Matcher error<r>: Inline snapshot creation is disabled in CI environments unless --update-snapshots is used.\nTo override, set the environment variable CI=false.\n\nReceived: {}",
                             bstr::BStr::new(&pretty_value),
@@ -1070,7 +1047,7 @@ impl Expect {
             }
             let Some(buntest_strong) = this.bun_test() else {
                 let signature = Self::get_signature(fn_name, "", false);
-                return this.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
+                return this.throw(global_this, signature, format_args!("\n\n<b>Matcher error<r>: Snapshot matchers cannot be used outside of a test\n"));
             };
             let buntest = buntest_strong.get();
 
@@ -1087,10 +1064,9 @@ impl Expect {
 
             if !srcloc.str.eql_utf8(fget_source_path_text) {
                 let signature = Self::get_signature(fn_name, "", false);
-                return this.throw_fmt(
+                return this.throw(
                     global_this,
                     signature,
-                    "",
                     format_args!(
                         "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
                         bstr::BStr::new(fget_source_path_text),
@@ -1128,7 +1104,7 @@ impl Expect {
         if let Some(_prop_matchers) = property_matchers {
             if !value.is_object() {
                 let signature = Self::get_signature(fn_name, "<green>properties<r><d>, <r>hint", false);
-                return self.throw_fmt(global_this, signature, "", format_args!("\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n")).map(drop);
+                return self.throw(global_this, signature, format_args!("\n\n<b>Matcher error: <red>received<r> values must be an object when the matcher has <green>properties<r>\n")).map(drop);
             }
 
             let prop_matchers = _prop_matchers;

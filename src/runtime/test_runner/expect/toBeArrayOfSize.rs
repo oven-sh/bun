@@ -44,24 +44,27 @@ pub(crate) fn to_be_array_of_size(
     }
 
     let mut formatter = super::make_formatter(global);
-    let received = value.to_fmt(&mut formatter);
 
     if not {
         let signature = get_signature("toBeArrayOfSize", "", true);
-        return this.throw_fmt(
+        return this.throw(
             global,
             signature,
-            concat!("\n\n", "Received: <red>{}<r>\n"),
-            format_args!("{}", received),
+            format_args!(
+                concat!("\n\n", "Received: <red>{}<r>\n"),
+                value.to_fmt(&mut formatter),
+            ),
         );
     }
 
     let signature = get_signature("toBeArrayOfSize", "", false);
-    this.throw_fmt(
+    this.throw(
         global,
         signature,
-        concat!("\n\n", "Received: <red>{}<r>\n"),
-        format_args!("{}", received),
+        format_args!(
+            concat!("\n\n", "Received: <red>{}<r>\n"),
+            value.to_fmt(&mut formatter),
+        ),
     )
 }
 

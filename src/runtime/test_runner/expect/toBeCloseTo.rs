@@ -84,46 +84,40 @@ impl Expect {
         let expected_fmt = expected_.to_fmt(&mut formatter);
         let received_fmt = received_.to_fmt(&mut formatter2);
 
-        const EXPECTED_LINE: &str = "Expected: <green>{}<r>\n";
-        const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-        const EXPECTED_PRECISION: &str = "Expected precision: {}\n";
-        const EXPECTED_DIFFERENCE: &str = "Expected difference: \\< <green>{}<r>\n";
-        const RECEIVED_DIFFERENCE: &str = "Received difference: <red>{}<r>\n";
-
-        const SUFFIX_FMT: &str = const_format::concatcp!(
-            "\n\n",
-            EXPECTED_LINE,
-            RECEIVED_LINE,
-            "\n",
-            EXPECTED_PRECISION,
-            EXPECTED_DIFFERENCE,
-            RECEIVED_DIFFERENCE,
-        );
-
-        // TODO(refactor): `format_args!` requires a literal fmt string, so SUFFIX_FMT cannot
-        // be threaded as a runtime arg. Decide `Expect::throw` signature — likely
-        // `fn throw(&self, &JSGlobalObject, &str, fmt::Arguments) -> JsResult<JSValue>` and inline
-        // SUFFIX_FMT into the `format_args!` call (or make `throw!` a macro).
         if not {
             let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", true);
-            return this.throw_fmt(
+            return this.throw(
                 global,
                 signature,
-                SUFFIX_FMT,
                 format_args!(
-                    "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n\nExpected precision: {}\nExpected difference: \\< <green>{}<r>\nReceived difference: <red>{}<r>\n",
+                    concat!(
+                        "\n\n",
+                        "Expected: <green>{}<r>\n",
+                        "Received: <red>{}<r>\n",
+                        "\n",
+                        "Expected precision: {}\n",
+                        "Expected difference: \\< <green>{}<r>\n",
+                        "Received difference: <red>{}<r>\n",
+                    ),
                     expected_fmt, received_fmt, precision, expected_diff, actual_diff
                 ),
             );
         }
 
         let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", false);
-        this.throw_fmt(
+        this.throw(
             global,
             signature,
-            SUFFIX_FMT,
             format_args!(
-                "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n\nExpected precision: {}\nExpected difference: \\< <green>{}<r>\nReceived difference: <red>{}<r>\n",
+                concat!(
+                    "\n\n",
+                    "Expected: <green>{}<r>\n",
+                    "Received: <red>{}<r>\n",
+                    "\n",
+                    "Expected precision: {}\n",
+                    "Expected difference: \\< <green>{}<r>\n",
+                    "Received difference: <red>{}<r>\n",
+                ),
                 expected_fmt, received_fmt, precision, expected_diff, actual_diff
             ),
         )

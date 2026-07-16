@@ -728,6 +728,45 @@ describe("DiffieHellman", () => {
     });
   });
 
+  // Upstream's test-crypto-dh.js exercises a two-party exchange over a generated
+  // group and asserts verifyError === 0 on it. That file is quarantined in
+  // test/expectations.txt because it generates a 256-bit group (hasOpenSSL3 is
+  // false here) and 256 bits now reports DH_MODULUS_TOO_SMALL. Keep its coverage
+  // alive here over a well-known prime instead of generating one.
+  it("completes a two-party exchange over a well-known prime", () => {
+    const p = crypto.getDiffieHellman("modp5").getPrime("buffer");
+    const dh1 = crypto.createDiffieHellman(p, "buffer");
+    const dh2 = crypto.createDiffieHellman(p, "buffer");
+    const key1 = dh1.generateKeys();
+    const key2 = dh2.generateKeys("hex");
+    const secret1 = dh1.computeSecret(key2, "hex", "base64");
+    const secret2 = dh2.computeSecret(key1, "latin1", "buffer");
+
+    expect(secret2.toString("base64")).toBe(secret1);
+    expect(dh1.verifyError).toBe(0);
+    expect(dh2.verifyError).toBe(0);
+
+    const dh3 = crypto.createDiffieHellman(p, "buffer");
+    dh3.setPublicKey(key1);
+    dh3.setPrivateKey(dh1.getPrivateKey());
+
+    expect({
+      prime: dh3.getPrime(),
+      generator: dh3.getGenerator(),
+      publicKey: dh3.getPublicKey(),
+      privateKey: dh3.getPrivateKey(),
+      verifyError: dh3.verifyError,
+    }).toEqual({
+      prime: dh1.getPrime(),
+      generator: dh1.getGenerator(),
+      publicKey: dh1.getPublicKey(),
+      privateKey: dh1.getPrivateKey(),
+      verifyError: 0,
+    });
+
+    expect(dh3.computeSecret(key2, "hex", "base64")).toBe(secret1);
+  });
+
   // These errors used to be constructed and returned rather than thrown, so
   // `createDiffieHellman(...)` evaluated to an Error instance and a caller's
   // `if (dh.verifyError) throw` read undefined on it. expect().toThrow() cannot

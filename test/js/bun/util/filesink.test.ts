@@ -410,6 +410,65 @@ it("Bun.file(fd).writer() write/end under GC pressure does not crash", async () 
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
 });
 
+// On Windows, Source::open_tty(fd=0) returns a process-static uv_tty_t
+// singleton. The writer's close() path must not uv_close it: a second close
+// on the same handle trips libuv's assert(0), and even one close leaves the
+// singleton stale for later consumers (INITIALIZED is sticky). The reader
+// side already guards this; this test covers the writer side.
+it.skipIf(!isWindows)("Bun.file(0).writer() on a TTY stdin does not close the shared stdin tty", async () => {
+  const childSrc = `
+    const tty = require("node:tty");
+    if (!tty.isatty(0)) {
+      process.stdout.write("RESULT not-a-tty");
+      process.exit(0);
+    }
+    for (let i = 0; i < 8; i++) {
+      (() => {
+        const w = Bun.file(0).writer();
+        w.end();
+      })();
+      Bun.gc(true);
+      await new Promise(r => setImmediate(r));
+    }
+    // stdin tty must still be usable after the writer cycle.
+    let setRawErr = "none";
+    process.stdin.once("error", e => (setRawErr = String(e && e.message || e)));
+    process.stdin.setRawMode(true);
+    process.stdin.setRawMode(false);
+    process.stdin.unref();
+    process.stdout.write("RESULT ok setRawErr=" + setRawErr);
+  `;
+
+  let output = "";
+  const decoder = new TextDecoder();
+  const done = Promise.withResolvers<void>();
+  const eof = Promise.withResolvers<void>();
+
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "-e", childSrc],
+    env: bunEnv,
+    terminal: {
+      cols: 200,
+      rows: 24,
+      data(_t, chunk) {
+        output += decoder.decode(chunk, { stream: true });
+        if (output.includes("RESULT")) done.resolve();
+      },
+      exit() {
+        eof.resolve();
+      },
+    },
+  });
+
+  await Promise.race([done.promise, eof.promise]);
+  proc.kill();
+  await proc.exited;
+  proc.terminal?.close();
+  output += decoder.decode();
+
+  expect(output).toContain("RESULT ok setRawErr=none");
+});
+
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {
   const dir = tmpdirSync();
   await using proc = Bun.spawn({

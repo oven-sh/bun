@@ -1439,7 +1439,12 @@ impl QuicEndpoint {
         let peer_stored = stored_addr_from_sockaddr(peer);
         let peer_decoded = peer_stored.decode();
         let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
-        if busy != 0 || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize) {
+        // `closing`: on_new_conn refuses these at promotion, so announcing one
+        // here would surface a session that can never open.
+        if self.closing.get()
+            || busy != 0
+            || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize)
+        {
             return;
         }
         bun_core::scoped_log!(
@@ -1528,6 +1533,18 @@ impl QuicEndpoint {
                 live.push_event(session::SessionEvent::HandshakeDone { ok: true });
                 return session;
             }
+        }
+        // A graceful close() has to stop accepting: a session promoted now
+        // keeps `sessions` non-empty, so the `closing && sessions.is_empty()`
+        // finish gate never trips and `endpoint.closed` never resolves. Close
+        // rather than refuse, as bun's own HTTP/3 listener does
+        // (us_quic_on_new_conn): CONNECTION_REFUSED would reject the peer's
+        // session, and this is not a busy refusal either, so serverBusyCount
+        // stays put.
+        if self.closing.get() {
+            // SAFETY: `conn` is the live conn lsquic just created.
+            unsafe { lsquic::lsquic_conn_close(conn) };
+            return null_mut();
         }
         let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
         if busy != 0 || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize) {

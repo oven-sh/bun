@@ -208,3 +208,58 @@ describe("transportParams.maxIdleTimeout", () => {
     expect({ zero: await advertised(0), seven: await advertised(7) }).toEqual({ zero: 0n, seven: 7n });
   });
 });
+
+// A graceful close() waits for live sessions to drain, but the listener kept
+// accepting: each new session re-filled `sessions`, so the
+// `closing && sessions.is_empty()` finish gate never tripped and `closed`
+// never resolved. Bun's own HTTP/3 listener refuses in on_new_conn while
+// closing (packages/bun-usockets/src/quic.c us_quic_on_new_conn).
+describe("endpoint.close() while a session is live", () => {
+  test("stops accepting new sessions so closed can resolve", async () => {
+    const tp = { maxIdleTimeout: 30 };
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    let announced = 0;
+    await using server = await listen(
+      async (s: any) => {
+        announced++;
+        await s.closed.catch(() => {});
+      },
+      { sni: sniOpt, transportParams: tp },
+    );
+
+    // close() clears `address`, so hold on to it for the late connect below.
+    const address = server.address;
+
+    // Hold one session open so close() has to drain instead of finishing now.
+    await using holdEndpoint = new QuicEndpoint();
+    const held = await connect(address, {
+      endpoint: holdEndpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    await held.opened;
+
+    server.close();
+    let resolved = false;
+    server.closed.then(
+      () => (resolved = true),
+      () => (resolved = true),
+    );
+
+    // A client arriving during the drain must not become a session.
+    await using lateEndpoint = new QuicEndpoint();
+    const late = await connect(address, {
+      endpoint: lateEndpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    await expect(late.opened).rejects.toThrow();
+
+    // Releasing the held session is now the last one, so close finishes.
+    held.close();
+    await server.closed;
+    expect({ announced, resolved }).toEqual({ announced: 1, resolved: true });
+  });
+});

@@ -525,7 +525,6 @@ const struct iovec *us_nq_spec_iov(const struct lsquic_out_spec *s, size_t *n) {
 }
 size_t us_nq_spec_stride(void) { return sizeof(struct lsquic_out_spec); }
 
-extern void lsquic_stream_maybe_reset(lsquic_stream_t *, uint64_t code, int do_close);
 void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
     /* RFC 9000 §3.1 allows RST in Data Sent state. */
     lsquic_stream_force_reset_ext(s, code);

@@ -1576,11 +1576,11 @@
  
 -    int ext_to = conn->imc_enpub->enp_settings.es_idle_timeout * 1000000
 -            - conn->imc_enpub->enp_settings.es_handshake_to;
-+    /* bun: honor the ms-granular idle override. */
-+    int ext_to = (conn->imc_enpub->enp_settings.es_idle_timeout_ms
-+            ? (int) conn->imc_enpub->enp_settings.es_idle_timeout_ms * 1000
-+            : (int) conn->imc_enpub->enp_settings.es_idle_timeout * 1000000)
-+            - (int) conn->imc_enpub->enp_settings.es_handshake_to;
++    /* bun: ms-granular idle override; 64-bit signed (INT_MAX us is ~2148s). */
++    int64_t ext_to = (int64_t) (conn->imc_enpub->enp_settings.es_idle_timeout_ms
++            ? (lsquic_time_t) conn->imc_enpub->enp_settings.es_idle_timeout_ms * 1000
++            : (lsquic_time_t) conn->imc_enpub->enp_settings.es_idle_timeout * 1000000)
++            - (int64_t) conn->imc_enpub->enp_settings.es_handshake_to;
      if (ext_to > 0)
      {
          conn->imc_expire += ext_to;

@@ -133,7 +133,7 @@ describe("node:test", () => {
 
   test("should serialize inline suites and await async describe callbacks like node", async () => {
     const { exitCode, stderr } = await runTests(["09-inline-suites.js"]);
-    expect(stderr).toContain("2 pass");
+    expect(stderr).toContain("3 pass");
     expect({ exitCode, stderr }).toMatchObject({
       exitCode: 0,
       stderr: expect.stringContaining("0 fail"),

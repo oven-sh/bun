@@ -1785,8 +1785,12 @@ function addSuite(
     }
     if (mode === "todo") suite.todoFlag = true;
     // The suite's children must run after the parent's previously scheduled
-    // subtests (Node runs subtests serially), so seed its chain on the parent's.
-    suite.subtestChain = runningNode.subtestChain;
+    // subtests AND after the describe callback's own returned promise settles
+    // (Node's Suite.run awaits buildPromise before iterating subtests). The
+    // callback has not returned yet so its promise does not exist; seed the
+    // chain through a gate the callback's settlement opens.
+    const gate = Promise.withResolvers<void>();
+    suite.subtestChain = runningNode.subtestChain.then(() => gate.promise);
     // Build the suite eagerly (Node also runs describe callbacks immediately),
     // collecting children onto the suite's own subtest chain.
     let build: unknown;
@@ -1800,8 +1804,9 @@ function addSuite(
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
       // Attach a handler now: the real await happens when the suite's turn
       // comes, which can be many ticks later (no unhandled rejection).
-      (build as Promise<unknown>).then(undefined, () => {});
+      (build as Promise<unknown>).then(gate.resolve, gate.resolve);
     } else {
+      gate.resolve();
       build = undefined;
     }
     return scheduleSuiteSubtest(runningNode, suite, build);

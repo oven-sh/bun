@@ -205,8 +205,11 @@ bool Worker::postTaskToParent(Function<void(ScriptExecutionContext&)>&& task)
 
 ExceptionOr<void> Worker::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    if (m_state.load() == State::Closed)
-        return Exception { InvalidStateError, "Worker has been terminated"_s };
+    // Posting to a worker that has exited (or been terminated) is a silent
+    // no-op, like Node and the HTML spec. Return before serializing so the
+    // undeliverable message cannot detach transferList entries or throw.
+    if (m_state.load() >= State::Closing)
+        return {};
 
     Vector<RefPtr<MessagePort>> ports;
     auto serialized = SerializedScriptValue::create(state, messageValue, WTF::move(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
@@ -227,13 +230,12 @@ void Worker::enqueueToWorker(MessageWithMessagePorts&& message)
     {
         Locker locker { m_toWorker.lock };
         m_toWorker.queue.append(WTF::move(message));
-        // If the worker isn't Running yet, just buffer; fireEarlyMessages()
-        // drains the inbox on the worker thread once it is. If Closing/
-        // Closed, also buffer (dropped with the Worker) — postMessage()
-        // already rejects on Closed, so only the close-handler window lands
-        // here. If a drain is already scheduled, don't double-schedule.
-        // drainScheduled is only set/cleared under the lock so the
-        // load/store pair is not a race.
+        // Pending: buffer here; fireEarlyMessages() drains the inbox on the
+        // worker thread once it's Running. postMessage() no-ops at Closing/
+        // Closed, so nothing lands here after the worker exits. If a drain
+        // is already scheduled, don't double-schedule. drainScheduled is
+        // only set/cleared under the lock so the load/store pair is not a
+        // race.
         if (m_state.load() != State::Running || m_toWorker.drainScheduled.load(std::memory_order_relaxed))
             return;
         m_toWorker.drainScheduled.store(true, std::memory_order_relaxed);
@@ -603,10 +605,9 @@ bool Worker::dispatchExit(int32_t exitCode)
         m_parentContextId,
         [this] { this->deref(); },
         [exitCode, protectedThis = Ref { *this }](ScriptExecutionContext&) {
-            // Closing → dispatch 'close' → Closed. The split lets 'close'/'exit'
-            // handlers observe threadId == -1 and isOnline() == false while
-            // postMessage() (gated only on Closed) still accepts and drops the
-            // message, matching browser/Node and pre-refactor behaviour.
+            // Closing -> dispatch 'close' -> Closed. The split lets 'close'/
+            // 'exit' handlers observe threadId == -1 and isOnline() == false
+            // while hasPendingActivity() still holds for the close dispatch.
             //
             // Drop any tasks queued while the worker was Pending and never
             // reached Running (m_pendingCrossVMRequests / rejectAllCrossVMRequests

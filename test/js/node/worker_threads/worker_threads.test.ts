@@ -1,3 +1,4 @@
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
@@ -21,6 +22,10 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Most tests here spawn a subprocess that starts a worker JSC VM; under a
+// debug+ASAN build several of them exceed the 5s default timeout.
+setDefaultTimeout(1000 * 60 * 5);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -201,6 +206,42 @@ test("threadId module and worker property is consistent", async () => {
   expect(() => worker2.postMessage({ workerId: worker2.threadId })).not.toThrow();
   await worker1.terminate();
   await worker2.terminate();
+});
+
+// Node's worker.postMessage() is a silent no-op once the worker has exited
+// or been terminated; it never throws for a dead worker.
+test("postMessage after the worker has exited is a no-op", async () => {
+  const worker = new Worker("", { eval: true });
+  const exitCode = await new Promise<number>(resolve => worker.on("exit", resolve));
+  expect(exitCode).toBe(0);
+  expect(() => worker.postMessage("after exit")).not.toThrow();
+});
+
+test("postMessage after terminate() resolves is a no-op", async () => {
+  const worker = new Worker("setInterval(() => {}, 100000)", { eval: true });
+  await new Promise(resolve => worker.on("online", resolve));
+  await worker.terminate();
+  expect(() => worker.postMessage("after terminate")).not.toThrow();
+});
+
+// Node returns before serializing, so a message to a dead worker can neither
+// throw a DataCloneError nor detach its transferList entries. This holds
+// from inside the 'exit' handler itself onward.
+test("postMessage to an exited worker does not serialize the message", async () => {
+  const worker = new Worker("", { eval: true });
+  await new Promise<void>((resolve, reject) => {
+    worker.on("exit", () => {
+      try {
+        worker.postMessage(() => {});
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+  });
+  const buffer = new ArrayBuffer(8);
+  expect(() => worker.postMessage(buffer, [buffer])).not.toThrow();
+  expect(buffer.byteLength).toBe(8);
 });
 
 test("receiveMessageOnPort works across threads", async () => {

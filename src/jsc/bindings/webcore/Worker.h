@@ -84,9 +84,9 @@ struct WorkerOptions;
 ///                 └────────┘  dispatched      └────────┘
 ///
 /// Closing exists so that inside the 'close'/'exit' handler threadId reads
-/// -1 and isOnline() is false (old ClosingFlag behaviour) while postMessage()
-/// — which only gates on Closed (old TerminatedFlag behaviour) — still
-/// accepts and silently drops the message, matching browser/Node semantics.
+/// -1 and isOnline() is false while hasPendingActivity() still holds for the
+/// close dispatch. postMessage() silently drops from Closing onward,
+/// matching browser/Node semantics.
 ///
 /// m_terminateRequested is orthogonal: set once by terminate(), gates
 /// dispatchEvent()/setKeepAlive(), and is mirrored into the native side via

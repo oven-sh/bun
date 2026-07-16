@@ -1774,6 +1774,12 @@ pub fn to_executable(
     };
 
     let fd = inject(&bytes, &self_exe, windows_options, target);
+    if fd == Fd::INVALID {
+        // inject() already printed the specific failure to stderr.
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "failed to write bytecode to executable"
+        )));
+    }
     // Note: a scopeguard closure capturing `fd` by value would not observe
     // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
     // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below

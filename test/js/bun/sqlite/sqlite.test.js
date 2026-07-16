@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -2097,5 +2097,53 @@ it("exec/run with an embedded NUL byte in the SQL string does not hang", async (
     stderr: "",
     signalCode: null,
     exitCode: 0,
+  });
+});
+
+describe("createPath (create parent directories)", () => {
+  it("creates missing parent directories by default", () => {
+    const base = tempDirWithFiles("sqlite-createpath-default", { "empty.txt": "" });
+    const dbPath = path.join(base, "nested", "deeper", "data.db");
+    const db = new Database(dbPath);
+    db.exec("CREATE TABLE t (id INTEGER)");
+    db.close();
+    expect(existsSync(dbPath)).toBe(true);
+  });
+
+  it("creates missing parent directories with { create: true }", () => {
+    const base = tempDirWithFiles("sqlite-createpath-create", { "empty.txt": "" });
+    const db = new Database(path.join(base, "made", "data.db"), { create: true });
+    db.close();
+    expect(existsSync(path.join(base, "made"))).toBe(true);
+  });
+
+  it("does not create directories when { createPath: false }", () => {
+    const base = tempDirWithFiles("sqlite-createpath-off", { "empty.txt": "" });
+    const missingDir = path.join(base, "missing");
+    // create is still on, so only createPath: false suppresses the mkdir
+    expect(() => new Database(path.join(missingDir, "data.db"), { create: true, createPath: false })).toThrow();
+    expect(existsSync(missingDir)).toBe(false);
+  });
+
+  it("does not create directories for a read-only database", () => {
+    const base = tempDirWithFiles("sqlite-createpath-readonly", { "empty.txt": "" });
+    const missingDir = path.join(base, "ro");
+    expect(() => new Database(path.join(missingDir, "data.db"), { readonly: true })).toThrow();
+    expect(existsSync(missingDir)).toBe(false);
+  });
+
+  it("opens a database in an existing directory without creating subdirectories", () => {
+    const base = tempDirWithFiles("sqlite-createpath-flat", { "empty.txt": "" });
+    const dbPath = path.join(base, "flat.db");
+    const db = new Database(dbPath);
+    db.close();
+    expect(existsSync(dbPath)).toBe(true);
+  });
+
+  it("still opens in-memory databases", () => {
+    const db = new Database(":memory:");
+    db.exec("CREATE TABLE t (id INTEGER)");
+    expect(db.query("SELECT 1 AS x").get()).toEqual({ x: 1 });
+    db.close();
   });
 });

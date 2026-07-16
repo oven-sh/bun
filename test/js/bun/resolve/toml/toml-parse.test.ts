@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("Bun.TOML.parse with non-string input throws", () => {
   expect(() => Bun.TOML.parse(SharedArrayBuffer as any)).toThrow();
@@ -116,4 +117,47 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
   expect(Bun.TOML.parse("a = [1, 2, 3]")).toEqual({ a: [1, 2, 3] });
   // Trailing comma is legal TOML.
   expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
+});
+
+// Deeply nested inline tables must throw RangeError, not the primitive `undefined`.
+// When the printer's stack check fires before the parser's, the printer returns
+// Error::StackOverflow without logging a message; the empty log used to convert
+// to JSValue::UNDEFINED and get thrown verbatim.
+test("Bun.TOML.parse throws RangeError (not undefined) on deeply nested inline tables", async () => {
+  const fixture = `
+    const results = [];
+    for (const d of [2000, 4000, 8000, 12000, 16000, 20000, 28000, 40000, 100000]) {
+      const src = "a = " + Buffer.alloc(d * 6).fill("{ b = ").toString() + "1" + Buffer.alloc(d * 2).fill(" }").toString();
+      try {
+        Bun.TOML.parse(src);
+        results.push({ d, ok: true });
+      } catch (e) {
+        results.push({
+          d,
+          ok: false,
+          isRangeError: e instanceof RangeError,
+          type: e === undefined ? "undefined" : e?.constructor?.name ?? typeof e,
+        });
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const results: Array<{ d: number; ok: boolean; isRangeError?: boolean; type?: string }> = JSON.parse(stdout.trim());
+
+  const thrown = results.filter(r => !r.ok);
+  expect(thrown.length).toBeGreaterThan(0);
+  for (const r of thrown) {
+    expect({ d: r.d, type: r.type, isRangeError: r.isRangeError }).toEqual({
+      d: r.d,
+      type: "RangeError",
+      isRangeError: true,
+    });
+  }
+  expect(exitCode).toBe(0);
 });

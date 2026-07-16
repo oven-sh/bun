@@ -2923,26 +2923,11 @@ describe("css tests", () => {
     // The shorthand prints <box> twice when origin != clip. A single <box>
     // token sets both origin and clip, so dropping a border-box clip after a
     // non-default origin would change the declared clip value.
-    minify_test(
-      ".foo { background: red content-box border-box }",
-      ".foo{background:red content-box border-box}",
-    );
-    minify_test(
-      ".foo { background: red border-box content-box }",
-      ".foo{background:red border-box content-box}",
-    );
-    minify_test(
-      ".foo { background: red border-box padding-box }",
-      ".foo{background:red border-box padding-box}",
-    );
-    minify_test(
-      ".foo { background: red padding-box border-box }",
-      ".foo{background:red}",
-    );
-    minify_test(
-      ".foo { background: red border-box border-box }",
-      ".foo{background:red border-box}",
-    );
+    minify_test(".foo { background: red content-box border-box }", ".foo{background:red content-box border-box}");
+    minify_test(".foo { background: red border-box content-box }", ".foo{background:red border-box content-box}");
+    minify_test(".foo { background: red border-box padding-box }", ".foo{background:red border-box padding-box}");
+    minify_test(".foo { background: red padding-box border-box }", ".foo{background:red}");
+    minify_test(".foo { background: red border-box border-box }", ".foo{background:red border-box}");
     cssTest(
       `
       .foo {

@@ -2396,28 +2396,34 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
         "-e",
         /* js */ `
         let errorFired = 0;
-        const server = Bun.serve({
-          port: 0, hostname: "127.0.0.1",
-          fetch(req, s) { if (s.upgrade(req)) return; return new Response("no"); },
-          websocket: {
-            open() {},
-            message(ws) {
-              ws.close(); // last socket of a stopped server → wrapper downgrades
-              Bun.gc(true);
-              throw new Error("boom");
-            },
-            error(e) { errorFired++; },
-          },
-        });
         const opened = Promise.withResolvers();
         const closed = Promise.withResolvers();
-        const ws = new WebSocket("ws://127.0.0.1:" + server.port);
-        ws.onopen = () => opened.resolve();
-        ws.onerror = e => opened.reject(e);
-        ws.onclose = () => closed.resolve();
-        await opened.promise;
-        server.stop(); // graceful: listener gone, this ws keeps wrapper Strong
-        globalThis.srv = null; // drop our own ref
+        let ws;
+        // Scope server so the module-level frame holds no reference to the
+        // wrapper when message(ws) runs; after ws.close() downgrades js_value
+        // and clears m_server, the wrapper must have zero roots for Bun.gc to
+        // reach wsOnError.
+        await (async () => {
+          const server = Bun.serve({
+            port: 0, hostname: "127.0.0.1",
+            fetch(req, s) { if (s.upgrade(req)) return; return new Response("no"); },
+            websocket: {
+              open() {},
+              message(ws) {
+                ws.close(); // last socket of a stopped server → wrapper downgrades
+                Bun.gc(true);
+                throw new Error("boom");
+              },
+              error(e) { errorFired++; },
+            },
+          });
+          ws = new WebSocket("ws://127.0.0.1:" + server.port);
+          ws.onopen = () => opened.resolve();
+          ws.onerror = e => opened.reject(e);
+          ws.onclose = () => closed.resolve();
+          await opened.promise;
+          server.stop(); // graceful: listener gone, this ws keeps wrapper Strong
+        })();
         ws.send("go");
         await closed.promise;
         console.log(JSON.stringify({ errorFired }));

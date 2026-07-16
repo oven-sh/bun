@@ -991,21 +991,29 @@ export const linkerFlags: Flag[] = [
     desc: "Emit PDB so the crash handler can symbolize stack traces",
   },
   {
+    // SAFEICF (lld-specific) only folds functions whose address is never
+    // taken (it honours .llvm_addrsig; objects without one — MSVC CRT
+    // import libs, the prebuilt ICU data — are treated conservatively), so
+    // JSC ClassInfo native constructors — stored as pointers and compared
+    // for identity — stay distinct. /OPT:ICF (aggressive) folded
+    // callBigIntConstructor with constructBigInt → "not a constructor",
+    // and broke expect.any(Constructor); see commit 218430c731. Mirrors
+    // Linux `-Wl,-icf=safe`. lldtailmerge (lld-specific; MSVC link.exe has
+    // no equivalent) tail-merges string literals across TUs.
+    //
+    // Not under ASAN: the runtime registers a redzone + descriptor per TU
+    // for every instrumented global (string literals included). ICF and tail
+    // merging then give two distinct registrations the same address, which
+    // the runtime reports as an odr-violation at startup (e.g. "127.0.0.1"
+    // size 10 vs "127.0.0.1\0" size 11).
+    flag: ["/OPT:SAFEICF", "/OPT:lldtailmerge"],
+    when: c => c.windows && c.release && !c.asan,
+    desc: "Safe identical-COMDAT folding and string-literal tail merging",
+  },
+  {
     flag: [
       "/LTCG",
       "/OPT:REF",
-      // SAFEICF (lld-specific) only folds functions whose address is never
-      // taken (it honours .llvm_addrsig; objects without one — MSVC CRT
-      // import libs, the prebuilt ICU data — are treated conservatively), so
-      // JSC ClassInfo native constructors — stored as pointers and compared
-      // for identity — stay distinct. /OPT:ICF (aggressive) folded
-      // callBigIntConstructor with constructBigInt → "not a constructor",
-      // and broke expect.any(Constructor); see commit 218430c731. Mirrors
-      // Linux `-Wl,-icf=safe`.
-      "/OPT:SAFEICF",
-      // String-literal tail merging (lld-specific; MSVC link.exe has no
-      // equivalent). Helps .rdata the same way --icf handles .rodata.cst on ELF.
-      "/OPT:lldtailmerge",
       // 512-byte section file alignment (default is 4 KB). Was present in
       // the pre-ninja CMake config; harmless to page-in cost since sections
       // are few and large.

@@ -81,7 +81,19 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // `leak:uws_create_app` silently stops matching and CI reports the
     // suppressed allocations as leaks. If local debug crashes feel slow to
     // print, set `ASAN_OPTIONS=symbolize=0` in your shell instead.
-    c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+    //
+    // Windows: `/GF` string pooling and COFF COMDAT folding give distinct
+    // per-TU ASAN global registrations the same address, which the ODR
+    // checker reports as a violation at startup. The linker-side folds are
+    // already gated off for ASAN (flags.ts SAFEICF/lldtailmerge), but `/GF`
+    // is per-TU at compile time and there is no COFF equivalent of ELF's
+    // odr-indicator, so disable the check. LSan is not implemented on
+    // Windows; leaving detect_leaks=0 keeps the option string uniform.
+    if cfg!(windows) {
+        c"detect_stack_use_after_return=0:detect_leaks=0:detect_odr_violation=0".as_ptr()
+    } else {
+        c"detect_stack_use_after_return=0:detect_leaks=0".as_ptr()
+    }
 }
 
 /// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`

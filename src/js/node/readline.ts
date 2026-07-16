@@ -695,6 +695,10 @@ function cursorTo(stream, x, y, callback) {
   if (NumberIsNaN(y)) throw $ERR_INVALID_ARG_VALUE("y", y);
 
   if (stream == null || (typeof x !== "number" && typeof y !== "number")) {
+    // Route through the stream when there is one so the callback queues with the
+    // stream's other write callbacks, not ahead of them; a no-op move must not
+    // overtake a write issued just before it.
+    if (stream != null && typeof callback === "function") return stream.write("", callback);
     if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
@@ -715,6 +719,10 @@ function moveCursor(stream, dx, dy, callback?) {
   }
 
   if (stream == null || !(dx || dy)) {
+    // Route through the stream when there is one so the callback queues with the
+    // stream's other write callbacks, not ahead of them; a no-op move must not
+    // overtake a write issued just before it.
+    if (stream != null && typeof callback === "function") return stream.write("", callback);
     if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }

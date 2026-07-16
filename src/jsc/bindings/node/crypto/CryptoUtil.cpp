@@ -205,6 +205,18 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalO
         return ncrypto::EVPKeyPointer::PKFormatType::JWK;
     }
 
+    if (formatStr == "raw-public"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::RawPublic;
+    }
+
+    if (formatStr == "raw-private"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::RawPrivate;
+    }
+
+    if (formatStr == "raw-seed"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::RawSeed;
+    }
+
     Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
     return {};
 }
@@ -346,12 +358,9 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "reason"_s), jsString(vm, reasonString), reasonSlot);
             RETURN_IF_EXCEPTION(scope, {});
 
-            // Convert reason to error code (e.g. "this error" -> "ERR_OSSL_<LIB>_THIS_ERROR"),
-            // matching Node's error::Decorate (src/crypto/crypto_util.cc): the code embeds the
-            // OpenSSL library name for the libraries Node knows about, and the "OSSL_" prefix is
-            // dropped for the SSL library so codes never look like "ERR_OSSL_SSL_".
-            // BoringSSL reason strings are already underscore-separated macro names, so only
-            // uppercasing is needed here (Node additionally maps spaces for OpenSSL builds).
+            // Build "ERR_OSSL_<LIB>_THIS_ERROR" like Node's error::Decorate (crypto_util.cc);
+            // the SSL library drops the OSSL_ prefix. BoringSSL reason strings are already
+            // underscore-separated macro names, so only uppercasing is needed here.
             String upperReason = reasonString.convertToASCIIUppercase();
 
             int errLib = ERR_GET_LIB(err);
@@ -749,6 +758,12 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject
             return EVPKeyPointer::PKFormatType::DER;
         } else if (formatView == "jwk"_s) {
             return EVPKeyPointer::PKFormatType::JWK;
+        } else if (formatView == "raw-public"_s) {
+            return EVPKeyPointer::PKFormatType::RawPublic;
+        } else if (formatView == "raw-private"_s) {
+            return EVPKeyPointer::PKFormatType::RawPrivate;
+        } else if (formatView == "raw-seed"_s) {
+            return EVPKeyPointer::PKFormatType::RawSeed;
         }
     }
 
@@ -814,6 +829,27 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
 
     config.format = parseKeyFormat(globalObject, scope, formatValue, isInput ? std::optional { EVPKeyPointer::PKFormatType::PEM } : std::nullopt, makeOptionString(objName, "format"_s));
     RETURN_IF_EXCEPTION(scope, );
+
+    if (config.format == EVPKeyPointer::PKFormatType::RawPublic) {
+        if (isPublic && *isPublic == false) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "format"_s), formatValue);
+            return;
+        }
+        // type may be undefined, 'compressed', or 'uncompressed'; handled at export time.
+        return;
+    }
+
+    if (config.format == EVPKeyPointer::PKFormatType::RawPrivate || config.format == EVPKeyPointer::PKFormatType::RawSeed) {
+        if (isPublic && *isPublic == true) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "format"_s), formatValue);
+            return;
+        }
+        if (!typeValue.isUndefined()) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+            return;
+        }
+        return;
+    }
 
     bool isRequired = (!isInput || config.format == EVPKeyPointer::PKFormatType::DER) && config.format != EVPKeyPointer::PKFormatType::JWK;
     std::optional<EVPKeyPointer::PKEncodingType> maybeKeyType = parseKeyType(globalObject, scope, typeValue, isRequired, keyTypeValue, isPublic, makeOptionString(objName, "type"_s));

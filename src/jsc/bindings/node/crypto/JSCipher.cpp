@@ -76,11 +76,10 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     JSValue bufferValue = callFrame->argument(1);
 
     // Like Node, validate the cipher options (padding, oaepHash, oaepLabel) before any key
-    // parsing so an invalid digest is reported even when the key material itself is invalid
-    // for this operation.
+    // parsing so an invalid digest is reported even when the key material itself is invalid.
     ncrypto::Digest digest;
     int32_t padding = defaultPadding;
-    GCOwnedDataScope<std::span<const uint8_t>> oaepLabel = { nullptr, {} };
+    std::optional<WTF::Vector<uint8_t>> oaepLabel;
     JSValue encodingValue = jsUndefined();
     if (JSObject* options = optionsValue.getObject()) {
         JSValue paddingValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "padding"_s));
@@ -112,8 +111,11 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
         JSValue oaepLabelValue = options->get(lexicalGlobalObject, Identifier::fromString(vm, "oaepLabel"_s));
         RETURN_IF_EXCEPTION(scope, {});
         if (!oaepLabelValue.isUndefined()) {
-            oaepLabel = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
+            // Key parsing below runs user JS (option getters, warning events) that could
+            // detach a borrowed label buffer, so copy the bytes instead of holding a view.
+            auto view = getArrayBufferOrView2(lexicalGlobalObject, scope, oaepLabelValue, "options.oaepLabel"_s, encodingValue);
             RETURN_IF_EXCEPTION(scope, {});
+            oaepLabel = WTF::Vector<uint8_t>(std::span<const uint8_t> { view->data(), view->size() });
         }
     }
 
@@ -181,9 +183,9 @@ JSValue rsaFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* ca
     }
 
     ncrypto::Buffer<const void> labelBuf = {};
-    if (oaepLabel.owner) {
+    if (oaepLabel) {
         labelBuf = {
-            .data = oaepLabel->data(),
+            .data = oaepLabel->begin(),
             .len = oaepLabel->size(),
         };
     }

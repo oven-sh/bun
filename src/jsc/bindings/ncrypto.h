@@ -878,6 +878,9 @@ public:
         DER,
         PEM,
         JWK,
+        RawPublic,
+        RawPrivate,
+        RawSeed,
     };
 
     enum class PKParseError { NOT_RECOGNIZED,

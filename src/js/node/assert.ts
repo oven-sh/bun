@@ -408,17 +408,21 @@ function compareBranch(actual, expected, comparedObjects?) {
 
     const expectedIterator = SafeMapPrototypeIterator.$call(expected);
 
+    let result = true;
     for (const { 0: key, 1: expectedValue } of expectedIterator) {
       if (!SafeMapPrototypeHas.$call(actual, key)) {
-        return false;
+        result = false;
+        break;
       }
       const actualValue = SafeMapPrototypeGet.$call(actual, key);
       if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
-        return false;
+        result = false;
+        break;
       }
     }
 
-    return true;
+    comparedObjects.delete(actual);
+    return result;
   }
 
   // Check for ArrayBuffer object equality
@@ -467,6 +471,15 @@ function compareBranch(actual, expected, comparedObjects?) {
       return false;
     }
 
+    comparedObjects ??= new SafeWeakSet();
+
+    // Handle circular references
+    if (comparedObjects.has(actual)) {
+      return true;
+    }
+    comparedObjects.add(actual);
+
+    let result = true;
     let actualPos = 0;
     for (let i = 0; i < expected.length; i++) {
       const lastCandidate = actual.length - expected.length + i;
@@ -474,12 +487,14 @@ function compareBranch(actual, expected, comparedObjects?) {
         actualPos++;
       }
       if (actualPos > lastCandidate) {
-        return false;
+        result = false;
+        break;
       }
       actualPos++;
     }
 
-    return true;
+    comparedObjects.delete(actual);
+    return result;
   }
 
   // Comparison done when at least one of the values is not an object
@@ -498,20 +513,18 @@ function compareBranch(actual, expected, comparedObjects?) {
   }
   comparedObjects.add(actual);
 
-  if (AssertionError === undefined) loadAssertionError();
   // Check if all expected keys and values match
+  let result = true;
   for (let i = 0; i < keysExpected.length; i++) {
     const key = keysExpected[i];
-    assert(
-      ReflectHas(actual, key),
-      new AssertionError({ message: `Expected key ${String(key)} not found in actual object` }),
-    );
-    if (!compareBranch(actual[key], expected[key], comparedObjects)) {
-      return false;
+    if (!ReflectHas(actual, key) || !compareBranch(actual[key], expected[key], comparedObjects)) {
+      result = false;
+      break;
     }
   }
 
-  return true;
+  comparedObjects.delete(actual);
+  return result;
 }
 
 /**

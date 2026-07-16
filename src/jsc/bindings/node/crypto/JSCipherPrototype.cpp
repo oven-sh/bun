@@ -2,13 +2,10 @@
 #include "JSCipher.h"
 #include "ErrorCode.h"
 #include "CryptoUtil.h"
-#include "BunProcess.h"
 #include "NodeValidator.h"
 #include "JSBufferEncodingType.h"
 #include <JavaScriptCore/TypedArrayInlines.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
-
-extern "C" bool Bun__Node__ProcessNoDeprecation;
 
 using namespace Bun;
 using namespace JSC;
@@ -278,10 +275,8 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
 
     uint32_t tagLen = authTag->byteLength();
 
-    // The authentication tag length was determined at construction time (every
-    // authenticated mode either received an explicit authTagLength or got its
-    // default), so the supplied tag must match it exactly. Implicitly accepting
-    // shorter GCM tags (former DEP0182) is no longer allowed in Node 26.
+    // m_authTagLen is always set at construction, so the supplied tag must match exactly;
+    // Node 26 no longer accepts implicit short GCM tags (former DEP0182).
     ASSERT(cipher->m_authTagLen.has_value());
     if (*cipher->m_authTagLen != tagLen) {
         WTF::StringBuilder builder;

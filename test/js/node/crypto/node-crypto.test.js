@@ -997,3 +997,125 @@ describe("sign/verify context option", () => {
     expect(() => crypto.generateKeyPairSync("rsa", { modulusLength: 2048 })).not.toThrow();
   });
 });
+
+describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
+  describe.each([
+    ["ed25519", undefined, 32, 32],
+    ["x25519", undefined, 32, 32],
+    ["ec", "P-256", 65, 32],
+    ["ec", "P-384", 97, 48],
+  ])("raw key format %s %s", (keyType, namedCurve, pubLen, privLen) => {
+    const gen = () =>
+      crypto.generateKeyPairSync(keyType, keyType === "ec" ? { namedCurve } : undefined);
+
+    it("round-trips through raw-public and raw-private", () => {
+      const { publicKey, privateKey } = gen();
+      const rawPub = publicKey.export({ format: "raw-public" });
+      const rawPriv = privateKey.export({ format: "raw-private" });
+      expect(Buffer.isBuffer(rawPub)).toBe(true);
+      expect(Buffer.isBuffer(rawPriv)).toBe(true);
+      expect(rawPub.length).toBe(pubLen);
+      expect(rawPriv.length).toBe(privLen);
+
+      const importOpts = { asymmetricKeyType: keyType, ...(namedCurve ? { namedCurve } : {}) };
+      const pub2 = crypto.createPublicKey({ key: rawPub, format: "raw-public", ...importOpts });
+      const priv2 = crypto.createPrivateKey({ key: rawPriv, format: "raw-private", ...importOpts });
+      expect(pub2.type).toBe("public");
+      expect(pub2.asymmetricKeyType).toBe(keyType);
+      expect(priv2.type).toBe("private");
+      expect(priv2.asymmetricKeyType).toBe(keyType);
+      expect(pub2.export({ format: "raw-public" })).toEqual(rawPub);
+      expect(priv2.export({ format: "raw-private" })).toEqual(rawPriv);
+
+      // A private key's raw-public export should match the public key's.
+      expect(privateKey.export({ format: "raw-public" })).toEqual(rawPub);
+    });
+
+    if (keyType === "ec") {
+      it("exports a compressed EC point when requested", () => {
+        const { publicKey } = gen();
+        const compressed = publicKey.export({ format: "raw-public", type: "compressed" });
+        expect(compressed.length).toBe((pubLen - 1) / 2 + 1);
+        const reimported = crypto.createPublicKey({
+          key: compressed,
+          format: "raw-public",
+          asymmetricKeyType: "ec",
+          namedCurve,
+        });
+        expect(reimported.export({ format: "raw-public" })).toEqual(publicKey.export({ format: "raw-public" }));
+      });
+    }
+  });
+
+  it("raw key formats reject unsupported combinations", () => {
+    const { publicKey: rsaPub, privateKey: rsaPriv } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    for (const fmt of ["raw-public", "raw-private", "raw-seed"]) {
+      expect(() => rsaPriv.export({ format: fmt })).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+      );
+    }
+    expect(() => rsaPub.export({ format: "raw-public" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+    );
+
+    const { privateKey: edPriv } = crypto.generateKeyPairSync("ed25519");
+    expect(() => edPriv.export({ format: "raw-seed" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+    );
+    expect(() => edPriv.export({ format: "raw-private", passphrase: "x" })).toThrow(
+      expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }),
+    );
+
+    // Import validation
+    expect(() =>
+      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "rsa" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
+    expect(() =>
+      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-private", asymmetricKeyType: "banana" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() =>
+      crypto.createPublicKey({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "ec" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() =>
+      crypto.createPrivateKey({ key: Buffer.alloc(32), format: "raw-public", asymmetricKeyType: "ed25519" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() =>
+      crypto.createPrivateKey({ key: "not a buffer", format: "raw-private", asymmetricKeyType: "ed25519" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+    expect(() =>
+      crypto.createPrivateKey({ key: Buffer.alloc(31), format: "raw-private", asymmetricKeyType: "ec", namedCurve: "P-256" }),
+    ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    expect(() =>
+      crypto.createPrivateKey({
+        key: Buffer.alloc(32),
+        format: "raw-private",
+        asymmetricKeyType: "ec",
+        namedCurve: "no-such-curve",
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_CURVE" }));
+  });
+
+  it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const label = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]);
+    const opts = {
+      key: publicKey,
+      oaepLabel: label,
+      padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      get passphrase() {
+        structuredClone(label.buffer, { transfer: [label.buffer] });
+        return undefined;
+      },
+    };
+    const ct = crypto.publicEncrypt(opts, Buffer.from("hello"));
+    const pt = crypto.privateDecrypt(
+      {
+        key: privateKey,
+        oaepLabel: new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]),
+        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+      },
+      ct,
+    );
+    expect(pt.toString()).toBe("hello");
+  });
+});

@@ -541,7 +541,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithm, (JSGlobalOb
     if (!algorithm.has_value())
         return JSValue::encode(jsUndefined());
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8(std::span { algorithm.value().data(), algorithm.value().size() }))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(algorithm.value().data()), algorithm.value().size() }))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithmOid, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
@@ -559,7 +559,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithmOid, (JSGloba
     if (!oid.has_value())
         return JSValue::encode(jsUndefined());
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8(std::span { oid.value().data(), oid.value().size() }))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(oid.value().data()), oid.value().size() }))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

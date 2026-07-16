@@ -20,10 +20,8 @@
 
 namespace Bun {
 
-// Node builds each ERR_OUT_OF_RANGE range string at the call site. validateInteger,
-// validateInt32, validateUint32 and validateNumber spell it with "&&"; other callers
-// (checkRangesOrGetDefault, buffer's boundsError) use the shared " and " form.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L102
+// Node spells the range with "&&" in validateInteger/Int32/Uint32/Number; other call sites
+// (checkRangesOrGetDefault, buffer's boundsError) keep " and ". Matches lib/internal/validators.js.
 static WTF::String conjunctiveRange(double lower, double upper)
 {
     WTF::StringBuilder range;

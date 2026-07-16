@@ -943,8 +943,16 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     const bunTLS = data[bunTlsSymbol];
 
     if (typeof bunTLS === "function") {
-      // Destroy socket if error happened before handshake's finish
+      const callback = data[kwriteCallback];
+      if (callback) {
+        data[kwriteCallback] = null;
+        callback(error);
+      }
       if (!data._secureEstablished) {
+        if (!data[kerrorEmitted]) {
+          data[kerrorEmitted] = true;
+          data.server?.emit("tlsClientError", error, data);
+        }
         data.destroy(data.listenerCount("error") > 0 ? error : undefined);
       } else if (
         data.isServer &&
@@ -955,15 +963,8 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         data.destroy();
       } else {
         data.emit("_tlsError", error);
-        if (!data[kerrorEmitted]) {
-          data[kerrorEmitted] = true;
-          data.server?.emit("tlsClientError", error, data);
-        }
-        SocketHandlers.error(socket, error, true);
-        return;
+        data.destroy(data.listenerCount("error") > 0 ? error : undefined);
       }
-      SocketHandlers.error(socket, error, true);
-      data.server?.emit("clientError", error, data);
       return;
     }
     // Plain TCP: the delegation above is a no-op (_hadError was just set and

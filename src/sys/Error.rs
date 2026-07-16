@@ -345,7 +345,10 @@ impl Error {
     fn fill_system_error_common(
         &self,
         map: &enum_map::EnumMap<SystemErrno, &'static str>,
-    ) -> (SystemError, Option<(&'static str, SystemErrno, &'static str)>) {
+    ) -> (
+        SystemError,
+        Option<(&'static str, SystemErrno, &'static str)>,
+    ) {
         let mut err = SystemError {
             errno: c_int::from(self.errno).wrapping_neg(),
             syscall: BunString::static_(<&'static str>::from(self.syscall).as_bytes()),

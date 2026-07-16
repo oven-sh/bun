@@ -2815,7 +2815,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             // prototype exotic object that the spec carves out of this rejection.
             // process.env is also allowed: Node.js supports
             // structuredClone(process.env) and yields a plain object.
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && inObject->classInfo() != Bun::JSEnvironmentVariableMap::info())
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

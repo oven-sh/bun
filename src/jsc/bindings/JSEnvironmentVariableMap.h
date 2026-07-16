@@ -74,6 +74,11 @@ void resetDateCachesAfterTimeZoneChange(JSC::VM&);
 // through the SharedEnvStore of the tree its global belongs to.
 JSC::JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
+// True for both process.env implementations that are non-JSFinalObject
+// (JSEnvironmentVariableMap and the file-local JSSharedEnvMap), so structured
+// clone can allowlist them without exposing the latter's declaration.
+bool isProcessEnvClassInfo(const JSC::ClassInfo*);
+
 // Resolve the SHARE_ENV store for a worker spawned from `globalObject`: the
 // spawning thread's existing store if it has one, otherwise a fresh store seeded
 // from its `process.env` (which is then swapped to a write-through view).

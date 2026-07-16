@@ -908,6 +908,11 @@ JSValue createSharedEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
     return JSSharedEnvMap::create(vm, structure);
 }
 
+bool isProcessEnvClassInfo(const JSC::ClassInfo* classInfo)
+{
+    return classInfo == JSEnvironmentVariableMap::info() || classInfo == JSSharedEnvMap::info();
+}
+
 RefPtr<SharedEnvStore> ensureSharedEnvStoreForWorker(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();

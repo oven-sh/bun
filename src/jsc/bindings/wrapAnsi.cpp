@@ -326,10 +326,9 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
     if (lastVisibleEnd == size)
         return;
 
-    // Mirror npm wrap-ansi's stringVisibleTrimSpacesRight: zero-width tail words
-    // (ANSI escapes, ZWSP/ZWJ, combining marks) are kept; only the separator
-    // spaces between them are removed. Dropping non-space content here would
-    // delete ZWJ sequences and change rendered grapheme clusters.
+    // Mirror npm wrap-ansi's stringVisibleTrimSpacesRight: keep zero-width tail
+    // words (ANSI escapes, ZWSP/ZWJ, combining marks); remove only the separator
+    // spaces between them.
     Vector<Char> tail;
     tail.reserveCapacity(size - lastVisibleEnd);
     for (size_t i = lastVisibleEnd; i < size; ++i) {

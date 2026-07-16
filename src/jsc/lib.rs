@@ -2052,7 +2052,15 @@ pub trait JsFinalize: Sized {
 }
 impl<T: Sized> JsFinalize for T {}
 
-/// Track whether an object should keep the event loop alive
+/// Track whether an object should keep the event loop alive.
+///
+/// On Windows the backing I/O (the request's `us_socket_t` → `uv_poll_t`) is
+/// `uv_unref`'d, so `active_tasks` alone keeps Bun's outer `while
+/// is_event_loop_alive()` spinning while `uv_run(UV_RUN_NOWAIT)` skips the
+/// IOCP poll because `uv_loop_alive()` is false. Bumping `active_handles`
+/// makes `uv_run` enter its loop body and drain the completion. POSIX does
+/// not need this: `tick_without_idle()` issues a 0-timeout
+/// `epoll_wait`/`kevent` that still dispatches ready events.
 #[derive(Default)]
 pub struct Ref {
     pub has: bool,
@@ -2069,6 +2077,10 @@ impl Ref {
         }
         self.has = false;
         vm.active_tasks -= 1;
+        #[cfg(windows)]
+        if let Some(loop_) = vm.platform_loop_opt() {
+            loop_.dec();
+        }
     }
 
     pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
@@ -2077,6 +2089,10 @@ impl Ref {
         }
         self.has = true;
         vm.active_tasks += 1;
+        #[cfg(windows)]
+        if let Some(loop_) = vm.platform_loop_opt() {
+            loop_.inc();
+        }
     }
 }
 

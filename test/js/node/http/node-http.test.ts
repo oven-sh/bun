@@ -3726,6 +3726,49 @@ it("http.Agent with proxyEnv does not write to a literal 'undefined' property", 
   }
 });
 
+it("server.close() completes after res.socket.end() half-closes an in-flight upload", async () => {
+  // On Windows the per-request NodeHTTPResponse ref kept only vm.active_tasks,
+  // so once server.close() dropped the server KeepAlive, uv_loop_alive() was
+  // false and uv_run(UV_RUN_NOWAIT) never drained the accepted socket's poll
+  // completion: the process spun at 100% CPU and server.close() never resolved.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { once } = require("node:events");
+        const http = require("node:http");
+        const { promise, resolve, reject } = Promise.withResolvers();
+        (async () => {
+          await using server = http.createServer((req, res) => {
+            res.writeHead(200, { Connection: "close" });
+            res.socket.end();
+            res.on("error", reject);
+            try { resolve(res.write("x")); } catch (e) { reject(e); }
+          });
+          await once(server.listen(0), "listening");
+          await fetch("http://localhost:" + server.address().port, {
+            method: "POST",
+            body: Buffer.allocUnsafe(10 * 1024 * 1024),
+          }).then(r => r.bytes()).catch(() => {});
+          console.log("write returned", await promise);
+        })().then(() => console.log("server.close() completed"));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 15_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim().split("\n"), stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: ["write returned true", "server.close() completed"],
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
+});
+
 it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () => {
   expect(typeof OutgoingMessage.prototype._flushOutput).toBe("function");
 

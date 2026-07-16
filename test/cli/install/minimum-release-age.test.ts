@@ -2519,7 +2519,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr.toLowerCase()).toContain("minimum-release-age");
       expect(exitCode).not.toBe(0);
     });
@@ -2536,7 +2536,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr.toLowerCase()).toContain("minimum-release-age");
       expect(exitCode).not.toBe(0);
     });
@@ -2553,7 +2553,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain("--minimum-release-age requires a value");
       expect(exitCode).not.toBe(0);
     });
@@ -2570,7 +2570,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stderr).toContain("--minimum-release-age requires a value");
       expect(exitCode).not.toBe(0);
     });
@@ -2980,7 +2980,7 @@ minimumReleaseAgeExcludes = ["regular-package"]
         stderr: "pipe",
       });
 
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // Sentinel binary must not have run.
       expect(stdout).not.toContain("CACHE_BYPASS_BUG_REPRO");
       // And the install step must have wiped the sentinel lockfile (the

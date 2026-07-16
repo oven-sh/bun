@@ -1552,6 +1552,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         result
     }
 
+    #[inline]
+    fn check_for_arrow_after_the_current_token(&mut self) -> bool {
+        self.next_token_matches(|p| p.lexer.token == T::TEqualsGreaterThan)
+    }
+
     /// This parses an expression. This assumes we've already parsed the "async"
     /// keyword and are currently looking at the following token.
     pub fn parse_async_prefix_expr(
@@ -1599,36 +1604,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if level.lte(Level::Assign) {
                         // p.markLoweredSyntaxFeature();
 
-                        let arg_ident = p.lexer.identifier;
-                        let arg_loc = p.lexer.loc();
-
                         // In TypeScript, "async <ident>" not followed by "=>" treats "async" as
                         // a plain identifier (e.g. "async as T"), matching tsc's two-token
                         // lookahead in isUnParenthesizedAsyncArrowFunctionWorker (TypeScript#8444).
-                        let is_arrow_fn = if Self::IS_TYPESCRIPT_ENABLED {
-                            let old_lexer = p.lexer.snapshot();
-                            p.lexer.is_log_disabled = true;
-                            let ok = matches!(p.lexer.next(), Ok(()))
-                                && p.lexer.token == T::TEqualsGreaterThan;
-                            if ok {
-                                p.lexer.is_log_disabled = old_lexer.is_log_disabled;
-                            } else {
-                                p.lexer.restore(&old_lexer);
-                            }
-                            ok
-                        } else {
-                            p.lexer.next()?;
-                            true
-                        };
+                        let is_arrow_fn = !Self::IS_TYPESCRIPT_ENABLED
+                            || p.check_for_arrow_after_the_current_token();
 
                         if is_arrow_fn {
-                            let ref_ = p.store_name_in_ref(arg_ident)?;
+                            let ref_ = p.store_name_in_ref(p.lexer.identifier)?;
+                            let arg_loc = p.lexer.loc();
                             let arg_binding = p.b(B::Identifier { r#ref: ref_ }, arg_loc);
                             let args: &'a mut [G::Arg] =
                                 p.arena.alloc_slice_fill_with(1, |_| G::Arg {
                                     binding: arg_binding,
                                     ..Default::default()
                                 });
+                            p.lexer.next()?;
 
                             let _ = p.push_scope_for_parse_pass(
                                 js_ast::scope::Kind::FunctionArgs,

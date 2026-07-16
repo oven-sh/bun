@@ -476,7 +476,10 @@ function setupWorkerStdio(stdio) {
   // remain reachable). Those Bun-specific APIs address the process fds by
   // design and are not routed through the port.
   if (stdout || stderr) {
-    $newRustFunction("ConsoleObject.rs", "setOutputStreams", 2)(process.stdout, process.stderr);
+    $newRustFunction("ConsoleObject.rs", "setOutputStreams", 2)(
+      stdout ? process.stdout : undefined,
+      stderr ? process.stderr : undefined,
+    );
   }
 }
 

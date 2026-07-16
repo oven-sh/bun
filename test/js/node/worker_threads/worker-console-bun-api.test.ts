@@ -73,9 +73,12 @@ describe.concurrent("node:worker_threads console", () => {
           let out = "", err = "";
           w.stdout.setEncoding("utf8").on("data", d => { out += d; });
           w.stderr.setEncoding("utf8").on("data", d => { err += d; });
-          w.stdout.on("end", () => {
-            process.stdout.write("CAPTURED:" + JSON.stringify({ out, err }));
-          });
+          let done = 0;
+          const finish = () => {
+            if (++done === 2) process.stdout.write("CAPTURED:" + JSON.stringify({ out, err }));
+          };
+          w.stdout.on("end", finish);
+          w.stderr.on("end", finish);
         } else {
           console.log("via-console", new Map([["k","v"]]));
           console.error("via-error");

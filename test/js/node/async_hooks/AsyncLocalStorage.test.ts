@@ -1,6 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -565,5 +565,113 @@ describe("async context passes through", () => {
       });
     });
     expect(a).toBe("value");
+  });
+  // The observer callback runs in the async context of the entry that
+  // scheduled the delivery batch (the first one queued), matching Node. The
+  // registration context is never what the callback sees.
+  test("PerformanceObserver", async () => {
+    const s = new AsyncLocalStorage<string>();
+    const batches: PromiseWithResolvers<{ store: string | undefined; names: string[] }>[] = [
+      Promise.withResolvers(),
+      Promise.withResolvers(),
+    ];
+    let batch = 0;
+    const observer = new PerformanceObserver(list => {
+      batches[batch++].resolve({
+        store: s.getStore(),
+        names: list
+          .getEntries()
+          .map(e => e.name)
+          .sort(),
+      });
+    });
+    try {
+      s.run("registration", () => observer.observe({ entryTypes: ["measure"] }));
+
+      // Batch 1: two producers in different contexts. The first one wins.
+      s.run("p1", () => {
+        performance.mark("a");
+        performance.measure("m1", "a");
+      });
+      s.run("p2", () => {
+        performance.mark("b");
+        performance.measure("m2", "b");
+      });
+      expect(await batches[0].promise).toStrictEqual({ store: "p1", names: ["m1", "m2"] });
+
+      // Batch 2: no producing context. Batch 1's captured context must not leak.
+      performance.mark("c");
+      performance.measure("m3", "c");
+      expect(await batches[1].promise).toStrictEqual({ store: undefined, names: ["m3"] });
+    } finally {
+      observer.disconnect();
+      // Only remove this test's entries; the timeline is process-wide.
+      for (const name of ["a", "b", "c"]) performance.clearMarks(name);
+      for (const name of ["m1", "m2", "m3"]) performance.clearMeasures(name);
+    }
+  });
+  // Signal handlers mutate process-global state, so run them in a subprocess.
+  test.skipIf(isWindows)("process signal handlers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `import { AsyncLocalStorage } from "node:async_hooks";
+        const als = new AsyncLocalStorage();
+        const seen = [];
+        const firstBatch = Promise.withResolvers();
+        const rearmed = Promise.withResolvers();
+        const rearmedAgain = Promise.withResolvers();
+
+        // All listeners for a signal run in the context captured when the
+        // first one was registered, matching Node's Signal async resource.
+        als.run("first", () => {
+          process.on("SIGUSR2", () => {
+            seen.push("a:" + als.getStore());
+            if (seen.length === 2) firstBatch.resolve();
+          });
+        });
+        als.run("second", () => {
+          process.on("SIGUSR2", () => {
+            seen.push("b:" + als.getStore());
+            if (seen.length === 2) firstBatch.resolve();
+          });
+        });
+        process.kill(process.pid, "SIGUSR2");
+        await firstBatch.promise;
+
+        // removeAllListeners releases the captured context; a fresh
+        // registration captures the new one.
+        process.removeAllListeners("SIGUSR2");
+        const third = () => {
+          seen.push("c:" + als.getStore());
+          rearmed.resolve();
+        };
+        als.run("third", () => process.on("SIGUSR2", third));
+        process.kill(process.pid, "SIGUSR2");
+        await rearmed.promise;
+
+        // removeListener of the last listener releases it too.
+        process.removeListener("SIGUSR2", third);
+        als.run("fourth", () => {
+          process.on("SIGUSR2", () => {
+            seen.push("d:" + als.getStore());
+            rearmedAgain.resolve();
+          });
+        });
+        process.kill(process.pid, "SIGUSR2");
+        await rearmedAgain.promise;
+
+        console.log(JSON.stringify(seen));`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+      stdout: JSON.stringify(["a:first", "b:first", "c:third", "d:fourth"]),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

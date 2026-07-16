@@ -61,16 +61,27 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
+    DECLARE_VISIT_CHILDREN;
     Performance& wrapped() const
     {
         return static_cast<Performance&>(Base::wrapped());
     }
+
+    JSC::JSValue timingBufferDeliveryAsyncContext() const { return m_timingBufferDeliveryAsyncContext.get(); }
+    void setTimingBufferDeliveryAsyncContext(JSC::VM& vm, JSC::JSValue value) { m_timingBufferDeliveryAsyncContext.set(vm, this, value); }
+    void clearTimingBufferDeliveryAsyncContext() { m_timingBufferDeliveryAsyncContext.clear(); }
 
 protected:
     JSPerformance(JSC::Structure*, JSDOMGlobalObject&, Ref<Performance>&&);
 
     void finishCreation(JSC::VM&);
     // DECLARE_DEFAULT_FINISH_CREATION;
+
+private:
+    // The async context active when the pending delivery task was scheduled.
+    // Node runs PerformanceObserver callbacks in the context of the entry that
+    // triggered the batch, so AsyncLocalStorage.getStore() works inside them.
+    JSC::WriteBarrier<JSC::Unknown> m_timingBufferDeliveryAsyncContext;
 };
 
 class JSPerformanceOwner final : public JSC::WeakHandleOwner {

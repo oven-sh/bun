@@ -1165,14 +1165,28 @@ bool isSignalName(WTF::String input)
 extern "C" void Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalObject)
 {
     Process* process = globalObject->processObject();
+    auto& vm = JSC::getVM(globalObject);
 
     String signalName = signalNumberToNameMap->get(signalNumber);
-    Identifier signalNameIdentifier = Identifier::fromString(JSC::getVM(globalObject), signalName);
+    Identifier signalNameIdentifier = Identifier::fromString(vm, signalName);
     MarkedArgumentBuffer args;
-    args.append(jsString(JSC::getVM(globalObject), signalNameIdentifier.string()));
+    args.append(jsString(vm, signalNameIdentifier.string()));
     args.append(jsNumber(signalNumber));
 
+    // Run the listeners in the async context captured when the signal handler
+    // was installed, matching Node's Signal async resource.
+    JSValue restoreAsyncContext {};
+    JSC::InternalFieldTuple* asyncContextData = nullptr;
+    if (JSValue asyncContext = process->signalAsyncContext(signalNumber)) {
+        asyncContextData = globalObject->m_asyncContextData.get();
+        restoreAsyncContext = asyncContextData->getInternalField(0);
+        asyncContextData->putInternalField(vm, 0, asyncContext);
+    }
+
     process->wrapped().emitForBindings(signalNameIdentifier, args);
+
+    if (asyncContextData)
+        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
 }
 
 #if OS(WINDOWS)
@@ -1555,6 +1569,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                             .handle = nullptr,
 #endif
                         };
+                        auto* global = defaultGlobalObject(eventEmitter.scriptExecutionContext()->jsGlobalObject());
 #if !OS(WINDOWS)
                         Bun__ensureSignalHandler();
                         struct sigaction action;
@@ -1571,13 +1586,20 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         sigaction(signalNumber, &action, nullptr);
 #else
                         signal_handle.handle = Bun__UVSignalHandle__init(
-                            eventEmitter.scriptExecutionContext()->jsGlobalObject(),
+                            global,
                             signalNumber,
                             &signalHandler);
 
                         if (!signal_handle.handle) [[unlikely]]
                             return;
 #endif
+
+                        // Node's Signal handle is an async resource created at
+                        // the first listener registration, so all of this
+                        // signal's listeners run in the context active here.
+                        JSC::JSValue asyncContext = global->m_asyncContextData.get()->getInternalField(0);
+                        if (!asyncContext.isUndefined())
+                            global->processObject()->setSignalAsyncContext(global->vm(), signalNumber, asyncContext);
 
                         signalToContextIdsMap->set(signalNumber, signal_handle);
                     }
@@ -1594,6 +1616,7 @@ static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& e
                         Bun__UVSignalHandle__close(signal_handle.handle);
 #endif
                         signalToContextIdsMap->remove(signalNumber);
+                        defaultGlobalObject(eventEmitter.scriptExecutionContext()->jsGlobalObject())->processObject()->clearSignalAsyncContext(signalNumber);
                     }
                 }
             }
@@ -3378,6 +3401,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
+    for (auto& signalAsyncContext : thisObject->m_signalAsyncContexts)
+        visitor.append(signalAsyncContext);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);

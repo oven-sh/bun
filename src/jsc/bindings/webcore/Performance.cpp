@@ -50,7 +50,11 @@
 #include "PerformanceTiming.h"
 #include "PerformanceUserTiming.h"
 // #include "ResourceResponse.h"
+#include "JSPerformance.h"
 #include "ScriptExecutionContext.h"
+#include "ZigGlobalObject.h"
+#include <JavaScriptCore/InternalFieldTuple.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 #include <wtf/TZoneMallocInlines.h>
 #include "BunClientData.h"
 
@@ -461,11 +465,35 @@ void Performance::scheduleTaskIfNeeded()
     if (!context)
         return;
 
+    // Observer callbacks run in the async context of the first entry queued in
+    // this batch, matching Node. The capture lives in a WriteBarrier on the
+    // JSPerformance wrapper, which the global roots for this Performance's life.
+    auto* schedulingGlobalObject = defaultGlobalObject(context->jsGlobalObject());
+    auto* jsPerformance = uncheckedDowncast<JSPerformance>(schedulingGlobalObject->performanceObject());
+    JSC::JSValue asyncContext = schedulingGlobalObject->m_asyncContextData.get()->getInternalField(0);
+    if (!asyncContext.isUndefined())
+        jsPerformance->setTimingBufferDeliveryAsyncContext(schedulingGlobalObject->vm(), asyncContext);
+
     m_hasScheduledTimingBufferDeliveryTask = true;
     context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
+
+        auto* globalObject = defaultGlobalObject(context.jsGlobalObject());
+        auto* jsPerformance = uncheckedDowncast<JSPerformance>(globalObject->performanceObject());
+        JSC::JSValue restoreAsyncContext {};
+        JSC::InternalFieldTuple* asyncContextData = nullptr;
+        if (JSC::JSValue asyncContext = jsPerformance->timingBufferDeliveryAsyncContext()) {
+            asyncContextData = globalObject->m_asyncContextData.get();
+            restoreAsyncContext = asyncContextData->getInternalField(0);
+            asyncContextData->putInternalField(globalObject->vm(), 0, asyncContext);
+            jsPerformance->clearTimingBufferDeliveryAsyncContext();
+        }
+
         for (auto& observer : copyToVector(m_observers))
             observer->deliver();
+
+        if (asyncContextData)
+            asyncContextData->putInternalField(globalObject->vm(), 0, restoreAsyncContext);
     });
 }
 

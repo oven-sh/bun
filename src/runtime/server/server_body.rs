@@ -2175,8 +2175,17 @@ where
         // config omits the handler, so subsequent `on_web_socket_upgrade` /
         // `set_routes` stop routing through the node:http path. `take()` yields
         // `None` when the new config omitted it; assignment drops the old Strong.
-        if self.config.on_node_http_request.as_ref().map(Strong::get)
-            != new_config.on_node_http_request.as_ref().map(Strong::get)
+        //
+        // Never the other direction: a server that was not created as a node:http
+        // server cannot become one through reload(). listen() already sized every
+        // future connection's socket ext block for this server's kind
+        // (HttpResponseData vs the bigger NodeHttpResponseData) and set_routes
+        // would swap the context onto the node:http handler instantiation under
+        // those already-sized allocations, so the node request path would
+        // construct and index past them.
+        if self.config.on_node_http_request.is_some()
+            && self.config.on_node_http_request.as_ref().map(Strong::get)
+                != new_config.on_node_http_request.as_ref().map(Strong::get)
         {
             self.config.on_node_http_request = new_config.on_node_http_request.take();
         }
@@ -3496,7 +3505,7 @@ where
             let is_ssl = SSL;
             let global = self.global();
             let node_socket = match jsc::from_js_host_call(&global, || {
-                Bun__createNodeHTTPServerSocketForClientError(
+                Bun__getOrCreateNodeHTTPServerSocket(
                     is_ssl,
                     std::ptr::from_mut(socket).cast::<c_void>(),
                     &global,
@@ -3529,6 +3538,32 @@ where
             ) {
                 global.report_active_exception_as_unhandled(err);
             }
+        }
+    }
+
+    /// node:http compat: a connection was accepted on this server (for TLS,
+    /// its handshake completed). Hands the JSNodeHTTPServerSocket to the JS
+    /// `onConnection` callback so `node:http` can emit 'connection' before any
+    /// request bytes arrive.
+    pub fn on_connection_callback(&mut self, socket: *mut c_void) {
+        let Some(callback) = self.on_connection.get() else {
+            return;
+        };
+        let global = self.global();
+        let node_socket = match jsc::from_js_host_call(&global, || {
+            Bun__getOrCreateNodeHTTPServerSocket(SSL, socket, &global)
+        }) {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        if node_socket.is_undefined_or_null() {
+            return;
+        }
+        // SAFETY: event_loop() returns a live raw pointer tied to the global.
+        let _scope =
+            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        if let Err(err) = callback.call(&global, JSValue::UNDEFINED, &[node_socket]) {
+            global.report_active_exception_as_unhandled(err);
         }
     }
 
@@ -3676,11 +3711,70 @@ pub(super) fn server_set_on_client_error_(
     Ok(JSValue::UNDEFINED)
 }
 
+pub(super) fn server_set_on_connection_(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JsResult<JSValue> {
+    if !server.is_object() {
+        return Err(global.throw(format_args!(
+            "Failed to set onConnection: The 'this' value is not a Server."
+        )));
+    }
+
+    if !callback.is_function() {
+        return Err(global.throw(format_args!(
+            "Failed to set onConnection: The provided value is not a function."
+        )));
+    }
+
+    macro_rules! handle {
+        ($T:ty) => {
+            if let Some(this) = server.as_::<$T>() {
+                // SAFETY: as_ returned a non-null *mut to a live server.
+                let this = unsafe { &mut *this };
+                if let Some(app) = this.app {
+                    this.on_connection.deinit();
+                    this.on_connection = StrongOptional::create(callback, global);
+                    // uws filters fire with `1` when an HTTP connection is opened
+                    // (for TLS, when its handshake completes) and `-1` on close;
+                    // only the open notification is forwarded to JS.
+                    extern "C" fn thunk(
+                        socket: *mut uws_sys::us_socket_t,
+                        opened: i32,
+                        user_data: *mut c_void,
+                    ) {
+                        if opened != 1 {
+                            return;
+                        }
+                        // SAFETY: user_data is the `*mut Self` registered below;
+                        // socket is a live uWS socket for this server's group.
+                        let this = unsafe { &mut *user_data.cast::<$T>() };
+                        this.on_connection_callback(socket.cast::<c_void>());
+                    }
+                    // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app)
+                        .filter(thunk, core::ptr::from_mut::<$T>(this).cast::<c_void>());
+                }
+                return Ok(JSValue::UNDEFINED);
+            }
+        };
+    }
+    handle!(HTTPServer);
+    handle!(HTTPSServer);
+    handle!(DebugHTTPServer);
+    handle!(DebugHTTPSServer);
+    debug_assert!(false);
+    Ok(JSValue::UNDEFINED)
+}
+
 pub(super) fn server_set_app_flags_(
     global: &JSGlobalObject,
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
+    use_insecure_http_parser: bool,
+    http_allow_half_open: bool,
 ) -> JsResult<JSValue> {
     if !server.is_object() {
         return Err(global.throw(format_args!(
@@ -3690,16 +3784,36 @@ pub(super) fn server_set_app_flags_(
 
     if let Some(this) = server.as_::<HTTPServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            use_insecure_http_parser,
+            http_allow_half_open,
+        );
     } else if let Some(this) = server.as_::<HTTPSServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            use_insecure_http_parser,
+            http_allow_half_open,
+        );
     } else if let Some(this) = server.as_::<DebugHTTPServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            use_insecure_http_parser,
+            http_allow_half_open,
+        );
     } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
         // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_flags(require_host_header, use_strict_method_validation);
+        unsafe { &mut *this }.set_flags(
+            require_host_header,
+            use_strict_method_validation,
+            use_insecure_http_parser,
+            http_allow_half_open,
+        );
     } else {
         return Err(global.throw(format_args!(
             "Failed to set timeout: The 'this' value is not a Server."
@@ -3755,6 +3869,8 @@ extern "C" fn server_set_app_flags_shim(
     server: JSValue,
     require_host_header: bool,
     use_strict_method_validation: bool,
+    use_insecure_http_parser: bool,
+    http_allow_half_open: bool,
 ) -> JSValue {
     host_fn::to_js_host_fn_result(
         global,
@@ -3763,6 +3879,8 @@ extern "C" fn server_set_app_flags_shim(
             server,
             require_host_header,
             use_strict_method_validation,
+            use_insecure_http_parser,
+            http_allow_half_open,
         ),
     )
 }
@@ -3777,6 +3895,15 @@ extern "C" fn server_set_on_client_error_shim(
         global,
         server_set_on_client_error_(global, server, callback),
     )
+}
+
+#[unsafe(export_name = "Server__setOnConnection")]
+extern "C" fn server_set_on_connection_shim(
+    global: &JSGlobalObject,
+    server: JSValue,
+    callback: JSValue,
+) -> JSValue {
+    host_fn::to_js_host_fn_result(global, server_set_on_connection_(global, server, callback))
 }
 
 #[unsafe(export_name = "Server__setMaxHTTPHeaderSize")]
@@ -3803,8 +3930,11 @@ unsafe extern "C" {
     // clashing_extern_declarations.
 
     // `&JSGlobalObject` encodes non-null/aligned; `socket` is the opaque live
-    // `uws::Socket*` handed to `on_client_error_callback` by the uws dispatcher.
-    safe fn Bun__createNodeHTTPServerSocketForClientError(
+    // `uws::Socket*` handed to `on_client_error_callback` /
+    // `on_connection_callback` by the uws dispatcher. Returns the
+    // JSNodeHTTPServerSocket already attached to the raw socket, creating one
+    // if the connection has not produced a parsed request yet.
+    safe fn Bun__getOrCreateNodeHTTPServerSocket(
         is_ssl: bool,
         socket: *mut c_void,
         global: &JSGlobalObject,

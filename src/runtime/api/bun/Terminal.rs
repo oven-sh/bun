@@ -161,6 +161,17 @@ pub struct Terminal {
 
     /// State flags
     flags: Cell<Flags>,
+
+    /// The streaming writer has accepted bytes it hasn't flushed to the fd
+    /// yet. Set by `write()` from `has_pending_data()`; cleared when
+    /// `on_write` observes `Drained` so POSIX can fire the `drain` callback
+    /// (Windows fires it from `on_writable`).
+    writer_has_buffered: Cell<bool>,
+
+    /// This PTY's own raw-mode state (mode + saved termios), so one terminal
+    /// going raw never makes another terminal's setRawMode a no-op.
+    #[cfg(unix)]
+    tty_state: Cell<bun_core::tty::State>,
 }
 
 bitflags::bitflags! {
@@ -458,6 +469,9 @@ impl Terminal {
             reader: JsCell::new(IOReader::init::<Terminal>()),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
+            writer_has_buffered: Cell::new(false),
+            #[cfg(unix)]
+            tty_state: Cell::new(bun_core::tty::State::new()),
         }));
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
@@ -1423,31 +1437,40 @@ impl Terminal {
         // defer string_or_buffer.deinit() — Drop handles it.
 
         let bytes = string_or_buffer.slice();
+        let input_len = bytes.len();
 
-        if bytes.is_empty() {
+        if input_len == 0 {
             return Ok(JSValue::js_number(0.0));
         }
 
-        // Write using the streaming writer
-        let write_result = self.writer.with_mut(|w| w.write(bytes));
+        // Suppress drain firing from the synchronous on_write calls that
+        // StreamingWriter::write() makes while we still hold the `with_mut`
+        // borrow; it is restored from `has_pending_data()` immediately after.
+        let had_buffered = self.writer_has_buffered.replace(false);
+        let (write_result, has_pending) = self.writer.with_mut(|w| {
+            let r = w.write(bytes);
+            (r, w.has_pending_data())
+        });
+        self.writer_has_buffered.set(has_pending);
+        // A second write() can drain what an earlier one buffered; on_write saw
+        // the cleared flag, so fire drain here (outside `with_mut`).
+        #[cfg(unix)]
+        if had_buffered && !has_pending {
+            self.on_writer_ready();
+        }
+        #[cfg(not(unix))]
+        let _ = had_buffered;
+
+        // StreamingWriter::write() buffers any bytes it couldn't flush
+        // synchronously, so the full input has been accepted on every non-error
+        // return. The per-arm counts are sync-flushed bytes (and on a buffered
+        // writer can even exceed `input_len` when prior data drains), so
+        // returning them would make callers re-send an already-queued tail.
         match write_result {
-            bun_io::WriteResult::Done(amt) => Ok(JSValue::js_number(
-                i32::try_from(amt).expect("int cast") as f64,
-            )),
-            bun_io::WriteResult::Wrote(amt) => Ok(JSValue::js_number(
-                i32::try_from(amt).expect("int cast") as f64,
-            )),
-            // On Windows the streaming writer buffers and returns .pending=0; the
-            // bytes were accepted, so report bytes.len to match POSIX semantics.
-            bun_io::WriteResult::Pending(amt) => {
-                let n = if cfg!(windows) { bytes.len() } else { amt };
-                Ok(JSValue::js_number(
-                    i32::try_from(n).expect("int cast") as f64
-                ))
-            }
             bun_io::WriteResult::Err(err) => {
                 Err(global_object.throw_value(err.to_js(global_object)))
             }
+            _ => Ok(JSValue::js_number(input_len as f64)),
         }
     }
 
@@ -1558,7 +1581,8 @@ impl Terminal {
         #[cfg(unix)]
         {
             // Use the existing TTY mode function
-            let tty_result = bun_core::tty::set_mode(
+            let mut state = self.tty_state.get();
+            let tty_result = state.set_mode(
                 self.master_fd.get().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
@@ -1566,6 +1590,7 @@ impl Terminal {
                     bun_core::tty::Mode::Normal
                 },
             );
+            self.tty_state.set(state);
             if tty_result != 0 {
                 return Err(global_object.throw(format_args!("Failed to set raw mode")));
             }
@@ -1729,9 +1754,17 @@ impl Terminal {
     }
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
-        let _ = status;
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        let _ = self;
+        let _ = amount;
+        // POSIX: `PosixStreamingWriter` never dispatches `on_ready`; detect the
+        // buffered→drained transition here instead. Windows fires the drain
+        // callback from `on_writable`, so skip to avoid double-firing.
+        #[cfg(unix)]
+        if status == WriteStatus::Drained && self.writer_has_buffered.replace(false) {
+            self.on_writer_ready();
+        }
+        #[cfg(not(unix))]
+        let _ = status;
     }
 
     // IOReader callbacks

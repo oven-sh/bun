@@ -57,6 +57,35 @@ describe("Bun.wrapAnsi", () => {
     test("trim false preserves leading whitespace", () => {
       expect(Bun.wrapAnsi("  hello", 10, { trim: false })).toBe("  hello");
     });
+
+    // Leading-whitespace trim must not depend on which escape sequence precedes
+    // it: the CSI scanner ends on any final byte in 0x40-0x7E (ECMA-48 §5.4),
+    // not just SGR's 'm'. With the escape stripped the result is identical.
+    describe("leading trim after non-SGR escape prefixes", () => {
+      const trimCases: [label: string, input: string, columns: number, expected: string][] = [
+        ["SGR red", "\x1b[31m\tab cd", 2, "\x1b[31mab\x1b[39m\n\x1b[31mcd"],
+        ["clear screen", "\x1b[2J\tab cd", 2, "\x1b[2Jab\ncd"],
+        ["erase line", "\x1b[0K\tab cd", 2, "\x1b[0Kab\ncd"],
+        ["cursor home", "\x1b[H\tab cd", 2, "\x1b[Hab\ncd"],
+        ["cursor up", "\x1b[1A\tab cd", 2, "\x1b[1Aab\ncd"],
+        ["cursor position", "\x1b[1;1H\tab cd", 2, "\x1b[1;1Hab\ncd"],
+        ["DEC private mode", "\x1b[?25l\tab cd", 2, "\x1b[?25lab\ncd"],
+        ["OSC 8 hyperlink", "\x1b]8;;http://x\x07\tab cd", 2, "\x1b]8;;http://x\x07ab\x1b]8;;\x07\n\x1b]8;;http://x\x07cd"],
+        ["CSI then SGR", "\x1b[2J\x1b[31m\tab cd", 2, "\x1b[2J\x1b[31mab\x1b[39m\n\x1b[31mcd"],
+      ];
+
+      test.each(trimCases)("trims leading tab after %s", (_, input, columns, expected) => {
+        expect(Bun.wrapAnsi(input, columns)).toBe(expected);
+      });
+
+      test.each(trimCases)("stripANSI composes with wrapAnsi after %s", (_, input, columns) => {
+        expect(Bun.stripANSI(Bun.wrapAnsi(input, columns))).toBe(Bun.wrapAnsi(Bun.stripANSI(input), columns));
+      });
+
+      test.each(trimCases)("trim:false preserves leading tab after %s", (_, input, columns) => {
+        expect(Bun.wrapAnsi(input, columns, { trim: false })).toContain("\t");
+      });
+    });
   });
 
   describe("ANSI escape codes", () => {

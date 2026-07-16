@@ -139,14 +139,24 @@ function systemLibs(cfg: Config): string[] {
  */
 function emitWindowsAsanRuntime(n: Ninja, cfg: Config, exe: string): string | undefined {
   if (!(cfg.windows && cfg.asan && cfg.webkit === "prebuilt")) return undefined;
-  const { dll } = windowsAsanRuntime(cfg);
+  const { importLib, dll } = windowsAsanRuntime(cfg);
   const out = resolve(dirname(exe), "clang_rt.asan_dynamic-x86_64.dll");
+  // The DLL is not a declared output of the WebKit fetch (only provides.libs
+  // are, and adding a .dll there would flow it into the link inputs). Depend
+  // on the import lib — it IS a declared fetch output and the DLL is its
+  // sibling — and name the DLL path via a per-edge $src so ninja escapes it.
   n.rule("copy_asan_dll", {
-    command: cfg.host.os === "windows" ? `cmd /c "copy /Y $in $out >nul"` : `cp $in $out`,
+    command: cfg.host.os === "windows" ? `cmd /c copy /Y $src $out >nul` : `cp $src $out`,
     description: "copy $out",
     restat: true,
   });
-  n.build({ outputs: [out], rule: "copy_asan_dll", inputs: [dll] });
+  n.build({
+    outputs: [out],
+    rule: "copy_asan_dll",
+    inputs: [],
+    implicitInputs: [importLib],
+    vars: { src: cfg.host.os === "windows" ? dll.replaceAll("/", "\\") : dll },
+  });
   return out;
 }
 

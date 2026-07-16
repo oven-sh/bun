@@ -24,15 +24,13 @@ use std::sync::OnceLock;
 use super::package_manager_options as Options;
 
 /// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
-/// literal then write to stdout. The help strings are runtime `&str`s so we
-/// use the runtime expander.
+/// literal then write to stdout. Must be a single rewrite pass: feeding the
+/// result through `format_args!` into `Output::pretty` would run the rewriter
+/// again on the already-unescaped `\<name\>` placeholders and delete them.
 #[inline]
 #[allow(clippy::disallowed_methods)] // template is a runtime &str parameter
 fn pretty_help(text: &str) {
-    Output::pretty(format_args!(
-        "{}",
-        Output::pretty_fmt_rt(text, Output::enable_ansi_colors_stdout())
-    ));
+    Output::pretty(text);
 }
 
 type ParamType = clap::Param<clap::Help>;
@@ -280,7 +278,7 @@ const AUDIT_PARAMS: &[ParamType] = &[
     ),
     clap::param!("--json                                 Output in JSON format"),
     clap::param!(
-        "--audit-level <STR>                    Only print advisories with severity greater than or equal to <level> (low, moderate, high, critical)"
+        "--audit-level <STR>                    Only print advisories with severity greater than or equal to \\<level\\> (low, moderate, high, critical)"
     ),
     clap::param!("--ignore <STR>...                      Ignore specific CVE IDs from audit"),
 ];

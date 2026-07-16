@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
+use super::throw;
 
 pub(crate) fn to_have_been_called_times(
     this: &Expect,
@@ -38,33 +39,31 @@ pub(crate) fn to_have_been_called_times(
     // handle failure
     if not {
         let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-        return this.throw(
+        return throw!(
+            this,
             global,
             signature,
-            format_args!(
-                concat!(
-                    "\n\n",
-                    "Expected number of calls: not <green>{}<r>\n",
-                    "Received number of calls: <red>{}<r>\n"
-                ),
-                times,
-                calls.get_length(global)?,
-            ),
-        );
-    }
-
-    let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-    this.throw(
-        global,
-        signature,
-        format_args!(
             concat!(
                 "\n\n",
-                "Expected number of calls: <green>{}<r>\n",
+                "Expected number of calls: not <green>{}<r>\n",
                 "Received number of calls: <red>{}<r>\n"
             ),
             times,
             calls.get_length(global)?,
+        );
+    }
+
+    let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
+    throw!(
+        this,
+        global,
+        signature,
+        concat!(
+            "\n\n",
+            "Expected number of calls: <green>{}<r>\n",
+            "Received number of calls: <red>{}<r>\n"
         ),
+        times,
+        calls.get_length(global)?,
     )
 }

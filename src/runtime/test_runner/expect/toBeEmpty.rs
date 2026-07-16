@@ -2,7 +2,7 @@ use core::ffi::c_void;
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
 
-use super::Expect;
+use super::{throw, Expect};
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
 // `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
@@ -63,10 +63,13 @@ pub(crate) fn to_be_empty(
             }
         } else {
             let signature = Expect::get_signature("toBeEmpty", "", false);
-            return Err(global.throw_pretty(format_args!(
-                "{signature}\n\nExpected value to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
+            return throw!(
+                this,
+                global,
+                signature,
+                "\n\nExpected value to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
                 value.to_fmt(&mut formatter)
-            )));
+            );
         }
     } else if actual_length.is_nan() {
         return Err(global.throw(format_args!(
@@ -79,10 +82,13 @@ pub(crate) fn to_be_empty(
 
     if not && pass {
         let signature = Expect::get_signature("toBeEmpty", "", true);
-        return Err(global.throw_pretty(format_args!(
-            "{signature}\n\nExpected value <b>not<r> to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
+        return throw!(
+            this,
+            global,
+            signature,
+            "\n\nExpected value <b>not<r> to be a string, object, or iterable\n\nReceived: <red>{}<r>\n",
             value.to_fmt(&mut formatter)
-        )));
+        );
     }
 
     if not {
@@ -94,16 +100,22 @@ pub(crate) fn to_be_empty(
 
     if not {
         let signature = Expect::get_signature("toBeEmpty", "", true);
-        return Err(global.throw_pretty(format_args!(
-            "{signature}\n\nExpected value <b>not<r> to be empty\n\nReceived: <red>{}<r>\n",
+        return throw!(
+            this,
+            global,
+            signature,
+            "\n\nExpected value <b>not<r> to be empty\n\nReceived: <red>{}<r>\n",
             value.to_fmt(&mut formatter)
-        )));
+        );
     }
 
     let signature = Expect::get_signature("toBeEmpty", "", false);
-    Err(global.throw_pretty(format_args!(
-        "{signature}\n\nExpected value to be empty\n\nReceived: <red>{}<r>\n",
+    throw!(
+        this,
+        global,
+        signature,
+        "\n\nExpected value to be empty\n\nReceived: <red>{}<r>\n",
         value.to_fmt(&mut formatter)
-    )))
+    )
 }
 

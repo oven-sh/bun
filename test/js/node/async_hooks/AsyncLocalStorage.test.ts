@@ -1042,7 +1042,9 @@ describe("async context passes through", () => {
          server.listen(0, () => {
            const client = http2.connect("http://127.0.0.1:" + server.address().port);
            let st;
-           als.run({ marker: true }, () => { st = client.request({ ":path": "/" }); st.resume(); });
+           // POST keeps the writable side open so destroy() emits 'aborted';
+           // GET/HEAD/DELETE force endStream and would skip the emit entirely.
+           als.run({ marker: true }, () => { st = client.request({ ":path": "/", ":method": "POST" }); st.resume(); });
            st.on("aborted", () => { throw new Error("aborted boom"); });
            st.on("response", () => st.destroy());
            // The throw is swallowed into the stream's 'error' — that event IS

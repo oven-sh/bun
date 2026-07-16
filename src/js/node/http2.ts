@@ -379,7 +379,6 @@ const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
 const bunHTTP2OriginSet = Symbol("::bunhttp2originset::");
 const bunHTTP2StreamFinal = Symbol.for("::bunHTTP2StreamFinal::");
 const bunHTTP2WaitForTrailers = Symbol("::bunhttp2waitfortrailers::");
-const bunHTTP2StreamAsyncContext = Symbol("::bunhttp2streamasynccontext::");
 
 const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
@@ -2372,27 +2371,6 @@ function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: numbe
   // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
   stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
 }
-// node's Http2Stream is an async resource: events the native session dispatches on a client
-// stream ('response', 'data', 'end') run in the async context that was active when request() was
-// called, not in the context of the socket read that delivered the frames. The snapshot is taken
-// in the ClientHttp2Stream constructor; these two helpers swap it in around a native dispatch and
-// restore the dispatch's own context afterwards.
-const kNoAsyncContextSwap = Symbol("noAsyncContextSwap");
-function enterStreamAsyncContext(stream: Http2Stream) {
-  const snapshot = stream[bunHTTP2StreamAsyncContext];
-  // kNoAsyncContextSwap = never captured (server streams); a captured EMPTY
-  // context (undefined) must still be swapped to, like Node's AsyncResource.
-  if (snapshot === kNoAsyncContextSwap) return kNoAsyncContextSwap;
-  const previous = $getInternalField($asyncContext, 0);
-  if (previous === snapshot) return kNoAsyncContextSwap;
-  $putInternalField($asyncContext, 0, snapshot);
-  return previous;
-}
-function exitStreamAsyncContext(previous) {
-  if (previous !== kNoAsyncContextSwap) {
-    $putInternalField($asyncContext, 0, previous);
-  }
-}
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
@@ -2413,9 +2391,6 @@ class Http2Stream extends Duplex {
   [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
-  // Async-context snapshot for native dispatches (see enterStreamAsyncContext); only client
-  // streams capture one (possibly an empty context, i.e. undefined).
-  [bunHTTP2StreamAsyncContext] = kNoAsyncContextSwap;
   constructor(streamId, session, headers) {
     super({
       decodeStrings: false,
@@ -2996,14 +2971,7 @@ class Http2Stream extends Duplex {
     }
   }
 }
-class ClientHttp2Stream extends Http2Stream {
-  constructor(streamId, session, headers) {
-    super(streamId, session, headers);
-    // Capture the async context active at request() time so the native dispatches for this stream
-    // ('response', 'data', 'end') run in it, like node's Http2Stream async resource.
-    this[bunHTTP2StreamAsyncContext] = $getInternalField($asyncContext, 0);
-  }
-}
+class ClientHttp2Stream extends Http2Stream {}
 
 // Wrap a native→JS #Handlers callback so its body runs inside the target
 // stream's captured async-context frame — the JS-side equivalent of Node's
@@ -5059,52 +5027,47 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(ClientHttp2Session.#Handlers.streamEnd, self, stream, state);
         return;
       }
-      const previousAsyncContext = enterStreamAsyncContext(stream);
-      try {
-        if (state == 6 || state == 7) {
-          if (stream.readable) {
-            if (!stream.rstCode) {
-              stream.rstCode = 0;
-            }
-            // Push a null so the stream can end whenever the client consumes
-            // it completely.
-            pushToStream(stream, null);
-            stream.read(0);
+      if (state == 6 || state == 7) {
+        if (stream.readable) {
+          if (!stream.rstCode) {
+            stream.rstCode = 0;
           }
+          // Push a null so the stream can end whenever the client consumes
+          // it completely.
+          pushToStream(stream, null);
+          stream.read(0);
         }
+      }
 
-        // 7 = closed, in this case we already send everything and received everything
-        if (state === 7) {
-          stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
-          markStreamClosed(stream);
-          self.#connections--;
-          if (stream.readable && !stream.rstCode) {
-            // Clean close while data is still buffered on the readable side: node defers the
-            // destroy until the consumer drains it ('end'), so a late-attaching reader does not
-            // lose data.
-            stream.once("end", destroySelfOnEnd);
-          } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
-            // The writable side is mid-finish (an in-flight _final settled the native stream
-            // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
-            // for the writable side to finish before destroying a cleanly closed stream.
-            stream.once("finish", destroySelfOnEnd);
-          } else {
-            stream.destroy();
-          }
-          if (self.#connections === 0 && self.#closed) {
-            // Deferred like close()'s own destroy: this runs inside a native dispatch
-            // batch, and frames the engine already received but has not dispatched yet
-            // must still reach JS. An outstanding settings() ACK gets a bounded grace
-            // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
-            if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
-            else setImmediate(destroyIfNotDestroyedNT, self);
-          }
-        } else if (state === 5) {
-          // 5 = local closed aka write is closed
-          markWritableDone(stream);
+      // 7 = closed, in this case we already send everything and received everything
+      if (state === 7) {
+        stream[bunHTTP2StreamStatus] |= StreamState.NativeClosed;
+        markStreamClosed(stream);
+        self.#connections--;
+        if (stream.readable && !stream.rstCode) {
+          // Clean close while data is still buffered on the readable side: node defers the
+          // destroy until the consumer drains it ('end'), so a late-attaching reader does not
+          // lose data.
+          stream.once("end", destroySelfOnEnd);
+        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
+          // The writable side is mid-finish (an in-flight _final settled the native stream
+          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
+          // for the writable side to finish before destroying a cleanly closed stream.
+          stream.once("finish", destroySelfOnEnd);
+        } else {
+          stream.destroy();
         }
-      } finally {
-        exitStreamAsyncContext(previousAsyncContext);
+        if (self.#connections === 0 && self.#closed) {
+          // Deferred like close()'s own destroy: this runs inside a native dispatch
+          // batch, and frames the engine already received but has not dispatched yet
+          // must still reach JS. An outstanding settings() ACK gets a bounded grace
+          // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+          if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
+          else setImmediate(destroyIfNotDestroyedNT, self);
+        }
+      } else if (state === 5) {
+        // 5 = local closed aka write is closed
+        markWritableDone(stream);
       }
     }),
     streamData: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) => {

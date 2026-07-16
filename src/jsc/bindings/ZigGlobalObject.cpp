@@ -195,6 +195,7 @@
 #include "JSCipher.h"
 #include "JSKeyObject.h"
 #include "JSSecretKeyObject.h"
+#include "JSAsymmetricKeyObjectPrototype.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
@@ -2017,6 +2018,11 @@ void GlobalObject::finishCreation(VM& vm)
             setupSecretKeyObjectClassStructure(init);
         });
 
+    m_JSAsymmetricKeyObjectPrototype.initLater(
+        [](const Initializer<JSObject>& init) {
+            setupAsymmetricKeyObjectPrototype(init);
+        });
+
     m_JSPublicKeyObjectClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupPublicKeyObjectClassStructure(init);
@@ -3154,6 +3160,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobal
 {
     auto& vm = JSC::getVM(globalObject);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->jsDateNow();
 }
 
 // ====================== end conditional builtin globals ======================

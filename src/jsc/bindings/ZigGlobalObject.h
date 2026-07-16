@@ -583,6 +583,7 @@ public:
     V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
     V(public, LazyClassStructure, m_JSKeyObjectClassStructure)                                               \
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSAsymmetricKeyObjectPrototype)                        \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
@@ -774,6 +775,12 @@ public:
     bool hasOverriddenModuleWrapper = false;
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
+
+    // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
+    // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be
+    // process-wide statics: each worker thread has its own realm and warns independently.
+    bool hasWarnedCryptoKeyDeprecation = false;
+    bool hasWarnedNonExtractableCryptoKeyDeprecation = false;
 
     // WeakGCMap<uint64_t, JSObject> — JS-level dedup of SecureContext by
     // config digest. WeakGCMap self-registers with the heap, so no

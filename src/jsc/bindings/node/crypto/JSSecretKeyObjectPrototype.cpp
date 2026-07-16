@@ -1,5 +1,6 @@
 #include "JSSecretKeyObjectPrototype.h"
 #include "JSSecretKeyObject.h"
+#include "JSKeyObject.h"
 #include "ErrorCode.h"
 #include "CryptoUtil.h"
 #include "BunProcess.h"
@@ -51,11 +52,17 @@ JSC_DEFINE_HOST_FUNCTION(jsSecretKeyObjectExport, (JSGlobalObject * globalObject
     RELEASE_AND_RETURN(scope, JSValue::encode(handle.exportSecret(globalObject, scope, optionsValue)));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName propertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsSecretKeyObjectSymmetricKeySize, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
+    VM& vm = globalObject->vm();
+    ThrowScope scope = DECLARE_THROW_SCOPE(vm);
+
     JSSecretKeyObject* secretKeyObject = dynamicDowncast<JSSecretKeyObject>(JSValue::decode(thisValue));
     if (!secretKeyObject) {
-        return JSValue::encode(jsUndefined());
+        // Like Node, a non-KeyObject names "KeyObject" while some other kind of KeyObject
+        // names "SecretKeyObject" (lib/internal/crypto/keys.js).
+        bool isKeyObject = JSValue::decode(thisValue).inherits<JSKeyObject>();
+        return ERR::INVALID_THIS(scope, globalObject, isKeyObject ? "SecretKeyObject"_s : "KeyObject"_s);
     }
 
     size_t symmetricKeySize = secretKeyObject->handle().symmetricKey().size();

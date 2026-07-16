@@ -422,6 +422,55 @@ describe("frame size limit (checklist §4.2)", () => {
   });
 });
 
+// RFC 9113 §6.8: receivers act on the most recently received GOAWAY, so a second GOAWAY carrying a
+// different error code overrides what the peer observes. Node sends exactly one on a connection
+// error (nghttp2_session_terminate_session is a no-op once terminated).
+describe("connection-error GOAWAY is sent once with the specific code (RFC 9113 §5.4.1, §6.8)", () => {
+  async function collectGoawayCodes(send: (c: RawH2) => void): Promise<number[]> {
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendSettingsAck();
+      send(c);
+      await c.waitForGoaway();
+      await c.waitClosed();
+      return c.frames.filter(f => f.type === FrameType.GOAWAY).map(goawayErrorCode);
+    } finally {
+      c.destroy();
+    }
+  }
+
+  test.each([
+    [
+      "DATA on stream 0 -> PROTOCOL_ERROR",
+      ErrorCode.PROTOCOL_ERROR,
+      (c: RawH2) => c.sendFrame(FrameType.DATA, 0, 0, Buffer.from("x")),
+    ],
+    [
+      "PING with length != 8 -> FRAME_SIZE_ERROR",
+      ErrorCode.FRAME_SIZE_ERROR,
+      (c: RawH2) => c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(5)),
+    ],
+    [
+      "INITIAL_WINDOW_SIZE overflow -> FLOW_CONTROL_ERROR",
+      ErrorCode.FLOW_CONTROL_ERROR,
+      (c: RawH2) => {
+        const b = Buffer.alloc(6);
+        b.writeUInt16BE(0x4, 0);
+        b.writeUInt32BE(0x80000000, 2);
+        c.sendFrame(FrameType.SETTINGS, 0, 0, b);
+      },
+    ],
+  ] as const)("%s", async (_name, expected, send) => {
+    const codes = await collectGoawayCodes(send);
+    // Node sends exactly one GOAWAY here (nghttp2_session_terminate_session is a no-op once
+    // terminated). A second GOAWAY with a different code (e.g. destroy()'s INTERNAL_ERROR
+    // default) is what conforming peers would act on, misclassifying the failure.
+    expect(codes).toEqual([expected]);
+  });
+});
+
 // ── Client-side conformance: a raw byte-level HTTP/2 *server* drives a Bun `node:http2`
 // client and asserts the client's wire behavior (push stream states, SETTINGS ack ordering).
 

@@ -234,7 +234,7 @@ describe("runAllTimers", () => {
   });
 
   test("timerLimit validation", () => {
-    for (const bad of [0, -1, NaN, Infinity, "ten", {}]) {
+    for (const bad of [0, -1, 1.5, NaN, Infinity, "ten", {}]) {
       expect(() => vi.useFakeTimers({ timerLimit: bad as any })).toThrow("'timerLimit' must be a positive integer");
     }
     expect(() => vi.useFakeTimers({ timerLimit: undefined })).not.toThrow();

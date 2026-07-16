@@ -320,7 +320,7 @@ fn use_fake_timers(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
                 )));
             }
             let n = limit.as_number();
-            if !n.is_finite() || n < 1.0 || n > u32::MAX as f64 {
+            if !n.is_finite() || n < 1.0 || n > u32::MAX as f64 || n.trunc() != n {
                 return Err(global.throw_invalid_arguments(format_args!(
                     "'timerLimit' must be a positive integer"
                 )));

@@ -305,53 +305,56 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
       enumerable: false,
       configurable: true,
     });
+    // V8 installs an accessor (no `writable`), Bun installs a data property; both
+    // must allow assignment. Only `writable: false` would be a regression.
+    expect(d.writable).not.toBe(false);
     expect(Object.prototype.propertyIsEnumerable.call(target, "stack")).toBe(false);
   };
 
   // plain object target
   const o = { a: 1 };
   Error.captureStackTrace(o);
-  expectNonEnumerableStack(o);
   expect(Object.keys(o)).toEqual(["a"]);
   expect(JSON.stringify(o)).toBe('{"a":1}');
   const forIn = [];
   for (const k in o) forIn.push(k);
   expect(forIn).toEqual(["a"]);
+  expectNonEnumerableStack(o);
   expect(typeof o.stack).toBe("string");
+  o.stack = "overwritten";
+  expect(o.stack).toBe("overwritten");
+  expectNonEnumerableStack(o);
 
   // plain object with Error.prepareStackTrace set
   Error.prepareStackTrace = (err, sites) => "from-prepare";
   try {
     const o2 = {};
     Error.captureStackTrace(o2);
-    expectNonEnumerableStack(o2);
     expect(Object.keys(o2)).toEqual([]);
+    expectNonEnumerableStack(o2);
     expect(o2.stack).toBe("from-prepare");
   } finally {
     Error.prepareStackTrace = origPrepareStackTrace;
   }
 
-  // ErrorInstance whose .stack has not been materialized yet
+  // ErrorInstance whose .stack has not been materialized yet. Object.keys must
+  // run before any descriptor lookup: getOwnPropertyDescriptor would trip
+  // ErrorInstance::materializeErrorInfoIfNeeded, which overwrites with its own
+  // DontEnum and hides the attribute on the captureStackTrace accessor path.
   const lazy = new Error("lazy");
   Error.captureStackTrace(lazy);
-  expectNonEnumerableStack(lazy);
   expect(Object.keys(lazy)).toEqual([]);
-  void lazy.stack;
   expectNonEnumerableStack(lazy);
 
   // ErrorInstance whose .stack has already been materialized
   const materialized = new Error("materialized");
   void materialized.stack;
   Error.captureStackTrace(materialized);
-  expectNonEnumerableStack(materialized);
   expect(Object.keys(materialized)).toEqual([]);
-
-  // assigning to .stack after captureStackTrace keeps it non-enumerable
-  const assigned = new Error("assigned");
-  Error.captureStackTrace(assigned);
-  assigned.stack = "assigned-value";
-  expectNonEnumerableStack(assigned);
-  expect(assigned.stack).toBe("assigned-value");
+  expectNonEnumerableStack(materialized);
+  materialized.stack = "overwritten";
+  expect(materialized.stack).toBe("overwritten");
+  expectNonEnumerableStack(materialized);
 });
 
 test("prepare stack trace call sites", () => {

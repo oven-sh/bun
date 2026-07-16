@@ -7,13 +7,9 @@
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapInlines.h"
 
-// libuv's UV__E* constants. On non-Windows these resolve to the negated host
-// errno (e.g. UV__ENOBUFS == -ENOBUFS == -105 on Linux); on Windows and for
-// codes the host lacks (EFTYPE on Linux, ...) they resolve to libuv's fixed
-// synthetic values (UV__ENOBUFS == -4060). Node.js exposes these exact values
-// on process.binding("uv") and keys util.getSystemErrorName() off them, so
-// using the platform E* macros directly (which picks up MSVC's errno.h on
-// Windows) breaks the round-trip.
+// libuv's UV__E* constants: -errno on POSIX, libuv-synthetic (-40xx) on Windows
+// and for codes the host lacks. Node keys process.binding("uv") and
+// util.getSystemErrorName() off these exact values; platform E* macros disagree.
 #include <uv/errno.h>
 
 // clang-format off

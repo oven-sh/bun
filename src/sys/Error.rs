@@ -355,6 +355,14 @@ impl Error {
 
         // both maps are total (`initFull("unknown error")`).
         let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
+            // Node.js surfaces libuv's UV_E* code as `err.errno`. On POSIX the
+            // negated discriminant above already IS that value; on Windows it is
+            // the internal Linux-style `E` discriminant (ENOENT -> -2) and must
+            // be remapped (-> -4058) so it agrees with process.binding("uv").
+            #[cfg(windows)]
+            {
+                err.errno = bun_errno::system_errno_to_uv_err(system_errno);
+            }
             err.code = BunString::static_(code.as_bytes());
             (code, map[system_errno])
         });

@@ -79,6 +79,24 @@ macro_rules! __errno_enum_with_uv_tail {
     };
 }
 
+/// Callback: emit `SystemErrno -> negative libuv error code` arms from the
+/// `[UV_X => EX]` rows. Entries without a `=> EX` counterpart are skipped.
+macro_rules! __system_errno_to_uv_err {
+    ( @uv $( [ $uv:ident $(=> $sys:ident)? ] )* ) => {
+        /// Map a `SystemErrno` to the value Node.js surfaces as `err.errno`
+        /// on Windows (libuv's synthetic `UV_E*` code, e.g. ENOENT -> -4058).
+        /// Returns the negated discriminant as a fallback for codes with no
+        /// libuv counterpart so an errno is never silently dropped.
+        pub const fn system_errno_to_uv_err(e: SystemErrno) -> c_int {
+            match e {
+                $( $( SystemErrno::$sys => uv::$uv, )? )*
+                _ => -(e as c_int),
+            }
+        }
+    };
+}
+for_each_uv_errno! { __system_errno_to_uv_err {} }
+
 // ──────────────────────────────────────────────────────────────────────────
 // E
 // ──────────────────────────────────────────────────────────────────────────

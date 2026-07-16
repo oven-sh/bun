@@ -1,5 +1,6 @@
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -781,14 +782,9 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           client.on("error", reject);
           const req = client.request({ ":path": "/", "test-header": "test-value" });
           {
-            const state = req.state;
-            expect(typeof state).toBe("object");
-            expect(typeof state.state).toBe("number");
-            expect(typeof state.weight).toBe("number");
-            expect(typeof state.sumDependencyWeight).toBe("number");
-            expect(typeof state.localClose).toBe("number");
-            expect(typeof state.remoteClose).toBe("number");
-            expect(typeof state.localWindowSize).toBe("number");
+            // Like node, the stream has no id (and an empty state object) until the session
+            // finishes connecting; the populated shape is asserted from the 'response' handler.
+            expect(req.state).toEqual({});
           }
           // Test Session State.
           {
@@ -805,8 +801,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             expect(typeof state.inflateDynamicTableSize).toBe("number");
           }
           let response_headers = null;
+          let response_state = null;
           req.on("response", (headers, flags) => {
             response_headers = headers;
+            response_state = req.state;
           });
           req.resume();
           req.on("end", () => {
@@ -815,6 +813,16 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           });
           await promise;
           expect(response_headers[":status"]).toBe(200);
+          {
+            const state = response_state;
+            expect(typeof state).toBe("object");
+            expect(typeof state.state).toBe("number");
+            expect(typeof state.weight).toBe("number");
+            expect(typeof state.sumDependencyWeight).toBe("number");
+            expect(typeof state.localClose).toBe("number");
+            expect(typeof state.remoteClose).toBe("number");
+            expect(typeof state.localWindowSize).toBe("number");
+          }
         });
         it("settings and properties should work", async () => {
           const assertSettings = settings => {
@@ -855,9 +863,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             const req = client.request(headers);
             expect(req.closed).toBeFalse();
             expect(req.destroyed).toBeFalse();
-            // we always asign a stream id to the request
-            expect(req.pending).toBeFalse();
-            expect(typeof req.id).toBe("number");
+            // node: the stream stays pending (no id) until the session finishes connecting; the
+            // HEADERS frame is submitted on 'connect'.
+            expect(req.pending).toBeTrue();
+            expect(req.id).toBeUndefined();
             expect(req.session).toBeDefined();
             expect(req.sentHeaders).toEqual({
               ":authority": `localhost:${serverAddress.port}`,
@@ -953,18 +962,19 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
           expect(received_ping).toBeUndefined();
         });
         it("ping with wrong payload length events should error", async () => {
+          // Node v26.3.0: ping() throws ERR_HTTP2_PING_LENGTH synchronously for a non-8-byte
+          // payload (lib/internal/http2/core.js:1462) — it never reaches the callback.
           const { promise, resolve, reject } = Promise.withResolvers();
           const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
           client.on("error", reject);
           client.on("connect", () => {
-            client.ping(Buffer.from("oops"), (err, duration, payload) => {
-              if (err) {
-                resolve(err);
-              } else {
-                reject("unreachable");
-              }
-              client.close();
-            });
+            try {
+              client.ping(Buffer.from("oops"), () => reject("unreachable"));
+              reject("did not throw");
+            } catch (err) {
+              resolve(err);
+            }
+            client.close();
           });
           const result = await promise;
           expect(result).toBeDefined();
@@ -1188,8 +1198,56 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
+          } finally {
+            server.close();
+          }
+        });
+        it("client tolerates a late RST_STREAM for a stream it already closed and evicted", async () => {
+          // RFC 9113 §5.1 (nghttp2 session_detect_idle_stream): a stream this client started and
+          // closed is closed, not idle, even once its state is evicted — a late peer RST_STREAM
+          // for it must be ignored, never answered with GOAWAY(PROTOCOL_ERROR).
+          const { promise: rawSocket, resolve: onRawSocket } = Promise.withResolvers();
+          const server = net.createServer(socket => {
+            socket.on("error", () => {});
+            socket.on("data", () => {});
+            // Server preface: our (empty) SETTINGS plus an ACK of the client's.
+            socket.write(new http2utils.SettingsFrame(false).data);
+            socket.write(new http2utils.SettingsFrame(true).data);
+            onRawSocket(socket);
+          });
+          await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+          const rstFrame = (id, code) => {
+            const payload = Buffer.alloc(4);
+            payload.writeUInt32BE(code, 0);
+            return Buffer.concat([new http2utils.Frame(4, 3, 0, id).data, payload]);
+          };
+          try {
+            const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+            const sessionErrors = [];
+            client.on("error", err => sessionErrors.push(err));
+            const req = client.request({ ":path": "/" });
+            req.on("error", () => {});
+            const closed = new Promise(resolve => req.on("close", resolve));
+            const socket = await rawSocket;
+            // Close the client's only stream, then wait until the client has fully processed it.
+            socket.write(rstFrame(1, http2.constants.NGHTTP2_CANCEL));
+            await closed;
+            // Late frame for the evicted stream, then a PING the session must still answer.
+            const pinged = new Promise((resolve, reject) => {
+              client.once("ping", resolve);
+              client.once("error", reject);
+              client.once("close", () => reject(new Error("session closed before the ping arrived")));
+            });
+            socket.write(rstFrame(1, http2.constants.NGHTTP2_NO_ERROR));
+            socket.write(Buffer.concat([new http2utils.Frame(8, 6, 0, 0).data, Buffer.alloc(8, 7)]));
+            await pinged;
+            expect(sessionErrors).toEqual([]);
+            expect(client.destroyed).toBe(false);
+            client.destroy();
           } finally {
             server.close();
           }
@@ -1220,8 +1278,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1252,8 +1312,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1284,8 +1346,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1317,8 +1381,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1359,8 +1425,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1448,8 +1516,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_COMPRESSION_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1491,8 +1561,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_PROTOCOL_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1534,8 +1606,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_ENHANCE_YOUR_CALM");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1568,8 +1642,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             });
             const result = await promise;
             expect(result).toBeDefined();
-            expect(result.code).toBe("ERR_HTTP2_SESSION_ERROR");
-            expect(result.message).toBe("Session closed with error code NGHTTP2_FRAME_SIZE_ERROR");
+            expect(result.code).toBe("ERR_HTTP2_ERROR");
+            // node: a violation nghttp2 detects locally surfaces as NghttpError ("Protocol error"),
+            // not as ERR_HTTP2_SESSION_ERROR (that one is reserved for a GOAWAY received from the peer).
+            expect(result.message).toBe("Protocol error");
           } finally {
             server.close();
           }
@@ -1578,6 +1654,44 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
     });
   }
 }
+
+// A stream's events run in the async context captured when request() was called (Node's
+// Http2Stream is an async resource), even when that context is empty and the session's
+// own socket callbacks carry the connect-time store.
+it("client stream events observe the request-time async context, not the session's", async () => {
+  const als = new AsyncLocalStorage();
+  const server = http2.createServer();
+  let client;
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const { promise: connected, resolve: onConnect, reject } = Promise.withResolvers();
+    client = als.run({ id: "connect" }, () => http2.connect(`http://localhost:${server.address().port}`));
+    client.on("error", reject);
+    client.on("connect", onConnect);
+    await connected;
+    // The await above resumed the test's own (empty) async context: this request
+    // captures an empty snapshot while the socket's callbacks carry { id: "connect" }.
+    const stores = [];
+    const { promise: closed, resolve: onClose, reject: onStreamError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/" });
+    req.on("response", () => stores.push(als.getStore()));
+    req.on("data", () => stores.push(als.getStore()));
+    req.on("end", () => stores.push(als.getStore()));
+    req.on("close", onClose);
+    req.on("error", onStreamError);
+    req.end();
+    await closed;
+    expect(stores.length).toBeGreaterThanOrEqual(3);
+    expect(stores).toEqual(new Array(stores.length).fill(undefined));
+  } finally {
+    client?.close?.();
+    server.close();
+  }
+});
 
 it("sensitive headers should work", async () => {
   const server = http2.createServer();
@@ -3183,6 +3297,74 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     expect(raw.toLowerCase()).not.toContain("keep-alive");
     expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("body");
   } finally {
+    server.close();
+  }
+});
+
+// close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
+// waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
+// ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().
+it("close() completes when the peer never ACKs an outstanding SETTINGS", async () => {
+  // Raw-socket h2 server: preface handshake + ACK the initial SETTINGS, then
+  // ignore any further SETTINGS frames (never ACK the second one).
+  const server = net.createServer(socket => {
+    let buf = Buffer.alloc(0);
+    let ackedInitial = false;
+    socket.on("data", chunk => {
+      buf = Buffer.concat([buf, chunk]);
+      if (!ackedInitial && buf.length >= 24) {
+        // Send server SETTINGS + ACK the client's initial SETTINGS.
+        socket.write(Buffer.from([0, 0, 0, 4, 0, 0, 0, 0, 0])); // empty SETTINGS
+        socket.write(Buffer.from([0, 0, 0, 4, 1, 0, 0, 0, 0])); // SETTINGS ACK
+        ackedInitial = true;
+      }
+      // Never ACK any subsequent SETTINGS.
+    });
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  await new Promise(resolve => client.once("localSettings", resolve));
+  client.settings({ enablePush: false }); // second SETTINGS the server will never ACK
+  expect(client.pendingSettingsAck).toBeTrue();
+  const closed = new Promise(resolve => client.on("close", resolve));
+  client.close();
+  await closed; // hangs before this fix
+  server.close();
+});
+
+// A pull-mode consumer (pause() then on('readable')/read()) must reopen the receive
+// window via _read(): the 'resume' event never fires on that path, so without _read()
+// clearing the paused gate the peer stalls at the initial ~64KB stream window.
+it("Http2Stream pull-mode read() after pause() replenishes the receive window", async () => {
+  const PAYLOAD = 200_000; // > 65535 initial stream window
+  const server = http2.createServer();
+  const { promise, resolve, reject } = Promise.withResolvers();
+  server.on("stream", stream => {
+    // Server-side stream already has an id, so pause() reaches setStreamReading().
+    stream.pause();
+    let received = 0;
+    stream.on("readable", () => {
+      let c;
+      while ((c = stream.read()) !== null) received += c.length;
+    });
+    stream.on("end", () => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+      resolve(received);
+    });
+    stream.on("error", reject);
+  });
+  await new Promise(r => server.listen(0, r));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    client.on("error", reject);
+    const req = client.request({ ":path": "/", ":method": "POST" });
+    req.on("error", reject);
+    req.end(Buffer.alloc(PAYLOAD, "x"));
+    const received = await promise;
+    expect(received).toBe(PAYLOAD);
+  } finally {
+    client.close();
     server.close();
   }
 });

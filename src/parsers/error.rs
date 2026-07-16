@@ -37,18 +37,4 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-impl From<crate::toml::lexer::Error> for Error {
-    fn from(e: crate::toml::lexer::Error) -> Self {
-        use crate::toml::lexer::Error as LexErr;
-        match e {
-            LexErr::UTF8Fail => Error::UTF8Fail,
-            LexErr::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
-            LexErr::SyntaxError => Error::SyntaxError,
-            LexErr::UnexpectedSyntax => Error::UnexpectedSyntax,
-            LexErr::JSONStringsMustUseDoubleQuotes => Error::JSONStringsMustUseDoubleQuotes,
-            LexErr::ParserError => Error::ParserError,
-        }
-    }
-}
-
 pub type Result<T, E = Error> = core::result::Result<T, E>;

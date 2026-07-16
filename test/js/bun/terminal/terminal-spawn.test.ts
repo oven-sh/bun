@@ -205,7 +205,7 @@ describe("Bun.Terminal subprocess integration", () => {
           ...opts.terminal,
           data(_t, chunk) {
             output += new TextDecoder().decode(chunk);
-            if (output.includes("]")) resolve();
+            if (output.includes("CHILD_TERM=[")) resolve();
           },
         },
       });
@@ -247,7 +247,7 @@ describe("Bun.Terminal subprocess integration", () => {
         name: "vt220",
         data(_t, chunk) {
           output += new TextDecoder().decode(chunk);
-          if (output.includes("]")) resolve();
+          if (output.includes("CHILD_TERM=[")) resolve();
         },
       });
       const proc = Bun.spawn({

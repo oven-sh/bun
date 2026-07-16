@@ -309,6 +309,11 @@ pub static TEMP_HOSTNAME: bun_core::RacyCell<[u8; 8192]> = bun_core::RacyCell::n
 
 const MAX_TLS_RECORD_SIZE: usize = 16 * 1024;
 
+/// Bound on `response_message_buffer` growth while accumulating response
+/// headers (and early data parked for `checkServerIdentity`). Generous
+/// fixed cap, independent of the request-side `--max-http-header-size` knob.
+pub(crate) const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
+
 /// REFUSED_STREAM or graceful GOAWAY past our id: the server promises it
 /// did not process the request, so re-dispatch from the top. Only reached
 /// for `.bytes` bodies (replayable).
@@ -3755,13 +3760,6 @@ impl<'a> HTTPClient<'a> {
             ) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
-                    // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
-                    // request-side knob (Node `--max-http-header-size`); reusing
-                    // it here rejects legitimate responses with large
-                    // `Location`/`Set-Cookie` headers. The intent is to bound
-                    // `response_message_buffer` growth, so use a generous fixed
-                    // cap independent of that knob.
-                    const MAX_RESPONSE_HEADER_BUFFER: usize = 1024 * 1024;
                     if to_read!().len() > MAX_RESPONSE_HEADER_BUFFER {
                         self.close_and_fail::<IS_SSL>(
                             crate::Error::ResponseHeadersTooLarge,
@@ -3953,6 +3951,12 @@ impl<'a> HTTPClient<'a> {
         // below the proxy_tunnel dispatch above so a tunneled target's raw
         // inner-TLS records still reach the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
+            if self.state.response_message_buffer.list.len() + incoming_data.len()
+                > MAX_RESPONSE_HEADER_BUFFER
+            {
+                self.close_and_fail::<IS_SSL>(crate::Error::ResponseHeadersTooLarge, socket);
+                return;
+            }
             let _ = self.state.response_message_buffer.append(incoming_data);
             self.set_timeout(&socket);
             return;

@@ -288,6 +288,12 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // Parked for the JS `checkServerIdentity` verdict: buffer early decrypted
     // bytes for `resume_after_cert_check` to replay (see `HTTPClient::on_data`).
     if this.state.flags.is_waiting_for_cert_check {
+        if this.state.response_message_buffer.list.len() + decoded_data.len()
+            > crate::MAX_RESPONSE_HEADER_BUFFER
+        {
+            ProxyTunnel::close_from_callback(proxy_nn, crate::Error::ResponseHeadersTooLarge);
+            return;
+        }
         scoped_log!(
             http_proxy_tunnel,
             "ProxyTunnel onData buffering while parked"

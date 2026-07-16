@@ -4633,9 +4633,11 @@ pub fn platform_iovec_const_create(buf: &[u8]) -> PlatformIoVecConst {
 /// Maximum number of iovecs a single `writev(2)`/`pwritev(2)`/`readv(2)`/
 /// `preadv(2)` may reference on POSIX. The kernel rejects a larger array with
 /// `EINVAL`, so `writev`/`pwritev` below batch the vectors into groups of at
-/// most this many and loop. `1024` is `IOV_MAX`/`UIO_MAXIOV` on every POSIX
-/// target Bun supports (Linux, macOS, the BSDs). The Windows path batches in
-/// `sys_uv` instead (see `sys_uv::pwritev`).
+/// most this many and loop, while `readv`/`preadv` cap at one batch and
+/// return a short read (matching libuv's `uv__fs_read`). `1024` is
+/// `IOV_MAX`/`UIO_MAXIOV` on every POSIX target Bun supports (Linux, macOS,
+/// the BSDs). The Windows path batches in `sys_uv` instead (see
+/// `sys_uv::pwritev`).
 #[cfg(unix)]
 const POSIX_IOV_MAX: usize = 1024;
 
@@ -4915,6 +4917,9 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     }
     #[cfg(unix)]
     {
+        // readv(2) rejects more than IOV_MAX iovecs with EINVAL; cap to one
+        // batch and return a short read, matching libuv's `uv__fs_read`.
+        let vecs = &vecs[..vecs.len().min(POSIX_IOV_MAX)];
         #[cfg(target_os = "macos")]
         {
             // SAFETY: vecs.ptr is `*const iovec`; the kernel writes through
@@ -4964,6 +4969,8 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     }
     #[cfg(unix)]
     {
+        // See `readv`: cap at IOV_MAX and return a short read.
+        let vecs = &vecs[..vecs.len().min(POSIX_IOV_MAX)];
         #[cfg(target_os = "macos")]
         {
             // SAFETY: see `readv`. Single shot.

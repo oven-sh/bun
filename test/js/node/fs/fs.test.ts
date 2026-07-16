@@ -3494,6 +3494,61 @@ describe("fs.writev past IOV_MAX", () => {
   });
 });
 
+// readv(2)/preadv(2) reject more than IOV_MAX (1024) iovecs with EINVAL.
+// Node (libuv) caps the batch and returns a short read instead of erroring;
+// Windows reads every buffer through libuv, so these POSIX tests don't apply.
+describe.skipIf(isWindows)("fs.readv past IOV_MAX", () => {
+  const COUNT = 1025;
+  const IOV_MAX = 1024;
+
+  const makeFile = (name: string) => {
+    const p = join(tmpdirSync(), name);
+    writeFileSync(p, Buffer.concat(Array.from({ length: COUNT }, (_, i) => Buffer.from([i & 0xff]))));
+    return p;
+  };
+  const makeBuffers = () => Array.from({ length: COUNT }, () => Buffer.alloc(1));
+
+  it("readvSync caps at IOV_MAX buffers and returns a short read", () => {
+    const fd = openSync(makeFile("readv-sync.bin"), "r");
+    const buffers = makeBuffers();
+    try {
+      // First call short-reads at the cap; a second call drains the rest.
+      expect(readvSync(fd, buffers)).toBe(IOV_MAX);
+      expect(readvSync(fd, buffers.slice(IOV_MAX))).toBe(COUNT - IOV_MAX);
+    } finally {
+      closeSync(fd);
+    }
+    expect(Buffer.concat(buffers)).toEqual(
+      Buffer.concat(Array.from({ length: COUNT }, (_, i) => Buffer.from([i & 0xff]))),
+    );
+  });
+
+  it("readvSync with a position caps at IOV_MAX buffers", () => {
+    const fd = openSync(makeFile("preadv-sync.bin"), "r");
+    const buffers = makeBuffers();
+    try {
+      expect(readvSync(fd, buffers, 1)).toBe(IOV_MAX);
+    } finally {
+      closeSync(fd);
+    }
+    expect(buffers[0]).toEqual(Buffer.from([1]));
+    expect(buffers[IOV_MAX - 1]).toEqual(Buffer.from([IOV_MAX & 0xff]));
+  });
+
+  it("async fs.readv caps at IOV_MAX buffers", async () => {
+    const fd = openSync(makeFile("readv-async.bin"), "r");
+    let bytesRead: number;
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.readv(fd, makeBuffers(), (err, n) => (err ? reject(err) : resolve(n)));
+      bytesRead = await promise;
+    } finally {
+      closeSync(fd);
+    }
+    expect(bytesRead).toBe(IOV_MAX);
+  });
+});
+
 describe("fs/promises", () => {
   const { exists, mkdir, readFile, rm, rmdir, stat, writeFile } = promises;
 

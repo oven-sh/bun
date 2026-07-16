@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -163,5 +163,73 @@ console.log(JSON.stringify(Bun.$.braces("echo {a,b}")));`,
       ["echo a","echo b"]"
     `);
     expect(exitCode).toBe(0);
+  });
+});
+
+// An unquoted empty brace alternative must not become an argv word (bash null
+// argument removal). Bun kept non-leading empties and dropped leading ones only
+// by accident, so `printf '[%s]' {a,}` emitted `[a][]` instead of `[a]`.
+describe("brace expansion drops empty argv words", () => {
+  // Observe argv directly via a spawned process so the assertion is on argc,
+  // not on `echo` rendering.
+  const script = "console.log(JSON.stringify(process.argv.slice(1)))";
+  const argv = async (pattern: string): Promise<string[]> => {
+    const out = await $`${bunExe()} -e ${script} -- ${{ raw: pattern }}`.env(bunEnv).nothrow().text();
+    return JSON.parse(out.trim());
+  };
+
+  const cases: Array<[string, string[]]> = [
+    // trailing / middle / leading unquoted empties all drop
+    ["{a,}", ["a"]],
+    ["{,a}", ["a"]],
+    ["{a,,b}", ["a", "b"]],
+    ["{a,,}", ["a"]],
+    ["{,a,}", ["a"]],
+    // all-empty expands to zero argv words
+    ["{,}", []],
+    ["{,,}", []],
+    // affixed: the variant is non-empty so nothing is dropped
+    ["x{,}y", ["xy", "xy"]],
+    ["x{a,}", ["xa", "x"]],
+    ["{a,}x", ["ax", "x"]],
+    // products: only the one fully-empty variant drops
+    ["{a,}{b,}", ["ab", "a", "b"]],
+    ["{,a}{,b}", ["b", "a", "ab"]],
+    ["{,}{,}", []],
+    // nested
+    ["{a,{b,}}", ["a", "b"]],
+    ["{{a,},b}", ["a", "b"]],
+    // a quoted empty in the compound word keeps empty variants as real words
+    ['""{a,}', ["a", ""]],
+    ['""{,a}', ["", "a"]],
+    ['{a,}""', ["a", ""]],
+    ['{"",a}', ["", "a"]],
+    ['{a,""}', ["a", ""]],
+    // non-empty cases stay unchanged
+    ["{a,b}", ["a", "b"]],
+  ];
+
+  for (const [pattern, expected] of cases) {
+    test.concurrent(`${pattern} -> ${JSON.stringify(expected)}`, async () => {
+      expect(await argv(pattern)).toEqual(expected);
+    });
+  }
+
+  // The phantom empty word was a real operand, not just rendering: without the
+  // fix `echo {a,}` prints "a \n" (trailing space) instead of "a\n".
+  test("echo {a,} has no trailing space", async () => {
+    const out = await $`echo {a,}`.nothrow().text();
+    expect(out).toBe("a\n");
+  });
+
+  // `/usr/bin/printf` argc witness from the report (POSIX only; Windows has
+  // no coreutils printf at that path).
+  test.skipIf(isWindows)("printf '[%s]' {a,} renders [a]", async () => {
+    const out = await $`/usr/bin/printf '[%s]' {a,}`.nothrow().text();
+    expect(out).toBe("[a]");
+  });
+  test.skipIf(isWindows)("printf '[%s]' {a,,b} renders [a][b]", async () => {
+    const out = await $`/usr/bin/printf '[%s]' {a,,b}`.nothrow().text();
+    expect(out).toBe("[a][b]");
   });
 });

@@ -338,11 +338,17 @@ impl Expansion {
         drop(arena);
 
         // Push each variant as its own word; word boundaries are recorded
-        // via `bounds`.
+        // via `bounds`. An unquoted empty variant is dropped (bash "null
+        // argument removal"): `{a,}`/`{,a}`/`{a,,b}` all lose the empty.
+        let mut pushed_any = !me.out.buf.is_empty();
         for s in expanded {
-            if !me.out.buf.is_empty() {
+            if s.is_empty() && !me.has_quoted_empty {
+                continue;
+            }
+            if pushed_any {
                 me.out.bounds.push(me.out.buf.len() as u32);
             }
+            pushed_any = true;
             me.out.buf.extend_from_slice(&s);
         }
 

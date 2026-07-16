@@ -11,10 +11,11 @@
 import type { Dependency } from "../source.ts";
 
 // Tip of oven-sh/libuv's `bun` branch: upstream f3ce527e + the win-pipe
-// CancelIoEx race fix, ConPTY pseudoconsole option for uv_spawn, and a
-// cherry-pick of upstream's AppContainer pipe-namespace fix
-// (libuv/libuv#5181 via oven-sh/libuv#7). To bump, update `bun`.
-const LIBUV_COMMIT = "8eed1923b81fec770ce27b1186b017406d4811e3";
+// CancelIoEx race fix, ConPTY pseudoconsole option for uv_spawn, the
+// cherry-picked upstream AppContainer pipe-namespace fix (libuv/libuv#5181
+// via oven-sh/libuv#7), and the fs stat/realpath + tty exact-fill line-read
+// correctness fixes (oven-sh/libuv#8). To bump, update `bun`.
+const LIBUV_COMMIT = "f6e75a7efdc8651ace3b0d07efbfd0b3e5037278";
 
 // prettier-ignore
 const SHARED = [

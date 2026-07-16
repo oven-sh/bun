@@ -175,11 +175,7 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherFinal, (JSC::JSGlobalObject * lexicalGlobalObje
         ASSERT(outLen <= outBuf->byteLength());
 
         if (ok && cipher->m_kind == CipherKind::Cipher && cipher->isAuthenticatedMode()) {
-            if (!cipher->m_authTagLen.has_value()) {
-                ASSERT(cipher->m_ctx.isGcmMode());
-                cipher->m_authTagLen = sizeof(cipher->m_authTag);
-            }
-
+            ASSERT(cipher->m_authTagLen.has_value());
             ok = cipher->m_ctx.getAeadTag(*cipher->m_authTagLen, reinterpret_cast<unsigned char*>(cipher->m_authTag));
         }
     }

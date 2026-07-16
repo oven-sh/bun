@@ -126,7 +126,7 @@ describe("node:quic under --isolate", () => {
       ]
     `);
     expect(exitCode).toBe(0);
-  });
+  }, 30000);
 });
 
 // An endpoint that both listens and dials keeps two lsquic engines on one

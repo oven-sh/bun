@@ -1821,13 +1821,7 @@ impl JSValkeyClient {
                         JSValue::UNDEFINED,
                     ));
                 }
-                Err(_) => {
-                    return Err(global.throw(format_args!(
-                        "Failed to remove handler for channel {}",
-                        // `JSString` is an `opaque_ffi!` ZST — safe deref.
-                        bun_jsc::JSString::opaque_ref(channel.as_string()).get_zig_string(global)
-                    )));
-                }
+                Err(e) => return Err(e),
             };
 
             // In this case, we only want to send the unsubscribe command to redis if there are no more listeners for this

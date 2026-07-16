@@ -177,6 +177,52 @@ function pauseOnBackpressure(self, socket) {
   self[kPausedUnref] = true;
   maybeUnrefIdle(self, socket);
 }
+// A completed write whose status is a negative errno: Node hands it to the write
+// callback as errnoException(status, 'write') and destroys the stream when no
+// callback is pending. https://github.com/nodejs/node/blob/v26.3.0/lib/internal/stream_base_commons.js#L81-L92
+function failWrite(self, negErrno, callback) {
+  let er = new ErrnoException(negErrno, "write") as Error & { code?: string; errno?: number; syscall?: string };
+  if (typeof er.code !== "string" || !/^E[A-Z0-9]+$/.test(er.code)) {
+    // A raw WSA value the errno table cannot name (Windows delivers fatal
+    // send errors this way): shape it like SocketEmitEndNT shapes reads,
+    // keeping the original errno.
+    er = new ConnResetException("write ECONNRESET") as Error & { code: string; errno?: number; syscall?: string };
+    er.errno = negErrno;
+    er.syscall = "write";
+  }
+  self._pendingData = null;
+  self[kwriteCallback] = null;
+  if (callback) {
+    // Node delivers a failed write to BOTH the write callback and the socket:
+    // onWriteComplete calls errorOrDestroy(self, ...) in addition to the
+    // chained callback (lib/internal/stream_base_commons.js), so 'error' and
+    // 'close' still fire even when every write had a callback. Only handing
+    // the error to a callback that ignores it left the socket alive forever
+    // (test-net-stream's server never observed its peer vanish).
+    callback(er);
+    if (!self.destroyed && !self._hadError) {
+      // _hadError is the cross-path once-guard: the native error dispatch
+      // (SocketHandlers.error) can deliver the same failure, and node emits
+      // a socket error exactly once.
+      self._hadError = true;
+      self.destroy(er);
+    }
+  } else if (!self.destroyed) {
+    if (self.listenerCount("error") > 0) {
+      // The consumer can detach its listener between now and destroy()'s
+      // deferred 'error' emission - the same last-resort guard
+      // SocketEmitEndNT uses for read errors.
+      self.once("error", () => {});
+      self.destroy(er);
+    } else {
+      // No write callback and no 'error' listener: a failed flush on an
+      // orphaned socket (an h2 teardown racing the peer's reset - routine on
+      // Windows, where the reset completes the send first) is teardown noise.
+      // Same silent-close policy as SocketEmitEndNT's no-listener case.
+      self.destroy();
+    }
+  }
+}
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
   // readable side open; the Duplex's allowHalfOpen drives the eventual destroy.
@@ -194,9 +240,12 @@ function detachSocket(self) {
 function destroyNT(self, err) {
   self.destroy(err);
 }
+let addAbortListener;
 function destroyWhenAborted(err) {
   if (!this.destroyed) {
-    this.destroy(err.target.reason);
+    // node's stream layer (addAbortSignal) destroys the socket with an AbortError (code
+    // ABORT_ERR) carrying the signal's reason as `cause`, not with the raw reason itself.
+    this.destroy($makeAbortError(undefined, { cause: err?.target?.reason }));
   }
 }
 // in node's code this callback is called 'onReadableStreamEnd' but that seemed confusing when `ReadableStream`s now exist
@@ -303,7 +352,11 @@ const SocketHandlers: SocketHandler = {
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
-      if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      if (res < 0) {
+        // The retried send failed for good (peer gone): $write returned -errno.
+        failWrite(self, res, callback);
+      } else if (res) {
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
         maybeUnrefIdle(self, socket);
@@ -505,7 +558,10 @@ function SocketEmitEndNT(self, _err?) {
   // merely called): a peer reset while queued data is still unflushed is the
   // peer aborting mid-transfer and must surface (test-net-error-twice).
   const teardownNoise = self[kended] && self.writableFinished;
-  if (_err && !self.destroyed && !teardownNoise && self.listenerCount("error") > 0) {
+  // _hadError: the failure already reached JS through the error dispatch
+  // (native on_error / a fatal write); node emits a socket error exactly
+  // once, so the close that follows it is delivered plain.
+  if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
     // The consumer can detach its 'error' listener between this close
     // callback and destroy()'s deferred 'error' emission (a request that
     // finished just as the reset arrived); a last-resort no-op listener keeps
@@ -819,8 +875,14 @@ const ServerHandlers: SocketHandler<NetSocket> = {
       if (verifyError) {
         self.authorized = false;
         self.authorizationError = verifyError.code || verifyError.message;
-        server?.emit("tlsClientError", verifyError, self);
         if (self._rejectUnauthorized) {
+          // The connection is refused: report the verification result through
+          // tlsClientError before tearing down. When the connection is kept
+          // (rejectUnauthorized: false) it proceeds with authorized=false and
+          // no tlsClientError - Node's onServerSocketSecure never emits it
+          // there and test-tls-sni-option asserts mustNotCall on it for the
+          // authorized=false cases.
+          server?.emit("tlsClientError", verifyError, self);
           // if we reject we still need to emit secure
           self.emit("secure", self);
           // No error argument: the socket has no 'error' listener yet, so destroy(err)
@@ -875,9 +937,28 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketHandlers.error(socket, error, true);
         return;
       }
+      SocketHandlers.error(socket, error, true);
+      this.server?.emit("clientError", error, data);
+      return;
     }
-    SocketHandlers.error(socket, error, true);
-    this.server?.emit("clientError", error, data);
+    // Plain TCP: the delegation above is a no-op (_hadError was just set and
+    // SocketHandlers.error's guard returns on it). On kqueue a fatal-flush
+    // from on_writable is the only place the errno is visible (the close it
+    // issues short-circuits the read dispatch at loop.c's
+    // us_socket_is_closed check), so swallowing it hung the server behind an
+    // un-failed pending write (test-net-stream on darwin). Shape it like
+    // Node's onWriteComplete: fail the pending write callback, then destroy
+    // with the error. destroy() owns the single 'error' emission via the
+    // stream's errorEmitted guard; callback(error) may have already
+    // destroyed, in which case this is a no-op.
+    const callback = data[kwriteCallback];
+    if (callback) {
+      data[kwriteCallback] = null;
+      callback(error);
+    }
+    if (!data.destroyed) {
+      data.destroy(error);
+    }
   },
   timeout(socket) {
     SocketHandlers.timeout(socket);
@@ -1054,7 +1135,12 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     self.connecting = false;
     if (callback) {
       const writeChunk = self._pendingData;
-      if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
+      const res = socket.$write(writeChunk || "", self._pendingEncoding || "utf8");
+      if (res < 0) {
+        // The retried send failed for good (peer gone): $write returned -errno.
+        self[kBytesWritten] = socket.bytesWritten;
+        failWrite(self, res, callback);
+      } else if (res) {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
@@ -1400,7 +1486,9 @@ function Socket(options?) {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
+  // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
+  // Bun.Socket), so store ms here. Node stores seconds because libuv does.
+  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
 
   this[khandlers] = SocketHandlers2;
   this.bytesRead = 0;
@@ -1412,6 +1500,9 @@ function Socket(options?) {
   this._port = undefined;
   this[bunTLSConnectOptions] = null;
   this.timeout = 0;
+  // node initializes the timer slot to null so it is observable before setTimeout() is called.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L401
+  this[kTimeout] = null;
   this[kwriteCallback] = undefined;
   this._pendingData = undefined;
   this._pendingEncoding = undefined; // for compatibility
@@ -1498,9 +1589,13 @@ function Socket(options?) {
   }
   if (signal) {
     if (signal.aborted) {
-      process.nextTick(destroyNT, this, signal.reason);
+      process.nextTick(destroyNT, this, $makeAbortError(undefined, { cause: signal.reason }));
     } else {
-      signal.addEventListener("abort", destroyWhenAborted.bind(this));
+      // addAbortListener registers a once listener; the close hook detaches it when the socket
+      // goes away first (mirrors node's addAbortSignal + eos cleanup).
+      addAbortListener ??= require("internal/abort_listener").addAbortListener;
+      const disposable = addAbortListener(signal, destroyWhenAborted.bind(this));
+      this.once("close", disposable[Symbol.dispose]);
     }
   }
   const optsBlockList = opts.blockList;
@@ -2240,7 +2335,10 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
-  const initialDelay = ~~(initialDelayMsecs / 1000);
+  // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
+  // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
+  // negatives and ~~ overflow match Node's no-validate behavior.
+  const initialDelay = MathMax(0, ~~initialDelayMsecs);
 
   if (!this._handle) {
     this[kSetKeepAlive] = enable;
@@ -2434,9 +2532,15 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     process.nextTick(callback, er);
     return false;
   }
-  const success = socket.$write(chunk, encoding);
+  const res = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
-  if (success) {
+  if (res < 0) {
+    // The kernel rejected the send outright (peer reset): $write returned the
+    // negative errno; deliver it like the EBADF/EPIPE branch above.
+    process.nextTick(failWrite, this, res, callback);
+    return false;
+  }
+  if (res) {
     if (this.encrypted) {
       // TLS batches writes through the SSL engine, so the bytes stay buffered
       // after $write returns. Defer the callback so writableLength/bufferSize
@@ -2457,9 +2561,9 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
   } else {
     this[kwriteCallback] = callback;
     // A pending native write holds the loop the way a libuv uv_write request
-    // does, so a write issued after FIN (handle already unref'd) still
-    // flushes. maybeUnrefIdle releases it once drain clears the callback.
-    if (!this[kUserUnrefed] && hasNativeLoopHold(this)) socket.ref();
+    // does, so a write issued after FIN or read backpressure (handle already
+    // unref'd) still flushes. maybeUnrefIdle releases it once drain clears.
+    if ((this[kended] || this[kPausedUnref]) && !this[kUserUnrefed] && hasNativeLoopHold(this)) socket.ref();
   }
 };
 
@@ -3157,7 +3261,7 @@ function Server(options?, connectionListener?) {
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1880
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = Boolean(keepAlive);
-  this.keepAliveInitialDelay = ~~(keepAliveInitialDelay / 1000);
+  this.keepAliveInitialDelay = MathMax(0, ~~keepAliveInitialDelay);
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = Boolean(noDelay);
@@ -3734,11 +3838,15 @@ function initSocketHandle(self) {
   }
 }
 
+// Node's handle.close(callback) takes a completion callback; userland code
+// intercepts close on `socket._handle` and invokes it, so always pass one.
+function onSocketHandleClosed() {}
+
 function closeSocketHandle(self, isException, isCleanupPending = false) {
   const handle = self._handle;
   $debug("closeSocketHandle", isException, isCleanupPending, !!handle);
   if (handle) {
-    handle.close();
+    handle.close(onSocketHandleClosed);
     setImmediate(() => {
       $debug("emit close", isCleanupPending);
       self.emit("close", isException);

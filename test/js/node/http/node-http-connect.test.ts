@@ -673,6 +673,30 @@ describe("HTTP server socket access via normal requests", () => {
 });
 
 describe("Should be compatible with node.js", () => {
+  // https://github.com/oven-sh/bun/issues/34158
+  test("server.close(cb) completes after a CONNECT handoff once both sockets are destroyed", async () => {
+    const server = http.createServer();
+    let serverSocket: net.Socket;
+    server.on("connect", (req, socket) => {
+      serverSocket = socket;
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = (server.address() as AddressInfo)!;
+
+    const request = http.request({ host: "127.0.0.1", port, method: "CONNECT", path: "example.com:80" });
+    request.on("error", () => {});
+    request.end();
+    const [, clientSocket] = (await once(request, "connect")) as [unknown, net.Socket];
+
+    clientSocket.destroy();
+    serverSocket!.destroy();
+    const { promise: closed, resolve: onClosed } = Promise.withResolvers<void>();
+    server.close(() => onClosed());
+    await closed;
+  });
+
   test("tests should run on node.js", async () => {
     const process = Bun.spawn({
       cmd: [nodeExe(), "--test", join(import.meta.dir, "node-http-connect.node.mts")],

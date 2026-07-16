@@ -157,11 +157,19 @@ const kPausedUnref = Symbol("kPausedUnref");
 const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
-// libuv unrefs the handle at UV_EOF; mirror that so a socket that has received
-// FIN does not keep the process alive. Skip while a write is in flight or
-// allowHalfOpen may still write, so drain can complete.
+// libuv deactivates the handle at UV_EOF and a pending uv_write() holds the
+// loop via active_reqs; mirror that: unref once FIN is in and no native write
+// is pending. _write re-refs on backpressure so a post-FIN write still holds.
 function maybeUnrefOnFIN(self, socket) {
-  if (!self[kwriteCallback] && (self.allowHalfOpen === false || self.writableFinished)) socket.unref();
+  if (self[kended] && !self[kwriteCallback] && !self[kUserUnrefed]) socket.unref();
+}
+// Node's readStop deactivates the handle; mirror Socket.prototype.pause's
+// unref when the data handler applies read backpressure so an idle unread
+// connection does not hold the loop. _read/resume re-ref via kPausedUnref.
+function pauseOnBackpressure(self, socket) {
+  socket.pause();
+  socket.unref();
+  self[kPausedUnref] = true;
 }
 function endNT(socket, callback, err) {
   // Node's _final half-closes the writable side (sends FIN) and leaves the
@@ -279,7 +287,7 @@ const SocketHandlers: SocketHandler = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      socket.pause();
+      pauseOnBackpressure(self, socket);
     }
   },
   drain(socket) {
@@ -292,6 +300,7 @@ const SocketHandlers: SocketHandler = {
       if (socket.$write(writeChunk || "", self._pendingEncoding || "utf8")) {
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
+        maybeUnrefOnFIN(self, socket);
       } else {
         self._pendingData = null;
       }
@@ -613,7 +622,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
     self._unrefTimer();
     self.bytesRead += buffer.length;
     if (!self.push(buffer)) {
-      socket.pause();
+      pauseOnBackpressure(self, socket);
     }
   },
   keylog(socket, line) {
@@ -1030,7 +1039,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     const { self } = socket.data;
     self._unrefTimer();
     self.bytesRead += buffer.length;
-    if (!self.push(buffer)) socket.pause();
+    if (!self.push(buffer)) pauseOnBackpressure(self, socket);
   },
   drain(socket) {
     $debug("Bun.Socket drain");
@@ -1043,6 +1052,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = self[kwriteCallback] = null;
         callback(null);
+        maybeUnrefOnFIN(self, socket);
       } else {
         self[kBytesWritten] = socket.bytesWritten;
         self._pendingData = null;
@@ -2440,6 +2450,10 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     callback(new Error("overlapping _write()"));
   } else {
     this[kwriteCallback] = callback;
+    // A pending native write holds the loop the way a libuv uv_write request
+    // does, so a write issued after FIN (handle already unref'd) still
+    // flushes. maybeUnrefOnFIN releases it once drain clears the callback.
+    if (!this[kUserUnrefed]) socket.ref();
   }
 };
 

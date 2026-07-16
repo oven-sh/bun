@@ -30,6 +30,7 @@ const {
   validateNumber,
   validateBoolean,
   validateFunction,
+  validateString,
 } = require("internal/validators");
 
 const types = require("node:util/types");
@@ -750,7 +751,7 @@ function _getMaxListeners(emitter) {
   return emitter?._maxListeners ?? defaultMaxListeners;
 }
 
-let AsyncResource = null;
+let kReferencingAsyncResource = null;
 
 function getMaxListeners(emitterOrTarget) {
   if (typeof emitterOrTarget?.getMaxListeners === "function") {
@@ -792,25 +793,58 @@ function addAbortListener(signal, listener) {
 }
 
 class EventEmitterAsyncResource extends EventEmitter {
-  triggerAsyncId;
-  asyncResource;
+  #asyncResource;
 
-  constructor(options) {
-    if (!AsyncResource) {
-      AsyncResource = require("node:async_hooks").AsyncResource;
+  constructor(options = undefined) {
+    let name;
+    if (typeof options === "string") {
+      name = options;
+      options = undefined;
+    } else {
+      if (new.target === EventEmitterAsyncResource) {
+        validateString(options?.name, "options.name");
+      }
+      name = options?.name || new.target.name;
     }
-    var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
-    super({ captureRejections });
-    this.triggerAsyncId = triggerAsyncId ?? 0;
-    this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+    super(options);
+
+    if (kReferencingAsyncResource === null) {
+      const { AsyncResource } = require("node:async_hooks");
+      kReferencingAsyncResource = class EventEmitterReferencingAsyncResource extends AsyncResource {
+        #eventEmitter;
+
+        constructor(ee, type, opts) {
+          super(type, opts);
+          this.#eventEmitter = ee;
+        }
+
+        get eventEmitter() {
+          return this.#eventEmitter;
+        }
+      };
+    }
+    this.#asyncResource = new kReferencingAsyncResource(this, name, options);
   }
 
-  emit(...args) {
-    this.asyncResource.runInAsyncScope(() => super.emit(...args));
+  emit(event, ...args) {
+    const asyncResource = this.#asyncResource;
+    return asyncResource.runInAsyncScope(super.emit, this, event, ...args);
   }
 
   emitDestroy() {
-    this.asyncResource.emitDestroy();
+    this.#asyncResource.emitDestroy();
+  }
+
+  get asyncId() {
+    return this.#asyncResource.asyncId();
+  }
+
+  get triggerAsyncId() {
+    return this.#asyncResource.triggerAsyncId();
+  }
+
+  get asyncResource() {
+    return this.#asyncResource;
   }
 }
 

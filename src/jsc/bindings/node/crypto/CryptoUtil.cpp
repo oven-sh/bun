@@ -882,6 +882,12 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
         RETURN_IF_EXCEPTION(scope, );
 
         if (!isInput) {
+            if (config.format == EVPKeyPointer::PKFormatType::RawPublic || config.format == EVPKeyPointer::PKFormatType::RawPrivate || config.format == EVPKeyPointer::PKFormatType::RawSeed) {
+                if (!cipherValue.isUndefinedOrNull() || !passphraseValue.isUndefined()) {
+                    ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, "raw format"_s, "does not support encryption"_s);
+                    return;
+                }
+            }
             if (!cipherValue.isUndefinedOrNull()) {
                 if (!cipherValue.isString()) {
                     ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "cipher"_s), cipherValue);

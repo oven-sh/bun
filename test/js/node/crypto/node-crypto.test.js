@@ -1097,6 +1097,23 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
         namedCurve: "no-such-curve",
       }),
     ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INVALID_CURVE" }));
+
+    // generateKeyPair's encoding path must also reject encryption for raw output.
+    expect(() =>
+      crypto.generateKeyPairSync("ed25519", {
+        privateKeyEncoding: { format: "raw-private", cipher: "aes-128-cbc", passphrase: "secret" },
+      }),
+    ).toThrow(
+      expect.objectContaining({
+        code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS",
+        message: "The selected key encoding raw format does not support encryption.",
+      }),
+    );
+    expect(() =>
+      crypto.generateKeyPairSync("ed25519", {
+        privateKeyEncoding: { format: "raw-private", passphrase: "secret" },
+      }),
+    ).toThrow(expect.objectContaining({ code: "ERR_CRYPTO_INCOMPATIBLE_KEY_OPTIONS" }));
   });
 
   it("publicEncrypt is not confused by a buffer detached from an oaepLabel getter", () => {

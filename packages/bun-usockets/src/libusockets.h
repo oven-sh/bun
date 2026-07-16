@@ -411,6 +411,11 @@ unsigned char us_connecting_socket_kind(struct us_connecting_socket_t *c) nonnul
 
 struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s);
 
+/* SNI hostname the peer sent in its ClientHello (server-side TLS sockets), or
+ * NULL when the socket is not TLS or no SNI extension was sent. The returned
+ * pointer is owned by the SSL object and only valid while the socket lives. */
+const char *us_socket_sni_servername(struct us_socket_t *s);
+
 /* ── SSL_CTX construction ─────────────────────────────────────────────────
  * The expensive bit (cert/key/CA parse, cipher list, DH params) is decoupled
  * from sockets entirely. Build once per SecureContext / config, share across

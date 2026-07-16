@@ -147,8 +147,9 @@ impl TimerObjectInternals {
     /// `cancel()` skips its own `remove`/`deref` because `state` is already
     /// `CANCELLED`, which is why the explicit `deref` follows.
     ///
-    /// `vm` is the live per-thread VM; `All.lock` must NOT be held (the
-    /// `set_enable_keeping_event_loop_alive` write reaches `&mut All`).
+    /// `vm` is the live per-thread VM; no borrow of `All` may be live across
+    /// this call (`cancel()` reaches `All::remove`, which forms its own
+    /// `&mut All`).
     pub(crate) fn release_heap_pin(this: core::ptr::NonNull<Self>, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees the parent box is live (refcount ≥ 1).
         let internals = unsafe { this.as_ref() };
@@ -290,8 +291,7 @@ impl TimerObjectInternals {
             flags: {
                 let mut f = Flags::default();
                 f.set_kind(kind);
-                // SAFETY: `state` is the boxed per-thread `RuntimeState`;
-                // single-threaded JS heap so no concurrent `&mut` to `.timer`.
+                // SAFETY: `state` is the boxed per-thread `RuntimeState`.
                 f.set_epoch(unsafe { (*state).timer.epoch });
                 Cell::new(f)
             },

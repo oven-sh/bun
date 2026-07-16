@@ -414,6 +414,15 @@ namespace uWS
     struct HttpParser
     {
 
+    public:
+        /* Re-arm after a parse error when the caller keeps the socket open
+         * (node:http 'clientError' with a user listener): the next bytes
+         * start a fresh request instead of resuming mid-stream. */
+        void resetParserState() {
+            fallback.clear();
+            remainingStreamingBytes = 0;
+        }
+
     private:
         std::string fallback;
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */

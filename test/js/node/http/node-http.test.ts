@@ -1583,7 +1583,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
           resolve();
@@ -1604,7 +1605,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();
@@ -1625,7 +1627,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
   describe("Transfer-Encoding Attacks", () => {
     test("rejects chunked requests with malformed chunk size", async () => {
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();
@@ -1653,7 +1656,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
 
     test("rejects chunked requests with invalid chunk ending", async () => {
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();
@@ -1685,7 +1689,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INVALID_TRANSFER_ENCODING");
           resolve();
@@ -1716,7 +1721,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INVALID_HEADER_TOKEN");
           resolve();
@@ -1875,7 +1881,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();
@@ -1900,7 +1907,8 @@ describe("HTTP Server Security Tests - Advanced", () => {
       const mockHandler = createMockHandler();
       server.on("request", mockHandler);
       const { promise, resolve, reject } = Promise.withResolvers();
-      server.on("clientError", (err: any) => {
+      server.on("clientError", (err: any, sock) => {
+        sock.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
         try {
           expect(err.code).toBe("HPE_INTERNAL");
           resolve();
@@ -2937,6 +2945,119 @@ it("removing transfer-encoding on a HEAD response keeps the connection alive", a
   } finally {
     server.close();
   }
+});
+
+describe("clientError listener owns the response and socket", () => {
+  // Node.js lib/_http_server.js socketOnError: when a 'clientError' listener is
+  // attached, the server writes nothing and does not close; the listener owns
+  // the response and the socket lifecycle. When no listener is attached the
+  // server writes a default 400/431/505 and destroys the socket.
+  async function raw(port: number, bytes: string) {
+    const socket = connect(port, "127.0.0.1");
+    const closed = new Promise<void>(r => socket.on("close", () => r()));
+    let data = "";
+    socket.on("data", d => (data += d.toString()));
+    socket.on("error", () => {});
+    await once(socket, "connect");
+    socket.write(bytes);
+    return { socket, closed, data: () => data };
+  }
+
+  it("does not write a default response or close when a listener is attached", async () => {
+    const errors: { code: string; raw: string }[] = [];
+    let serverSocket: any;
+    const server = createServer(() => {});
+    server.on("clientError", (err: any, sock: any) => {
+      serverSocket = sock;
+      errors.push({ code: err.code, raw: err.rawPacket.toString() });
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { socket, closed, data } = await raw(port, "*");
+      // Wait for each error before sending the next byte so writes never
+      // coalesce into one TCP read on the server (rawPacket stays one byte
+      // per event). Mirrors test-http-socket-error-listeners.js.
+      while (errors.length < 1) await new Promise(r => setImmediate(r));
+      for (let i = 0; i < 20; i++) {
+        const before = errors.length;
+        socket.write("*");
+        while (errors.length === before) await new Promise(r => setImmediate(r));
+      }
+      // The server wrote nothing to the peer.
+      expect({
+        count: errors.length,
+        wireBytes: data(),
+        allCodesInvalidMethod: errors.every(e => e.code === "HPE_INVALID_METHOD"),
+        allRawSingleByte: errors.every(e => e.raw === "*"),
+        writable: serverSocket.writable,
+        destroyed: serverSocket.destroyed,
+      }).toEqual({
+        count: 21,
+        wireBytes: "",
+        allCodesInvalidMethod: true,
+        allRawSingleByte: true,
+        writable: true,
+        destroyed: false,
+      });
+      socket.end();
+      await closed;
+    } finally {
+      server.closeAllConnections?.();
+      server.close();
+    }
+  });
+
+  it("writes 400 and destroys the socket when no listener is attached", async () => {
+    const socketErrors: any[] = [];
+    const server = createServer(() => {});
+    server.on("connection", s => s.on("error", e => socketErrors.push(e)));
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { closed, data } = await raw(port, "FOO /\r\n");
+      await closed;
+      expect(data()).toBe("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
+      expect(socketErrors[0]?.code).toBe("HPE_INVALID_METHOD");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("writes 431 for a header overflow when no listener is attached", async () => {
+    const server = createServer(() => {});
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const huge = Buffer.alloc(128 * 1024, 97).toString();
+      const { closed, data } = await raw(port, "GET / HTTP/1.1\r\nHost: a\r\nX-H: " + huge + "\r\n\r\n");
+      await closed;
+      expect(data()).toBe("HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("delivers only the listener's response on the wire", async () => {
+    const server = createServer(() => {});
+    server.on("clientError", (_err, sock) => {
+      sock.end("HTTP/1.1 418 I'm a teapot\r\nConnection: close\r\n\r\n");
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { closed, data } = await raw(port, "*");
+      await closed;
+      // Exactly the listener's bytes; no canned 400 prefixed or appended.
+      expect(data()).toBe("HTTP/1.1 418 I'm a teapot\r\nConnection: close\r\n\r\n");
+    } finally {
+      server.close();
+    }
+  });
 });
 
 it("clientError after a kept-alive request reuses the connection's socket and untracks it on close", async () => {

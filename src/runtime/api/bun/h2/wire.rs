@@ -105,6 +105,21 @@ impl ErrorCode {
     }
 }
 
+/// nghttp2 library error codes (negative). The embedder surfaces locally-detected connection
+/// errors to JS with one of these so node's `NghttpError` shape (code `ERR_HTTP2_ERROR`, message
+/// `nghttp2_strerror(code)`) can be reproduced exactly.
+/// https://github.com/nghttp2/nghttp2/blob/master/lib/includes/nghttp2/nghttp2.h (nghttp2_error)
+pub mod lib_error {
+    /// NGHTTP2_ERR_PROTO — "Protocol error"
+    pub const PROTO: i32 = -505;
+    /// NGHTTP2_ERR_STREAM_CLOSED — "Stream was already closed or invalid"
+    pub const STREAM_CLOSED: i32 = -510;
+    /// NGHTTP2_ERR_BAD_CLIENT_MAGIC — "Received bad client magic byte string"
+    pub const BAD_CLIENT_MAGIC: i32 = -903;
+    /// NGHTTP2_ERR_FLOODED — "Flooding was detected in this HTTP/2 session, and it must be closed"
+    pub const FLOODED: i32 = -904;
+}
+
 /// RFC 9113 §6.5.2 SETTINGS parameter registry (+ RFC 8441, RFC 9218).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u16)]

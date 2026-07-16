@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 
 // Helper to enable echo on a terminal (echo is disabled by default to avoid duplication)
 function enableEcho(terminal: Bun.Terminal) {
@@ -652,10 +652,7 @@ describe("Bun.Terminal", () => {
     });
   });
 
-  // On Windows the StreamingWriter is async so drain fires after each write.
-  // On POSIX, drain only fires after backpressure clears, which requires a
-  // reader on the slave side; with no child attached the buffer never drains.
-  describe.todoIf(!isWindows)("drain callback", () => {
+  describe("drain callback", () => {
     test("drain callback is invoked when writer is ready", async () => {
       const { promise, resolve } = Promise.withResolvers<void>();
       let drainCalled = false;
@@ -672,6 +669,34 @@ describe("Bun.Terminal", () => {
       terminal.close();
 
       expect(drainCalled).toBe(true);
+    });
+
+    // Reaching the `had_buffered && !has_pending` branch needs a second write
+    // whose combined size both exceeds CHUNK_SIZE (so should_buffer is false)
+    // and fits in the kernel PTY input queue (so the sync flush completes).
+    // On Linux the queue is ~12K so 5005 bytes works; on macOS it is smaller
+    // than 5005 with no slave reader, and on Apple Silicon CHUNK_SIZE is 16K,
+    // so neither constraint is satisfiable there. The branch under test has no
+    // target-specific code, so Linux is the regression guard.
+    test.skipIf(!isLinux)("drain fires when a second write flushes what the first buffered", async () => {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      let drainCount = 0;
+
+      const terminal = new Bun.Terminal({
+        drain() {
+          drainCount++;
+          resolve();
+        },
+      });
+      terminal.setRawMode(true);
+
+      expect(terminal.write("hello")).toBe(5);
+      expect(terminal.write(Buffer.alloc(5000, 66))).toBe(5000);
+
+      await promise;
+      terminal.close();
+
+      expect(drainCount).toBeGreaterThan(0);
     });
   });
 

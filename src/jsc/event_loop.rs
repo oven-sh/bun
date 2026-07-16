@@ -810,6 +810,11 @@ impl EventLoop {
                 unsafe { __bun_cancel_pending_immediate(task, vm) };
             }
         }
+        // Free the deferred-task map's storage. The tasks must not be run (same rule as the
+        // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
+        // released it when the JSC teardown before this finalized it. A worker's VM box is
+        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing else frees it.
+        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
     }
 
     /// Note (§Dispatch): `task` is an erased

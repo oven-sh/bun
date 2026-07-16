@@ -7,6 +7,7 @@ const { isIP } = require("node:net");
 const net = require("node:net");
 const { urlToHttpOptions } = require("internal/url");
 const { kEmptyObject, once } = require("internal/shared");
+const { validateObject } = require("internal/validators");
 const { kProxyConfig, checkShouldUseProxy, kWaitForProxyTunnel } = require("internal/http");
 const { validateHeaderValue } = require("node:_http_common");
 
@@ -495,6 +496,35 @@ Agent.prototype._evictSession = function _evictSession(key) {
 
 const { shouldUseEnvProxy } = require("node:_http_agent");
 
+// Like Node's https.Server constructor: default ALPNProtocols to ['http/1.1']
+// when neither ALPNProtocols nor ALPNCallback was given, and store the
+// normalized protocol list / callback on the server instance the way
+// tls.Server does (test-https-argument-of-creating.js).
+// https://github.com/nodejs/node/blob/v26.3.0/lib/https.js#L82-L97
+function createServer(options, requestListener) {
+  if (typeof options === "function") {
+    requestListener = options;
+    options = {};
+  } else if (options == null) {
+    options = {};
+  } else {
+    validateObject(options, "options");
+    options = { ...options };
+  }
+  if (!options.ALPNProtocols && !options.ALPNCallback) {
+    // http/1.0 is not defined as a Protocol ID in the IANA registry, so
+    // ALPN requests are always answered with http/1.1.
+    options.ALPNProtocols = ["http/1.1"];
+  }
+  const server = http.createServer(options, requestListener);
+  const optionsALPNProtocols = options.ALPNProtocols;
+  if (optionsALPNProtocols) {
+    tls.convertALPNProtocols(optionsALPNProtocols, server);
+  }
+  server.ALPNCallback = options.ALPNCallback;
+  return server;
+}
+
 var https = {
   Agent,
   globalAgent: new Agent({
@@ -504,7 +534,7 @@ var https = {
     proxyEnv: shouldUseEnvProxy() ? process.env : undefined,
   }),
   Server: http.Server,
-  createServer: http.createServer,
+  createServer,
   get,
   request,
 };

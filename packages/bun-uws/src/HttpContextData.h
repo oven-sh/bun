@@ -34,6 +34,16 @@ struct HttpFlags {
     bool requireHostHeader: 1 = true;
     bool isAuthorized: 1 = false;
     bool useStrictMethodValidation: 1 = false;
+    /* node:http insecureHTTPParser server option. NOTE: unlike Node's server
+     * (which fans kLenientAll out to all 10 llhttp lenient setters), the uWS
+     * parser only implements the LENIENT_HEADERS bit (control bytes accepted
+     * in field values); TE+CL conflict, chunked-size/CRLF strictness, version
+     * and header-token checks are still enforced. */
+    bool useInsecureHTTPParser: 1 = false;
+    /* node:http server.httpAllowHalfOpen: when true, a peer FIN with in-flight
+     * or queued responses keeps the connection open until they drain (Node's
+     * socketOnEnd); when false (the default), the connection ends right away. */
+    bool httpAllowHalfOpen: 1 = false;
 };
 
 template <bool SSL>

@@ -7876,8 +7876,14 @@ declare module "bun" {
 
     /**
      * Write data to the terminal.
+     *
+     * All bytes are accepted; any portion that cannot be flushed to the PTY
+     * immediately is buffered and delivered later. The `drain` callback fires
+     * once buffered data has been flushed. Do not re-send any part of `data`
+     * based on the return value.
+     *
      * @param data The data to write (string or BufferSource)
-     * @returns The number of bytes written
+     * @returns The number of bytes accepted (the byte length of `data`)
      */
     write(data: string | BufferSource): number;
 

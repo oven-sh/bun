@@ -48,7 +48,7 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch"],
+  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
 
   build: () => ({
     kind: "direct",

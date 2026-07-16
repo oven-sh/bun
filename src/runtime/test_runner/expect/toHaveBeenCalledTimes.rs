@@ -23,9 +23,9 @@ pub(crate) fn to_have_been_called_times(
         )));
     }
 
-    let times = arguments[0].coerce::<i32>(global)?;
+    let times = arguments[0].to_int64();
 
-    let mut pass = i32::try_from(calls.get_length(global)?).unwrap() == times;
+    let mut pass = calls.get_length(global)? as i64 == times;
 
     let not = this.flags.get().not();
     if not {

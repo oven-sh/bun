@@ -23,6 +23,10 @@ function getTimerDuration(msecs, name) {
 }
 
 export default {
-  kTimeout: Symbol("timeout"), // For hiding Timeouts on other internals.
+  // For hiding Timeouts on other internals. A registered symbol so the node
+  // test harness's --expose-internals shim ("internal/timers" virtual module
+  // in test/js/node/test/common/index.js) can hand the same symbol to ported
+  // tests that inspect socket[kTimeout].
+  kTimeout: Symbol.for("::buntimeout::"),
   getTimerDuration,
 };

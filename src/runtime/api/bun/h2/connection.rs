@@ -13,6 +13,14 @@ use super::stream::{self, State};
 use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
 use bun_collections::HashMap;
 
+/// Snapshot of the local-settings values carried by one sent-but-unACKed SETTINGS frame, so an
+/// inbound ACK is attributed to the submission it actually acknowledges (RFC 9113 §6.5.3) rather
+/// than to the latest submission.
+#[derive(Clone, Copy)]
+pub struct PendingLocalSettings {
+    pub settings: Settings,
+}
+
 /// Per-stream protocol state tracked by the engine.
 pub struct Stream {
     pub state: State,
@@ -86,14 +94,20 @@ pub struct Feed {
     pub fatal: bool,
 }
 
+/// nghttp2's NGHTTP2_DEFAULT_MAX_OBQ_FLOOD_ITEM: outbound PING/SETTINGS ACKs that may pile up
+/// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
+const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
+
 /// What the connection engine calls back into the embedder (the JSC binding) for. Methods take
 /// `&self`: the JSC binding (H2FrameParser) is fully interior-mutable (Cell/JsCell) and its host
 /// functions receive `&Self`, so it can own the `Connection` and pass itself as the sink without an
 /// ownership cycle.
 pub trait Sink {
     fn write(&self, bytes: &[u8]) -> WriteResult;
-    /// `code` is the raw u32 from the wire so unknown error codes survive to JS (node parity).
-    fn on_error(&self, code: u32, last_stream_id: u32, debug: &[u8]);
+    /// A locally-detected connection error: the GOAWAY (when one applies) is already on the wire.
+    /// `lib_error_code` is the negative nghttp2-style library error code (`wire::lib_error`) the
+    /// embedder maps to node's NghttpError.
+    fn on_error(&self, lib_error_code: i32, last_stream_id: u32, debug: &[u8]);
     fn on_local_settings(&self, settings: &Settings);
     fn on_remote_settings(&self, settings: &Settings);
     fn on_ping(&self, payload: &[u8], is_ack: bool);
@@ -107,11 +121,14 @@ pub trait Sink {
     /// A new stream was created by an inbound HEADERS (the embedder allocates its JS wrapper).
     fn on_stream_open(&self, _stream_id: u32) {}
     /// Whether the embedder can afford the state for a new peer-initiated stream (the session
-    /// memory budget). `false` refuses the HEADERS with RST_STREAM (REFUSED_STREAM) before any
-    /// stream state is allocated; the header block is still decoded for HPACK-table sync.
+    /// memory budget, node's maxSessionMemory). `false` refuses the HEADERS with RST_STREAM
+    /// (ENHANCE_YOUR_CALM, node's Http2Session::OnBeginHeadersCallback) before any stream state
+    /// is allocated; the header block is still decoded for HPACK-table sync (§4.3).
     fn can_open_stream(&self) -> bool {
         true
     }
+    /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
+    fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
     /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
     fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
@@ -143,6 +160,21 @@ pub trait Sink {
     fn is_local_stream(&self, _stream_id: u32) -> bool {
         false
     }
+    /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
+    /// stream eviction: ids at or below it have existed (closed at worst, never idle), which the
+    /// engine cannot tell on its own for locally-initiated streams whose HEADERS it never sent
+    /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks).
+    fn highest_started_stream_id(&self) -> u32 {
+        0
+    }
+    /// Whether the embedder's reader for `stream_id` is currently consuming data. While it is
+    /// paused, the stream's receive window is not replenished (mirrors node, where
+    /// nghttp2_session_consume_stream is only called while the JS readable is flowing) so the
+    /// peer is backpressured instead of buffering unboundedly. Connection-level replenishment is
+    /// unaffected.
+    fn is_stream_reading(&self, _stream_id: u32) -> bool {
+        true
+    }
 }
 
 pub struct Connection {
@@ -162,10 +194,17 @@ pub struct Connection {
     /// The initial window size the peer has ACKed (RFC 9113 6.5.3): until our SETTINGS is ACKed,
     /// the peer may legitimately send according to the previous value - enforce the larger.
     acked_local_initial_window: u32,
-    /// INITIAL_WINDOW_SIZE values of sent-but-unACKed SETTINGS frames, in send order. §6.5.3:
+    /// SETTINGS_MAX_HEADER_LIST_SIZE value enforced on received header blocks. nghttp2 only
+    /// applies a submitted local SETTINGS value once the peer ACKs it, so a header block that was
+    /// already in flight when we lowered the limit must not be rejected (node's
+    /// test-http2-session-settings submits maxHeaderListSize=1 mid-request and still receives the
+    /// response). Starts at the creation-time value the connection preface advertises and is
+    /// updated on each SETTINGS ACK.
+    pub enforced_max_header_list_size: u32,
+    /// Local-settings snapshots of sent-but-unACKed SETTINGS frames, in send order. §6.5.3:
     /// ACKs apply to outstanding SETTINGS in order, so each inbound ACK pops the front - the
-    /// value the peer actually acknowledged - rather than assuming the latest submission.
-    pub pending_local_window_acks: std::collections::VecDeque<u32>,
+    /// values the peer actually acknowledged - rather than assuming the latest submission.
+    pub pending_local_settings_acks: std::collections::VecDeque<PendingLocalSettings>,
     invalid_frame_count: u32,
     /// Maximum number of entries accepted in a single inbound SETTINGS frame (node's maxSettings
     /// session option, nghttp2's max_settings; not a SETTINGS parameter). Frames carrying more
@@ -200,7 +239,15 @@ pub struct Connection {
     /// connection-scoped HPACK table stays in sync (§4.3), then refused with RST_STREAM
     /// (STREAM_CLOSED) instead of being dispatched.
     header_stream_closed: bool,
+    /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory): the
+    /// block is decoded for HPACK sync (§4.3), then answered with RST_STREAM(ENHANCE_YOUR_CALM).
     header_stream_refused: bool,
+    /// A locally-detected connection error already tore the session down: ignore further input.
+    terminated: bool,
+    /// PING/SETTINGS ACKs queued behind a non-reading peer (nghttp2's
+    /// obq_flood_counter_). Reset only via note_outbound_drained() when the
+    /// embedder confirms its outbound buffer emptied — never per receive().
+    obq_ack_pending: u32,
 
     /// Scratch buffer for the outbound HPACK-encoded header block.
     enc_buf: Vec<u8>,
@@ -224,7 +271,8 @@ impl Connection {
             max_header_list_pairs: 128,
             max_invalid_frames: 1000,
             acked_local_initial_window: 65_535,
-            pending_local_window_acks: std::collections::VecDeque::new(),
+            enforced_max_header_list_size: local.max_header_list_size,
+            pending_local_settings_acks: std::collections::VecDeque::new(),
             invalid_frame_count: 0,
             max_settings: 32,
             send_window: SendWindow::new(wire::DEFAULT_WINDOW_SIZE),
@@ -240,6 +288,8 @@ impl Connection {
             header_push_parent: 0,
             header_stream_closed: false,
             header_stream_refused: false,
+            terminated: false,
+            obq_ack_pending: 0,
             enc_buf: Vec::new(),
             replenish_buf: Vec::new(),
             evict_buf: Vec::new(),
@@ -281,8 +331,10 @@ impl Connection {
     pub fn send_settings(&mut self, sink: &impl Sink) {
         let mut buf = [0u8; Settings::STANDARD_COUNT * 6];
         let n = self.local_settings.pack_standard(&mut buf);
-        self.pending_local_window_acks
-            .push_back(self.local_settings.initial_window_size);
+        self.pending_local_settings_acks
+            .push_back(PendingLocalSettings {
+                settings: self.local_settings,
+            });
         self.write_frame(sink, FrameType::Settings, 0, 0, &buf[..n]);
     }
 
@@ -298,15 +350,32 @@ impl Connection {
         self.write_frame(sink, FrameType::Ping, wire::flags::ACK, 0, payload);
     }
 
-    pub fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
+    /// Locally-detected connection error: send GOAWAY, mark the session terminated (further input
+    /// is ignored, like nghttp2 after terminate_session), and surface it to the embedder with the
+    /// nghttp2-style `lib_code` so JS can build node's NghttpError.
+    fn local_connection_error(
+        &mut self,
+        sink: &impl Sink,
+        code: ErrorCode,
+        lib_code: i32,
+        debug: &[u8],
+    ) {
         self.going_away = true;
+        self.terminated = true;
         let mut payload = Vec::with_capacity(8 + debug.len());
         payload.extend_from_slice(&self.last_stream_id.to_be_bytes());
         payload.extend_from_slice(&code.as_u32().to_be_bytes());
         payload.extend_from_slice(debug);
         self.write_frame(sink, FrameType::GoAway, 0, 0, &payload);
         let last = self.last_stream_id;
-        sink.on_error(code.as_u32(), last, debug);
+        sink.on_error(lib_code, last, debug);
+    }
+
+    /// Connection error with the generic NGHTTP2_ERR_PROTO library code — the same thing node
+    /// reports ("Protocol error") whenever nghttp2 terminates a session internally without a more
+    /// specific callback (node's `internal_goaway_sent_` path in OnFrameSent/SendPendingData).
+    pub fn send_go_away(&mut self, sink: &impl Sink, code: ErrorCode, debug: &[u8]) {
+        self.local_connection_error(sink, code, wire::lib_error::PROTO, debug);
     }
 
     fn send_window_update(&mut self, sink: &impl Sink, stream_id: u32, increment: u32) {
@@ -337,6 +406,15 @@ impl Connection {
     pub fn receive(&mut self, sink: &impl Sink, bytes: &[u8]) -> Feed {
         let mut offset = 0usize;
 
+        // A locally-detected connection error already tore the session down (GOAWAY sent, error
+        // surfaced): everything after it is discarded so no further streams/frames reach JS.
+        if self.terminated {
+            return Feed {
+                consumed: bytes.len(),
+                fatal: true,
+            };
+        }
+
         // §3.4: server validates the 24-octet client preface before any frame.
         if self.is_server && self.preface_received < wire::CONNECTION_PREFACE.len() {
             let need = wire::CONNECTION_PREFACE.len() - self.preface_received;
@@ -344,9 +422,12 @@ impl Connection {
             let expect =
                 &wire::CONNECTION_PREFACE[self.preface_received..self.preface_received + avail];
             if &bytes[..avail] != expect {
-                self.send_go_away(
+                // node: nghttp2_session_mem_recv returns NGHTTP2_ERR_BAD_CLIENT_MAGIC and the
+                // session errors with "Received bad client magic byte string".
+                self.local_connection_error(
                     sink,
                     ErrorCode::ProtocolError,
+                    wire::lib_error::BAD_CLIENT_MAGIC,
                     b"invalid connection preface",
                 );
                 return Feed {
@@ -463,7 +544,10 @@ impl Connection {
         let mut buf = std::mem::take(&mut self.replenish_buf);
         buf.clear();
         for (id, s) in self.streams.iter_mut() {
-            if s.state != State::Closed && s.recv_window.needs_update() {
+            if s.state != State::Closed
+                && s.recv_window.needs_update()
+                && sink.is_stream_reading(*id)
+            {
                 let inc = s.recv_window.take_update();
                 if inc > 0 {
                     buf.push((*id, inc));
@@ -562,15 +646,28 @@ impl Connection {
                 );
                 return true;
             }
+            // An ACK with no outstanding SETTINGS submission is unsolicited; nghttp2 silently
+            // ignores it (it never reaches node's HandleSettingsFrame defensive branch). The
+            // queue can also be empty during the legacy-parser bridge handoff (its
+            // pending_settings_window_submissions is drained into this queue between batches),
+            // so the first ACK falls back to local_settings rather than being dropped.
+            if self.local_settings_acked && self.pending_local_settings_acks.is_empty() {
+                return false;
+            }
             self.local_settings_acked = true;
-            // §6.5.3: this ACK acknowledges the oldest outstanding SETTINGS, whose window size
-            // may differ from the latest submission when several SETTINGS are in flight.
-            self.acked_local_initial_window = self
-                .pending_local_window_acks
-                .pop_front()
-                .unwrap_or(self.local_settings.initial_window_size);
-            let snapshot = self.local_settings;
-            sink.on_local_settings(&snapshot);
+            // §6.5.3: this ACK acknowledges the oldest outstanding SETTINGS, whose values may
+            // differ from the latest submission when several SETTINGS are in flight.
+            let acked =
+                self.pending_local_settings_acks
+                    .pop_front()
+                    .unwrap_or(PendingLocalSettings {
+                        settings: self.local_settings,
+                    });
+            self.acked_local_initial_window = acked.settings.initial_window_size;
+            // The peer has acknowledged this submission: header-list enforcement may now use the
+            // limit it carried.
+            self.enforced_max_header_list_size = acked.settings.max_header_list_size;
+            sink.on_local_settings(&acked.settings);
             return false;
         }
         // node's maxSettings (nghttp2 max_settings): refuse SETTINGS frames carrying more entries
@@ -600,7 +697,22 @@ impl Connection {
                 payload[i + 5],
             ]);
             if let Some(sid) = SettingId::from_u16(id) {
+                // RFC 8441 §3 (and nghttp2): once SETTINGS_ENABLE_CONNECT_PROTOCOL has been
+                // enabled, the peer must not disable it again — doing so is a connection error.
+                if sid == SettingId::EnableConnectProtocol
+                    && value == 0
+                    && self.remote_settings.enable_connect_protocol == 1
+                {
+                    self.send_go_away(
+                        sink,
+                        ErrorCode::ProtocolError,
+                        b"SETTINGS: server attempted to disable enableConnectProtocol",
+                    );
+                    return true;
+                }
                 self.remote_settings.apply(sid, value);
+            } else {
+                sink.on_remote_custom_setting(id, value);
             }
             i += 6;
         }
@@ -622,7 +734,37 @@ impl Connection {
         let snapshot = self.remote_settings;
         sink.on_remote_settings(&snapshot);
         self.send_settings_ack(sink);
+        if self.note_outbound_ack(sink) {
+            return true;
+        }
         false
+    }
+
+    /// The embedder confirms its outbound buffer is fully drained to the
+    /// transport: reset the outbound-ACK-queue counter (mirrors nghttp2's
+    /// per-send decrement, coarsened to whole-buffer drains). Never called
+    /// from receive() itself so a peer that never reads cannot reset it.
+    pub fn note_outbound_drained(&mut self) {
+        self.obq_ack_pending = 0;
+    }
+
+    /// Bound queued PING/SETTINGS ACKs behind a non-reading peer — nghttp2's
+    /// obq_flood_counter_ / NGHTTP2_ERR_FLOODED. The counter is only reset by
+    /// note_outbound_drained() when the transport actually drains, so detection
+    /// is independent of recv() chunk size. Returns true when the session was
+    /// torn down.
+    fn note_outbound_ack(&mut self, sink: &impl Sink) -> bool {
+        self.obq_ack_pending = self.obq_ack_pending.saturating_add(1);
+        if self.obq_ack_pending < MAX_OUTBOUND_ACK_QUEUE {
+            return false;
+        }
+        self.local_connection_error(
+            sink,
+            ErrorCode::EnhanceYourCalm,
+            wire::lib_error::FLOODED,
+            b"too many outbound control frames queued",
+        );
+        true
     }
 
     fn handle_ping(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
@@ -635,6 +777,9 @@ impl Connection {
         echo.copy_from_slice(&payload[..8]);
         self.send_ping_ack(sink, &echo);
         sink.on_ping(&echo, false);
+        if self.note_outbound_ack(sink) {
+            return true;
+        }
         false
     }
 
@@ -647,6 +792,22 @@ impl Connection {
         let last_stream_id =
             u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
         let code_raw = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+        // nghttp2 (nghttp2_session_on_goaway_received): the Last-Stream-ID must refer to a stream
+        // the *receiver* initiated (or 0) — for a server that means an even id, for a client an
+        // odd id. Anything else is a connection PROTOCOL_ERROR.
+        let initiated_locally = if self.is_server {
+            last_stream_id.is_multiple_of(2)
+        } else {
+            !last_stream_id.is_multiple_of(2)
+        };
+        if last_stream_id > 0 && !initiated_locally {
+            self.send_go_away(
+                sink,
+                ErrorCode::ProtocolError,
+                b"GOAWAY: invalid last_stream_id",
+            );
+            return true;
+        }
         self.going_away = true;
         sink.on_go_away(code_raw, last_stream_id, &payload[8..]);
         false
@@ -786,10 +947,23 @@ impl Connection {
                     return true;
                 }
                 Err(stream::TransitionError::StreamClosed) => {
-                    // §4.3: the field block must still be decompressed even though the frames are
-                    // discarded - skipping it would desync the connection-scoped HPACK table and
-                    // corrupt the next valid stream's headers. Buffer/decode the block, then
-                    // finish_header_block refuses it with RST_STREAM(STREAM_CLOSED).
+                    // nghttp2 (session_on_*_headers_received): HEADERS for a stream whose remote
+                    // half already ended (half-closed (remote)) is escalated to a CONNECTION error
+                    // of type STREAM_CLOSED — node surfaces it as NghttpError "Stream was already
+                    // closed or invalid" and tears the session down. A stream that closed for any
+                    // other reason (e.g. we reset it and the peer's trailers were already in
+                    // flight) keeps the conservative stream-level handling: the block is still
+                    // decoded for HPACK sync (§4.3), then refused with RST_STREAM(STREAM_CLOSED)
+                    // by finish_header_block.
+                    if cur_state == State::HalfClosedRemote {
+                        self.local_connection_error(
+                            sink,
+                            ErrorCode::StreamClosed,
+                            wire::lib_error::STREAM_CLOSED,
+                            b"HEADERS: stream closed",
+                        );
+                        return true;
+                    }
                     stream_closed = true;
                 }
             }
@@ -831,9 +1005,11 @@ impl Connection {
         // CONTINUATION floods. node itself never errors on this (nghttp2 tolerates far more,
         // verified on node v26.3.0) — this is deliberate hardening, covered by the
         // maxHeaderListSize test in node-http2.test.js.
-        let cap = (self.local_settings.max_header_list_size as usize).max(65536);
+        let cap = (self.enforced_max_header_list_size as usize).max(65536);
         if self.header_block.len().saturating_add(payload.len()) > cap {
-            self.send_go_away(sink, ErrorCode::EnhanceYourCalm, b"header block too large");
+            // nghttp2's NGHTTP2_MAX_HEADERSLEN (65536) overflow returns NGHTTP2_ERR_HEADER_COMP,
+            // which node surfaces as a session COMPRESSION_ERROR.
+            self.send_go_away(sink, ErrorCode::CompressionError, b"header block too large");
             return true;
         }
         self.header_block.extend_from_slice(payload);
@@ -862,8 +1038,9 @@ impl Connection {
         let mut fatal = false;
         // RFC 9113 §10.5.1: enforce SETTINGS_MAX_HEADER_LIST_SIZE (uncompressed size: name + value
         // + 32 per field). The whole block is still decoded so the HPACK table stays in sync; the
-        // stream is then refused without surfacing the oversized list.
-        let max_list_size = self.local_settings.max_header_list_size as usize;
+        // stream is then refused without surfacing the oversized list. The peer-acknowledged
+        // limit is used, never a still-in-flight submission (see enforced_max_header_list_size).
+        let max_list_size = self.enforced_max_header_list_size as usize;
         let max_pairs = self.max_header_list_pairs as usize;
         let mut list_size: usize = 0;
         let mut field_count: usize = 0;
@@ -926,10 +1103,20 @@ impl Connection {
                             // headers, but inbound PUSH_PROMISE blocks legitimately carry request
                             // pseudo-headers, so that check needs the push context first.)
                             let wrong_direction = self.is_server && rest == b"status";
+                            // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
+                            // has been enabled by this endpoint. nghttp2 (and so node) checks the
+                            // submitted local value here, not the ACKed one — so a request that arrives
+                            // after a server has set enableConnectProtocol back to false is rejected at
+                            // the protocol level and never reaches the JS 'stream' handler
+                            // (test-http2-connect-method-extended-cant-turn-off).
+                            let protocol_disabled = self.is_server
+                                && rest == b"protocol"
+                                && self.local_settings.enable_connect_protocol == 0;
                             if seen_regular
                                 || bit == 64
                                 || (seen_pseudo & bit) != 0
                                 || wrong_direction
+                                || protocol_disabled
                                 || is_trailer
                             {
                                 malformed = true;
@@ -982,7 +1169,10 @@ impl Connection {
             return true;
         }
         if stream_refused {
-            self.send_rst_stream(sink, target, ErrorCode::RefusedStream);
+            // node (node_http2.cc, Http2Session::OnBeginHeadersCallback): a stream refused for
+            // the session memory budget is answered with RST_STREAM(ENHANCE_YOUR_CALM), which is
+            // what node's own test-http2-max-session-memory asserts.
+            self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
             sink.on_stream_rejected(target);
             return false;
         }
@@ -1010,6 +1200,16 @@ impl Connection {
             }
         }
         if malformed && !rejected {
+            // node (Http2Session::OnInvalidFrame): every locally-rejected invalid frame counts
+            // against maxSessionInvalidFrames; exceeding it tears the session down with
+            // ERR_HTTP2_TOO_MANY_INVALID_FRAMES (same post-increment comparison as node).
+            let count = self.invalid_frame_count;
+            self.invalid_frame_count = count.saturating_add(1);
+            if count > self.max_invalid_frames {
+                self.terminated = true;
+                sink.on_too_many_invalid_frames();
+                return true;
+            }
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
             // is not delivered to the application.
             self.send_rst_stream(sink, target, ErrorCode::ProtocolError);
@@ -1112,12 +1312,16 @@ impl Connection {
                 } else {
                     st.recv_window.on_data(hdr.length as i64);
                     if st.recv_window.is_overflowed_with(recv_limit) {
-                        self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
-                        if let Some(st2) = self.streams.get_mut(&hdr.stream_id) {
-                            st2.state = State::Closed;
-                        }
-                        sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
-                        discard = true;
+                        // nghttp2 (nghttp2_session_update_recv_stream_window_size): a peer that
+                        // violates a stream's flow-control window terminates the whole session
+                        // with FLOW_CONTROL_ERROR; node surfaces it as NghttpError "Protocol
+                        // error" via its internal-GOAWAY path.
+                        self.send_go_away(
+                            sink,
+                            ErrorCode::FlowControlError,
+                            b"stream flow-control window exceeded",
+                        );
+                        return StreamedDataStart::Fatal;
                     } else {
                         st.recv_body_bytes = st.recv_body_bytes.saturating_add(data_total as u64);
                     }
@@ -1201,6 +1405,7 @@ impl Connection {
             let count = self.invalid_frame_count;
             self.invalid_frame_count = count.saturating_add(1);
             if count > self.max_invalid_frames {
+                self.terminated = true;
                 sink.on_too_many_invalid_frames();
                 return true;
             }
@@ -1210,6 +1415,7 @@ impl Connection {
         // below don't alias the streams map.
         enum DataDecision {
             Rst(ErrorCode),
+            FlowControlViolation,
             Deliver(u32),
         }
         // Transition shim: DATA for a stream the embedder opened locally (legacy outbound) — open it
@@ -1233,7 +1439,7 @@ impl Connection {
                 } else {
                     s.recv_window.on_data(consumed);
                     if s.recv_window.is_overflowed_with(recv_limit) {
-                        DataDecision::Rst(ErrorCode::FlowControlError)
+                        DataDecision::FlowControlViolation
                     } else {
                         s.recv_body_bytes = s.recv_body_bytes.saturating_add((end - off) as u64);
                         DataDecision::Deliver(0)
@@ -1247,9 +1453,20 @@ impl Connection {
                 if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
                     s.state = State::Closed;
                 }
-                // Surface the stream error (e.g. a peer flow-control violation) to the embedder.
+                // Surface the stream error (e.g. a peer protocol violation) to the embedder.
                 sink.on_stream_reset(hdr.stream_id, code.as_u32());
                 return false;
+            }
+            DataDecision::FlowControlViolation => {
+                // nghttp2 (nghttp2_session_update_recv_stream_window_size): a stream flow-control
+                // violation terminates the whole session with FLOW_CONTROL_ERROR; node surfaces
+                // it as NghttpError "Protocol error" via its internal-GOAWAY path.
+                self.send_go_away(
+                    sink,
+                    ErrorCode::FlowControlError,
+                    b"stream flow-control window exceeded",
+                );
+                return true;
             }
             DataDecision::Deliver(inc) => inc,
         };
@@ -1331,8 +1548,12 @@ impl Connection {
         }
         // §5.1: a stream evicted after full close (per-request memory release) is
         // closed, not idle — a late RST_STREAM on it MUST be tolerated. Anything at or
-        // below the highest stream id this connection has processed has existed.
-        if on_idle && hdr.stream_id <= self.last_stream_id {
+        // below the highest stream id either layer has started has existed; the embedder's
+        // mark covers locally-initiated streams this engine never saw HEADERS for.
+        if on_idle
+            && (hdr.stream_id <= self.last_stream_id
+                || hdr.stream_id <= sink.highest_started_stream_id())
+        {
             return false;
         }
         if on_idle {
@@ -1622,6 +1843,21 @@ impl Connection {
         self.streams.remove(&stream_id);
     }
 
+    /// Replenish a single stream's receive window now (the embedder's reader resumed after a
+    /// pause). Without this, a peer stalled on a zero stream window would only be released by the
+    /// next inbound batch — which may never come, since the peer is the one waiting.
+    pub fn replenish_stream(&mut self, sink: &impl Sink, stream_id: u32) {
+        let inc = match self.streams.get_mut(&stream_id) {
+            Some(s) if s.state != State::Closed && s.recv_window.needs_update() => {
+                s.recv_window.take_update()
+            }
+            _ => return,
+        };
+        if inc > 0 {
+            self.send_window_update(sink, stream_id, inc);
+        }
+    }
+
     /// Locally reset a stream (RST_STREAM) and mark it closed.
     pub fn send_reset(&mut self, sink: &impl Sink, stream_id: u32, code: ErrorCode) {
         self.send_rst_stream(sink, stream_id, code);
@@ -1695,6 +1931,8 @@ mod tests {
         pings: RefCell<Vec<(Vec<u8>, bool)>>,
         remote_settings: Cell<u32>,
         goaway: Cell<Option<(u32, u32)>>,
+        /// nghttp2-style lib error code from on_error (locally-detected connection errors).
+        local_error: Cell<Option<i32>>,
         opens: RefCell<Vec<u32>>,
         headers: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
         headers_done: RefCell<Vec<(u32, bool)>>,
@@ -1710,9 +1948,9 @@ mod tests {
             self.out.borrow_mut().extend_from_slice(bytes);
             WriteResult::Sent
         }
-        fn on_error(&self, c: u32, l: u32, _d: &[u8]) {
+        fn on_error(&self, lib_code: i32, _l: u32, _d: &[u8]) {
             // send_go_away() reports through on_error; record it so the _is_goaway tests can assert.
-            self.goaway.set(Some((c, l)));
+            self.local_error.set(Some(lib_code));
         }
         fn on_local_settings(&self, _s: &Settings) {}
         fn on_remote_settings(&self, _s: &Settings) {
@@ -1813,10 +2051,7 @@ mod tests {
         let f = frame(FrameType::WindowUpdate, 0, 0, &[0, 0, 0, 0]);
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(
-            sink.goaway.get().map(|(code, _)| code),
-            Some(ErrorCode::ProtocolError.as_u32())
-        );
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 
     #[test]
@@ -1829,10 +2064,7 @@ mod tests {
         let f = frame(FrameType::Settings, 0, 0, &payload);
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(
-            sink.goaway.get().map(|(code, _)| code),
-            Some(ErrorCode::ProtocolError.as_u32())
-        );
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 
     #[test]
@@ -1902,10 +2134,7 @@ mod tests {
         );
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(
-            sink.goaway.get().map(|(code, _)| code),
-            Some(ErrorCode::ProtocolError.as_u32())
-        );
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 
     #[test]
@@ -1997,10 +2226,7 @@ mod tests {
         );
         let fed = c.receive(&sink, &f);
         assert!(fed.fatal);
-        assert_eq!(
-            sink.goaway.get().map(|(code, _)| code),
-            Some(ErrorCode::ProtocolError.as_u32())
-        );
+        assert_eq!(sink.local_error.get(), Some(wire::lib_error::PROTO));
     }
 
     #[test]

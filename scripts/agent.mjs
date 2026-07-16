@@ -203,9 +203,13 @@ async function doBuildkiteAgent(action, cliOptions = {}) {
       // Matches the script already deployed on the fleet: covers both the
       // Homebrew-agent layout (older x64 boxes) and the Library layout (this
       // installer), fixes ownership, then reboots.
+      // The pgrep guard skips the cycle when a job is live (the agent runs
+      // each job under a `buildkite-agent bootstrap` child); wiping builds/
+      // from under a live job turns into spurious test failures.
       const cleanupPlistPath = "/Library/LaunchDaemons/com.buildkite.cleanup.plist";
       const cleanupScript =
         `PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin; ` +
+        `pgrep -qf "buildkite-agent bootstrap" && exit 0; ` +
         `BASE_PREFIX=$([ "$(uname -m)" = "arm64" ] && echo "/opt/homebrew" || echo "/usr/local"); ` +
         `{ rm -rf $BASE_PREFIX/{var,etc}/buildkite-agent/{builds,cache}/* ${homePath}/{builds,cache}/* /tmp/* /var/tmp/* || true; } && ` +
         `{ chown -R ${runAsUser}:admin $BASE_PREFIX/var/buildkite-agent $BASE_PREFIX/etc/buildkite-agent || true; } && ` +

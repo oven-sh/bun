@@ -634,6 +634,15 @@ async function runTests() {
         break;
       }
 
+      // If the binary has vanished (agent cleanup / disk wipe) every remaining
+      // spawn will ENOENT and be recorded as a test failure. Abort instead.
+      if (!existsSync(execPath)) {
+        throw new Error(
+          `${execPath} no longer exists; the checkout was removed mid-run ` +
+            `(agent cleanup or disk wipe). Aborting instead of marking the remaining tests failed.`,
+        );
+      }
+
       const color = attempt >= maxAttempts ? "red" : "yellow";
       const label = `${getAnsi(color)}[${index}/${total}] ${title} - ${error}${getAnsi("reset")}`;
       startGroup(label, () => {

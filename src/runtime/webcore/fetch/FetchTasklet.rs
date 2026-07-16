@@ -1561,17 +1561,11 @@ impl FetchTasklet {
             )),
         };
 
-        // `jsc::SystemError` has no `Default` impl upstream — spell out
-        // every field's default.
         let fetch_error = jsc::SystemError {
-            errno: 0,
             code,
             message,
             path,
-            syscall: BunString::EMPTY,
-            hostname: BunString::EMPTY,
-            fd: core::ffi::c_int::MIN,
-            dest: BunString::EMPTY,
+            ..Default::default()
         };
 
         // Node (undici) exposes the underlying socket error on `err.cause`

@@ -578,7 +578,11 @@ pub(super) fn validation_error_strings(code: i32) -> (&'static str, &'static str
         "UNSPECIFIED"
     } else {
         // SAFETY: as above; NUL-terminated and 'static.
-        unsafe { core::ffi::CStr::from_ptr(name).to_str().unwrap_or("UNSPECIFIED") }
+        unsafe {
+            core::ffi::CStr::from_ptr(name)
+                .to_str()
+                .unwrap_or("UNSPECIFIED")
+        }
     };
     // SAFETY: the returned string is a static name owned by BoringSSL.
     let s = unsafe { ssl::X509_verify_cert_error_string(code as _) };

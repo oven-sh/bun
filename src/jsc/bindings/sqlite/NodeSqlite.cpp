@@ -3280,7 +3280,14 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
     void* pChangeset = nullptr;
     int r = fn(record->handle, &nChangeset, &pChangeset);
     record->inUse = false;
-    CHECK_UDF_EXCEPTION(scope);
+    // sessionGenerateChangeset transfers the buffer to *ppChangeset before its
+    // trailing RELEASE (whose result is discarded) reaches the authorizer, so
+    // an exception there returns SQLITE_OK with an owned buffer — free it here
+    // (mirrors jsDatabaseSyncSerialize).
+    if (scope.exception()) [[unlikely]] {
+        if (pChangeset) sqlite3_free(pChangeset);
+        return {};
+    }
     if (r != SQLITE_OK) {
         if (pChangeset) sqlite3_free(pChangeset);
         throwSqliteReturnCodeError(globalObject, scope, conn, r);

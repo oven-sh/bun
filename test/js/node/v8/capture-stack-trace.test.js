@@ -925,6 +925,32 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   }
 });
 
+test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
+  // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
+  const src = `
+    function depth(n) {
+      if (n) return 0 + depth(n - 1);
+      const e = {};
+      Error.captureStackTrace(e);
+      return e.stack.split("\\n").length - 1;
+    }
+    const reported = Error.stackTraceLimit;
+    const before = depth(30);
+    Error.stackTraceLimit = Error.stackTraceLimit;
+    const after = depth(30);
+    process.stdout.write(JSON.stringify({ reported, before, after }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { reported, before, after } = JSON.parse(stdout);
+  // Node.js defaults to 10 and the reported value must match the applied limit.
+  expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
+});
+
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {
   // Runs in its own process: which dispatch path delivers the message (and therefore
   // which frames are on the stack under the listener) depends on prior event-loop state.

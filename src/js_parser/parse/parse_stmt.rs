@@ -924,7 +924,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // "export declare class Foo {}"
                                 opts.is_export = true;
                                 opts.lexical_decl = LexicalDecl::AllowAll;
-                                opts.is_typescript_declare = true;
                                 return p.parse_stmt(opts);
                             }
                         }
@@ -1090,6 +1089,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && is_identifier
                     && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
                     && name == b"abstract"
+                    && !p.lexer.has_newline_before
                     && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
                 {
                     let mut stmt_opts = ParseStatementOptions {
@@ -1139,7 +1139,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // "@decorator export default abstract = 1"
+                // "@decorator export default abstract \n class Foo {}"
                 if opts.ts_decorators.is_some() {
+                    if is_identifier
+                        && name == b"abstract"
+                        && p.lexer.has_newline_before
+                        && matches!(expr.data, js_ast::ExprData::EIdentifier(_))
+                    {
+                        let r = js_lexer::range_of_identifier(p.source, expr.loc);
+                        p.log()
+                            .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
+                        return Err(crate::Error::SyntaxError);
+                    }
                     p.lexer.expected(T::TClass)?;
                 }
 
@@ -1765,17 +1776,37 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_lexer::TypescriptStmtKeyword::TsStmtInterface => {
                 // "interface Foo {}"
-                let mut stmt_opts = ParseStatementOptions {
-                    is_module_scope: opts.is_module_scope,
-                    ..Default::default()
-                };
+                // "export default interface Foo {}"
+                // "export default interface \n Foo {}"
+                if !p.lexer.has_newline_before || opts.is_name_optional {
+                    let mut stmt_opts = ParseStatementOptions {
+                        is_module_scope: opts.is_module_scope,
+                        ..Default::default()
+                    };
 
-                p.skip_type_script_interface_stmt(&mut stmt_opts)?;
-                return Ok(Some(p.s(S::TypeScript {}, loc)));
+                    p.skip_type_script_interface_stmt(&mut stmt_opts)?;
+                    return Ok(Some(p.s(S::TypeScript {}, loc)));
+                }
+                // "interface \n Foo {}"
+                // "export interface \n Foo {}"
+                if opts.is_export {
+                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    p.log()
+                        .add_range_error(Some(p.source), r, b"Unexpected \"interface\"");
+                    return Err(crate::Error::SyntaxError);
+                }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtAbstract => {
-                if p.lexer.token == T::TClass || opts.ts_decorators.is_some() {
+                if !p.lexer.has_newline_before
+                    && (p.lexer.token == T::TClass || opts.ts_decorators.is_some())
+                {
                     return Ok(Some(p.parse_class_stmt(loc, opts)?));
+                }
+                if opts.ts_decorators.is_some() {
+                    let r = js_lexer::range_of_identifier(p.source, loc);
+                    p.log()
+                        .add_range_error(Some(p.source), r, b"Unexpected \"abstract\"");
+                    return Err(crate::Error::SyntaxError);
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtGlobal => {
@@ -1791,6 +1822,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
             js_lexer::TypescriptStmtKeyword::TsStmtDeclare => {
+                if p.lexer.has_newline_before {
+                    if opts.ts_decorators.is_some() {
+                        let r = js_lexer::range_of_identifier(p.source, loc);
+                        p.log()
+                            .add_range_error(Some(p.source), r, b"Unexpected \"declare\"");
+                        return Err(crate::Error::SyntaxError);
+                    }
+                    return Ok(None);
+                }
                 opts.lexical_decl = LexicalDecl::AllowAll;
                 opts.is_typescript_declare = true;
 
@@ -1817,8 +1857,27 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
 
                 // "declare const x: any"
+                let after_declare_range = p.lexer.range();
                 let scope_index = p.scopes_in_order.len();
                 let stmt = p.parse_stmt(opts)?;
+                // Anything unexpected is a syntax error ("declare foo", "declare type \n Foo").
+                // esbuild rewinds its lexer here; we point at the range captured above instead.
+                if !matches!(
+                    &stmt.data,
+                    js_ast::StmtData::STypeScript(_)
+                        | js_ast::StmtData::SLocal(_)
+                        | js_ast::StmtData::SEmpty(_)
+                ) {
+                    p.log().add_range_error_fmt(
+                        Some(p.source),
+                        after_declare_range,
+                        format_args!(
+                            "Unexpected {}",
+                            bun_core::fmt::quote(p.source.text_for_range(after_declare_range))
+                        ),
+                    );
+                    return Err(crate::Error::SyntaxError);
+                }
                 if let Some(decs) = &opts.ts_decorators {
                     p.discard_scopes_up_to(decs.scope_index);
                 } else {

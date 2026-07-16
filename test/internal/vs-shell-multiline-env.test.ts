@@ -15,12 +15,7 @@ test.skipIf(!isWindows || !existsSync(vswhere))(
   async () => {
     const repoRoot = join(import.meta.dir, "..", "..");
     const vsShell = join(repoRoot, "scripts", "vs-shell.ps1");
-    const probe = [
-      "line1",
-      "VS_SHELL_LEAKED=oops",
-      "BUN_JSC_notARealOption=1 some trailing text",
-      "line4",
-    ].join("\n");
+    const probe = ["line1", "VS_SHELL_LEAKED=oops", "BUN_JSC_notARealOption=1 some trailing text", "line4"].join("\n");
 
     const dump =
       "process.stdout.write(JSON.stringify({" +
@@ -41,11 +36,7 @@ test.skipIf(!isWindows || !existsSync(vswhere))(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // vs-shell.ps1 writes status lines before `$ <cmd>`; the JSON is the last line.
     const jsonLine = stdout.trimEnd().split("\n").pop() ?? "";
@@ -53,9 +44,7 @@ test.skipIf(!isWindows || !existsSync(vswhere))(
     try {
       result = JSON.parse(jsonLine);
     } catch {
-      throw new Error(
-        `expected JSON on last line, got:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`,
-      );
+      throw new Error(`expected JSON on last line, got:\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`);
     }
 
     expect(result).toEqual({

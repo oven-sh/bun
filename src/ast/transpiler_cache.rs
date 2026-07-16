@@ -3,12 +3,13 @@
 //! Single canonical struct, lowered to `bun_ast` so both the parser
 //! (`Features.runtime_transpiler_cache`) and the printer
 //! (`Options.runtime_transpiler_cache`) can name it without a `bun_js_parser`
-//! edge. `bun_bundler::cache` re-exports it and adds disk-I/O / `js_printer`
-//! dispatch via an extension trait (those need `bun_js_printer` / `bun_sys`
-//! which sit a tier above). The parser writes `input_hash` / `features_hash` /
-//! `exports_kind` and calls `get()` through the vtable; the bundler/jsc tier
-//! owns `entry` and the on-disk encode/decode (`Metadata` / `Entry` live in
-//! `bun_bundler::cache` and are stored here type-erased as `*mut ()`).
+//! edge. `bun_bundler::cache` re-exports it and adds the env-var-gated
+//! `disabled`/`set_disabled` via an extension trait (those need
+//! `bun_core::env_var` which sits a tier above). The parser writes
+//! `input_hash` / `features_hash` / `exports_kind` and calls `get()` through
+//! the vtable; the jsc tier owns `entry` and the on-disk encode/decode
+//! (`Metadata` / `Entry` live in `bun_jsc::runtime_transpiler_cache` and are
+//! stored here type-erased as `*mut ()`).
 
 use crate::{ExportsKind, Source};
 use core::ptr::NonNull;
@@ -22,7 +23,7 @@ pub struct RuntimeTranspilerCache {
     /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
     /// when surfacing to JS.
     pub output_code: Option<Box<[u8]>>,
-    /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
+    /// Opaque storage for `bun_jsc::runtime_transpiler_cache::Entry` —
     /// the concrete type lives a tier up and is round-tripped via cast.
     pub entry: Option<*mut ()>,
 

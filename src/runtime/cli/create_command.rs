@@ -397,18 +397,23 @@ impl CreateCommand {
                     ) {
                         Ok(b) => b,
                         Err(err) => {
-                            if matches!(err, crate::Error::HTTPForbidden) {
+                            if matches!(
+                                err,
+                                crate::Error::HTTPForbidden | crate::Error::HTTPTooManyRequests
+                            ) {
                                 node.end();
                                 progress.refresh();
 
                                 pretty_error!(
-                                    "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    "\n<r><red>error:<r> GitHub returned {}. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
+                                    if matches!(err, crate::Error::HTTPForbidden) {
+                                        "403"
+                                    } else {
+                                        "429"
+                                    },
                                 );
                                 Global::crash();
-                            } else if matches!(
-                                err,
-                                crate::Error::GitHubIsDown | crate::Error::HTTPTooManyRequests
-                            ) {
+                            } else if matches!(err, crate::Error::GitHubIsDown) {
                                 node.end();
                                 progress.refresh();
 

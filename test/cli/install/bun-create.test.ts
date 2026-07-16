@@ -197,29 +197,31 @@ it("should create template from local folder", async () => {
 });
 
 // `bun create <github-url>` hits https://api.github.com/repos/{owner}/{repo}/tarball.
-// Unauthenticated GitHub API is limited to 60 req/hr per IP; CI agents running many
-// parallel builds exhaust that quickly, and the endpoint can also return 5xx during a
-// GitHub outage. When we detect either, skip rather than fail: these tests exercise
-// `bun create`, not GitHub's availability.
+// CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
+// during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.
 function isGithubUnavailable(stderr: string): boolean {
-  if (stderr.includes("GitHub returned 403")) {
-    console.warn("Skipping: GitHub API rate limit reached (403). Set GITHUB_TOKEN to avoid this.");
+  if (stderr.includes("GitHub is rate limiting")) {
+    console.warn("Skipping: GitHub API rate limit reached. Set GITHUB_TOKEN to avoid this.");
     return true;
   }
   if (stderr.includes("GitHub returned a server error")) {
-    console.warn("Skipping: GitHub API returned a 5xx/429 server error.");
+    console.warn("Skipping: GitHub API returned a 5xx server error.");
     return true;
   }
   return false;
 }
 
-for (const status of [503, 429]) {
-  it(`should report a GitHub server error (not NPMIsDown) when the tarball request gets ${status}`, async () => {
+for (const [status, expected] of [
+  [503, "error: GitHub returned a server error"],
+  [429, "error: GitHub returned 429. This usually means GitHub is rate limiting your requests"],
+  [403, "error: GitHub returned 403. This usually means GitHub is rate limiting your requests"],
+] as const) {
+  it(`should name GitHub in the error when the tarball request gets ${status}`, async () => {
     using server = Bun.serve({
       tls,
       port: 0,
       fetch() {
-        return new Response("service unavailable", { status });
+        return new Response("nope", { status });
       },
     });
 
@@ -236,8 +238,8 @@ for (const status of [503, 429]) {
     });
 
     const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(err).toContain("error: GitHub returned a server error");
-    expect(err).toContain('"dylan-conway/create-test"');
+    expect(err).toContain(expected);
+    expect(isGithubUnavailable(err)).toBe(true);
     expect(err).not.toContain("NPMIsDown");
     expect(err).not.toContain("An internal error occurred");
     expect(exitCode).toBe(1);

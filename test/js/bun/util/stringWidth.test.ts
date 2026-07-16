@@ -123,6 +123,112 @@ test("ambiguousIsNarrow=false", () => {
   }
 });
 
+// Bun.stringWidth must be a function of the string's codepoints only, never of
+// JSC's internal 8-bit/16-bit representation. 43 bytes in U+00A1..U+00FE are
+// East Asian Ambiguous (§, °, ±, ×, ÷, é, ...); the Latin-1 fast path used to
+// drop ambiguousIsNarrow and measure them as width 1 regardless.
+describe("ambiguousIsNarrow is encoding-independent on Latin-1 text", () => {
+  // Force a 16-bit backing store: build one flat string via a single
+  // String.fromCharCode call that includes a non-Latin-1 unit, then slice the
+  // interior. Concatenation would leave a rope whose Latin-1 leaf JSC can
+  // return directly from .slice().
+  const asUtf16 = (s: string) => {
+    const units = [0x4e00];
+    for (let i = 0; i < s.length; i++) units.push(s.charCodeAt(i));
+    units.push(0x4e00);
+    return String.fromCharCode.apply(null, units).slice(1, 1 + s.length);
+  };
+
+  test("same codepoints, same width, regardless of backing encoding", () => {
+    const l1 = "ééééé";
+    const u16 = asUtf16(l1);
+    expect(u16).toBe(l1);
+    for (const countAnsiEscapeCodes of [false, true]) {
+      expect(Bun.stringWidth(l1, { countAnsiEscapeCodes, ambiguousIsNarrow: false })).toBe(10);
+      expect(Bun.stringWidth(u16, { countAnsiEscapeCodes, ambiguousIsNarrow: false })).toBe(10);
+      expect(Bun.stringWidth(l1, { countAnsiEscapeCodes, ambiguousIsNarrow: true })).toBe(5);
+      expect(Bun.stringWidth(u16, { countAnsiEscapeCodes, ambiguousIsNarrow: true })).toBe(5);
+    }
+  });
+
+  test("every Latin-1 byte agrees between encodings, for every option combination", () => {
+    const mismatches: string[] = [];
+    for (let cp = 0x00; cp <= 0xff; cp++) {
+      // Use length 4 so JSC keeps the 16-bit backing store for the slice.
+      const l1 = String.fromCharCode(cp, cp, cp, cp);
+      const u16 = asUtf16(l1);
+      for (const ambiguousIsNarrow of [true, false]) {
+        for (const countAnsiEscapeCodes of [true, false]) {
+          const a = Bun.stringWidth(l1, { ambiguousIsNarrow, countAnsiEscapeCodes });
+          const b = Bun.stringWidth(u16, { ambiguousIsNarrow, countAnsiEscapeCodes });
+          if (a !== b) {
+            mismatches.push(
+              `U+${cp.toString(16).padStart(4, "0")} ambiguousIsNarrow=${ambiguousIsNarrow} countAnsi=${countAnsiEscapeCodes}: latin1=${a} utf16=${b}`,
+            );
+          }
+        }
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  test("long Latin-1 runs (past every SIMD chunk boundary)", () => {
+    for (const n of [1, 15, 16, 17, 63, 64, 65, 200]) {
+      const s = Buffer.alloc(n, "\xe9", "latin1").toString("latin1");
+      expect(Bun.stringWidth(s, { ambiguousIsNarrow: false })).toBe(2 * n);
+      expect(Bun.stringWidth(s, { ambiguousIsNarrow: false, countAnsiEscapeCodes: true })).toBe(2 * n);
+      expect(Bun.stringWidth(asUtf16(s), { ambiguousIsNarrow: false })).toBe(2 * n);
+    }
+    // Mixed: ambiguous + non-ambiguous + zero-width, no escapes.
+    const mixed = Buffer.alloc(40 * 5, "a\xe9b\xe2\xad", "latin1").toString("latin1");
+    expect(Bun.stringWidth(mixed, { ambiguousIsNarrow: false })).toBe(40 * 5);
+    expect(Bun.stringWidth(mixed, { ambiguousIsNarrow: true })).toBe(40 * 4);
+  });
+
+  test("CSI escapes interleaved with ambiguous Latin-1 bytes", () => {
+    const s = "\x1b[31mé§±\x1b[0m";
+    expect(Bun.stringWidth(s, { ambiguousIsNarrow: false })).toBe(6);
+    expect(Bun.stringWidth(s, { ambiguousIsNarrow: true })).toBe(3);
+    expect(Bun.stringWidth(asUtf16(s), { ambiguousIsNarrow: false })).toBe(6);
+    // Sliding an SGR across chunk boundaries in a long ambiguous run.
+    for (const pad of [0, 15, 16, 60, 64, 65, 120]) {
+      const body = Buffer.alloc(pad, "\xe9", "latin1").toString("latin1");
+      const str = body + "\x1b[38;2;1;2;3m" + body + "\x1b[0m";
+      expect(Bun.stringWidth(str, { ambiguousIsNarrow: false })).toBe(4 * pad);
+      expect(Bun.stringWidth(asUtf16(str), { ambiguousIsNarrow: false })).toBe(4 * pad);
+    }
+  });
+
+  test("OSC payload containing ambiguous Latin-1 bytes contributes nothing", () => {
+    // é inside the OSC URL must not be counted; é outside is width 2.
+    for (const term of ["\x07", "\x1b\\", "\x9c"]) {
+      const s = `é\x1b]8;;http://é§°.example/éé${term}link\x1b]8;;${term}é`;
+      expect(Bun.stringWidth(s, { ambiguousIsNarrow: false })).toBe(2 + 4 + 2);
+      expect(Bun.stringWidth(asUtf16(s), { ambiguousIsNarrow: false })).toBe(2 + 4 + 2);
+      expect(Bun.stringWidth(s, { ambiguousIsNarrow: true })).toBe(1 + 4 + 1);
+    }
+  });
+
+  test("stringWidth and sliceAnsi agree on Latin-1 ambiguous text", () => {
+    const l1 = "é§°±×÷";
+    const wide = Bun.stringWidth(l1, { ambiguousIsNarrow: false });
+    expect(wide).toBe(12);
+    expect(Bun.sliceAnsi(l1, 0, wide, { ambiguousIsNarrow: false })).toBe(l1);
+    expect(Bun.sliceAnsi(l1, 0, 4, { ambiguousIsNarrow: false })).toBe("é§");
+    expect(Bun.stringWidth(Bun.sliceAnsi(l1, 0, 4, false), { ambiguousIsNarrow: false })).toBe(4);
+  });
+
+  test("matches npm string-width for Latin-1 ambiguous characters", () => {
+    for (const s of ["§", "±", "×÷", "ééééé", "àáâãäå", "naïve façade"]) {
+      for (const countAnsiEscapeCodes of [false, true]) {
+        expect(Bun.stringWidth(s, { countAnsiEscapeCodes, ambiguousIsNarrow: false })).toBe(
+          npmStringWidth(s, { countAnsiEscapeCodes, ambiguousIsNarrow: false }),
+        );
+      }
+    }
+  });
+});
+
 for (let matcher of ["toMatchNPMStringWidth", "toMatchNPMStringWidthExcludeANSI"]) {
   test("ignores control characters", () => {
     expect(String.fromCodePoint(0))[matcher]();

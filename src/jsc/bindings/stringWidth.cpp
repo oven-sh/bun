@@ -495,23 +495,123 @@ struct GraphemeState {
 // ============================================================================
 
 // Zero-width Latin-1 bytes: C0 controls, DEL + C1 controls, soft hyphen.
-static uint8_t visibleLatin1WidthScalar(uint8_t c)
+static constexpr uint8_t visibleLatin1WidthScalar(uint8_t c)
 {
     return ((c >= 0x7F && c <= 0x9F) || c < 0x20 || c == 0xAD) ? 0 : 1;
 }
 
-size_t visibleLatin1Width(std::span<const uint8_t> input)
+// Per-byte Latin-1 width with East-Asian-Ambiguous treated as wide. Derived
+// from the same fused classification table the UTF-16 path uses so the two
+// encodings cannot disagree. 43 Latin-1 bytes in U+00A1..U+00FE are Ambiguous
+// (§, °, ±, ×, ÷, é, ...); the rest match visibleLatin1WidthScalar.
+static constexpr auto kLatin1WidthAmbiguousWide = []() constexpr {
+    std::array<uint8_t, 256> result {};
+    for (size_t c = 0; c < 256; c++)
+        result[c] = widthFromFused(fusedClassify(static_cast<char32_t>(c)), true);
+    return result;
+}();
+static_assert(kLatin1WidthAmbiguousWide['A'] == 1);
+static_assert(kLatin1WidthAmbiguousWide[0xE9] == 2); // é
+static_assert(kLatin1WidthAmbiguousWide[0xA7] == 2); // §
+static_assert(kLatin1WidthAmbiguousWide[0xB1] == 2); // ±
+static_assert(kLatin1WidthAmbiguousWide[0xE2] == 1); // â (not ambiguous)
+static_assert(kLatin1WidthAmbiguousWide[0xAD] == 0); // soft hyphen
+static_assert(kLatin1WidthAmbiguousWide[0x1B] == 0); // ESC
+
+// The fused table's narrow Latin-1 widths must match visibleLatin1WidthScalar
+// exactly, so `wide = narrow + (ambiguous ? 1 : 0)` is an equivalence, not an
+// approximation.
+static_assert([]() constexpr {
+    for (size_t c = 0; c < 256; c++) {
+        if (widthFromFused(fusedClassify(static_cast<char32_t>(c)), false) != visibleLatin1WidthScalar(static_cast<uint8_t>(c)))
+            return false;
+    }
+    return true;
+}());
+
+static size_t countLatin1Ambiguous(std::span<const uint8_t> input)
+{
+    size_t count = 0;
+    for (const uint8_t c : input)
+        count += kLatin1WidthAmbiguousWide[c] >> 1;
+    return count;
+}
+
+size_t visibleLatin1Width(std::span<const uint8_t> input, bool ambiguousAsWide)
 {
     // For inputs smaller than one SIMD vector the dynamic-dispatch call costs
     // more than the count itself — ANSI-heavy strings hit this constantly with
     // the short visible runs between escape sequences.
+    size_t count;
     if (input.size() < 16) {
-        size_t count = 0;
+        count = 0;
         for (const uint8_t c : input)
             count += visibleLatin1WidthScalar(c);
-        return count;
+    } else {
+        count = highway_visible_latin1_width(input.data(), input.size());
     }
-    return highway_visible_latin1_width(input.data(), input.size());
+    if (ambiguousAsWide)
+        count += countLatin1Ambiguous(input);
+    return count;
+}
+
+// Scalar escape-aware width for the ambiguous-as-wide case. Mirrors
+// VisibleLatin1WidthExcludeANSIScalar (highway_strings.cpp) byte for byte so
+// OSC payload bytes (which can be >= 0xA1) are excluded from the count.
+static size_t visibleLatin1WidthExcludeANSIAmbiguousWide(std::span<const uint8_t> input)
+{
+    enum class State : uint8_t { None, InCSI, InOSC };
+    State state = State::None;
+    size_t width = 0;
+    size_t i = 0;
+    const size_t len = input.size();
+    while (i < len) {
+        const uint8_t c = input[i];
+        switch (state) {
+        case State::InCSI:
+            if (c >= 0x40 && c <= 0x7E)
+                state = State::None;
+            i++;
+            break;
+        case State::InOSC:
+            if (c == 0x07 || c == 0x9C) {
+                state = State::None;
+                i++;
+                break;
+            }
+            if (c == 0x1B && i + 1 < len && input[i + 1] == '\\') {
+                state = State::None;
+                i += 2;
+                break;
+            }
+            i++;
+            break;
+        case State::None:
+            if (c == 0x1B) {
+                if (i + 1 >= len) {
+                    i++;
+                    break;
+                }
+                const uint8_t next = input[i + 1];
+                if (next == '[') {
+                    state = State::InCSI;
+                    i += 2;
+                    break;
+                }
+                if (next == ']') {
+                    state = State::InOSC;
+                    i += 2;
+                    break;
+                }
+                i++;
+                break;
+            }
+            width += kLatin1WidthAmbiguousWide[c];
+            i++;
+            break;
+        }
+    }
+    return width;
 }
 
 // Visible width treating ANSI escape sequences (ESC[...<final>, ESC]...BEL/ST)
@@ -520,11 +620,18 @@ size_t visibleLatin1Width(std::span<const uint8_t> input)
 // Implemented as a single-pass SIMD kernel (highway_strings.cpp): each chunk
 // is classified once into printable/escape bitmasks, so dense SGR input does
 // not pay a separate scan per escape sequence.
-size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input)
+size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input, bool ambiguousAsWide)
 {
     if (input.empty())
         return 0;
-    return highway_visible_latin1_width_exclude_ansi(input.data(), input.size());
+    if (!ambiguousAsWide)
+        return highway_visible_latin1_width_exclude_ansi(input.data(), input.size());
+    // Ambiguous Latin-1 bytes are all >= 0xA1, so they cannot appear inside a
+    // CSI (pure ASCII) but can appear inside an OSC payload. When no ESC is
+    // present the SIMD narrow result plus a per-byte correction is exact.
+    if (highway_index_of_char(input.data(), input.size(), 0x1B) == input.size())
+        return highway_visible_latin1_width_exclude_ansi(input.data(), input.size()) + countLatin1Ambiguous(input);
+    return visibleLatin1WidthExcludeANSIAmbiguousWide(input);
 }
 
 // ============================================================================
@@ -618,7 +725,7 @@ static size_t visibleUTF8WidthImpl(std::span<const uint8_t> input, AsciiWidthFn 
 size_t visibleUTF8WidthExcludeANSI(std::span<const uint8_t> input)
 {
     return visibleUTF8WidthImpl(input, [](std::span<const uint8_t> ascii) {
-        return visibleLatin1WidthExcludeANSI(ascii);
+        return visibleLatin1WidthExcludeANSI(ascii, false);
     });
 }
 
@@ -1022,9 +1129,9 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
 // console.table column sizing and the markdown ANSI renderer)
 // ============================================================================
 
-extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len)
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide)
 {
-    return StringWidth::visibleLatin1WidthExcludeANSI({ ptr, len });
+    return StringWidth::visibleLatin1WidthExcludeANSI({ ptr, len }, ambiguous_as_wide);
 }
 
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide)
@@ -1122,14 +1229,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunStringWidth, (JSC::JSGlobalObject * global
     const bool ambiguousAsWide = !ambiguousIsNarrow;
     size_t width;
     if (view->is8Bit()) {
-        // 8-bit JSC strings are Latin-1. The Latin-1 path has never honored
-        // ambiguousIsNarrow (parity with the previous implementation), even
-        // though some Latin-1 codepoints are East-Asian-Ambiguous (§, ×, ÷, ...).
         const auto span = view->span8();
         const std::span<const uint8_t> bytes { reinterpret_cast<const uint8_t*>(span.data()), span.size() };
         width = countAnsiEscapeCodes
-            ? StringWidth::visibleLatin1Width(bytes)
-            : StringWidth::visibleLatin1WidthExcludeANSI(bytes);
+            ? StringWidth::visibleLatin1Width(bytes, ambiguousAsWide)
+            : StringWidth::visibleLatin1WidthExcludeANSI(bytes, ambiguousAsWide);
     } else {
         const auto span = view->span16();
         width = StringWidth::visibleUTF16Width({ span.data(), span.size() }, !countAnsiEscapeCodes, ambiguousAsWide);

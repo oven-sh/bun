@@ -22,10 +22,10 @@ bool graphemeBreak(char32_t cp1, char32_t cp2, uint8_t& state);
 bool isEmojiPresentation(char32_t cp);
 
 // Visible width of Latin-1 text, counting ANSI escape sequences as visible.
-size_t visibleLatin1Width(std::span<const uint8_t> input);
+size_t visibleLatin1Width(std::span<const uint8_t> input, bool ambiguousAsWide);
 
 // Visible width of Latin-1 text, treating ANSI escape sequences as zero-width.
-size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input);
+size_t visibleLatin1WidthExcludeANSI(std::span<const uint8_t> input, bool ambiguousAsWide);
 
 // Visible width of UTF-16 text (grapheme-cluster aware). `excludeAnsiColors`
 // treats ANSI escape sequences as zero-width.

@@ -10,7 +10,7 @@
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 extern "C" bool Bun__isEmojiPresentation(uint32_t cp);
-extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 
 namespace Bun {
@@ -1412,7 +1412,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunSliceAnsi, (JSC::JSGlobalObject * globalOb
     size_t ellipsisWidth = 0;
     if (!ellipsis.isEmpty()) {
         ellipsisWidth = ellipsis.is8Bit()
-            ? Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(ellipsis.span8().data()), ellipsis.length())
+            ? Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(ellipsis.span8().data()), ellipsis.length(), ambiguousIsWide)
             : Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(ellipsis.span16().data()), ellipsis.length(), ambiguousIsWide);
     }
 

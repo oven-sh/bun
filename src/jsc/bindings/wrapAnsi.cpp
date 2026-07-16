@@ -10,7 +10,7 @@
 
 // Native exports (implemented in stringWidth.cpp) for visible width calculation
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
-extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 
@@ -51,9 +51,7 @@ static size_t stringWidth(const Char* start, const Char* end, bool ambiguousIsNa
 
     if constexpr (sizeof(Char) == 1) {
         // 8-bit JSC strings are Latin1, not UTF-8
-        // Note: Latin1 doesn't have ambiguous width characters (all are in U+0000-U+00FF)
-        (void)ambiguousIsNarrow;
-        return Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(start), len);
+        return Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(start), len, !ambiguousIsNarrow);
     } else {
         return Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(start), len, !ambiguousIsNarrow);
     }

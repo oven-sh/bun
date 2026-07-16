@@ -3490,6 +3490,18 @@ pub use bun_windows_sys::{
 
 // Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.rs
 
+/// Account name from `GetUserNameW`, without the trailing NUL. `None` on failure.
+/// The buffer is `UNLEN + 1` (see the link in [`user_unique_id`]).
+pub fn username_utf16(buf: &mut [u16; 257]) -> Option<&[u16]> {
+    let mut size: u32 = buf.len() as u32;
+    // SAFETY: buf and size are valid
+    if unsafe { externs::GetUserNameW(buf.as_mut_ptr(), &mut size) } == 0 || size == 0 {
+        return None;
+    }
+    // On success `size` counts the copied chars including the terminating NUL.
+    Some(&buf[0..size as usize - 1])
+}
+
 /// Is not the actual UID of the user, but just a hash of username.
 pub fn user_unique_id() -> u32 {
     // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e

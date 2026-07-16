@@ -1600,13 +1600,21 @@ mod _impl {
 
         #[cfg(windows)]
         {
-            result.put(
-                global_this,
-                b"username",
-                ZigString::init(env_var::USER.get().unwrap_or(b"unknown"))
+            // Node takes the account name from GetUserNameW (via uv_os_get_passwd)
+            // and never reads the environment; keep the cheap USERNAME read but
+            // ask the OS when it is unset or empty (e.g. service/CI contexts).
+            let mut name_buf = [0u16; 257];
+            let username = if let Some(name) = env_var::USER.get_not_empty() {
+                ZigString::init(name).with_encoding().to_js(global_this)
+            } else if let Some(name) = windows::username_utf16(&mut name_buf) {
+                let name = scopeguard::guard(BunString::clone_utf16(name), |s| s.deref());
+                name.to_js(global_this)?
+            } else {
+                ZigString::init(b"unknown")
                     .with_encoding()
-                    .to_js(global_this),
-            );
+                    .to_js(global_this)
+            };
+            result.put(global_this, b"username", username);
             result.put(global_this, b"uid", JSValue::js_number(-1.0));
             result.put(global_this, b"gid", JSValue::js_number(-1.0));
             result.put(global_this, b"shell", JSValue::NULL);

@@ -7,6 +7,7 @@
 #include "Http3Request.h"
 #include "Http3Response.h"
 #include "Http3ResponseData.h"
+#include "Utilities.h"
 
 namespace uWS {
 
@@ -35,7 +36,17 @@ struct Http3Context {
             rd->reset();
 
             Http3Request req(s);
-            if (req.getHeader("expect") == "100-continue") res->writeContinue();
+            /* RFC 9110 §10.1.1: expectation-name is case-insensitive; answer
+             * unknown expectations with 417 to match Node.js. */
+            std::string_view expect = req.getHeader("expect");
+            if (expect.length()) {
+                if (utils::hasExpect100Continue(expect)) {
+                    res->writeContinue();
+                } else {
+                    res->writeStatus("417 Expectation Failed")->end();
+                    return;
+                }
+            }
             cd->router.getUserData() = {res, &req};
             if (!cd->router.route(req.getMethod(), req.getUrl())) {
                 res->writeStatus("404 Not Found")->end();

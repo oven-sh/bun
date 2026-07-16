@@ -3186,3 +3186,55 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/20415
+// RFC 7231 §5.1.1: expectation-name is a case-insensitive token.
+it.each(["100-continue", "100-Continue", "100-CONTINUE", "100-cOnTiNuE"])(
+  "http2 server matches Expect: %s case-insensitively (#20415)",
+  async expectValue => {
+    // Passing a request handler to createServer enables the http2 compat layer
+    // (which is what emits "checkContinue"); a request that matched the
+    // expectation is routed through checkContinue, not this fallback.
+    const server = http2.createServer((req, res) => {
+      res.writeHead(500);
+      res.end("unexpected: request handler ran instead of checkContinue");
+    });
+    server.on("checkContinue", (req, res) => {
+      res.writeContinue();
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const port = server.address().port;
+    const client = http2.connect(`http://localhost:${port}`);
+    const { promise, resolve, reject } = Promise.withResolvers();
+    try {
+      const req = client.request({ ":method": "POST", ":path": "/", expect: expectValue });
+      let gotContinue = false;
+      let body = "";
+      req.setEncoding("utf8");
+      req.on("continue", () => {
+        gotContinue = true;
+      });
+      req.on("response", headers => {
+        req.end();
+        if (headers[":status"] !== 200) {
+          reject(new Error(`expected status 200, got ${headers[":status"]}`));
+        }
+      });
+      req.on("data", chunk => {
+        body += chunk;
+      });
+      req.on("end", () => resolve(body));
+      req.on("error", reject);
+      client.on("error", reject);
+
+      const result = await promise;
+      expect(gotContinue).toBe(true);
+      expect(result).toBe("ok");
+    } finally {
+      client.close();
+      server.close();
+    }
+  },
+);

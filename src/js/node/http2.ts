@@ -29,6 +29,9 @@
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
+// Lazy: an eager require would load _http_common (and its HTTPParser-backed
+// FreeList) whenever http2 loads, breaking http_parser monkey-patching.
+let continueExpression;
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -1215,7 +1218,9 @@ function onServerStream(Http2ServerRequest, Http2ServerResponse, stream, headers
 
   // Check for Expectations
   if (headers.expect !== undefined) {
-    if (headers.expect === "100-continue") {
+    // RFC 7231 §5.1.1: expectation-name is a case-insensitive token.
+    continueExpression ??= require("node:_http_common").continueExpression;
+    if (continueExpression.test(headers.expect)) {
       if (server.listenerCount("checkContinue")) {
         server.emit("checkContinue", request, response);
       } else {

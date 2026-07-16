@@ -5,12 +5,8 @@ const isFFIUnavailable = isWindows && isArm64;
 
 describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
   test("rejects non-object symbol descriptor values", () => {
-    // Each symbol descriptor must be an object like { args: [...], returns: "void" }.
-    // Previously, non-object values like numbers or strings would cause a debug
-    // assertion failure (crash) in generateSymbolForFunction.
-    // viewSource currently returns the TypeError rather than throwing it; this
-    // test used to rely on toThrow() accepting a returned Error, which it no
-    // longer does.
+    // viewSource returns (rather than throws) a TypeError when a symbol descriptor is not an object.
+    // Non-object descriptors previously crashed with a debug assertion in generateSymbolForFunction.
     for (const value of [42, "not_an_object", true]) {
       const result = Bun.FFI.viewSource({ myFunc: value });
       expect(result).toBeInstanceOf(TypeError);

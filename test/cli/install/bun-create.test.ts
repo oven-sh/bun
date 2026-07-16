@@ -200,7 +200,8 @@ it("should create template from local folder", async () => {
 // CI exhausts the unauthenticated 60 req/hr limit (403) and the endpoint serves 5xx
 // during outages; skip rather than fail since these tests exercise `bun create`, not GitHub.
 function githubUnavailableReason(stderr: string): string | null {
-  if (stderr.includes("GitHub is rate limiting")) return "GitHub API rate limit reached. Set GITHUB_TOKEN to avoid this.";
+  if (stderr.includes("GitHub is rate limiting"))
+    return "GitHub API rate limit reached. Set GITHUB_TOKEN to avoid this.";
   if (stderr.includes("GitHub returned a server error")) return "GitHub API returned a 5xx server error.";
   return null;
 }

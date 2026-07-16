@@ -174,3 +174,37 @@ describe("dual-mode endpoint", () => {
     });
   });
 });
+
+// RFC 9000 §18.2: maxIdleTimeout 0 disables the idle timeout, and node stores
+// it as `max_idle_timeout * NGTCP2_SECONDS` so 0 survives. lsquic reads its
+// seconds field whenever the ms field is zero, so 0 has to reach both or it
+// silently becomes the 10s default.
+describe("transportParams.maxIdleTimeout", () => {
+  test("0 disables the idle timeout instead of falling back to the default", async () => {
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    const onSession = async (s: any) => {
+      await s.closed.catch(() => {});
+    };
+
+    // Assert what the server put on the WIRE: localTransportParams echoes the
+    // requested value whatever the engine does with it. A fresh endpoint per
+    // case, since the implicit client endpoint is shared across connect() calls
+    // and its engine keeps the first connect's settings.
+    const advertised = async (maxIdleTimeout: number) => {
+      await using server = await listen(onSession, { sni: sniOpt, transportParams: { maxIdleTimeout } });
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(server.address, {
+        endpoint,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 3 },
+      });
+      await client.opened;
+      const remote = client.remoteTransportParams.maxIdleTimeout;
+      client.close();
+      return remote;
+    };
+
+    expect({ zero: await advertised(0), seven: await advertised(7) }).toEqual({ zero: 0n, seven: 7n });
+  });
+});

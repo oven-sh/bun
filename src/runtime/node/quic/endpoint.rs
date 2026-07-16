@@ -842,6 +842,14 @@ fn apply_transport_params(
             // Node's maxIdleTimeout is SECONDS: transportparams.cc:197 stores
             // `max_idle_timeout * NGTCP2_SECONDS`; the getter at :473 divides
             // it back out.
+            if secs == 0 {
+                // Only the seconds field can say "disabled" (RFC 9000 §18.2):
+                // every lsquic reader falls back to it when the ms field is
+                // zero. Non-zero stays ms-only -- lsquic rejects an
+                // es_idle_timeout above 600 (lsquic_engine.c), which node's
+                // ngtcp2 has no equivalent of.
+                s.idle_timeout(0);
+            }
             s.idle_timeout_ms(secs.saturating_mul(MS_PER_SEC).min(c_uint::MAX as u64) as _);
         }
         if let Some(v) = read_u64_option(global, tp, "maxUdpPayloadSize")? {

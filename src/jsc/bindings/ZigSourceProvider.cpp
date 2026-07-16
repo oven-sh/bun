@@ -210,8 +210,10 @@ static JSC::VM& getVMForBytecodeCache()
 
 extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    // Decode via the same path the runtime loader uses (Bun::toString ==
+    // BunString__fromBytes == clone_utf8) so the SourceCodeKey baked into the
+    // cached bytecode matches the one computed at load time.
+    JSC::SourceCode sourceCode = JSC::makeSource(Bun::toString(reinterpret_cast<const char*>(inputSourceCode), inputSourceCodeSize).transferToWTFString(), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
 
     JSC::VM& vm = getVMForBytecodeCache();
 
@@ -245,9 +247,9 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
 
 extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
 {
-    std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
-
-    JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
+    // See generateCachedModuleByteCodeFromSourceCode: decode via Bun::toString
+    // so the SourceCodeKey matches the runtime loader.
+    JSC::SourceCode sourceCode = JSC::makeSource(Bun::toString(reinterpret_cast<const char*>(inputSourceCode), inputSourceCodeSize).transferToWTFString(), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
     JSC::VM& vm = getVMForBytecodeCache();
 
     JSC::JSLockHolder locker(vm);

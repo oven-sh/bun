@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import perf from "perf_hooks";
+import { describe, expect, test } from "bun:test";
+import perf, { PerformanceObserver } from "perf_hooks";
 
 test("stubs", () => {
   expect(perf.performance.nodeTiming).toBeObject();
@@ -20,4 +20,26 @@ test("doesn't throw", () => {
   expect(() => performance.now()).not.toThrow();
   expect(() => performance.timeOrigin).not.toThrow();
   expect(() => performance.markResourceTiming()).not.toThrow();
+});
+
+describe("PerformanceObserver.supportedEntryTypes", () => {
+  test("node:perf_hooks returns the same frozen array on every access", () => {
+    const a = PerformanceObserver.supportedEntryTypes;
+    const b = PerformanceObserver.supportedEntryTypes;
+    expect(Object.isFrozen(a)).toBe(true);
+    expect(b).toBe(a);
+    expect(() => (a as string[]).push("evil")).toThrow(TypeError);
+    expect(PerformanceObserver.supportedEntryTypes.includes("evil")).toBe(false);
+    expect(PerformanceObserver.supportedEntryTypes).toBe(a);
+  });
+
+  test("globalThis.PerformanceObserver returns the same frozen array on every access", () => {
+    const a = globalThis.PerformanceObserver.supportedEntryTypes;
+    const b = globalThis.PerformanceObserver.supportedEntryTypes;
+    expect(Object.isFrozen(a)).toBe(true);
+    expect(b).toBe(a);
+    expect(() => (a as string[]).push("evil")).toThrow(TypeError);
+    expect(globalThis.PerformanceObserver.supportedEntryTypes.includes("evil")).toBe(false);
+    expect(globalThis.PerformanceObserver.supportedEntryTypes).toBe(a);
+  });
 });

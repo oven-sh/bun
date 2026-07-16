@@ -116,6 +116,11 @@ $toClass(PerformanceResourceTiming, "PerformanceResourceTiming", PerformanceEntr
 const kNodeObserver = Symbol("kNodeObserver");
 const kObserverCallback = Symbol("kObserverCallback");
 
+// Web IDL FrozenArray<DOMString>: one frozen, identity-stable array per class.
+const kSupportedEntryTypes = Object.freeze(
+  [...new Set([...(NodePerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort(),
+);
+
 /**
  * The native (WebCore) observer only understands mark/measure/resource.
  * Node-only entry types ('net', 'dns', ...) are routed to the JS-side
@@ -131,7 +136,7 @@ class PerformanceObserverForNodeTypes extends NodePerformanceObserver {
 
   /** The native list plus the Node-only types routed through the JS registry. */
   static get supportedEntryTypes() {
-    return [...new Set([...(NodePerformanceObserver.supportedEntryTypes ?? []), ...kNodeEntryTypes])].sort();
+    return kSupportedEntryTypes;
   }
 
   observe(options) {

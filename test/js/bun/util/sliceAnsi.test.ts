@@ -1143,7 +1143,9 @@ describe("Bun.sliceAnsi", () => {
     test("SGR between speculative-zone chars is discarded with the zone when cut", () => {
       const red = "\u001B[31m";
       const green = "\u001B[32m";
+      const bold = "\u001B[1m";
       const reset = "\u001B[39m";
+      const resetAll = "\u001B[0m";
       // 'efg' fall in the speculative zone and are replaced by the ellipsis;
       // the \e[32m between them applies only to discarded chars and must not
       // leak into the output. The negative-index path already behaves this
@@ -1154,6 +1156,25 @@ describe("Bun.sliceAnsi", () => {
       const viaKnown = Bun.sliceAnsi(text, -11, -4, { ellipsis: "..." });
       expect(viaLazy).toBe(`${red}abcd...${reset}`);
       expect(viaLazy).toBe(viaKnown);
+      // SGR 0 (full reset) between zone chars: the snapshot restore must bring
+      // back every active slot so emitCloseCodes closes them individually.
+      const multi = `${red}${bold}abcde${resetAll}fghij`;
+      expect(Bun.sliceAnsi(multi, 0, 7, { ellipsis: "..." })).toBe(`${red}${bold}abcd...\u001B[22m${reset}`);
+      expect(Bun.sliceAnsi(multi, 0, 7, { ellipsis: "..." })).toBe(Bun.sliceAnsi(multi, -10, -3, { ellipsis: "..." }));
+    });
+
+    test("hyperlink state is restored when speculative zone is discarded", () => {
+      // OSC 8 open lands between two speculative-zone chars and every linked
+      // character is discarded: no OSC 8 bytes should appear in the output.
+      const inner = "abcde" + createHyperlink("fghij", "http://x");
+      expect(Bun.sliceAnsi(inner, 0, 7, { ellipsis: "..." })).toBe("abcd...");
+      expect(Bun.sliceAnsi(inner, 0, 7, { ellipsis: "..." })).toBe(Bun.sliceAnsi(inner, -10, -3, { ellipsis: "..." }));
+      // Link open before the zone and close between zone chars: restoring the
+      // snapshot keeps the link active so a close is still synthesized before
+      // the ellipsis.
+      const outer = createHyperlink("abcde", "http://x") + "fghij";
+      expect(Bun.sliceAnsi(outer, 0, 7, { ellipsis: "..." })).toBe(createHyperlink("abcd", "http://x") + "...");
+      expect(Bun.sliceAnsi(outer, 0, 7, { ellipsis: "..." })).toBe(Bun.sliceAnsi(outer, -10, -3, { ellipsis: "..." }));
     });
   });
 

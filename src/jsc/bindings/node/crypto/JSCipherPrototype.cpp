@@ -281,7 +281,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAuthTag, (JSC::JSGlobalObject * globalObject
         return ERR::CRYPTO_INVALID_AUTH_TAG(scope, globalObject, builder.toString());
     }
 
-    cipher->m_authTagLen = tagLen;
     cipher->m_authTagState = AuthTagState::AuthTagKnown;
 
     memset(cipher->m_authTag, 0, sizeof(cipher->m_authTag));

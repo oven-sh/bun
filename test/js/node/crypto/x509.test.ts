@@ -72,3 +72,31 @@ describe("X509Certificate.checkHost()", () => {
     expect(cnOnly.checkIP("127.0.0.1")).toBeUndefined();
   });
 });
+
+describe("X509Certificate.infoAccess", () => {
+  // Node on OpenSSL 3 produces no trailing newline; match that so split("\n") does not yield a
+  // trailing empty element and exact string comparisons against Node-persisted values hold.
+  test("has no trailing newline", () => {
+    const cert = new X509Certificate(cnOnlyCertPem);
+    expect(cert.infoAccess).toBe("OCSP - URI:http://ocsp.nodejs.org/\nCA Issuers - URI:http://ca.nodejs.org/ca.cert");
+  });
+
+  test("is undefined when the certificate has no AIA extension", () => {
+    const cert = new X509Certificate(wildcardSanCertPem);
+    expect(cert.infoAccess).toBeUndefined();
+  });
+});
+
+describe("X509Certificate.subjectAltName", () => {
+  const escaping = path.join(import.meta.dir, "..", "test", "fixtures", "x509-escaping");
+  const altCert = (i: number) => new X509Certificate(readFileSync(path.join(escaping, `alt-${i}-cert.pem`)));
+
+  // Node on OpenSSL 3 includes the bad length; BoringSSL leaves OPENSSL_VERSION_MAJOR undefined so
+  // the <invalid length=N> branch in PrintGeneralName must be selected explicitly.
+  test.each([
+    [10, "IP Address:<invalid length=5>"],
+    [11, "IP Address:<invalid length=6>"],
+  ])("alt-%i-cert.pem renders a malformed IP SAN with its length", (i, expected) => {
+    expect(altCert(i).subjectAltName).toBe(expected);
+  });
+});

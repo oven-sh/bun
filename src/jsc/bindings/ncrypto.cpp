@@ -901,7 +901,7 @@ bool PrintGeneralName(const BIOPointer& out, const GENERAL_NAME* gen)
                 BIO_printf(out.get(), (j == 0) ? "%X" : ":%X", pair);
             }
         } else {
-#if OPENSSL_VERSION_MAJOR >= 3
+#if OPENSSL_VERSION_MAJOR >= 3 || defined(OPENSSL_IS_BORINGSSL)
             BIO_printf(out.get(), "<invalid length=%d>", ip->length);
 #else
             BIO_printf(out.get(), "<invalid>");
@@ -1028,7 +1028,7 @@ bool SafeX509InfoAccessPrint(const BIOPointer& out, X509_EXTENSION* ext)
     }
     sk_ACCESS_DESCRIPTION_pop_free(descs, ACCESS_DESCRIPTION_free);
 
-#if OPENSSL_VERSION_MAJOR < 3
+#if OPENSSL_VERSION_MAJOR < 3 && !defined(OPENSSL_IS_BORINGSSL)
     BIO_write(out.get(), "\n", 1);
 #endif
 

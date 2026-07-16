@@ -653,6 +653,98 @@ describe("Bun.wrapAnsi", () => {
     });
   });
 
+  describe("OSC 8 hyperlinks", () => {
+    const lineWidths = (s: string) => s.split("\n").map(l => Bun.stringWidth(l));
+
+    // OSC 8 may be terminated by BEL (0x07), ST (ESC \) or C1 ST (0x9c), and may
+    // carry parameters (e.g. id=) between the first and second ';'. Every form must
+    // uphold the wrap contract: each output line's visible width <= columns.
+    const open = {
+      bel: "\x1b]8;;http://x\x07",
+      st: "\x1b]8;;http://x\x1b\\",
+      c1st: "\x1b]8;;http://x\x9c",
+      idBel: "\x1b]8;id=9;http://e.co\x07",
+      idSt: "\x1b]8;id=9;http://e.co\x1b\\",
+    };
+    const close = {
+      bel: "\x1b]8;;\x07",
+      st: "\x1b]8;;\x1b\\",
+      c1st: "\x1b]8;;\x9c",
+      idBel: "\x1b]8;;\x07",
+      idSt: "\x1b]8;;\x1b\\",
+    };
+    const variants = Object.keys(open) as (keyof typeof open)[];
+
+    describe.each(variants)("%s-terminated", v => {
+      test("hard wrap respects columns", () => {
+        const input = `${open[v]}longlonglongword${close[v]}`;
+        expect(lineWidths(Bun.wrapAnsi(input, 5, { hard: true }))).toEqual([5, 5, 5, 1]);
+      });
+
+      test("wordWrap:false respects columns", () => {
+        const input = `${open[v]}longlonglongword${close[v]}`;
+        expect(lineWidths(Bun.wrapAnsi(input, 5, { wordWrap: false }))).toEqual([5, 5, 5, 1]);
+      });
+
+      test("hard wrap with trailing text respects columns", () => {
+        const input = `${open[v]}idlink${close[v]} more`;
+        for (const w of lineWidths(Bun.wrapAnsi(input, 3, { hard: true }))) {
+          expect(w).toBeLessThanOrEqual(3);
+        }
+      });
+
+      test("hard wrap respects columns (UTF-16 input)", () => {
+        const input = `${open[v]}longlonglongword${close[v]}\u00e9`;
+        for (const w of lineWidths(Bun.wrapAnsi(input, 5, { hard: true }))) {
+          expect(w).toBeLessThanOrEqual(5);
+        }
+      });
+
+      test("soft wrap closes and reopens the link at each newline", () => {
+        const input = `${open[v]}aa bb cc${close[v]}`;
+        const out = Bun.wrapAnsi(input, 2);
+        expect(lineWidths(out)).toEqual([2, 2, 2]);
+        // Every wrapped line carries its own open (ESC ] 8 ; ... ; non-empty URI)
+        // and close (ESC ] 8 ; ; <terminator>) so it remains independently clickable.
+        const linkOpen = /\x1b]8;[^;]*;[^\x07\x1b\x9c]+(?:\x07|\x1b\\|\x9c)/;
+        const linkClose = /\x1b]8;;(?:\x07|\x1b\\|\x9c)/;
+        for (const line of out.split("\n")) {
+          expect(line).toMatch(linkOpen);
+          expect(line).toMatch(linkClose);
+        }
+      });
+    });
+
+    test("hard-wrapped ST-terminated link: exact output", () => {
+      const input = `${open.st}longlonglongword${close.st}`;
+      expect(Bun.wrapAnsi(input, 5, { hard: true })).toBe(
+        "\x1b]8;;http://x\x1b\\longl\x1b]8;;\x07\n" +
+          "\x1b]8;;http://x\x07onglo\x1b]8;;\x07\n" +
+          "\x1b]8;;http://x\x07ngwor\x1b]8;;\x07\n" +
+          "\x1b]8;;http://x\x07d\x1b]8;;\x1b\\",
+      );
+    });
+
+    test("soft-wrapped id= link preserves params when reopening", () => {
+      const input = `${open.idBel}aa bb cc${close.idBel}`;
+      expect(Bun.wrapAnsi(input, 2)).toBe(
+        "\x1b]8;id=9;http://e.co\x07aa\x1b]8;;\x07\n" +
+          "\x1b]8;id=9;http://e.co\x07bb\x1b]8;;\x07\n" +
+          "\x1b]8;id=9;http://e.co\x07cc\x1b]8;;\x07",
+      );
+    });
+
+    test("BEL form is unchanged", () => {
+      const input = `${open.bel}longlonglongword${close.bel}`;
+      expect(Bun.wrapAnsi(input, 5, { hard: true })).toBe(
+        "\x1b]8;;http://x\x07longl\x1b]8;;\x07\n" +
+          "\x1b]8;;http://x\x07onglo\x1b]8;;\x07\n" +
+          "\x1b]8;;http://x\x07ngwor\x1b]8;;\x07\n" +
+          "\x1b]8;;http://x\x07d\x1b]8;;\x07",
+      );
+    });
+  });
+
   describe("long inputs", () => {
     test("wraps a long run of color escape sequences on one line", async () => {
       await using proc = Bun.spawn({

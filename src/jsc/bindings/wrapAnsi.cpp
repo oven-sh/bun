@@ -145,15 +145,26 @@ public:
         size_t read = m_trimScanOffset;
         size_t write = m_trimScanOffset;
         bool inEscape = m_trimInEscape;
+        bool inOscEscape = m_trimInOscEscape;
         size_t removedWidth = 0;
 
         while (read < size) {
             Char c = m_data[read];
             if (c == 0x1b) {
-                inEscape = true;
-            } else if (inEscape) {
-                if (c == 'm' || c == 0x07)
+                if (inOscEscape && read + 1 < size && m_data[read + 1] == '\\') {
+                    m_data[write++] = c;
+                    m_data[write++] = m_data[read + 1];
+                    read += 2;
                     inEscape = false;
+                    inOscEscape = false;
+                    continue;
+                }
+                inEscape = true;
+                if (read + 1 < size && m_data[read + 1] == ']')
+                    inOscEscape = true;
+            } else if (inEscape) {
+                if (inOscEscape ? (c == 0x07 || c == 0x9c) : (c == 'm'))
+                    inEscape = false, inOscEscape = false;
             } else if (c == ' ' || c == '\t') {
                 if (c == ' ')
                     removedWidth++;
@@ -179,11 +190,13 @@ public:
 
         m_trimScanOffset = write;
         m_trimInEscape = inEscape;
+        m_trimInOscEscape = inOscEscape;
         return removedWidth;
     }
 
     size_t m_trimScanOffset = 0;
     bool m_trimInEscape = false;
+    bool m_trimInOscEscape = false;
     bool m_leadingTrimComplete = false;
 };
 
@@ -202,13 +215,18 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
     const Char* it = wordStart;
     while (it < wordEnd) {
         if (*it == 0x1b) {
+            // ST (ESC \) terminates an in-progress OSC sequence
+            if (isInsideLinkEscape && wordEnd - it > 1 && it[1] == '\\') {
+                rows.last().append(it, it + 2);
+                it += 2;
+                isInsideEscape = false;
+                isInsideLinkEscape = false;
+                continue;
+            }
             isInsideEscape = true;
             isInsideCsiEscape = false;
-            // Check for hyperlink escape (OSC 8)
-            if (wordEnd - it > 4) {
-                if (it[1] == ']' && it[2] == '8' && it[3] == ';' && it[4] == ';')
-                    isInsideLinkEscape = true;
-            }
+            if (wordEnd - it > 1 && it[1] == ']')
+                isInsideLinkEscape = true;
             // Check for CSI escape (ESC [)
             if (wordEnd - it > 1 && it[1] == '[')
                 isInsideCsiEscape = true;
@@ -246,7 +264,7 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
 
         if (isInsideEscape) {
             if (isInsideLinkEscape) {
-                if (*it == 0x07) {
+                if (*it == 0x07 || *it == 0x9c) {
                     isInsideEscape = false;
                     isInsideLinkEscape = false;
                 }
@@ -294,7 +312,7 @@ template<typename Char>
 static bool isAnsiEscapeTerminator(Char c, bool isOscSequence)
 {
     if (isOscSequence)
-        return c == 0x07; // BEL terminates OSC sequences
+        return c == 0x07 || c == 0x9c; // BEL or C1 ST terminate OSC sequences
     return isCsiTerminator(c); // CSI terminator
 }
 
@@ -395,25 +413,33 @@ static std::optional<uint32_t> parseSgrCode(const Char* start, const Char* end)
     return std::nullopt;
 }
 
+// Parse an OSC 8 hyperlink: ESC ] 8 ; params ; uri TERMINATOR
+// where TERMINATOR is BEL (0x07), ST (ESC \) or C1 ST (0x9c).
+// Returns the [params;uri) body span, and whether the URI is non-empty (open).
 template<typename Char>
-static std::pair<const Char*, const Char*> parseOsc8Url(const Char* start, const Char* end)
+static std::pair<const Char*, const Char*> parseOsc8Body(const Char* start, const Char* end, bool& isOpen)
 {
-    // Format: ESC ] 8 ; ; url BEL
-    if (end - start < 6)
-        return { nullptr, nullptr };
-    if (start[0] != 0x1b || start[1] != ']' || start[2] != '8' || start[3] != ';' || start[4] != ';')
+    isOpen = false;
+    if (end - start < 4 || start[0] != 0x1b || start[1] != ']' || start[2] != '8' || start[3] != ';')
         return { nullptr, nullptr };
 
-    const Char* urlStart = start + 5;
-    const Char* urlEnd = urlStart;
-
-    while (urlEnd < end && *urlEnd != 0x07 && *urlEnd != 0x1b)
-        urlEnd++;
-
-    if (urlEnd == urlStart)
+    const Char* bodyStart = start + 4;
+    const Char* sep = bodyStart;
+    while (sep < end && *sep != ';' && *sep != 0x07 && *sep != 0x9c && *sep != 0x1b)
+        sep++;
+    if (sep >= end || *sep != ';')
         return { nullptr, nullptr };
+    const Char* uriStart = sep + 1;
 
-    return { urlStart, urlEnd };
+    const Char* p = uriStart;
+    while (p < end) {
+        if (*p == 0x07 || *p == 0x9c || (*p == 0x1b && p + 1 < end && p[1] == '\\')) {
+            isOpen = p > uriStart;
+            return { bodyStart, p };
+        }
+        p++;
+    }
+    return { nullptr, nullptr };
 }
 
 static std::optional<uint32_t> getCloseCode(uint32_t code)
@@ -468,8 +494,8 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
 
     // Process for ANSI style preservation
     std::optional<uint32_t> escapeCode;
-    const Char* escapeUrl = nullptr;
-    size_t escapeUrlLen = 0;
+    const Char* escapeLink = nullptr;
+    size_t escapeLinkLen = 0;
 
     for (size_t i = 0; i < joined.size(); ++i) {
         Char c = joined[i];
@@ -485,14 +511,17 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
                     else
                         escapeCode = *code;
                 }
-            } else if (i + 4 < joined.size() && joined[i + 1] == ']' && joined[i + 2] == '8' && joined[i + 3] == ';' && joined[i + 4] == ';') {
-                auto [urlStart, urlEnd] = parseOsc8Url(span.data() + i, span.data() + span.size());
-                if (urlStart && urlEnd != urlStart) {
-                    escapeUrl = urlStart;
-                    escapeUrlLen = urlEnd - urlStart;
-                } else {
-                    escapeUrl = nullptr;
-                    escapeUrlLen = 0;
+            } else if (i + 3 < joined.size() && joined[i + 1] == ']' && joined[i + 2] == '8' && joined[i + 3] == ';') {
+                bool isOpen;
+                auto [bodyStart, bodyEnd] = parseOsc8Body(span.data() + i, span.data() + span.size(), isOpen);
+                if (bodyStart) {
+                    if (isOpen) {
+                        escapeLink = bodyStart;
+                        escapeLinkLen = bodyEnd - bodyStart;
+                    } else {
+                        escapeLink = nullptr;
+                        escapeLinkLen = 0;
+                    }
                 }
             }
         }
@@ -500,7 +529,7 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
         // Check if next character is newline
         if (i + 1 < joined.size() && joined[i + 1] == '\n') {
             // Close styles before newline
-            if (escapeUrl) {
+            if (escapeLink) {
                 result.append("\x1b]8;;\x07"_s);
             }
             if (escapeCode) {
@@ -517,10 +546,10 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
                 result.append(String::number(*escapeCode));
                 result.append('m');
             }
-            if (escapeUrl) {
-                result.append("\x1b]8;;"_s);
-                for (size_t j = 0; j < escapeUrlLen; ++j)
-                    result.append(static_cast<UChar>(escapeUrl[j]));
+            if (escapeLink) {
+                result.append("\x1b]8;"_s);
+                for (size_t j = 0; j < escapeLinkLen; ++j)
+                    result.append(static_cast<UChar>(escapeLink[j]));
                 result.append(static_cast<UChar>(0x07));
             }
         }

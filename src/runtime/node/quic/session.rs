@@ -695,6 +695,19 @@ impl QuicSession {
     }
     pub(super) fn remove_stream(&self, stream: *mut super::stream::QuicStream) {
         self.streams.with_mut(|v| v.retain(|&s| s != stream));
+        // Null the slot instead of dropping it: these are positional FIFOs
+        // that lsquic fulfils in order. Leaving the raw pointer would let a
+        // recycled allocation at the same address satisfy the `contains()`
+        // check in take_pending_local_stream and bind to the wrong wrapper.
+        for queue in [&self.pending_local_bidi, &self.pending_local_uni] {
+            queue.with_mut(|v| {
+                for slot in v.iter_mut() {
+                    if *slot == stream {
+                        *slot = null_mut();
+                    }
+                }
+            });
+        }
     }
     fn bump_stream_stat(&self, id: u64, local: bool) {
         let idx = match (id & STREAM_ID_UNI_BIT != 0, local) {
@@ -1049,14 +1062,16 @@ impl QuicSession {
                         continue;
                     };
                     let handle = stream.handle();
-                    // Latin-1, as node does for HTTP headers.
-                    let to_js = |s: &Vec<u8>| {
-                        bun_core::String::clone_latin1(s)
+                    // Latin-1, as node does for HTTP headers. Allocate inside
+                    // the closure: a collected `Vec<JSValue>` lives on the Rust
+                    // heap, which the GC does not scan, so strings built early
+                    // would be collectible while later ones allocate.
+                    let js_arr = JSValue::create_array_from_iter(global, pairs.iter(), |s| {
+                        Ok(bun_core::String::clone_latin1(s)
                             .to_js(global)
-                            .unwrap_or(JSValue::UNDEFINED)
-                    };
-                    let arr = pairs.iter().map(to_js).collect::<Vec<_>>();
-                    if let Ok(js_arr) = JSValue::create_array_from_slice(global, &arr) {
+                            .unwrap_or(JSValue::UNDEFINED))
+                    });
+                    if let Ok(js_arr) = js_arr {
                         if let Some(cb) = callbacks::get(global, "onStreamHeaders") {
                             let vm = global.bun_vm().as_mut();
                             vm.event_loop_ref().run_callback(

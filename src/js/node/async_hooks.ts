@@ -379,7 +379,10 @@ function createHook(hook) {
   let enabled;
   return {
     enable() {
-      if (enabled === undefined && (init !== undefined || before !== undefined || after !== undefined || destroy !== undefined)) {
+      if (
+        enabled === undefined &&
+        (init !== undefined || before !== undefined || after !== undefined || destroy !== undefined)
+      ) {
         // init/before/after/destroy are delivered for TickObject resources
         // (process.nextTick); other resource types are still unimplemented.
         // Per-instance entry: two createHook() results sharing the same

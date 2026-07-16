@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // createHook().enable() mutates process-global state (the nextTick hook
@@ -14,10 +14,10 @@ async function run(src: string) {
 }
 
 describe.concurrent("async_hooks.createHook TickObject lifecycle", () => {
-test("TickObject: init is paired with destroy (no unbounded map growth)", async () => {
-  // The APM/CLS pattern: init -> map.set, destroy -> map.delete. Without
-  // destroy, the map grows by one entry per nextTick() call.
-  const { stdout, stderr, exitCode } = await run(`
+  test("TickObject: init is paired with destroy (no unbounded map growth)", async () => {
+    // The APM/CLS pattern: init -> map.set, destroy -> map.delete. Without
+    // destroy, the map grows by one entry per nextTick() call.
+    const { stdout, stderr, exitCode } = await run(`
     const ah = require("async_hooks");
     const m = new Map();
     ah.createHook({
@@ -30,12 +30,12 @@ test("TickObject: init is paired with destroy (no unbounded map growth)", async 
       else setImmediate(() => console.log("map size:", m.size));
     })();
   `);
-  expect({ stdout, stderr }).toEqual({ stdout: "map size: 0\n", stderr: "" });
-  expect(exitCode).toBe(0);
-});
+    expect({ stdout, stderr }).toEqual({ stdout: "map size: 0\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 
-test("TickObject: before/after/destroy fire in order around the callback", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+  test("TickObject: before/after/destroy fire in order around the callback", async () => {
+    const { stdout, stderr, exitCode } = await run(`
     const ah = require("async_hooks");
     const events = [];
     let tickId;
@@ -48,14 +48,14 @@ test("TickObject: before/after/destroy fire in order around the callback", async
     process.nextTick(() => events.push("cb"));
     setImmediate(() => console.log(events.join(",")));
   `);
-  expect(stderr).toBe("");
-  // node order: init, before, cb, after, destroy
-  expect(stdout.trim()).toMatch(/^init (\d+),before \1,cb,after \1,destroy \1$/);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    // node order: init, before, cb, after, destroy
+    expect(stdout.trim()).toMatch(/^init (\d+),before \1,cb,after \1,destroy \1$/);
+    expect(exitCode).toBe(0);
+  });
 
-test("TickObject: nested nextTick receives outer tick's asyncId as triggerAsyncId", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+  test("TickObject: nested nextTick receives outer tick's asyncId as triggerAsyncId", async () => {
+    const { stdout, stderr, exitCode } = await run(`
     const ah = require("async_hooks");
     const inits = [];
     ah.createHook({
@@ -67,24 +67,24 @@ test("TickObject: nested nextTick receives outer tick's asyncId as triggerAsyncI
     });
     setImmediate(() => console.log(JSON.stringify(inits)));
   `);
-  expect(stderr).toBe("");
-  const inits = JSON.parse(stdout.trim()) as [number, number][];
-  expect(inits.length).toBe(2);
-  const [outerId, outerTrigger] = inits[0];
-  const [innerId, innerTrigger] = inits[1];
-  expect(typeof outerId).toBe("number");
-  expect(innerId).not.toBe(outerId);
-  // inner was scheduled inside outer's callback, so its trigger is outer's id
-  expect(innerTrigger).toBe(outerId);
-  // outer was scheduled from top-level; Bun does not yet track
-  // executionAsyncId outside TickObject callbacks, so just require it is
-  // not the hardcoded-wrong value that would alias a real asyncId.
-  expect(outerTrigger).not.toBe(outerId);
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    const inits = JSON.parse(stdout.trim()) as [number, number][];
+    expect(inits.length).toBe(2);
+    const [outerId, outerTrigger] = inits[0];
+    const [innerId, innerTrigger] = inits[1];
+    expect(typeof outerId).toBe("number");
+    expect(innerId).not.toBe(outerId);
+    // inner was scheduled inside outer's callback, so its trigger is outer's id
+    expect(innerTrigger).toBe(outerId);
+    // outer was scheduled from top-level; Bun does not yet track
+    // executionAsyncId outside TickObject callbacks, so just require it is
+    // not the hardcoded-wrong value that would alias a real asyncId.
+    expect(outerTrigger).not.toBe(outerId);
+    expect(exitCode).toBe(0);
+  });
 
-test("TickObject: after/destroy still fire when callback throws", async () => {
-  const { stdout, exitCode } = await run(`
+  test("TickObject: after/destroy still fire when callback throws", async () => {
+    const { stdout, exitCode } = await run(`
     const ah = require("async_hooks");
     const events = [];
     let tickId;
@@ -98,24 +98,24 @@ test("TickObject: after/destroy still fire when callback throws", async () => {
     process.nextTick(() => { throw new Error("boom"); });
     setImmediate(() => console.log(events.join(",")));
   `);
-  expect(stdout.trim()).toBe("init,before,after,destroy");
-  expect(exitCode).toBe(0);
-});
+    expect(stdout.trim()).toBe("init,before,after,destroy");
+    expect(exitCode).toBe(0);
+  });
 
-test("TickObject: destroy-only hook still fires (asyncId assigned without init)", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+  test("TickObject: destroy-only hook still fires (asyncId assigned without init)", async () => {
+    const { stdout, stderr, exitCode } = await run(`
     const ah = require("async_hooks");
     let destroys = 0;
     ah.createHook({ destroy() { destroys++; } }).enable();
     for (let i = 0; i < 100; i++) process.nextTick(() => {});
     setImmediate(() => console.log("destroys:", destroys));
   `);
-  expect({ stdout, stderr }).toEqual({ stdout: "destroys: 100\n", stderr: "" });
-  expect(exitCode).toBe(0);
-});
+    expect({ stdout, stderr }).toEqual({ stdout: "destroys: 100\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 
-test("TickObject: disable() stops delivering all lifecycle events", async () => {
-  const { stdout, stderr, exitCode } = await run(`
+  test("TickObject: disable() stops delivering all lifecycle events", async () => {
+    const { stdout, stderr, exitCode } = await run(`
     const ah = require("async_hooks");
     let inits = 0, destroys = 0;
     const h = ah.createHook({
@@ -129,8 +129,8 @@ test("TickObject: disable() stops delivering all lifecycle events", async () => 
       setImmediate(() => console.log(JSON.stringify({ inits, destroys })));
     });
   `);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({ inits: 1, destroys: 1 });
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ inits: 1, destroys: 1 });
+    expect(exitCode).toBe(0);
+  });
 });

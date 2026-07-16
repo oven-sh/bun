@@ -17,16 +17,14 @@ function thrown(fn: () => unknown): unknown {
 }
 
 describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
-  test("throws on non-object symbol descriptor values", () => {
-    // Each symbol descriptor must be an object like { args: [...], returns: "void" }.
-    // Previously, non-object values like numbers or strings would cause a debug
-    // assertion failure (crash) in generateSymbolForFunction; after that crash
-    // was fixed, viewSource returned the TypeError instead of throwing it.
-    for (const value of [42, "not_an_object", true] as const) {
-      const err = thrown(() => viewSource({ myFunc: value as any }));
-      expect(err).toBeInstanceOf(TypeError);
-      expect((err as TypeError).message).toContain("Expected an object");
-    }
+  // Each symbol descriptor must be an object like { args: [...], returns: "void" }.
+  // Previously, non-object values like numbers or strings would cause a debug
+  // assertion failure (crash) in generateSymbolForFunction; after that crash
+  // was fixed, viewSource returned the TypeError instead of throwing it.
+  test.each([42, "not_an_object", true])("throws on non-object symbol descriptor value %p", value => {
+    const err = thrown(() => viewSource({ myFunc: value as any }));
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as TypeError).message).toContain("Expected an object");
   });
 
   test("throws on an unknown FFI type", () => {
@@ -35,19 +33,15 @@ describe.skipIf(isFFIUnavailable)("FFI viewSource", () => {
     expect((err as TypeError).message).toContain("bogus_type");
   });
 
-  test("throws on a non-object options argument", () => {
-    for (const value of [null, undefined, 42] as const) {
-      const err = thrown(() => viewSource(value as any));
-      expect(err).toBeInstanceOf(TypeError);
-    }
+  test.each([null, undefined, 42])("throws on non-object options argument %p", value => {
+    const err = thrown(() => viewSource(value as any));
+    expect(err).toBeInstanceOf(TypeError);
   });
 
-  test("throws on a non-object callback descriptor", () => {
-    for (const value of [null, undefined, 42, "str"] as const) {
-      const err = thrown(() => viewSource(value as any, true));
-      expect(err).toBeInstanceOf(TypeError);
-      expect((err as TypeError).message).toContain("Expected an object");
-    }
+  test.each([null, undefined, 42, "str"])("throws on non-object callback descriptor %p", value => {
+    const err = thrown(() => viewSource(value as any, true));
+    expect(err).toBeInstanceOf(TypeError);
+    expect((err as TypeError).message).toContain("Expected an object");
   });
 
   test("returns the generated source for a valid descriptor", () => {

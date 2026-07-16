@@ -99,6 +99,7 @@ public:
     static constexpr JSC::DestructionMode needsDestruction = NeedsDestruction;
 
     HistogramData m_histogramData;
+    void* m_eventLoopDelayMonitor = nullptr;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 

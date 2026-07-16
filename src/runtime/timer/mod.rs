@@ -371,10 +371,9 @@ impl Maps {
 // host fns see the same nominal type.
 pub use crate::test_runner::timers::fake_timers::FakeTimers;
 
-// ─── DateHeaderTimer / EventLoopDelayMonitor (struct-only) ───────────────────
-// Method bodies (`enable`/`run`) call `vm.timer.*` and `vm.uws_loop()` which
-// need `VirtualMachine.timer: All` (currently `()` in bun_jsc). Struct shape
-// is real so `All` embeds them by value with the correct layout.
+// ─── DateHeaderTimer / EventLoopDelayMonitor ─────────────────────────────────
+// `DateHeaderTimer` is embedded by value in `All`. `EventLoopDelayMonitor`
+// instances are heap-allocated per `monitorEventLoopDelay()` histogram.
 
 pub struct DateHeaderTimer {
     pub event_loop_timer: EventLoopTimer,
@@ -427,19 +426,18 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO: bare `JSValue` heap field with no Strong/visitChildren rooting —
-    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
-    // Needs JsRef-style rooting.
-    js_histogram: JSValue,
+    // Strong root keeps the JS histogram alive while monitoring is enabled.
+    js_histogram: bun_jsc::strong::Optional,
     pub event_loop_timer: EventLoopTimer,
     pub resolution_ms: i32,
     pub last_fire_ns: u64,
     pub enabled: bool,
 }
+bun_event_loop::impl_timer_owner!(EventLoopDelayMonitor; from_timer_ptr => event_loop_timer);
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            js_histogram: JSValue::default(),
+            js_histogram: bun_jsc::strong::Optional::empty(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
             resolution_ms: 10,
             last_fire_ns: 0,
@@ -455,14 +453,14 @@ impl EventLoopDelayMonitor {
 
     pub(crate) fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
         if self.enabled {
             return;
         }
-        self.js_histogram = histogram;
+        self.js_histogram.set(vm.global(), histogram);
         self.resolution_ms = resolution_ms;
         self.enabled = true;
 
@@ -474,8 +472,7 @@ impl EventLoopDelayMonitor {
             nsec: next.nsec,
         };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: single JS thread; nothing `All::insert` touches overlaps
-        // `event_loop_delay`, which `self` aliases.
+        // SAFETY: single JS thread; `self` is a heap allocation disjoint from `All`.
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
@@ -484,11 +481,13 @@ impl EventLoopDelayMonitor {
             return;
         }
         self.enabled = false;
-        self.js_histogram = JSValue::default();
+        self.js_histogram.deinit();
         self.last_fire_ns = 0;
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).remove(elt) };
+        if self.event_loop_timer.in_heap != InHeap::None {
+            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
+            // SAFETY: single JS thread; `self` is a heap allocation disjoint from `All`.
+            unsafe { (*Self::timer_all()).remove(elt) };
+        }
     }
 
     /// Record `now - last_fire_ns`
@@ -498,7 +497,10 @@ impl EventLoopDelayMonitor {
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
-        if !self.enabled || self.js_histogram.is_empty() {
+        let Some(histogram) = self.js_histogram.get() else {
+            return;
+        };
+        if !self.enabled {
             return;
         }
 
@@ -518,7 +520,7 @@ impl EventLoopDelayMonitor {
                         delay_ns: i64,
                     );
                 }
-                JSNodePerformanceHooksHistogram_recordDelay(self.js_histogram, delay_ns);
+                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
             }
         }
 
@@ -535,7 +537,7 @@ impl EventLoopDelayMonitor {
             nsec: next.nsec,
         };
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
+        // SAFETY: single JS thread; `self` is a heap allocation disjoint from `All`.
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 }
@@ -621,7 +623,6 @@ pub struct All {
     pub immediate_ref_count: i32,
     #[cfg(windows)]
     pub uv_idle: bun_sys::windows::libuv::uv_idle_t,
-    pub event_loop_delay: EventLoopDelayMonitor,
     pub fake_timers: FakeTimers,
     pub maps: Maps,
     pub date_header_timer: DateHeaderTimer,
@@ -643,7 +644,6 @@ impl All {
             immediate_ref_count: 0,
             #[cfg(windows)]
             uv_idle: bun_core::ffi::zeroed(),
-            event_loop_delay: EventLoopDelayMonitor::default(),
             fake_timers: FakeTimers::default(),
             maps: Maps::default(),
             date_header_timer: DateHeaderTimer::default(),
@@ -1185,6 +1185,7 @@ impl All {
     ) {
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
+        let mut delay_monitors: Vec<*mut EventLoopDelayMonitor> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
         // SAFETY: `this` is the live per-thread `All` (JS thread only).
@@ -1226,6 +1227,11 @@ impl All {
                     // field of a live boxed `abort_signal::Timeout`.
                     signal_timeouts.push(unsafe { AbortSignalTimeout::from_timer_ptr(node) });
                 }
+                EventLoopTimerTag::EventLoopDelayMonitor => {
+                    // SAFETY: tag invariant — `node` IS the `event_loop_timer`
+                    // field of a live boxed `EventLoopDelayMonitor`.
+                    delay_monitors.push(unsafe { EventLoopDelayMonitor::from_timer_ptr(node) });
+                }
                 _ => {}
             }
         }
@@ -1260,6 +1266,25 @@ impl All {
                 if !signal.is_null() {
                     crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
                 }
+            }
+        }
+
+        // Heap-allocated `monitorEventLoopDelay()` monitors still enabled at
+        // teardown: null the owning histogram's pointer, unlink, drop Strong,
+        // and free.
+        for m in delay_monitors {
+            unsafe extern "C" {
+                safe fn JSNodePerformanceHooksHistogram_clearMonitor(histogram: JSValue);
+            }
+            // SAFETY: each `m` was collected from the live heap above; the
+            // box is still owned by the histogram's `m_eventLoopDelayMonitor`
+            // which we clear here. JS thread.
+            unsafe {
+                if let Some(histogram) = (*m).js_histogram.get() {
+                    JSNodePerformanceHooksHistogram_clearMonitor(histogram);
+                }
+                (*m).disable(&mut *vm);
+                bun_core::heap::destroy(m);
             }
         }
     }

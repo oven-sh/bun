@@ -141,9 +141,9 @@ pub(crate) fn runtime_state() -> *mut RuntimeState {
 /// with no high tier, or `Bun__Timer__getNextID` racing init).
 ///
 /// Returns `*mut` (NOT `&mut`) so callers that are themselves fields of `All`
-/// (`DateHeaderTimer`, `EventLoopDelayMonitor`, `FakeTimers`) can dereference
-/// per-field under `// SAFETY:` without forming an aliased `&mut All` while
-/// `&mut self` is live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
+/// (`DateHeaderTimer`, `FakeTimers`) can dereference per-field under
+/// `// SAFETY:` without forming an aliased `&mut All` while `&mut self` is
+/// live (raw-ptr-per-field re-entry pattern, see `auto_tick`).
 #[inline]
 pub(crate) fn timer_all() -> *mut timer::All {
     let state = runtime_state();

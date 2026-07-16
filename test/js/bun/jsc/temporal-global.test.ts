@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Upstream WebKit c8b6308aaa69 ships Temporal enabled by default

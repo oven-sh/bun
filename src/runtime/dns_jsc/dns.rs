@@ -2974,6 +2974,9 @@ pub mod internal {
                                     dns,
                                     "libinfoCallback: failed to register poll"
                                 );
+                                if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
+                                    cancel(machport);
+                                }
                                 break 'retry;
                             }
                             sys::Result::Ok(_) => return,
@@ -3162,30 +3165,34 @@ pub mod internal {
     #[cfg(target_os = "macos")]
     fn sweep_stale_libinfo(loop_: *mut Loop) {
         let now = GlobalCache::get_cache_timestamp();
-        let mut stale: Vec<(*mut Request, NonNull<FilePoll>, mach_port)> = Vec::new();
-        {
-            let guard = global_cache().lock();
-            for &entry in &guard.cache[..guard.len] {
-                // SAFETY: entries 0..len are live heap Requests while the lock
-                // is held; `libinfo.*` is only mutated under this lock.
-                unsafe {
-                    if (*entry).result.is_none()
-                        && (*entry).libinfo.loop_ == loop_
-                        && now.saturating_sub((*entry).created_at) > LIBINFO_STALE_SECONDS
-                    {
-                        if let Some(poll) = (*entry).libinfo.file_poll.take() {
-                            let machport = core::mem::take(&mut (*entry).libinfo.machport);
-                            (*entry).libinfo.loop_ = ptr::null_mut();
-                            stale.push((entry, poll, machport));
+        // Take one stale entry per lock acquisition, then cancel/deinit/schedule
+        // outside the lock. The common case is zero stale entries (one acquire).
+        loop {
+            let found = {
+                let guard = global_cache().lock();
+                let mut found = None;
+                for &entry in &guard.cache[..guard.len] {
+                    // SAFETY: entries 0..len are live heap Requests while the lock
+                    // is held; `libinfo.*` is only mutated under this lock.
+                    unsafe {
+                        if (*entry).result.is_none()
+                            && (*entry).libinfo.loop_ == loop_
+                            && now.saturating_sub((*entry).created_at) > LIBINFO_STALE_SECONDS
+                        {
+                            if let Some(poll) = (*entry).libinfo.file_poll.take() {
+                                let machport = core::mem::take(&mut (*entry).libinfo.machport);
+                                (*entry).libinfo.loop_ = ptr::null_mut();
+                                found = Some((entry, poll, machport));
+                                break;
+                            }
                         }
                     }
                 }
-            }
-        }
-        // Syscalls + deinit + scheduling outside the lock. `req` stays live:
-        // its in-flight refcount is released only by `after_result`, which we
-        // schedule below.
-        for (req, poll, machport) in stale {
+                found
+            };
+            let Some((req, poll, machport)) = found else {
+                return;
+            };
             if machport != 0 {
                 if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
                     // SAFETY: `machport` is the receive right `lookup_libinfo` obtained.

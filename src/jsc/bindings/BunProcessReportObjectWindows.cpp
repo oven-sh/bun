@@ -242,8 +242,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
     // JavaScript stack
     {
-        report->putDirect(vm, Identifier::fromString(vm, "javascriptStack"_s), constructReportJavaScriptStack(vm, globalObject, errorValue), 0);
+        JSValue javascriptStack = constructReportJavaScriptStack(vm, globalObject, errorValue);
         RETURN_IF_EXCEPTION(scope, {});
+        report->putDirect(vm, Identifier::fromString(vm, "javascriptStack"_s), javascriptStack, 0);
     }
 
     // JavaScript heap

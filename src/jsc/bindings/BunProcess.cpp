@@ -2500,8 +2500,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         report->putDirect(vm, JSC::Identifier::fromString(vm, "header"_s), constructHeader(), 0);
         RETURN_IF_EXCEPTION(scope, {});
-        report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptStack"_s), constructReportJavaScriptStack(vm, globalObject, errorValue), 0);
+        JSValue javascriptStack = constructReportJavaScriptStack(vm, globalObject, errorValue);
         RETURN_IF_EXCEPTION(scope, {});
+        report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptStack"_s), javascriptStack, 0);
         report->putDirect(vm, JSC::Identifier::fromString(vm, "javascriptHeap"_s), constructJavaScriptHeap(), 0);
         RETURN_IF_EXCEPTION(scope, {});
         report->putDirect(vm, JSC::Identifier::fromString(vm, "nativeStack"_s), constructNativeStack(), 0);

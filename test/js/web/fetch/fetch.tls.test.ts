@@ -640,7 +640,6 @@ describe.concurrent("fetch-tls", () => {
   it("fetch timeout works on tls", async () => {
     using server = Bun.serve({
       tls: validTls,
-      hostname: "localhost",
       port: 0,
       rejectUnauthorized: false,
       async fetch() {
@@ -657,7 +656,7 @@ describe.concurrent("fetch-tls", () => {
     const THRESHOLD = 150 * (isASAN ? 2 : 1); // ASAN can be very slow, so we need to increase the threshold for it
 
     try {
-      await fetch(server.url, {
+      await fetch(`https://localhost:${server.port}/`, {
         signal: AbortSignal.timeout(TIMEOUT),
         tls: { ca: validTls.cert },
       }).then(res => res.text());

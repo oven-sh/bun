@@ -6167,11 +6167,12 @@ declare module "bun" {
     /**
      * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
      * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Setting `0` for `initialDelay` (the default) will leave the value unchanged from the default (or previous) setting.
      * Only available for already connected sockets; returns `false` otherwise.
      *
      * Enabling the keep-alive functionality sets the following socket options:
      * SO_KEEPALIVE=1
-     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPIDLE=initialDelay/1000
      * TCP_KEEPCNT=10
      * TCP_KEEPINTVL=1
      * @param enable Default: `false`

@@ -204,6 +204,9 @@ unsafe extern "C" {
     // ABI-identical to non-null `*const`); C++ mutating VM state through it is
     // interior to the cell.
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
+    // safe: opaque `&JSGlobalObject` handle (see above); takes the contexts-map
+    // lock and flips an atomic flag, no Rust-visible state touched.
+    safe fn ScriptExecutionContext__markTerminating(global: &JSGlobalObject);
     // safe: `cpp_worker` is an opaque round-trip pointer owned by C++ (allocated
     // there, stored in `WebWorker.cpp_worker`, and only ever passed back to C++
     // — never dereferenced as Rust data); same contract as `JSC__VM__holdAPILock`'s
@@ -1277,6 +1280,15 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Stop cross-thread posters first: markTerminating() serializes
+            // with postTaskTo() on the contexts-map lock, so after this call
+            // every task another thread has already enqueued is visible to the
+            // drain below and no new one can land. teardownJSCVM() will call
+            // it again (redundantly) after the drain; without this earlier
+            // call a parent-side MessagePort ack (worker stdio backpressure)
+            // posted in the gap would sit in concurrent_tasks past the raw VM
+            // dealloc and leak under LSan.
+            ScriptExecutionContext__markTerminating(vm.global());
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when
             // terminate() lands, and any Worker dispatchExit close task from a

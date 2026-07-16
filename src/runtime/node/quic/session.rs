@@ -38,6 +38,11 @@ const LISTENER_FLAG_ORIGIN: u32 = 0x20;
 /// RFC 9412 sec 2: each Origin-Entry is a 16-bit length prefix followed by
 /// the ASCII origin.
 const ORIGIN_LEN_PREFIX: usize = 2;
+/// Ceiling on one ORIGIN frame's accumulated payload. The frame length is a
+/// 62-bit varint, so without this a peer could grow the buffer unboundedly;
+/// entries are `scheme://host:port`, so this holds far more than any real
+/// server sends. A truncated trailing entry is dropped by the parser.
+const MAX_ORIGIN_BYTES: usize = 64 * 1024;
 
 /// Stream-id bit 1 selects the direction (RFC 9000 §2.1).
 const STREAM_ID_UNI_BIT: u64 = 0x2;
@@ -2394,7 +2399,10 @@ lsquic_callback! {
         if !chunk.is_null() && len > 0 {
             // SAFETY: `chunk[..len]` is live for the duration of this callback.
             let bytes = unsafe { core::slice::from_raw_parts(chunk, len) };
-            session.origin_buf.with_mut(|b| b.extend_from_slice(bytes));
+            session.origin_buf.with_mut(|b| {
+                let room = MAX_ORIGIN_BYTES.saturating_sub(b.len());
+                b.extend_from_slice(&bytes[..bytes.len().min(room)]);
+            });
         }
         if fin != 0 {
             let payload = session.origin_buf.with_mut(core::mem::take);

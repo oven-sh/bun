@@ -1260,7 +1260,16 @@ impl QuicEndpoint {
         let _keep_alive = bun_jsc::Strong::create(self.this_value.get().get(), global);
 
         loop {
-            let Some(session) = self.pending_new_sessions.with_mut(|v| v.pop()) else {
+            // Arrival order: both push sites append, and a burst of Initials in
+            // one recvmmsg batch must announce in the order the sessions loop
+            // below then walks them.
+            let Some(session) = self.pending_new_sessions.with_mut(|v| {
+                if v.is_empty() {
+                    None
+                } else {
+                    Some(v.remove(0))
+                }
+            }) else {
                 break;
             };
             let Some(session) = self.live_session(session) else {
@@ -1972,6 +1981,11 @@ impl QuicEndpoint {
                 idle_ms.min(c_uint::MAX as u64) as c_uint,
             )
         };
+        // Keep what localTransportParams() reports in step with what this
+        // connect() just put on the wire; a reused endpoint would otherwise
+        // still echo the first session's value.
+        self.client_local_tp
+            .with_mut(|tp| tp.max_idle_timeout = idle_ms);
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
@@ -2009,6 +2023,11 @@ impl QuicEndpoint {
                 0,
                 resume_ptr,
                 resume_len,
+                // `options.token` (the blob from onnewtoken) is validated in JS
+                // but deliberately not replayed: handing it to lsquic here makes
+                // test-quic-token-secret and both zero-rtt tests fail with
+                // "handshake timed out", so the Retry path needs understanding
+                // first. Costs the extra Retry RTT the token would have saved.
                 null(),
                 0,
             )

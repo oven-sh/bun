@@ -81,6 +81,7 @@ const {
   8: _markAsUncloneable,
   9: _setEntryEvaluatedHook,
   10: _isNodeWorker,
+  11: _resourceLimits,
 } = $cpp("Worker.cpp", "createNodeWorkerThreadsBinding") as [
   unknown,
   number,
@@ -93,9 +94,32 @@ const {
   (value: unknown) => void,
   (hook: () => void) => void,
   boolean,
+  NodeResourceLimits | null,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
+type NodeResourceLimits = import("node:worker_threads").ResourceLimits;
+
+// Bun does not enforce worker resource limits (JSC has no V8-style per-context
+// heap cap), but `worker.resourceLimits` and the module-level `resourceLimits`
+// export inside a worker reflect the limits passed to the constructor, applying
+// the same normalizations and defaults Node does so the documented API shape
+// matches. Node (lib/internal/worker.js + node_worker.cc):
+//   - maxYoungGenerationSizeMb / codeRangeSizeMb: echoed verbatim, else -1
+//   - maxOldGenerationSizeMb: clamped to Math.max(value, 2), else -1
+//   - stackSizeMb: echoed when positive, otherwise the 4 MB default
+function applyResourceLimits(raw: NodeResourceLimits | null | undefined): Required<NodeResourceLimits> {
+  const read = (value: unknown, fallback: number): number => (typeof value === "number" ? value : fallback);
+  const maxOldValue = raw?.maxOldGenerationSizeMb;
+  const stack = read(raw?.stackSizeMb, 4);
+  return {
+    maxYoungGenerationSizeMb: read(raw?.maxYoungGenerationSizeMb, -1),
+    // A numeric maxOldGenerationSizeMb is clamped to >= 2; absent stays -1.
+    maxOldGenerationSizeMb: typeof maxOldValue === "number" ? Math.max(maxOldValue, 2) : -1,
+    codeRangeSizeMb: read(raw?.codeRangeSizeMb, -1),
+    stackSizeMb: stack > 0 ? stack : 4,
+  };
+}
 
 // Used to ensure that Blobs created to hold the source code for `eval: true` Workers get cleaned up
 // after their Worker exits
@@ -317,7 +341,9 @@ Object.defineProperty(MessagePort.prototype, kInspectCustom, {
   configurable: true,
 });
 
-let resourceLimits = {};
+// On the main thread this is `{}` (matching Node). Inside a worker it reflects
+// the limits the parent passed to the constructor, with Node's defaults filled.
+let resourceLimits = isMainThread ? {} : applyResourceLimits(_resourceLimits);
 
 const BUN_WORKER_STDIO_KEY = "@@bunWorkerThreadsStdio";
 const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
@@ -928,6 +954,7 @@ class Worker extends EventEmitter {
   #stderr;
   #stdoutAutoPipe = false;
   #stderrAutoPipe = false;
+  #resourceLimits: Required<NodeResourceLimits>;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -944,6 +971,7 @@ class Worker extends EventEmitter {
     options ??= {};
 
     this.#name = normalizeWorkerName(options.name);
+    this.#resourceLimits = applyResourceLimits(options.resourceLimits);
 
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options[builtinsGeneratorHatesEval]) {
@@ -1096,6 +1124,17 @@ class Worker extends EventEmitter {
 
   get threadName() {
     return this.#exited ? null : this.#name;
+  }
+
+  get resourceLimits() {
+    // Node returns {} once the worker has stopped (its getter returns {} when
+    // the native handle is null). #onExitPromise is set to the numeric exit
+    // code in #onClose, so a number here means the worker has exited.
+    if (typeof this.#onExitPromise === "number") return {};
+    // Return a fresh copy each access, like Node (its getter builds a new
+    // object from the native handle), so identity differs between reads and
+    // mutations to the returned object don't leak back into the worker.
+    return { ...this.#resourceLimits };
   }
 
   ref() {

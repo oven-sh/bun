@@ -1,8 +1,18 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import path from "path";
 import wt from "worker_threads";
+
+// Several tests spawn a bun subprocess (one relays many worker messages) which
+// is much slower to start under the debug/ASAN build and can exceed the 5s
+// default test timeout. Give the whole file more headroom there.
+if (isDebug || isASAN) setDefaultTimeout(60_000);
+
+// The in-test watchdog that kills the subprocess on hang needs more headroom
+// than 1s under debug/ASAN, where subprocess startup alone can exceed that. It
+// stays below the per-test timeout so a real hang fails with a clear message.
+const subprocessWatchdogMs = isDebug || isASAN ? 30_000 : 1_000;
 
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
@@ -250,7 +260,7 @@ describe("web worker", () => {
     const timer = setTimeout(() => {
       x.kill();
       done(new Error("timeout"));
-    }, 1000);
+    }, subprocessWatchdogMs);
 
     x.exited.then(async code => {
       clearTimeout(timer);
@@ -278,7 +288,7 @@ describe("web worker", () => {
     const timer = setTimeout(() => {
       x.kill();
       done(new Error("timeout"));
-    }, 1000);
+    }, subprocessWatchdogMs);
 
     x.exited.then(async code => {
       clearTimeout(timer);
@@ -384,9 +394,11 @@ describe("worker_threads", () => {
     // Wait for the worker to self-exit (its setTimeout fires process.exit(2)
     // after 10 ms) — a fixed sleep races with worker startup, which under
     // debug/ASAN can exceed 200 ms.
-    const [code] = await once(worker, "exit");
-    await worker.terminate();
-    expect(code).toBe(2);
+    const [exitCode] = await once(worker, "exit");
+    expect(exitCode).toBe(2);
+    // terminate() after the worker has already exited resolves to undefined,
+    // matching Node (it only yields a code when it stops a running worker).
+    expect(await worker.terminate()).toBeUndefined();
   });
 
   test.todo("worker terminating forcefully properly interrupts", async () => {

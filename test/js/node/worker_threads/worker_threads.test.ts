@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +22,12 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Several tests spawn a fresh bun subprocess (sometimes one that itself spawns
+// nested workers), which is much slower to start up under the debug/ASAN build
+// and can exceed the 5s default timeout. Give the whole file more headroom
+// there; it doesn't affect the fast in-process tests.
+if (isDebug || isASAN) setDefaultTimeout(60_000);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -189,6 +196,168 @@ test("all worker_threads worker instance properties are present", async () => {
   expect(worker.listenerCount).toBeFunction();
   expect(worker.eventNames).toBeFunction();
   await worker.terminate();
+});
+
+// Bun does not enforce worker resource limits, but the `resourceLimits` passed
+// to `new Worker(...)` must be reflected back through `worker.resourceLimits`
+// and the module-level `resourceLimits` export inside the worker, matching
+// Node's shape (unset numeric fields default to -1, `stackSizeMb` to 4).
+describe("resourceLimits", () => {
+  test("worker.resourceLimits echoes the limits passed to the constructor", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8, codeRangeSizeMb: 4, stackSizeMb: 2 },
+    });
+    expect(worker.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: 8,
+      maxOldGenerationSizeMb: 32,
+      codeRangeSizeMb: 4,
+      stackSizeMb: 2,
+    });
+    await worker.terminate();
+  });
+
+  test("worker.resourceLimits fills defaults for fields not passed", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 16 },
+    });
+    expect(worker.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: -1,
+      maxOldGenerationSizeMb: 16,
+      codeRangeSizeMb: -1,
+      stackSizeMb: 4,
+    });
+    await worker.terminate();
+  });
+
+  test("worker.resourceLimits is an empty object once the worker has stopped", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 16 },
+    });
+    const exited = once(worker, "exit");
+    expect(worker.resourceLimits).toMatchObject({ maxOldGenerationSizeMb: 16 });
+    await worker.terminate();
+    await exited;
+    expect(worker.resourceLimits).toEqual({});
+  });
+
+  test("worker.resourceLimits is a defaulted object when no resourceLimits is passed", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, { eval: true });
+    expect(worker.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: -1,
+      maxOldGenerationSizeMb: -1,
+      codeRangeSizeMb: -1,
+      stackSizeMb: 4,
+    });
+    await worker.terminate();
+  });
+
+  test("module-level resourceLimits inside a worker reflects the applied limits", async () => {
+    const worker = new Worker(
+      `
+        const { parentPort, resourceLimits } = require("node:worker_threads");
+        parentPort.postMessage(resourceLimits);
+      `,
+      {
+        eval: true,
+        resourceLimits: { maxOldGenerationSizeMb: 32, maxYoungGenerationSizeMb: 8, codeRangeSizeMb: 4, stackSizeMb: 2 },
+      },
+    );
+    const [message] = await once(worker, "message");
+    expect(message).toEqual({
+      maxYoungGenerationSizeMb: 8,
+      maxOldGenerationSizeMb: 32,
+      codeRangeSizeMb: 4,
+      stackSizeMb: 2,
+    });
+    await worker.terminate();
+  });
+
+  test("module-level resourceLimits inside a worker fills defaults for fields not passed", async () => {
+    const worker = new Worker(
+      `
+        const { parentPort, resourceLimits } = require("node:worker_threads");
+        parentPort.postMessage(resourceLimits);
+      `,
+      { eval: true, resourceLimits: { maxOldGenerationSizeMb: 16 } },
+    );
+    const [message] = await once(worker, "message");
+    expect(message).toEqual({
+      maxYoungGenerationSizeMb: -1,
+      maxOldGenerationSizeMb: 16,
+      codeRangeSizeMb: -1,
+      stackSizeMb: 4,
+    });
+    await worker.terminate();
+  });
+
+  test("module-level resourceLimits on the main thread is an empty object", () => {
+    expect(resourceLimits).toEqual({});
+  });
+
+  test("non-number resourceLimits fields fall back to defaults", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      // @ts-expect-error intentionally passing wrong types
+      resourceLimits: { maxOldGenerationSizeMb: "16", codeRangeSizeMb: null },
+    });
+    expect(worker.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: -1,
+      maxOldGenerationSizeMb: -1,
+      codeRangeSizeMb: -1,
+      stackSizeMb: 4,
+    });
+    await worker.terminate();
+  });
+
+  test("worker.resourceLimits normalizes values like Node", async () => {
+    // Node clamps maxOldGenerationSizeMb to >= 2 and treats a non-positive
+    // stackSizeMb as the 4 MB default; maxYoung/codeRange are echoed verbatim.
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 1, stackSizeMb: 0, maxYoungGenerationSizeMb: 0, codeRangeSizeMb: -2 },
+    });
+    expect(worker.resourceLimits).toEqual({
+      maxYoungGenerationSizeMb: 0,
+      maxOldGenerationSizeMb: 2,
+      codeRangeSizeMb: -2,
+      stackSizeMb: 4,
+    });
+    await worker.terminate();
+  });
+
+  test("worker.resourceLimits returns a fresh object each access (like Node)", async () => {
+    const worker = new Worker(`setInterval(() => {}, 1000);`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 16 },
+    });
+    const first = worker.resourceLimits;
+    // Node builds a fresh object from the native handle on every access, so the
+    // identity differs and mutating one read does not affect later reads.
+    expect(worker.resourceLimits).not.toBe(first);
+    first.maxOldGenerationSizeMb = 999;
+    expect(worker.resourceLimits.maxOldGenerationSizeMb).toBe(16);
+    await worker.terminate();
+  });
+
+  test("worker.resourceLimits stays {} after a clean exit then terminate()", async () => {
+    // A worker that exits cleanly gets exit code 0. terminate() must not treat
+    // that falsy code as "not yet exited" — doing so would hang the returned
+    // promise and revert resourceLimits from {} to the populated object.
+    const worker = new Worker(`1 + 1;`, {
+      eval: true,
+      resourceLimits: { maxOldGenerationSizeMb: 16 },
+    });
+    const [code] = await once(worker, "exit");
+    expect(code).toBe(0);
+    expect(worker.resourceLimits).toEqual({});
+    // terminate() after the worker has already exited resolves to undefined
+    // (matching Node), and must not hang — if it hangs, the test times out.
+    expect(await worker.terminate()).toBeUndefined();
+    expect(worker.resourceLimits).toEqual({});
+  });
 });
 
 test("threadId module and worker property is consistent", async () => {

@@ -213,52 +213,52 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     RETURN_IF_EXCEPTION(scope, {});
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s), JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION))), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "bun"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(Bun__version)).substring(1)), JSC::PropertyAttribute::ReadOnly | 0);
 
     // Use CMake-generated versions
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_BORINGSSL))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_BORINGSSL))), JSC::PropertyAttribute::ReadOnly | 0);
     // https://github.com/oven-sh/bun/issues/7921
     // BoringSSL is a fork of OpenSSL 1.1.0, so we can report OpenSSL 1.1.0
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "openssl"_s), JSC::jsOwnedString(vm, String("1.1.0"_s)));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "openssl"_s), JSC::jsOwnedString(vm, String("1.1.0"_s)), JSC::PropertyAttribute::ReadOnly | 0);
     // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "llhttp"_s), JSC::jsOwnedString(vm, String("9.3.0"_s)));
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LIBARCHIVE)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_MIMALLOC)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_PICOHTTPPARSER)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_UWS)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_WEBKIT)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZIG)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "llhttp"_s), JSC::jsOwnedString(vm, String("9.3.0"_s)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libarchive"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LIBARCHIVE)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "mimalloc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_MIMALLOC)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "picohttpparser"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_PICOHTTPPARSER)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uwebsockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_UWS)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "webkit"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_WEBKIT)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zig"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZIG)), JSC::PropertyAttribute::ReadOnly | 0);
 
     // Use commit hash for zlib to match test expectations
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZLIB_HASH)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zlib"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZLIB_HASH)), JSC::PropertyAttribute::ReadOnly | 0);
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "tinycc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_TINYCC)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "lolhtml"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LOLHTML)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_C_ARES)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "tinycc"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_TINYCC)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "lolhtml"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LOLHTML)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_C_ARES)), JSC::PropertyAttribute::ReadOnly | 0);
 
     // Use commit hash for libdeflate to match test expectations
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LIBDEFLATE_HASH)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LIBDEFLATE_HASH)), JSC::PropertyAttribute::ReadOnly | 0);
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_USOCKETS)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LSHPACK)), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_USOCKETS)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_LSHPACK)), JSC::PropertyAttribute::ReadOnly | 0);
 
     // Use commit hash for zstd (semantic version extraction not working yet)
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZSTD_HASH)), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION)))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "zstd"_s), JSC::jsOwnedString(vm, ASCIILiteral::fromLiteralUnsafe(BUN_VERSION_ZSTD_HASH)), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "v8"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_V8_VERSION)))), JSC::PropertyAttribute::ReadOnly | 0);
 #if OS(WINDOWS)
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String::fromLatin1(uv_version_string()))), JSC::PropertyAttribute::ReadOnly | 0);
 #else
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String("1.48.0"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "uv"_s), JSValue(JSC::jsOwnedString(vm, String("1.48.0"_s))), JSC::PropertyAttribute::ReadOnly | 0);
 #endif
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsOwnedString(vm, String("10"_s))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "napi"_s), JSValue(JSC::jsOwnedString(vm, String("10"_s))), JSC::PropertyAttribute::ReadOnly | 0);
 
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_ICU_VERSION)))), 0);
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_UNICODE_VERSION)))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_ICU_VERSION)))), JSC::PropertyAttribute::ReadOnly | 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "unicode"_s), JSValue(JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(U_UNICODE_VERSION)))), JSC::PropertyAttribute::ReadOnly | 0);
 
 #define STRINGIFY_IMPL(x) #x
 #define STRINGIFY(x) STRINGIFY_IMPL(x)
-    object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION)))));
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "modules"_s), JSC::jsOwnedString(vm, String(ASCIILiteral::fromLiteralUnsafe(STRINGIFY(REPORTED_NODEJS_ABI_VERSION)))), JSC::PropertyAttribute::ReadOnly | 0);
 #undef STRINGIFY
 #undef STRINGIFY_IMPL
 
@@ -271,9 +271,9 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* release = JSC::constructEmptyObject(globalObject);
 
-    release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
-    release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsOwnedString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), 0);
-    release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)), 0);
+    release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), JSC::PropertyAttribute::ReadOnly | 0); // maybe this should be 'bun' eventually
+    release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsOwnedString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), JSC::PropertyAttribute::ReadOnly | 0);
+    release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)), JSC::PropertyAttribute::ReadOnly | 0);
 
     RETURN_IF_EXCEPTION(scope, {});
     return release;
@@ -2548,6 +2548,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+    JSC::JSObject* targetDefaults = JSC::constructEmptyObject(globalObject);
     JSC::JSArray* shareableBuiltins = JSC::constructEmptyArray(globalObject, nullptr);
     if (auto* exception = scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
@@ -2566,7 +2567,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "node_byteorder"_s), JSC::jsString(vm, String("little"_s)), 0);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "clang"_s), JSC::jsNumber(0), 0);
 
-    config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), JSC::constructEmptyObject(globalObject), 0);
+    config->putDirect(vm, JSC::Identifier::fromString(vm, "target_defaults"_s), targetDefaults, 0);
     config->putDirect(vm, JSC::Identifier::fromString(vm, "variables"_s), variables, 0);
 
 #if OS(WINDOWS)
@@ -2646,6 +2647,13 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "asan"_s), JSC::jsNumber(0), 0);
 #endif
 
+    // Node deep-freezes the whole process.config tree.
+    // objectConstructorFreeze also makes the array's length non-writable,
+    // which JSObject::freeze does not.
+    JSC::objectConstructorFreeze(globalObject, shareableBuiltins);
+    RETURN_IF_EXCEPTION(scope, {});
+    targetDefaults->freeze(vm);
+    variables->freeze(vm);
     config->freeze(vm);
     RETURN_IF_EXCEPTION(scope, {});
     return config;
@@ -2753,6 +2761,81 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
         return jsUndefined();
     }
     return result;
+}
+
+JSValue Process::getStdin(JSGlobalObject* globalObject)
+{
+    if (JSValue cached = m_stdin.get())
+        return cached;
+    auto& vm = JSC::getVM(globalObject);
+    JSValue value = constructStdin(vm, this);
+    m_stdin.set(vm, this, value);
+    return value;
+}
+
+JSValue Process::getStdout(JSGlobalObject* globalObject)
+{
+    if (JSValue cached = m_stdout.get())
+        return cached;
+    auto& vm = JSC::getVM(globalObject);
+    JSValue value = constructStdout(vm, this);
+    m_stdout.set(vm, this, value);
+    return value;
+}
+
+JSValue Process::getStderr(JSGlobalObject* globalObject)
+{
+    if (JSValue cached = m_stderr.get())
+        return cached;
+    auto& vm = JSC::getVM(globalObject);
+    JSValue value = constructStderr(vm, this);
+    m_stderr.set(vm, this, value);
+    return value;
+}
+
+JSValue Process::getReport(JSGlobalObject* globalObject)
+{
+    if (JSValue cached = m_report.get())
+        return cached;
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = constructProcessReportObject(vm, this);
+    RETURN_IF_EXCEPTION(scope, {});
+    m_report.set(vm, this, value);
+    return value;
+}
+
+// Node.js exposes stdin/stdout/stderr/report as getter-only accessors.
+JSC_DEFINE_CUSTOM_GETTER(processStdin, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(process->getStdin(globalObject));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processStdout, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(process->getStdout(globalObject));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processStderr, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(process->getStderr(globalObject));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processReport, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    if (!process) [[unlikely]]
+        return JSValue::encode(jsUndefined());
+    return JSValue::encode(process->getReport(globalObject));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processThrowDeprecation, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName name))
@@ -3378,6 +3461,10 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
+    visitor.append(thisObject->m_stdin);
+    visitor.append(thisObject->m_stdout);
+    visitor.append(thisObject->m_stderr);
+    visitor.append(thisObject->m_report);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_resourceUsageStructure.visit(visitor);
@@ -4436,23 +4523,23 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   _getActiveRequests               Process_stubFunctionReturningArray                  Function 0
   _kill                            Process_functionReallyKill                          Function 2
   _linkedBinding                   Process_stubEmptyFunction                           Function 0
-  _preload_modules                 Process_stubEmptyArray                              PropertyCallback
+  _preload_modules                 Process_stubEmptyArray                              PropertyCallback|ReadOnly
   _rawDebug                        Process_stubEmptyFunction                           Function 0
   _startProfilerIdleNotifier       Process_stubEmptyFunction                           Function 0
   _stopProfilerIdleNotifier        Process_stubEmptyFunction                           Function 0
   _tickCallback                    Process_stubEmptyFunction                           Function 0
   abort                            Process_functionAbort                               Function 1
   allowedNodeEnvironmentFlags      Process_stubEmptySet                                PropertyCallback
-  arch                             constructArch                                       PropertyCallback
+  arch                             constructArch                                       PropertyCallback|ReadOnly
   argv                             processArgv                                         CustomAccessor
-  argv0                            constructArgv0                                      PropertyCallback
+  argv0                            constructArgv0                                      PropertyCallback|ReadOnly|DontDelete
   assert                           Process_functionAssert                              Function 1
   availableMemory                  Process_availableMemory                             Function 0
   binding                          Process_functionBinding                             Function 1
   browser                          constructBrowser                                    PropertyCallback
   channel                          constructProcessChannel                             PropertyCallback
   chdir                            Process_functionChdir                               Function 1
-  config                           constructProcessConfigObject                        PropertyCallback
+  config                           constructProcessConfigObject                        PropertyCallback|ReadOnly
   connected                        processConnected                                    CustomAccessor
   constrainedMemory                Process_functionConstrainedMemory                   Function 0
   cpuUsage                         Process_functionCpuUsage                            Function 1
@@ -4467,7 +4554,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   execve                           Process_functionExecve                              Function 3
   exit                             Process_functionExit                                Function 1
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
-  features                         constructFeatures                                   PropertyCallback
+  features                         constructFeatures                                   PropertyCallback|ReadOnly|DontDelete
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
@@ -4476,32 +4563,32 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   kill                             Process_functionKill                                Function 2
   mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
-  moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
+  moduleLoadList                   Process_stubEmptyArray                              PropertyCallback|ReadOnly
   nextTick                         constructProcessNextTickFn                          PropertyCallback
   noDeprecation                    processNoDeprecation                                CustomAccessor
   openStdin                        Process_functionOpenStdin                           Function 0
-  pid                              constructPid                                        PropertyCallback
-  platform                         constructPlatform                                   PropertyCallback
+  pid                              constructPid                                        PropertyCallback|ReadOnly
+  platform                         constructPlatform                                   PropertyCallback|ReadOnly
   ppid                             processPpid                                         CustomAccessor
   reallyExit                       Process_functionReallyExit                          Function 1
   ref                              Process_ref                                         Function 1
-  release                          constructProcessReleaseObject                       PropertyCallback
-  report                           constructProcessReportObject                        PropertyCallback
+  release                          constructProcessReleaseObject                       PropertyCallback|ReadOnly
+  report                           processReport                                       CustomAccessor|ReadOnly
   resourceUsage                    Process_functionResourceUsage                       Function 0
-  revision                         constructRevision                                   PropertyCallback
+  revision                         constructRevision                                   PropertyCallback|ReadOnly
   send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_setSourceMapsEnabled                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
-  stderr                           constructStderr                                     PropertyCallback
-  stdin                            constructStdin                                      PropertyCallback
-  stdout                           constructStdout                                     PropertyCallback
+  stderr                           processStderr                                       CustomAccessor|ReadOnly
+  stdin                            processStdin                                        CustomAccessor|ReadOnly
+  stdout                           processStdout                                       CustomAccessor|ReadOnly
   throwDeprecation                 processThrowDeprecation                             CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
   unref                            Process_unref                                       Function 1
   uptime                           Process_functionUptime                              Function 1
-  version                          constructVersion                                    PropertyCallback
-  versions                         constructVersions                                   PropertyCallback
+  version                          constructVersion                                    PropertyCallback|ReadOnly
+  versions                         constructVersions                                   PropertyCallback|ReadOnly
 
 #if !OS(WINDOWS)
   getegid                          Process_functiongetegid                             Function 0

@@ -1572,3 +1572,123 @@ it("proxy env vars assigned at runtime propagate to spawned children via {...pro
   const got = JSON.parse(child.stdout.toString().trim());
   expect(got).toEqual({ HTTP_PROXY: "http://x:8080", HTTPS_PROXY: "http://y:8080", NO_PROXY: "z" });
 });
+
+// https://github.com/oven-sh/bun/issues/34228
+describe("process property descriptors match Node.js", () => {
+  it.each([
+    "version",
+    "versions",
+    "arch",
+    "platform",
+    "release",
+    "pid",
+    "config",
+    "moduleLoadList",
+    "_preload_modules",
+    "revision",
+  ])("process.%s is read-only and configurable", name => {
+    expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
+      value: process[name],
+      writable: false,
+      enumerable: true,
+      configurable: true,
+    });
+  });
+
+  it.each(["argv0", "features"])("process.%s is read-only and non-configurable", name => {
+    expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
+      value: process[name],
+      writable: false,
+      enumerable: true,
+      configurable: false,
+    });
+  });
+
+  it.each(["stdin", "stdout", "stderr", "report"])("process.%s is a getter-only accessor", name => {
+    expect(Object.getOwnPropertyDescriptor(process, name)).toEqual({
+      get: expect.any(Function),
+      set: undefined,
+      enumerable: true,
+      configurable: true,
+    });
+    expect(process[name]).toBe(process[name]);
+  });
+
+  it("assigning to process metadata throws in strict mode", () => {
+    expect(() => {
+      process.version = "overwritten";
+    }).toThrow(TypeError);
+    expect(() => {
+      process.versions.node = "overwritten";
+    }).toThrow(TypeError);
+    expect(() => {
+      process.release.name = "overwritten";
+    }).toThrow(TypeError);
+    expect(() => {
+      process.arch = "overwritten";
+    }).toThrow(TypeError);
+    expect(() => {
+      process.pid = 1;
+    }).toThrow(TypeError);
+    expect(() => {
+      process.stdout = null;
+    }).toThrow(TypeError);
+    expect(() => {
+      delete process.argv0;
+    }).toThrow(TypeError);
+  });
+
+  it("every process.versions entry is read-only", () => {
+    const keys = Object.keys(process.versions);
+    expect(keys.length).toBeGreaterThan(0);
+    for (const name of keys) {
+      expect(Object.getOwnPropertyDescriptor(process.versions, name)).toMatchObject({ writable: false });
+    }
+  });
+
+  it("every process.release entry is read-only", () => {
+    const keys = Object.keys(process.release);
+    expect(keys).toContain("name");
+    for (const name of keys) {
+      expect(Object.getOwnPropertyDescriptor(process.release, name)).toMatchObject({ writable: false });
+    }
+  });
+
+  it("process.config is deeply frozen", () => {
+    expect(Object.isFrozen(process.config)).toBe(true);
+    expect(Object.isFrozen(process.config.variables)).toBe(true);
+    expect(Object.isFrozen(process.config.target_defaults)).toBe(true);
+    expect(Object.isFrozen(process.config.variables.node_builtin_shareable_builtins)).toBe(true);
+  });
+
+  it("process.stdout can still be replaced via defineProperty", () => {
+    const original = Object.getOwnPropertyDescriptor(process, "stdout");
+    try {
+      Object.defineProperty(process, "stdout", { value: 42, writable: true, configurable: true });
+      expect(process.stdout).toBe(42);
+    } finally {
+      Object.defineProperty(process, "stdout", original);
+    }
+    expect(typeof process.stdout.write).toBe("function");
+  });
+
+  it("sloppy-mode assignment is a silent no-op", async () => {
+    using dir = tempDir("process-readonly", {
+      "index.cjs": `
+        process.version = "overwritten";
+        process.stdout = 5;
+        console.log(process.version !== "overwritten" && process.stdout !== 5 ? "pass" : "fail");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout.trim()).toBe("pass");
+    expect(exitCode).toBe(0);
+  });
+});

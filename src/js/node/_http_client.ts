@@ -599,6 +599,14 @@ function socketOnEnd() {
   const req = this._httpMessage;
   const parser = this.parser;
 
+  // An 'end' after req.destroy() is our own teardown, not a server FIN;
+  // finishing the parser here would mark an EOF-delimited body complete and
+  // let socketCloseListener deliver a clean 'end' for a locally aborted body.
+  if (req.destroyed) {
+    socket.destroy();
+    return;
+  }
+
   if (!req.res && !req.socket._hadError) {
     // If we don't have a response then we know that the socket
     // ended prematurely and we need to emit an error on the request.

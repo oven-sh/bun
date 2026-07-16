@@ -212,6 +212,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
 
     thisObject->ended = true;
+    // onNodeHTTPRequest pauses the socket before the user handler so the
+    // request body buffers. HttpContext::onData discards everything once
+    // shut down, so undo that pause here or the peer's FIN is never drained.
+    if (thisObject->socket && !thisObject->upgraded) {
+        us_socket_resume(thisObject->socket);
+    }
     // The response's buffered body must reach the kernel before the FIN; uWS
     // performs the shutdown after its send buffer drains.
     if (thisObject->shutdownAfterResponseDrains()) {

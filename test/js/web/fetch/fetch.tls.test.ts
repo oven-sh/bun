@@ -306,11 +306,15 @@ describe.concurrent("fetch-tls", () => {
       });
     });
     let redirectPort = 0;
+    // Write the 302 immediately but keep the connection open until the
+    // request arrives, so the redirect is replayed from resume_after_cert_check
+    // (after the first hop's certificate has been approved) rather than the
+    // on_close fail-closed path.
     const redirector = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       socket.write(
         `HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:${redirectPort}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
       );
-      socket.end();
+      socket.once("data", () => socket.end());
     });
     try {
       await new Promise<void>((resolve, reject) => {
@@ -340,6 +344,54 @@ describe.concurrent("fetch-tls", () => {
         expect(res.status).toBe(200);
         expect(seen).toEqual(["127.0.0.1", "127.0.0.1"]);
       }
+    } finally {
+      redirector.close();
+      target.close();
+    }
+  });
+
+  // A 3xx from a peer whose certificate the pinning callback rejects must
+  // never result in a connection to the Location target, regardless of
+  // whether the early 302 is replayed from resume_after_cert_check (callback
+  // already ran) or from on_close (fail-closed before the callback ran).
+  it("fetch with checkServerIdentity never connects to the redirect target when the peer's certificate is rejected", async () => {
+    let targetConnections = 0;
+    const target = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      targetConnections++;
+      socket.end();
+    });
+    let redirectPort = 0;
+    const redirector = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.write(
+        `HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:${redirectPort}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+      );
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        target.on("error", reject);
+        target.listen(0, "127.0.0.1", () => resolve());
+      });
+      redirectPort = (target.address() as import("node:net").AddressInfo).port;
+      await new Promise<void>((resolve, reject) => {
+        redirector.on("error", reject);
+        redirector.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (redirector.address() as import("node:net").AddressInfo).port;
+
+      for (let i = 0; i < 5; i++) {
+        let err: unknown;
+        try {
+          await fetch(`https://127.0.0.1:${port}/`, {
+            keepalive: false,
+            tls: { ca: validTls.cert, checkServerIdentity: () => new Error("pinned") },
+          });
+        } catch (e) {
+          err = e;
+        }
+        expect(err).toBeInstanceOf(Error);
+      }
+      expect(targetConnections).toBe(0);
     } finally {
       redirector.close();
       target.close();

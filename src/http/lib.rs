@@ -2078,21 +2078,22 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.is_waiting_for_cert_check {
             self.state.flags.is_waiting_for_cert_check = false;
             if !self.state.response_message_buffer.list.is_empty() {
+                // A 3xx here comes from a peer whose certificate has not been
+                // approved by the JS callback; following its Location would act
+                // on attacker-chosen data before verification. Force the
+                // redirect-error path for the replay so a buffered 3xx fails
+                // closed instead of calling `do_redirect`.
+                let redirect_type = core::mem::replace(&mut self.redirect_type, FetchRedirect::Error);
                 // A terminal outcome frees the AsyncHTTP that embeds `*self`
                 // (via `on_async_http_callback_raw`, which is the sole
-                // HTTP-thread `ACTIVE_REQUESTS_COUNT` decrement); a redirect
-                // keeps `*self` but starts a new hop that the fallthrough must
-                // not touch. Both counters are HTTP-thread-only.
+                // HTTP-thread `ACTIVE_REQUESTS_COUNT` decrement). HTTP-thread-only.
                 let active_before = async_http::ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
-                let redirects_before = self.remaining_redirect_count;
                 let ctx = self.get_ssl_ctx::<IS_SSL>();
                 self.handle_on_data_headers::<IS_SSL>(&[], ctx, socket);
                 if async_http::ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed) < active_before {
                     return;
                 }
-                if self.remaining_redirect_count != redirects_before {
-                    return;
-                }
+                self.redirect_type = redirect_type;
             }
         }
 

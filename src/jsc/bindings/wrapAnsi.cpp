@@ -149,7 +149,7 @@ public:
 
         while (read < size) {
             Char c = m_data[read];
-            if (c == 0x1b) {
+            if (c == 0x1b || c == 0x9b) {
                 inEscape = true;
             } else if (inEscape) {
                 if (c == 'm' || c == 0x07)
@@ -212,6 +212,10 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
             // Check for CSI escape (ESC [)
             if (wordEnd - it > 1 && it[1] == '[')
                 isInsideCsiEscape = true;
+        } else if (*it == 0x9b) {
+            // 8-bit C1 CSI: single-byte introducer, no '[' follows.
+            isInsideEscape = true;
+            isInsideCsiEscape = true;
         }
 
         size_t charLen = 0;
@@ -330,11 +334,14 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
         bool inEscape = false;
         bool inOscEscape = false;
         for (size_t i = 0; i < size; ++i) {
-            if (data[i] == 0x1b || inEscape) {
+            if (data[i] == 0x1b || data[i] == 0x9b || inEscape) {
                 ansiOnly.append(data[i]);
                 if (data[i] == 0x1b) {
                     inEscape = true;
                     inOscEscape = (i + 1 < size && data[i + 1] == ']');
+                } else if (data[i] == 0x9b) {
+                    inEscape = true;
+                    inOscEscape = false;
                 } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
                     inEscape = false;
                     inOscEscape = false;
@@ -351,11 +358,14 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
         bool inEscape = false;
         bool inOscEscape = false;
         for (size_t i = lastVisibleEnd; i < size; ++i) {
-            if (data[i] == 0x1b || inEscape) {
+            if (data[i] == 0x1b || data[i] == 0x9b || inEscape) {
                 trailingAnsi.append(data[i]);
                 if (data[i] == 0x1b) {
                     inEscape = true;
                     inOscEscape = (i + 1 < size && data[i + 1] == ']');
+                } else if (data[i] == 0x9b) {
+                    inEscape = true;
+                    inOscEscape = false;
                 } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
                     inEscape = false;
                     inOscEscape = false;
@@ -377,11 +387,16 @@ static constexpr uint32_t END_CODE = 39;
 template<typename Char>
 static std::optional<uint32_t> parseSgrCode(const Char* start, const Char* end)
 {
-    if (end - start < 3 || start[0] != 0x1b || start[1] != '[')
+    const Char* it;
+    if (end - start >= 3 && start[0] == 0x1b && start[1] == '[')
+        it = start + 2;
+    else if (end - start >= 2 && start[0] == 0x9b)
+        it = start + 1;
+    else
         return std::nullopt;
 
     uint32_t code = 0;
-    for (const Char* it = start + 2; it < end; ++it) {
+    for (; it < end; ++it) {
         Char c = *it;
         if (c >= '0' && c <= '9') {
             code = code * 10 + (c - '0');
@@ -475,10 +490,10 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
         Char c = joined[i];
         result.append(static_cast<UChar>(c));
 
-        if (c == 0x1b && i + 1 < joined.size()) {
+        if ((c == 0x1b || c == 0x9b) && i + 1 < joined.size()) {
             auto span = joined.span();
             // Parse ANSI sequence
-            if (joined[i + 1] == '[') {
+            if (c == 0x9b || joined[i + 1] == '[') {
                 if (auto code = parseSgrCode(span.data() + i, span.data() + span.size())) {
                     if (*code == END_CODE || *code == 0)
                         escapeCode = std::nullopt;

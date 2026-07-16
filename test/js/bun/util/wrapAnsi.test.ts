@@ -97,6 +97,40 @@ describe("Bun.wrapAnsi", () => {
     });
   });
 
+  describe("8-bit C1 CSI sequences", () => {
+    // \x9B is the single-byte C1 CSI introducer, equivalent to ESC [. Its
+    // parameter bytes must never be treated as wrappable visible text, and the
+    // SGR code it carries must be tracked for close/reopen at line boundaries
+    // the same as the ESC [ form (matching npm wrap-ansi).
+    test("hard wrap never inserts a newline inside a C1 CSI sequence", () => {
+      const input = "\x9B31mabcdefghij\x9B39m";
+      expect(Bun.wrapAnsi(input, 3, { hard: true })).toBe(
+        "\x9B31mabc\x1b[39m\n\x1b[31mdef\x1b[39m\n\x1b[31mghi\x1b[39m\n\x1b[31mj\x9B39m",
+      );
+    });
+
+    test("hard wrap keeps C1 CSI intact on the UTF-16 path", () => {
+      const input = "\x9B31m日本語\x9B39m";
+      expect(Bun.wrapAnsi(input, 4, { hard: true })).toBe("\x9B31m日本\x1b[39m\n\x1b[31m語\x9B39m");
+    });
+
+    test("wordWrap:false keeps C1 CSI intact", () => {
+      const input = "\x9B31mabcdef\x9B39m";
+      expect(Bun.wrapAnsi(input, 3, { wordWrap: false })).toBe("\x9B31mabc\x1b[39m\n\x1b[31mdef\x9B39m");
+    });
+
+    test("C1 SGR is closed and reopened across a soft line break", () => {
+      const input = "\x9B31mhello world\x9B39m";
+      expect(Bun.wrapAnsi(input, 5)).toBe("\x9B31mhello\x1b[39m\n\x1b[31mworld\x9B39m");
+    });
+
+    test("stripANSI(wrapAnsi(s)) === wrapAnsi(stripANSI(s)) for C1 input", () => {
+      const input = "\x9B31mabcdefghij\x9B39m";
+      const wrapped = Bun.wrapAnsi(input, 3, { hard: true });
+      expect(Bun.stripANSI(wrapped)).toBe(Bun.wrapAnsi(Bun.stripANSI(input), 3, { hard: true }));
+    });
+  });
+
   describe("Unicode support", () => {
     test("handles full-width characters", () => {
       // 日本語 characters are 2 columns each

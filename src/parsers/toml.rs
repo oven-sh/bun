@@ -268,6 +268,7 @@ impl<'a> TOML<'a> {
     }
 
     pub fn parse_assignment(&mut self, obj: &mut E::Object, bump: &'a Bump) -> crate::Result<()> {
+        let outer_allow_double_bracket = self.lexer.allow_double_bracket;
         self.lexer.allow_double_bracket = false;
         let rope = self.parse_key(bump)?;
         let rope_end = self.lexer.start;
@@ -278,6 +279,7 @@ impl<'a> TOML<'a> {
         }
 
         self.lexer.expect_assignment()?;
+        self.lexer.allow_double_bracket = outer_allow_double_bracket;
         if !is_array {
             let value = self.parse_value()?;
             match obj.set_rope(rope, self.bump, value) {
@@ -306,7 +308,7 @@ impl<'a> TOML<'a> {
                 }
             }
         }
-        self.lexer.allow_double_bracket = true;
+        self.lexer.allow_double_bracket = outer_allow_double_bracket;
         Ok(())
     }
 
@@ -324,7 +326,10 @@ impl<'a> TOML<'a> {
     fn parse_value_inner(&mut self) -> crate::Result<Expr> {
         let loc = self.lexer.loc();
 
-        self.lexer.allow_double_bracket = true;
+        // `[[`/`]]` merge into header tokens only at top level. Inside a value
+        // the flag is held false; the caller's value is restored before lexing
+        // the token after this value so a following `[[header]]` is recognised.
+        let outer_allow_double_bracket = self.lexer.allow_double_bracket;
 
         match self.lexer.token {
             T::t_false => {
@@ -367,6 +372,7 @@ impl<'a> TOML<'a> {
                 Ok(self.e(E::Number::new(value), loc))
             }
             T::t_open_brace => {
+                self.lexer.allow_double_bracket = false;
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 let key_allocator = self.bump;
@@ -396,23 +402,22 @@ impl<'a> TOML<'a> {
                     unsafe {
                         self.parse_assignment(&mut *obj, key_allocator)?;
                     }
-                    self.lexer.allow_double_bracket = false;
                 }
 
                 if self.lexer.has_newline_before {
                     is_single_line = false;
                 }
                 let _ = is_single_line;
-                self.lexer.allow_double_bracket = true;
+                self.lexer.allow_double_bracket = outer_allow_double_bracket;
                 self.lexer.expect(T::t_close_brace)?;
                 Ok(expr)
             }
             T::t_empty_array => {
                 self.lexer.next()?;
-                self.lexer.allow_double_bracket = true;
                 Ok(self.e(E::Array::default(), loc))
             }
             T::t_open_bracket => {
+                self.lexer.allow_double_bracket = false;
                 self.lexer.next()?;
                 let mut is_single_line = !self.lexer.has_newline_before;
                 let array_ = self.e(E::Array::default(), loc);
@@ -424,7 +429,6 @@ impl<'a> TOML<'a> {
                 // SAFETY: `array` aliases into `array_.data`; the raw pointer
                 // sidesteps overlapping &mut on `array_`.
                 let bump = self.bump;
-                self.lexer.allow_double_bracket = false;
 
                 while self.lexer.token != T::t_close_bracket {
                     // SAFETY: `array` points into the AST store and is live here.
@@ -453,7 +457,7 @@ impl<'a> TOML<'a> {
                     is_single_line = false;
                 }
                 let _ = is_single_line;
-                self.lexer.allow_double_bracket = true;
+                self.lexer.allow_double_bracket = outer_allow_double_bracket;
                 self.lexer.expect(T::t_close_bracket)?;
                 Ok(array_)
             }

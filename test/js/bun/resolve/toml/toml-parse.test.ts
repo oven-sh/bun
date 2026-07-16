@@ -117,3 +117,46 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
   // Trailing comma is legal TOML.
   expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
 });
+
+// The TOML lexer has an `allow_double_bracket` mode flag so `[[` / `]]` are
+// merged into a single array-of-tables header token. `parse_value_inner` set
+// the flag to `true` unconditionally on entry and again after every compound
+// value closed, so inside `a = [[1]]` the adjacent `]]` (and at depth >=3 the
+// adjacent `[[`) were merged into header tokens and the parse failed. The same
+// document with spaces between the brackets (`a = [ [1] ]`) parsed fine. The
+// fix saves the caller's flag on entry, keeps it `false` while inside an
+// array or inline table, and restores the saved value only for the token
+// lexed after the outermost closing delimiter.
+test("Bun.TOML.parse accepts nested array literals with adjacent brackets", () => {
+  expect(Bun.TOML.parse("a = [[1]]")).toEqual({ a: [[1]] });
+  expect(Bun.TOML.parse("a = [[1], [2]]")).toEqual({ a: [[1], [2]] });
+  expect(Bun.TOML.parse('a = [["x"], ["y"]]')).toEqual({ a: [["x"], ["y"]] });
+  expect(Bun.TOML.parse("a = [[[1]]]")).toEqual({ a: [[[1]]] });
+  expect(Bun.TOML.parse("a = [[1, 2], [3, 4]]")).toEqual({
+    a: [
+      [1, 2],
+      [3, 4],
+    ],
+  });
+  expect(Bun.TOML.parse("a = [[]]")).toEqual({ a: [[]] });
+  expect(Bun.TOML.parse("a = [[], []]")).toEqual({ a: [[], []] });
+  expect(Bun.TOML.parse("a = [[[1], [2]], [[3]]]")).toEqual({ a: [[[1], [2]], [[3]]] });
+  expect(Bun.TOML.parse("t = {a = [[1]]}")).toEqual({ t: { a: [[1]] } });
+  expect(Bun.TOML.parse("a = [{b = [[1]]}]")).toEqual({ a: [{ b: [[1]] }] });
+  // Whitespace-separated forms already parsed; they must keep working.
+  expect(Bun.TOML.parse("a = [ [1] ]")).toEqual({ a: [[1]] });
+  expect(Bun.TOML.parse("a = [1, [2], 3]")).toEqual({ a: [1, [2], 3] });
+});
+
+test("Bun.TOML.parse still merges [[ / ]] as array-of-tables headers after a value", () => {
+  // The flag restore must re-enable header merging once the top-level value is
+  // consumed; otherwise `[[t]]` on the next line would be lexed as two `[` and
+  // misparsed as a `[table]` header. Every value shape exercises a different
+  // restore point.
+  expect(Bun.TOML.parse("a = 1\n[[t]]\nb = 2\n")).toEqual({ a: 1, t: [{ b: 2 }] });
+  expect(Bun.TOML.parse("a = [1]\n[[t]]\nb = 2\n")).toEqual({ a: [1], t: [{ b: 2 }] });
+  expect(Bun.TOML.parse("a = []\n[[t]]\nb = 2\n")).toEqual({ a: [], t: [{ b: 2 }] });
+  expect(Bun.TOML.parse("a = {b = 1}\n[[t]]\nc = 2\n")).toEqual({ a: { b: 1 }, t: [{ c: 2 }] });
+  expect(Bun.TOML.parse("a = [[1]]\n[[t]]\nb = 2\n")).toEqual({ a: [[1]], t: [{ b: 2 }] });
+  expect(Bun.TOML.parse("[[t]]\na = [[1]]\n[[t]]\nb = 2\n")).toEqual({ t: [{ a: [[1]] }, { b: 2 }] });
+});

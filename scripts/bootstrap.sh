@@ -1179,7 +1179,24 @@ install_llvm() {
 
 		bash="$(require bash)"
 		llvm_script="$(download_file "https://apt.llvm.org/llvm.sh")"
-		execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		# apt.llvm.org stopped publishing focal arm64 binaries for the 22
+		# release (binary-arm64 has only the Architecture:all packages). The
+		# bullseye repo still has the full arm64 set and is built against
+		# glibc 2.31 (same as focal), so force that codename on focal arm64.
+		# The bullseye clang-22 Depends names Debian's gcc-10 dev packages,
+		# which focal doesn't ship; stub them with equivs so apt resolves
+		# (we use gcc-13's libstdc++ via install_gcc()).
+		if [ "$arch" = "aarch64" ] && [ "$release" = "20.04" ]; then
+			install_packages equivs
+			for p in libstdc++-10-dev libgcc-10-dev libobjc-10-dev; do
+				printf 'Section: misc\nPriority: optional\nStandards-Version: 3.9.2\nPackage: %s\nVersion: 99\nDescription: dummy for bullseye clang dep\n' "$p" > "/tmp/$p.ctl"
+				(cd /tmp && execute_sudo equivs-build "$p.ctl" && execute_sudo dpkg -i "${p}_99_all.deb" && rm -f "$p.ctl" "${p}_99_all.deb")
+			done
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" -n bullseye
+			install_packages "llvm-$(llvm_version)" "llvm-$(llvm_version)-dev" "libclang-rt-$(llvm_version)-dev" "clang-format-$(llvm_version)" "clang-tidy-$(llvm_version)"
+		else
+			execute_sudo "$bash" "$llvm_script" "$(llvm_version)" all
+		fi
 
 		# Install llvm-symbolizer explicitly to ensure it's available for ASAN
 		install_packages "llvm-$(llvm_version)-tools"

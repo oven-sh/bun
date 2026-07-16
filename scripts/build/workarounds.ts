@@ -151,9 +151,9 @@ export const workarounds: Workaround[] = [
     // Only exercised when the rust-lld swap actually fired on a musl link.
     applies: cfg => cfg.linux && cfg.abi === "musl" && cfg.rustLld !== undefined && cfg.ld === cfg.rustLld,
     expectedToBeFixed: cfg => {
-      // Obsolete the same instant the rust-lld swap above is — once clang's
-      // ld.lld (built with zlib) reads rustc's bitcode, we never select
-      // rust-lld and the compressed CRTs are a non-issue.
+      // Obsolete whenever the wantRustLld swap in resolveConfig() is dormant:
+      // once clang's ld.lld (built with zlib) reads rustc's bitcode, we never
+      // select rust-lld and the compressed CRTs are a non-issue.
       const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
       const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
       return clangMajor >= rustMajor;

@@ -33,10 +33,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
    && apt-get install -y gcc-13 g++-13 libgcc-13-dev libstdc++-13-dev \
        libasan6 libubsan1 libatomic1 libtsan0 liblsan0 \
        libgfortran5 libc6-dev \
-   && wget https://apt.llvm.org/llvm.sh \
-   && chmod +x llvm.sh \
-   && ./llvm.sh ${LLVM_VERSION} all \
-   && rm llvm.sh \
+   && rm -rf /var/lib/apt/lists/*
+
+# Install LLVM. apt.llvm.org stopped publishing focal arm64 binaries for the
+# 22 release (binary-arm64 has only the Architecture:all packages). The
+# bullseye repo still has the full arm64 set, built against glibc 2.31 (same
+# as focal), so on arm64 we pull from there instead; three Debian-named gcc-10
+# dev packages are stubbed with equivs so apt resolves (we use gcc-13's
+# libstdc++ via the PPA above).
+RUN wget -qO /etc/apt/trusted.gpg.d/apt.llvm.org.asc https://apt.llvm.org/llvm-snapshot.gpg.key \
+   && if [ "$TARGETARCH" = "arm64" ]; then \
+        echo "deb https://apt.llvm.org/bullseye/ llvm-toolchain-bullseye-${LLVM_VERSION} main" > /etc/apt/sources.list.d/llvm.list \
+        && apt-get update \
+        && apt-get install -y --no-install-recommends equivs \
+        && for p in libstdc++-10-dev libgcc-10-dev libobjc-10-dev; do \
+             printf 'Section: misc\nPriority: optional\nStandards-Version: 3.9.2\nPackage: %s\nVersion: 99\nDescription: dummy for bullseye clang dep\n' "$p" > /tmp/$p.ctl \
+             && (cd /tmp && equivs-build $p.ctl && dpkg -i ${p}_99_all.deb && rm -f $p.ctl ${p}_99_all.deb); \
+           done \
+        && apt-get install -y --no-install-recommends \
+             clang-${LLVM_VERSION} lld-${LLVM_VERSION} llvm-${LLVM_VERSION} \
+             llvm-${LLVM_VERSION}-dev llvm-${LLVM_VERSION}-tools llvm-${LLVM_VERSION}-runtime \
+             llvm-${LLVM_VERSION}-linker-tools libllvm${LLVM_VERSION} libclang-cpp${LLVM_VERSION} \
+             libclang1-${LLVM_VERSION} libclang-common-${LLVM_VERSION}-dev \
+             libclang-rt-${LLVM_VERSION}-dev liblld-${LLVM_VERSION} \
+             clangd-${LLVM_VERSION} lldb-${LLVM_VERSION} clang-format-${LLVM_VERSION} clang-tidy-${LLVM_VERSION}; \
+      else \
+        wget https://apt.llvm.org/llvm.sh \
+        && chmod +x llvm.sh \
+        && ./llvm.sh ${LLVM_VERSION} all \
+        && rm llvm.sh; \
+      fi \
+   && clang-${LLVM_VERSION} --version \
    && rm -rf /var/lib/apt/lists/*
 
 

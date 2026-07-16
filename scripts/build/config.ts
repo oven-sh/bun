@@ -807,10 +807,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // LLVM, so it reads both rustc's bitcode (same version) and clang's
   // (older, hence readable). Swap it in as `ld` for the whole build —
   // it's a stock lld, just newer, so non-LTO objects and nested cmake
-  // deps link the same as before.
-  //
-  // Tracked in workarounds.ts ("rust-lld-for-crosslang-lto") so this
-  // branch self-obsoletes once clang's LLVM catches up to rustc's.
+  // deps link the same as before. Dormant while clang's LLVM major
+  // matches rustc's (the `rustLlvmMajor > clangMajor` gate).
   let ld = toolchain.ld;
   const clangMajor = majorOf(toolchain.clangVersion);
   const rustLlvmMajor = majorOf(toolchain.rustLlvmVersion);

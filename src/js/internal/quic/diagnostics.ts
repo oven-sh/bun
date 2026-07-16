@@ -1,4 +1,3 @@
-// Diagnostics channels for the QUIC implementation.
 // Ported from Node.js lib/internal/quic/diagnostics.js (v26.3.0).
 const dc = require("node:diagnostics_channel");
 

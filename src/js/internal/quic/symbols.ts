@@ -1,5 +1,3 @@
-// Symbols used to hide various private properties and methods from the
-// public API of the QUIC implementation.
 // Ported from Node.js lib/internal/quic/symbols.js (v26.3.0).
 
 const kInspect = Symbol.for("nodejs.util.inspect.custom");

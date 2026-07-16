@@ -1199,9 +1199,7 @@ impl<'a> Resolver<'a> {
                         rewrite_jest_for_tests: self.opts.rewrite_jest_for_tests,
                     },
                 )
-                // Node's `--expose-internals`: bundled `internal/*` modules
-                // are builtins; the module loader's fetch serves them by
-                // registry tag (or errors for unknown names).
+                // Node's `--expose-internals`.
                 || (import_path.starts_with(b"internal/")
                     && ::bun_resolve_builtins::expose_internals_enabled())
             {

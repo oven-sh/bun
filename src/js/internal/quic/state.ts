@@ -1,5 +1,3 @@
-// State helper objects for the QUIC implementation. Each wraps a DataView
-// over an ArrayBuffer shared with the native layer.
 // Ported from Node.js lib/internal/quic/state.js (v26.3.0).
 const { uncurryThis } = require("internal/primordials");
 const { isArrayBuffer } = require("node:util/types");
@@ -19,9 +17,6 @@ const kIsLittleEndian = require("node:os").endianness() === "LE";
 
 const { kFinishClose, kInspect, kPrivateConstructor } = require("internal/quic/symbols");
 
-// Error constructors matching the subset of `internal/errors` codes used by
-// this file. Plain functions returning the error object so both `new ERR_X()`
-// and `ERR_X()` call styles produce the same error.
 function ERR_ILLEGAL_CONSTRUCTOR() {
   return $ERR_ILLEGAL_CONSTRUCTOR();
 }
@@ -77,9 +72,6 @@ const {
 } = require("internal/quic/binding");
 
 const kEmptyObject = { __proto__: null };
-
-// The internal state objects for endpoints, sessions, and streams.
-// These are not exposed directly to users.
 
 class QuicEndpointState {
   /** @type {DataView} */
@@ -160,12 +152,7 @@ class QuicEndpointState {
     DataViewPrototypeSetUint16(handle, IDX_STATE_ENDPOINT_MAX_CONNECTIONS_TOTAL, val, kIsLittleEndian);
   }
 
-  /**
-   * The number of underlying callbacks that are pending. If the endpoint
-   * is closing, these are the number of callbacks that the endpoint is
-   * waiting on before it can be closed.
-   * @type {bigint}
-   */
+  /** @type {bigint} */
   get pendingCallbacks() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
@@ -270,8 +257,7 @@ class QuicSessionState {
     this.#offset = byteOffset;
   }
 
-  // Listener flags are packed into a single uint32_t bitfield. The bit
-  // positions must match the SessionListenerFlags enum in session.cc.
+  // Bit positions must match the SessionListenerFlags enum in session.cc.
   static #LISTENER_PATH_VALIDATION = 1 << 0;
   static #LISTENER_DATAGRAM = 1 << 1;
   static #LISTENER_DATAGRAM_STATUS = 1 << 2;
@@ -408,11 +394,7 @@ class QuicSessionState {
     return DataViewPrototypeGetUint8(handle, this.#offset + IDX_STATE_SESSION_PRIORITY_SUPPORTED) !== 0;
   }
 
-  /**
-   * Whether the negotiated application protocol supports headers.
-   * Returns 0 (unknown), 1 (supported), or 2 (not supported).
-   * @type {number}
-   */
+  /** @type {number} */
   get headersSupported() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
@@ -433,28 +415,14 @@ class QuicSessionState {
     return DataViewPrototypeGetUint8(handle, this.#offset + IDX_STATE_SESSION_APPLICATION_TYPE);
   }
 
-  /**
-   * The negotiated application protocol's "no error" code, populated
-   * by the C++ layer when the application is selected during ALPN
-   * negotiation. For raw QUIC this is `0n`; for HTTP/3 this is
-   * `0x100n` (`H3_NO_ERROR`).
-   * @type {bigint}
-   */
+  /** @type {bigint} */
   get noErrorCode() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
     return DataViewPrototypeGetBigUint64(handle, this.#offset + IDX_STATE_SESSION_NO_ERROR_CODE, kIsLittleEndian);
   }
 
-  /**
-   * The negotiated application protocol's "internal error" code,
-   * populated by the C++ layer when the application is selected
-   * during ALPN negotiation. Used as the wire code for `RESET_STREAM`
-   * frames when a stream is aborted without a more specific code.
-   * For raw QUIC this is `0x1n` (NGTCP2_INTERNAL_ERROR); for HTTP/3
-   * this is `0x102n` (`H3_INTERNAL_ERROR`).
-   * @type {bigint}
-   */
+  /** @type {bigint} */
   get internalErrorCode() {
     const handle = this.#handle;
     if (handle === undefined) return undefined;
@@ -910,7 +878,6 @@ class QuicStreamState {
   }
 
   [kFinishClose]() {
-    // Cache the stream ID since the buffer will be zeroed out and the ID will be lost.
     this.#id = this.id;
     this.#handle = undefined;
   }

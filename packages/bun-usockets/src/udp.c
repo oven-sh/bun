@@ -60,10 +60,6 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         }
         total_sent += sent;
         if (sent < count) {
-            /* Short send: the socket buffer is full. Register a writable event
-             * so the drain callback fires. Compare against `count` (this
-             * batch), not the remaining `num` — with a single-packet send the
-             * old `sent < num` test was `0 < 0` and never re-armed. */
             us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
             break;
         }

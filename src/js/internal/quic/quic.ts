@@ -1,4 +1,3 @@
-// The implementation of the `node:quic` API.
 // Ported from Node.js lib/internal/quic/quic.js (v26.3.0).
 /*
  * Portions of this code are derived from the Node.js project (https://nodejs.org/),
@@ -48,10 +47,7 @@ function wrapCertificate(der) {
   return new X509Certificate(Buffer.from(der.buffer ?? der, der.byteOffset ?? 0, der.byteLength));
 }
 
-// ----------------------------------------------------------------------------
-// Stand-ins for the Node.js primordials used by the original source. The call
-// sites below are kept verbatim from upstream; these definitions provide the
-// same behavior with values captured at module load time.
+// Stand-ins for the Node.js primordials used by the original source.
 const ArrayIsArray = Array.isArray;
 const StringPrototypeStartsWith = uncurryThis(String.prototype.startsWith);
 const NumberIsInteger = Number.isInteger;
@@ -87,28 +83,23 @@ function assert(value, message) {
   }
 }
 
-// Marks a promise rejection as handled without altering its observable state
-// (stand-in for Node's internalBinding('util').markPromiseAsHandled).
+// Stand-in for Node's internalBinding('util').markPromiseAsHandled.
 function noop() {}
 function markPromiseAsHandled(promise) {
   PromisePrototypeThen(promise, noop, noop);
 }
 
-// ----------------------------------------------------------------------------
 // The native quic binding (Bun's equivalent of internalBinding('quic')).
 const {
   Endpoint: Endpoint_,
   setCallbacks,
 
-  // The constants to be exposed to end users for various options.
   CC_ALGO_RENO_STR: CC_ALGO_RENO,
   CC_ALGO_CUBIC_STR: CC_ALGO_CUBIC,
   CC_ALGO_BBR_STR: CC_ALGO_BBR,
   DEFAULT_CIPHERS,
   DEFAULT_GROUPS,
 
-  // Internal constants for use by the implementation.
-  // These are not exposed to end users.
   PREFERRED_ADDRESS_IGNORE: kPreferredAddressIgnore,
   PREFERRED_ADDRESS_USE: kPreferredAddressUse,
   DEFAULT_PREFERRED_ADDRESS_POLICY: kPreferredAddressDefault,
@@ -127,16 +118,11 @@ const {
   QUIC_STREAM_HEADERS_FLAGS_TERMINAL: kHeadersFlagsTerminal,
 } = require("internal/quic/binding");
 
-// Maps the numeric HeadersKind constants from C++ to user-facing strings.
-// Indexed by the enum value (HINTS=0, INITIAL=1, TRAILING=2).
 const kHeadersKindName = [];
 kHeadersKindName[kHeadersKindHints] = "hints";
 kHeadersKindName[kHeadersKindInitial] = "initial";
 kHeadersKindName[kHeadersKindTrailing] = "trailing";
 
-// ----------------------------------------------------------------------------
-// Error constructors. Plain functions returning the error object so both the
-// `new ERR_X()` and `ERR_X()` call styles used by the upstream source work.
 // Message templates match Node's internal/errors.js definitions.
 function ERR_ILLEGAL_CONSTRUCTOR() {
   return $ERR_ILLEGAL_CONSTRUCTOR();
@@ -179,15 +165,6 @@ function ERR_QUIC_VERSION_NEGOTIATION_ERROR() {
   return $ERR_QUIC_VERSION_NEGOTIATION_ERROR("The QUIC session requires version negotiation");
 }
 
-// ----------------------------------------------------------------------------
-// Native-handle adapters. The Bun native binding accepts and returns the
-// public JS objects directly (net.SocketAddress, net.BlockList, Blob,
-// KeyObject), so the upstream `[kHandle]`-style accesses below resolve to the
-// objects themselves and `new InternalSocketAddress(handle)` is an identity
-// wrapper.
-// lsquic fixes HTTP/3-vs-raw framing per client *engine*, so an implicit
-// endpoint's mode is set by its first successful connect();
-// `findSuitableEndpoint` must not hand out one in the other mode.
 const kClientHttp = Symbol("kClientHttp");
 const kNoteClientHttp = Symbol("kNoteClientHttp");
 
@@ -223,9 +200,6 @@ function isBlob(value) {
   return value instanceof Blob;
 }
 
-// KeyObject adapters. The native binding consumes private keys as PKCS#8 PEM
-// text rather than KeyObject handles (Node passes the native KeyObjectHandle;
-// Bun's KeyObject internals are not reachable from the quic binding yet).
 // TODO(quic): pass the KeyObject itself once the binding can read its EVP_PKEY
 // directly; PEM export does not work for non-exportable keys.
 function getKeyObjectHandle(key) {
@@ -235,8 +209,6 @@ function getKeyObjectType(key) {
   return key.type;
 }
 
-// FileHandle adapters. Bun's fs.promises FileHandle is a JS class wrapping a
-// numeric fd; the native binding receives the fd for fd-backed body sources.
 const FileHandleImpl = require("node:fs/promises").$data.FileHandle;
 const kFileLocked = Symbol("kFileLocked");
 const kFileHandle = Symbol("kFileHandle");
@@ -317,8 +289,6 @@ const { QuicEndpointStats, QuicStreamStats, QuicSessionStats, kCreateDisconnecte
 
 const { QuicEndpointState, QuicSessionState, QuicStreamState } = require("internal/quic/state");
 
-// Performance-observer integration: 'quic' entries route through the JS-side
-// node-entry-type registry (same machinery as 'net'/'dns'/'http').
 const { hasObserver, startPerf, stopPerf } = require("internal/shared");
 
 const kPerfEntry = Symbol("kPerfEntry");
@@ -358,15 +328,7 @@ const {
   onEndpointConnectChannel,
 } = require("internal/quic/diagnostics");
 
-// ----------------------------------------------------------------------------
-// Async iterable over a native stream reader handle.
-// Ported verbatim from Node lib/internal/blob.js createBlobReaderIterable();
-// the reader handle returned by the native binding's stream.getReader() must
-// implement the same protocol: setWakeup(fn) and pull(cb(status, buffer))
-// where status 0 = end-of-stream, < 0 = error, 2 = blocked, otherwise data.
-
-// Maximum number of chunks to collect in a single batch to prevent
-// unbounded memory growth when the DataQueue has a large burst of data.
+// Ported verbatim from Node lib/internal/blob.js createBlobReaderIterable().
 const kMaxBatchChunks = 16;
 
 async function* createBlobReaderIterable(reader, options = {}) {
@@ -381,8 +343,6 @@ async function* createBlobReaderIterable(reader, options = {}) {
       let eos = false;
       let error = null;
 
-      // Pull as many chunks as available synchronously. `pull` invokes its
-      // callback synchronously, so a shared scratch pair is safe.
       let pullStatus = 0;
       let pullBuffer = null;
       const onPull = (status, buffer) => {
@@ -422,11 +382,6 @@ async function* createBlobReaderIterable(reader, options = {}) {
         const fin = await wakeup.promise;
         wakeup = PromiseWithResolvers();
         reader.setWakeup(wakeup.resolve);
-        // If the wakeup was triggered by FIN (EndReadable), the DataQueue
-        // is capped. Continue the loop to pull again -- the next pull will
-        // return EOS. Without this, a race between the data notification
-        // and the FIN notification can leave the iterator waiting for a
-        // wakeup that will never come.
         if (fin) continue;
       }
     }
@@ -437,19 +392,8 @@ async function* createBlobReaderIterable(reader, options = {}) {
 
 const kNilDatagramId = 0n;
 
-// Module-level registry of all live QuicEndpoint instances. Used by
-// connect() and listen() to find existing endpoints for reuse instead
-// of creating a new one per session.
 const endpointRegistry = new SafeSet();
 
-// Idle endpoints (typically the implicit client endpoint that connect()
-// creates) keep their socket open with the loop unref'd; release the
-// socket directly at process exit so it is freed instead of leaking.
-// This bypasses the JS close() flow entirely so no `endpoint.closing`
-// diagnostics events fire (the implicit endpoint is never observably
-// closed by user code) and runs even when the process exits on an
-// unhandled error. `releaseEndpointSocket` is set in the QuicEndpoint
-// static block so it can reach the private handle.
 let releaseEndpointSocket;
 process.on("exit", () => {
   for (const endpoint of endpointRegistry) {
@@ -891,8 +835,6 @@ process.on("exit", () => {
  */
 
 setCallbacks({
-  // QuicEndpoint callbacks
-
   /**
    * Called when the QuicEndpoint C++ handle has closed and we need to finish
    * cleaning up the JS side.
@@ -911,8 +853,6 @@ setCallbacks({
     debug("new server session callback", this[kOwner], session);
     this[kOwner][kNewSession](session);
   },
-
-  // QuicSession callbacks
 
   /**
    * Called when the underlying session C++ handle is closed either normally
@@ -1051,11 +991,6 @@ setCallbacks({
     this[kOwner][kNewToken](token, address);
   },
 
-  /**
-   * Called when the server rejects 0-RTT early data. All streams
-   * opened during the 0-RTT phase have been destroyed. The
-   * application should re-open streams if needed.
-   */
   onSessionEarlyDataRejected() {
     debug("session early data rejected callback", this[kOwner]);
     this[kOwner][kEarlyDataRejected]();
@@ -1079,8 +1014,6 @@ setCallbacks({
   onSessionVersionNegotiation(version, requestedVersions, supportedVersions) {
     debug("session version negotiation callback", version, requestedVersions, supportedVersions, this[kOwner]);
     this[kOwner][kVersionNegotiation](version, requestedVersions, supportedVersions);
-    // Note that immediately following a version negotiation event, the
-    // session will be destroyed.
   },
 
   onSessionKeyLog(line) {
@@ -1090,8 +1023,6 @@ setCallbacks({
 
   onSessionQlog(data, fin) {
     if (this[kOwner] === undefined) {
-      // Qlog data can arrive during native conn creation, before the
-      // QuicSession JS wrapper exists. Cache until the wrapper is ready.
       this._pendingQlog ??= [];
       this._pendingQlog.push(data, fin);
       return;
@@ -1107,7 +1038,6 @@ setCallbacks({
    */
   onStreamCreated(stream, direction) {
     const session = this[kOwner];
-    // The event is ignored and the stream destroyed if the session has been destroyed.
     debug("stream created callback", session, direction);
     if (session.destroyed) {
       stream.destroy();
@@ -1116,31 +1046,20 @@ setCallbacks({
     session[kNewStream](stream, direction);
   },
 
-  // QuicStream callbacks
   onStreamBlocked() {
     debug("stream blocked callback", this[kOwner]);
-    // Called when the stream C++ handle has been blocked by flow control.
     this[kOwner][kBlocked]();
   },
 
   onStreamDrain() {
-    // Called when the stream's outbound buffer has capacity for more data.
     debug("stream drain callback", this[kOwner]);
     this[kOwner][kDrain]();
   },
 
   onStreamClose(error) {
-    // Called when the stream C++ handle has been closed. The error is
-    // either undefined (clean close) or a raw array [type, code, reason]
-    // from QuicError::ToV8Value. Convert to a proper Node.js Error.
     if (error !== undefined) {
       error = convertQuicError(error);
     } else if (this[kOwner] && !this[kOwner].destroyed) {
-      // The stream is closing cleanly, but it may have been reset by the
-      // peer (ReceiveStreamReset) or locally (resetStream). The C++ side
-      // records the reset code in state.resetCode. If set, surface the
-      // reset as the close error so stream.closed rejects -- the reset
-      // was an abnormal termination even if the session closed cleanly.
       const resetCode = getQuicStreamState(this[kOwner]).resetCode;
       if (resetCode !== undefined && resetCode > 0n) {
         error = makeQuicError(
@@ -1157,7 +1076,6 @@ setCallbacks({
   },
 
   onStreamReset(error) {
-    // Called when the stream C++ handle has received a stream reset.
     if (error !== undefined) {
       error = convertQuicError(error);
     }
@@ -1166,13 +1084,11 @@ setCallbacks({
   },
 
   onStreamHeaders(headers, kind) {
-    // Called when the stream C++ handle has received a full block of headers.
     debug(`stream ${this[kOwner].id} headers callback`, headers, kind);
     this[kOwner][kHeaders](headers, kind);
   },
 
   onStreamTrailers() {
-    // Called when the stream C++ handle is ready to receive trailing headers.
     debug("stream want trailers callback", this[kOwner]);
     this[kOwner][kTrailers]();
   },
@@ -1264,13 +1180,7 @@ class QuicError extends Error {
   }
 }
 
-// Build the human-readable message for an ERR_QUIC_TRANSPORT_ERROR or
-// ERR_QUIC_APPLICATION_ERROR. `errorName` is the symbolic name for
-// the wire code when known: either the OpenSSL-decoded TLS alert
-// (CRYPTO_ERROR; 0x100..0x1ff) or one of the named transport codes
-// from RFC 9000 (e.g. PROTOCOL_VIOLATION). Otherwise undefined.
-// `reason` is the peer-supplied UTF-8 reason string from the
-// CONNECTION_CLOSE / RESET_STREAM frame, often empty.
+// `errorName`: TLS alert (CRYPTO_ERROR; 0x100..0x1ff) or named transport code from RFC 9000.
 function quicErrorMessage(prefix, errorCode, reason, errorName) {
   let msg = `${prefix} `;
   msg += errorName ? `${errorName} (${errorCode})` : `${errorCode}`;
@@ -1310,24 +1220,8 @@ function convertQuicError(error) {
   }
 }
 
-// Convert a JavaScript error into close options suitable for
-// `session.close()` / `session.destroy(error, options)`. The returned
-// shape is `{ code, type, reason }` matching what `validateCloseOptions`
-// expects (and what the native side reads via `MaybeSetCloseError`).
-//
-// Used so that destroying a session with an error actually emits a
-// CONNECTION_CLOSE frame on the wire, instead of dropping the connection
-// silently and leaving the peer waiting on its idle timer.
-//
-// Returns `undefined` when no error was supplied (caller falls back to
-// a clean / silent close).
 function errorToCloseOptions(error) {
   if (error === undefined || error === null) return undefined;
-  // Generic mapping for now: any error becomes a transport-level
-  // INTERNAL_ERROR (NGTCP2_INTERNAL_ERROR == 0x1) with the original
-  // error message used as the human-readable reason. Future work could
-  // detect specific `ERR_QUIC_*` subclasses and round-trip their
-  // original code/type back onto the wire.
   const reason = typeof error === "object" && error !== null && error.message ? `${error.message}` : `${error}`;
   return { code: 0x1n, type: "transport", reason };
 }
@@ -1346,12 +1240,6 @@ function safeCallbackInvoke(fn, owner, ...args) {
   try {
     const result = fn(...args, owner);
     if (isPromise(result)) {
-      // Block body - do NOT return the result of `owner.destroy(err)`.
-      // For some owners (e.g. `QuicEndpoint`), `destroy(err)` returns the
-      // owner's `closed` promise which itself eventually rejects with
-      // the same error. If we let that propagate through the `.then()`
-      // chain promise, nobody is awaiting that chain and we surface the
-      // rejection as unhandled.
       PromisePrototypeThen(result, undefined, err => {
         owner.destroy(err);
       });
@@ -1389,26 +1277,15 @@ function invokeOnerror(fn, error) {
 
 function validateBody(body) {
   if (body === undefined) return body;
-  // ArrayBuffers, SharedArrayBuffers, and ArrayBufferViews are passed
-  // through to the C++ layer which copies the bytes into its own
-  // BackingStore. Callers can therefore safely reuse or mutate their
-  // input buffers after the call returns. Callers that want to ensure
-  // their buffer cannot be mutated after handing it off (for example,
-  // when sharing the source with another async consumer) can call
-  // ArrayBuffer.prototype.transfer() themselves before passing the
-  // buffer.
   if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body)) {
     return body;
   }
   if (isBlob(body)) return body[kBlobHandle];
 
-  // Strings are encoded as UTF-8.
   if (typeof body === "string") {
     return Buffer.from(body, "utf8");
   }
 
-  // FileHandle -- lock it and pass the C++ handle to GetDataQueueFromSource
-  // which creates an fd-backed DataQueue entry from the file path.
   if (FileHandle.isFileHandle(body)) {
     if (body[kFileLocked]) {
       throw new ERR_INVALID_STATE("FileHandle is locked");
@@ -1514,15 +1391,12 @@ const kDefaultHighWaterMark = 65536;
 const kDefaultMaxPendingDatagrams = 128;
 
 function configureOutbound(handle, stream, body) {
-  // body: null - close writable side immediately (FIN)
   if (body === null) {
     handle.initStreamingSource();
     handle.endWrite();
     return;
   }
 
-  // Handle Promise - await and recurse. Native promises auto-flatten,
-  // so the resolved value will never itself be a promise.
   if (isPromise(body)) {
     PromisePrototypeThen(
       body,
@@ -1536,20 +1410,11 @@ function configureOutbound(handle, stream, body) {
     return;
   }
 
-  // Tier: One-shot - string (checked before sync iterable since
-  // strings are iterable but we want the one-shot path).
-  // Buffer.from may return a pooled buffer whose ArrayBuffer cannot
-  // be transferred, so run it through validateBody which copies when
-  // the buffer is a partial view of a larger ArrayBuffer.
   if (typeof body === "string") {
     handle.attachSource(validateBody(Buffer.from(body, "utf8")));
     return;
   }
 
-  // Tier: Streaming - FileHandle, pumped through the streaming source (the
-  // native side has no fd-backed one-shot source). Locked to prevent
-  // concurrent use; closed automatically when the stream finishes
-  // ([kFinishClose] closes inner.fileHandle).
   if (FileHandle.isFileHandle(body)) {
     if (body[kFileLocked]) {
       throw new ERR_INVALID_STATE("FileHandle is locked");
@@ -1559,30 +1424,21 @@ function configureOutbound(handle, stream, body) {
     return;
   }
 
-  // Tier: Streaming - Blob, pumped via its ReadableStream (the native side
-  // has no blob-backed one-shot source).
   if (isBlob(body)) {
     consumeAsyncSource(handle, stream, body.stream());
     return;
   }
 
-  // Tier: One-shot - ArrayBuffer, SharedArrayBuffer, TypedArray,
-  // DataView. validateBody handles transfer-vs-copy logic,
-  // SharedArrayBuffer copying, and partial view safety.
   if (isArrayBuffer(body) || isSharedArrayBuffer(body) || isArrayBufferView(body)) {
     handle.attachSource(validateBody(body));
     return;
   }
 
-  // Tier: Streaming - AsyncIterable (ReadableStream, stream.Readable,
-  // async generators, etc.). Checked before sync iterable because some
-  // objects implement both protocols and we prefer async.
   if (isAsyncIterable(body)) {
     consumeAsyncSource(handle, stream, body);
     return;
   }
 
-  // Tier: Sync iterable - consumed synchronously
   if (isSyncIterable(body)) {
     consumeSyncSource(handle, stream, body);
     return;
@@ -1605,15 +1461,8 @@ function configureOutbound(handle, stream, body) {
   );
 }
 
-// Sets the high water mark and initial writeDesiredSize for a streaming
-// outbound source. Called after handle.initStreamingSource() for both
-// body-source and writer paths. One-shot body sources (string, Uint8Array,
-// Blob, FileHandle, etc.) do not use this -- they go through attachSource
-// and are not subject to backpressure.
 function initStreamingBackpressure(stream) {
   const state = getQuicStreamState(stream);
-  // Only set defaults if the user hasn't already configured them
-  // (e.g., via createBidirectionalStream({ highWaterMark: N })).
   if (state.highWaterMark === 0) {
     state.highWaterMark = kDefaultHighWaterMark;
   }
@@ -1622,8 +1471,6 @@ function initStreamingBackpressure(stream) {
   }
 }
 
-// Waits for the stream's drain callback to fire, indicating the
-// outbound has capacity for more data.
 function waitForDrain(stream) {
   const { promise, resolve } = PromiseWithResolvers();
   const prevDrain = stream[kDrain];
@@ -1634,12 +1481,6 @@ function waitForDrain(stream) {
   return promise;
 }
 
-// Writes a batch to the handle, awaiting drain if backpressured.
-// Returns true if the stream was destroyed during the wait.
-// Only waits when writeDesiredSize is 0 (no capacity at all).
-// When there is any capacity, the write proceeds even if the batch
-// is larger -- the C++ side buffers the data and writeDesiredSize
-// drops toward 0, letting the normal drain mechanism take over.
 async function writeBatchWithDrain(handle, stream, batch) {
   const state = getQuicStreamState(stream);
 
@@ -1648,9 +1489,6 @@ async function writeBatchWithDrain(handle, stream, batch) {
     if (stream.destroyed) return true;
   }
 
-  // Write the batch. The return value is the total queued byte count
-  // on success, or undefined on failure (e.g., DataQueue append
-  // rejected). Guard against silent data loss.
   const result = handle.write(batch);
   if (result === undefined) {
     if (!stream.destroyed) {
@@ -1665,7 +1503,6 @@ async function consumeAsyncSource(handle, stream, source) {
   handle.initStreamingSource();
   initStreamingBackpressure(stream);
   try {
-    // Normalize to AsyncIterable<Uint8Array[]>
     const normalized = streamFrom(source);
     for await (const batch of normalized) {
       if (stream.destroyed) return;
@@ -1684,8 +1521,6 @@ async function consumeAsyncSource(handle, stream, source) {
 async function consumeSyncSource(handle, stream, source) {
   handle.initStreamingSource();
   initStreamingBackpressure(stream);
-  // Normalize to Iterable<Uint8Array[]>. Manually iterate so we can
-  // pause between next() calls when backpressure hits.
   const normalized = streamFromSync(source);
   const iter = normalized[SymbolIterator]();
   try {
@@ -1700,8 +1535,6 @@ async function consumeSyncSource(handle, stream, source) {
     if (!stream.destroyed) {
       stream.destroy(err);
     } else {
-      // If the stream is already destroyed, rethrow the error to avoid
-      // silently swallowing it. Tho in practice this shouldn't happen.
       throw err;
     }
   }
@@ -1715,7 +1548,6 @@ function isSyncIterable(obj) {
   return obj != null && typeof obj[SymbolIterator] === "function";
 }
 
-// Functions used specifically for internal or assertion purposes only.
 let getQuicStreamState;
 let getQuicSessionState;
 let isQuicSessionDestroying;
@@ -1751,7 +1583,6 @@ function maybeGetCloseError(context, status, pendingError) {
       return new ERR_QUIC_ENDPOINT_CLOSED("Start failure", status);
     }
   }
-  // Otherwise return undefined.
 }
 
 class QuicStream {
@@ -1849,27 +1680,11 @@ class QuicStream {
     inner.iteratorLocked = true;
 
     inner.reader ??= this.#handle?.getReader();
-    // Non-readable stream (outbound-only unidirectional, or closed)
     if (!inner.reader) return;
 
     yield* createBlobReaderIterable(inner.reader, {
       getReadError: () => {
-        // The read side ends for one of three reasons:
-        //   * Clean FIN received from the peer (state.finReceived
-        //     === true). The iterator stops without calling this;
-        //     fall through to the generic state error if it does.
-        //   * Peer sent us a RESET_STREAM. The C++ side records the
-        //     code in state.resetCode regardless of whether the JS
-        //     onreset handler was attached. state.finReceived stays
-        //     false because no FIN was seen.
-        //   * We aborted locally via stream.resetStream() or
-        //     stream.stopSending(). Both paths run EndReadable in
-        //     C++, setting state.readEnded without setting
-        //     state.finReceived. There is no peer code to surface.
         if (inner.state.readEnded && !inner.state.finReceived) {
-          // `state.reset` (not the code) distinguishes the two: a peer
-          // RESET_STREAM may legally carry code 0, and stopSending() records
-          // a code without setting `reset`.
           if (inner.state.reset) {
             return new ERR_QUIC_STREAM_RESET(Number(inner.state.resetCode ?? 0n));
           }
@@ -1917,8 +1732,6 @@ class QuicStream {
     validateInteger(val, "highWaterMark", 0, 0xffffffff);
     const inner = this.#inner;
     inner.state.highWaterMark = val;
-    // If writeDesiredSize hasn't been set yet (still 0 from initialization),
-    // initialize it to the highWaterMark so the first write can proceed.
     if (inner.state.writeDesiredSize === 0 && val > 0) {
       inner.state.writeDesiredSize = val;
     }
@@ -1938,7 +1751,6 @@ class QuicStream {
     } else {
       validateFunction(fn, "onerror");
       inner.onerror = FunctionPrototypeBind(fn, this);
-      // Lazily create the close promise so it can be marked handled.
       inner.pendingClose ??= PromiseWithResolvers();
       markPromiseAsHandled(inner.pendingClose.promise);
     }
@@ -2169,20 +1981,7 @@ class QuicStream {
   destroy(error, options = kEmptyObject) {
     assertIsQuicStream(this);
     const inner = this.#inner;
-    // Two distinct guards:
-    //   * `#destroying` flips synchronously here so any re-entrant call
-    //     from inside this method's user callbacks hits the guard and
-    //     returns immediately.
-    //   * `destroyed` (i.e. `#handle === undefined`) catches the case
-    //     where the C++ side already finished cleanup via the
-    //     `onStreamClose -> [kFinishClose]` path - which does NOT go
-    //     through `destroy()` and therefore never sets `#destroying`.
-    //     `[kFinishClose]` clears `#handle` at the end of its work.
     if (inner.destroying || this.destroyed) return;
-    // Validate options up front so a malformed `options` argument
-    // throws before any side effects (mutating `#destroying`,
-    // emitting wire frames, invoking `onerror`, settling the closed
-    // promise). The caller may retry with valid options.
     validateObject(options, "options");
     const { code: optionCode, reason } = options;
     if (optionCode !== undefined && typeof optionCode !== "bigint" && typeof optionCode !== "number") {
@@ -2192,8 +1991,6 @@ class QuicStream {
       validateString(reason, "options.reason");
     }
     inner.destroying = true;
-    // Resolve the wire error code for any RESET_STREAM / STOP_SENDING
-    // frames emitted below.
     let abortCode;
     if (optionCode !== undefined) {
       abortCode = BigInt(optionCode);
@@ -2219,19 +2016,7 @@ class QuicStream {
     // the surviving peer is expected to clean up via its own close/idle
     // timeout rather than via per-stream RESET/STOP_SENDING.
     const cascadingFromSessionDestroy = inner.session !== undefined && isQuicSessionDestroying(inner.session);
-    // When destroying with an error, ensure the peer stops sending
-    // data we are about to discard by emitting STOP_SENDING. The
-    // condition gates the emission to error-path destroys with a
-    // still-open readable side. The C++ state.readEnded flag is
-    // authoritative -- it is set for locally-initiated uni streams
-    // (which have no readable side) and when reading completes.
-    // When destroying with an error, ensure the peer learns about it via
-    // RESET_STREAM (the writer.fail path inside [kFinishClose] emits it
-    // only when a writer was created) and stops sending data we are about
-    // to discard via STOP_SENDING. Routed through a single native call so
-    // that a stream which never reached the wire can defer (and possibly
-    // drop) the frames — Node parity for streams created and abandoned in
-    // one turn.
+    // Node parity for streams created and abandoned in one turn.
     if (abortCode !== undefined && !cascadingFromSessionDestroy) {
       const wantStop = !inner.state.readEnded;
       const wantReset = inner.writer === undefined && !inner.state.writeEnded;
@@ -2245,10 +2030,6 @@ class QuicStream {
     }
     const handle = this.#handle;
     this[kFinishClose](error);
-    // The cascade flag tells the native side to skip its own wire actions
-    // too (reset/close of the lsquic stream): the session teardown that
-    // follows frees the streams, and any frame emitted here would make the
-    // otherwise-silent session destroy ack-eliciting.
     handle.destroy(cascadingFromSessionDestroy);
   }
 
@@ -2284,7 +2065,7 @@ class QuicStream {
     }
     validateObject(headers, "headers");
     const { terminal = false } = options;
-    const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true /* strictSingleValueFields */);
+    const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
     const flags = terminal ? kHeadersFlagsTerminal : kHeadersFlagsNone;
     return this.#handle.sendHeaders(kHeadersKindInitial, headerString, flags);
   }
@@ -2347,7 +2128,6 @@ class QuicStream {
     let totalBytesWritten = 0;
     let drainWakeup = null;
 
-    // Drain callback - C++ fires this when send buffer has space
     stream[kDrain] = () => {
       if (drainWakeup) {
         drainWakeup.resolve(true);
@@ -2355,30 +2135,13 @@ class QuicStream {
       }
     };
 
-    // A note on backpressure handling: per the stream/iter spec, the default
-    // backpressure policy for writers is strict, meaning that if the stream
-    // signals backpressure additional writes are rejected until the buffer has
-    // capacity again.
-
     function writeSync(chunk) {
-      // If the stream is closed, errored, or write-ended, we cannot accept
-      // more data. Refuse the sync write.
-      // If a drain is already pending, another operation is waiting
-      // for capacity. Refuse the sync write.
       if (closed || errored || stream.#inner.state.writeEnded || drainWakeup != null) {
         return false;
       }
       chunk = toUint8Array(chunk);
       const len = TypedArrayPrototypeGetByteLength(chunk);
       if (len === 0) return true;
-      // Refuse the write only when there is no available capacity at
-      // all. When writeDesiredSize > 0 we allow the write even if the
-      // chunk is larger than the remaining capacity -- the C++ side
-      // will accept the data into the DataQueue and
-      // UpdateWriteDesiredSize() will drop writeDesiredSize toward 0,
-      // at which point the standard drain mechanism takes over.
-      // This follows the Web Streams model where writes beyond the HWM
-      // succeed and backpressure applies to *subsequent* writes.
       if (stream.#inner.state.writeDesiredSize === 0) return false;
       const result = handle.write([chunk]);
       if (result === undefined) return false;
@@ -2397,10 +2160,6 @@ class QuicStream {
       if (closed || stream.#inner.state.writeEnded) {
         throw new ERR_INVALID_STATE("Writer is closed");
       }
-      // If a drain is already pending, another operation is waiting
-      // for capacity. Under strict policy, reject immediately.
-      // Later, if we add support for other backpressure policies,
-      // we could instead await the existing drain before proceeding.
       if (drainWakeup != null) {
         throw new ERR_INVALID_STATE("Stream write buffer is full");
       }
@@ -2438,10 +2197,6 @@ class QuicStream {
         throw new ERR_INVALID_STATE("Writer is closed");
       }
 
-      // If a drain is already pending, another operation is waiting
-      // for capacity. Under strict policy, reject immediately.
-      // Later, if we add support for other backpressure policies,
-      // we could instead await the existing drain before proceeding.
       if (drainWakeup != null) {
         throw new ERR_INVALID_STATE("Stream write buffer is full");
       }
@@ -2452,20 +2207,12 @@ class QuicStream {
     }
 
     function endSync() {
-      // Per the streams/iter spec, endSync and end follow a try-fallback
-      // pattern. That is, callers should try endSync first and if it returns
-      // -1, then they should call and await end(). This is a signal that sync
-      // end is not currently possible. However, we always support sync end
-      // here unless the stream is already errored.
       if (errored) return -1;
 
-      // If we're already closed, just return the total bytes written.
       if (closed) return totalBytesWritten;
 
-      // If we are waiting for drain to complete, we cannot end synchronously.
       if (drainWakeup != null) return -1;
 
-      // Fantastic, we can end synchronously!
       handle.endWrite();
       closed = true;
       return totalBytesWritten;
@@ -2483,19 +2230,7 @@ class QuicStream {
         // At most we do here is check for signal abort at the start of the call.
       }
 
-      // Per the streams/iter spec, endSync and end follow a try-fallback
-      // pattern. That is, callers should try endSync first and if it returns
-      // -1, then they should call and await end(). This is a signal that sync
-      // end is not currently possible. However, we always support sync end
-      // here unless the stream is already errored.
-      // While the user should have already called endSync, we call it again
-      // here to actually process the end request. At worst it's called twice.
       const n = endSync();
-
-      // A return value of -1 indicates that endSync was not yet able to
-      // process the end request, either because we are errored or because we
-      // are awaiting drain. If we're errored, throw the error. If we're waiting
-      // for drain, await it and then try ending again.
 
       if (n >= 0) return n;
       if (errored) throw error;
@@ -2513,17 +2248,6 @@ class QuicStream {
       if (closed || errored) return;
       errored = true;
       error = reason ?? new ERR_INVALID_STATE("Failed");
-      // Resolve the wire code for the RESET_STREAM in priority order:
-      //   1. If `reason` is a `QuicError`, use its explicit
-      //      `errorCode`.
-      //   2. Any other `reason` falls back to the negotiated
-      //      application's "internal error" code, surfaced via
-      //      `QuicSessionState.internalErrorCode`. For HTTP/3 this is
-      //      `H3_INTERNAL_ERROR` (0x102); for raw QUIC applications
-      //      it falls back to the QUIC transport-layer
-      //      `INTERNAL_ERROR` (0x1).
-      //   3. `fail()` with no reason (writer disposal, clean teardown)
-      //      uses `0n`, which the peer treats as a clean completion.
       const code =
         reason === undefined
           ? 0n
@@ -2531,9 +2255,6 @@ class QuicStream {
             ? error.errorCode
             : getQuicSessionState(stream.#inner.session).internalErrorCode;
       handle.resetStream(code);
-      // The error already reached the writer's caller; the stream's
-      // `closed` promise will reject with the locally recorded reset code
-      // when the stream tears down, and nothing is required to observe it.
       markPromiseAsHandled(stream.closed);
       if (drainWakeup != null) {
         drainWakeup.reject(error);
@@ -2556,7 +2277,6 @@ class QuicStream {
       fail,
       [drainableProtocol]() {
         if (closed || errored) return null;
-        // If a drain is already pending, return the existing promise.
         if (drainWakeup != null) return drainWakeup.promise;
         if (stream.#inner.state.writeDesiredSize > 0) return null;
         drainWakeup = PromiseWithResolvers();
@@ -2571,10 +2291,6 @@ class QuicStream {
       },
     };
 
-    // Non-writable stream - return a pre-closed writer.
-    // A remote unidirectional stream is read-only and has no writable
-    // side. isLocal distinguishes locally-initiated (writable) from
-    // remotely-initiated (read-only) uni streams.
     if (
       !handle ||
       this.destroyed ||
@@ -2585,7 +2301,6 @@ class QuicStream {
       return (inner.writer = writer);
     }
 
-    // Initialize the outbound DataQueue for streaming writes
     handle.initStreamingSource();
     initStreamingBackpressure(this);
 
@@ -2611,8 +2326,6 @@ class QuicStream {
       throw new ERR_INVALID_STATE("Stream writer already accessed");
     }
     inner.outboundSet = true;
-    // If the body is a FileHandle, store it so it is closed
-    // automatically when the stream finishes.
     if (FileHandle.isFileHandle(body)) {
       inner.fileHandle = body;
     }
@@ -2654,10 +2367,6 @@ class QuicStream {
     if (this.destroyed) return;
     code = BigInt(code);
     this.#handle.resetStream(code);
-    // An explicit local reset is an abnormal termination of the stream:
-    // surface it through `closed` once the stream finishes, the same way a
-    // peer-initiated reset is surfaced (the writer.fail() path settles
-    // `closed` through destroy() instead and does not take this branch).
     this.#inner.localResetError ??= makeQuicError(
       "ERR_QUIC_APPLICATION_ERROR",
       "QUIC application error",
@@ -2675,9 +2384,6 @@ class QuicStream {
    */
   get priority() {
     assertIsQuicStream(this);
-    // headersSupported is tri-state: 0 = ALPN not yet settled (pending
-    // streams still expose the priority they were created with), 1 = h3,
-    // 2 = definitively raw QUIC (no priority extension).
     if (this.destroyed || getQuicSessionState(this.#inner.session).headersSupported === 2) return null;
     const packed = this.#handle.getPriority();
     const urgency = packed >> 1;
@@ -2726,11 +2432,7 @@ class QuicStream {
     } else {
       debug(`stream ${this.id} sending headers`, headers);
     }
-    const headerString = buildNgHeaderString(
-      headers,
-      assertValidPseudoHeader,
-      true, // This could become an option in future
-    );
+    const headerString = buildNgHeaderString(headers, assertValidPseudoHeader, true);
     return this.#handle.sendHeaders(kind, headerString, flags);
   }
 
@@ -2740,10 +2442,6 @@ class QuicStream {
     if (this.destroyed) {
       return inner.pendingClose.promise;
     }
-    // A stream the local side explicitly reset (stream.resetStream(code))
-    // did not finish cleanly even when the close itself carries no error.
-    // An explicit destroy() (destroying === true) settles closed with
-    // whatever error destroy() was given, including none.
     if (!inner.destroying) {
       error ??= inner.localResetError;
     }
@@ -2771,15 +2469,10 @@ class QuicStream {
       });
     }
     inner.stats?.[kFinishClose]();
-    // `stream.early` stays readable after close (the peer's 0-RTT flag is
-    // often checked once the exchange completes).
     inner.earlySnapshot = inner.state?.early;
     inner.state?.[kFinishClose]();
     inner.session[kRemoveStream](this);
     inner.writer?.fail(error);
-    // Materialize the reader before dropping the handle: data the peer
-    // delivered before the close stays buffered natively, and an iterator
-    // obtained after the close must still drain it (then hit EOS).
     inner.reader ??= this.#handle?.getReader();
     inner.session = undefined;
     inner.pendingClose.reject = undefined;
@@ -2794,14 +2487,8 @@ class QuicStream {
     inner.headers = undefined;
     inner.pendingTrailers = undefined;
     this.#handle = undefined;
-    // Wake anything parked in waitForDrain(): only the native StreamDrain
-    // event resolves it, and that stops at close. `#handle` is already
-    // cleared, so the resumed writer sees `destroyed` and bails.
     this[kDrain]?.();
     if (inner.fileHandle !== undefined) {
-      // Close the FileHandle that was used as a body source. The close
-      // may fail if the user already closed it -- that's expected and
-      // harmless, so mark the promise as handled.
       markPromiseAsHandled(this.#inner.fileHandle.close());
       inner.fileHandle = undefined;
     }
@@ -2809,8 +2496,6 @@ class QuicStream {
 
   [kBlocked]() {
     const inner = this.#inner;
-    // The blocked event should only be called if the stream was created with
-    // an onblocked callback. The callback should always exist here.
     assert(inner.onblocked, "Unexpected stream blocked event");
     if (onStreamBlockedChannel.hasSubscribers) {
       onStreamBlockedChannel.publish({
@@ -2822,15 +2507,10 @@ class QuicStream {
     safeCallbackInvoke(inner.onblocked, this);
   }
 
-  [kDrain]() {
-    // No-op by default. Overridden by the writer closure when
-    // stream.writer is accessed.
-  }
+  [kDrain]() {}
 
   [kReset](error) {
     const inner = this.#inner;
-    // The reset event should only be called if the stream was created with
-    // an onreset callback. The callback should always exist here.
     assert(inner.onreset, "Unexpected stream reset event");
     if (onStreamResetChannel.hasSubscribers) {
       onStreamResetChannel.publish({
@@ -2897,8 +2577,6 @@ class QuicStream {
     if (this.destroyed) return;
     const inner = this.#inner;
 
-    // The HTTP/3 layer is asking us to provide trailers to send.
-    // Check for pre-set pendingTrailers first, then the callback.
     if (inner.pendingTrailers) {
       this.sendTrailers(inner.pendingTrailers);
       inner.pendingTrailers = undefined;
@@ -2970,10 +2648,6 @@ class QuicSession {
     onkeylog: undefined,
     onqlog: undefined,
     pendingQlog: undefined,
-    // Default to 'manual' (no auto-rejection). Client sessions override
-    // this via kVerifyPeer in kConnect. Server sessions keep 'manual'
-    // because server-side cert validation is handled by rejectUnauthorized
-    // at the C++ level.
     verifyPeer: "manual",
     handshakeInfo: undefined,
     /** @type {QuicSessionPath|undefined} */
@@ -3013,7 +2687,6 @@ class QuicSession {
    * @param {QuicEndpoint} endpoint
    */
   constructor(privateSymbol, handle, endpoint) {
-    // Instances of QuicSession can only be created internally.
     assertPrivateSymbol(privateSymbol);
 
     this.#handle = handle;
@@ -3021,7 +2694,6 @@ class QuicSession {
 
     const inner = this.#inner;
     inner.endpoint = endpoint;
-    // Move any qlog entries that arrived before the wrapper existed.
     if (handle._pendingQlog !== undefined) {
       inner.pendingQlog = handle._pendingQlog;
       handle._pendingQlog = undefined;
@@ -3037,9 +2709,6 @@ class QuicSession {
   }
 
   get applicationOptions() {
-    // We don't cache application options because they may be updated by the
-    // C++ layer after session creation depending on the behavior of the
-    // application.
     if (this.destroyed) return null;
     return this.#handle.applicationOptions();
   }
@@ -3048,7 +2717,6 @@ class QuicSession {
     if (this.#inner.localTransportParams !== undefined) {
       return this.#inner.localTransportParams;
     }
-    // If the handle is already gone, we cannot retrieve the transport params.
     if (this.destroyed) return null;
     const params = this.#handle.localTransportParams();
     if (params.preferredAddressIpv4 !== undefined) {
@@ -3064,15 +2732,8 @@ class QuicSession {
     if (this.#inner.remoteTransportParams !== undefined) {
       return this.#inner.remoteTransportParams;
     }
-    // If the handle is already gone, we cannot retrieve the transport params.
     if (this.destroyed) return null;
     const params = this.#handle.remoteTransportParams();
-    // If params is undefined, the transport parameters have not yet been received.
-    // Note the distinction between this and the case where the handle is gone.
-    // If the handle is gone, we return null because we know the transport
-    // parameters will be unavailable. If the transport parameters have not yet
-    // been received, we return undefined to indicate that they may still become
-    // available in the future.
     if (params === undefined) return undefined;
     if (params.preferredAddressIpv4 !== undefined) {
       params.preferredAddressIpv4 = new InternalSocketAddress(params.preferredAddressIpv4);
@@ -3102,15 +2763,8 @@ class QuicSession {
     } else {
       validateFunction(fn, "onerror");
       inner.onerror = FunctionPrototypeBind(fn, this);
-      // When an onerror handler is provided, mark the pending promises
-      // as handled so that rejections from destroy(error) don't surface
-      // as unhandled rejections. The onerror callback is the
-      // application's error handler for this session.
       markPromiseAsHandled(inner.pendingClose.promise);
       markPromiseAsHandled(inner.pendingOpen.promise);
-      // Also mark existing streams' closed promises. Stream rejections
-      // during session destruction are expected collateral when the
-      // session has an error handler.
       for (const stream of inner.streams) {
         markPromiseAsHandled(stream.closed);
       }
@@ -3224,7 +2878,6 @@ class QuicSession {
     } else {
       validateFunction(fn, "onqlog");
       inner.onqlog = FunctionPrototypeBind(fn, this);
-      // Flush any qlog entries that were cached before the callback was set.
       if (inner.pendingQlog !== undefined) {
         const pending = inner.pendingQlog;
         inner.pendingQlog = undefined;
@@ -3487,9 +3140,6 @@ class QuicSession {
     validateOneOf(priority, "options.priority", ["default", "low", "high"]);
     validateBoolean(incremental, "options.incremental");
 
-    // Blob and FileHandle bodies are pumped through the streaming source
-    // after the stream is constructed (configureOutbound); the native
-    // openStream only takes one-shot buffer bodies.
     const deferredBody = body !== undefined && (isBlob(body) || FileHandle.isFileHandle(body));
     const validatedBody = deferredBody ? undefined : validateBody(body);
 
@@ -3499,28 +3149,22 @@ class QuicSession {
     }
 
     if (inner.state.headersSupported !== 2) {
-      // Applied natively even while the stream is pending — the native
-      // side caches the value and applies it when the lsquic stream binds.
       const urgency = priority === "high" ? 0 : priority === "low" ? 7 : 3;
       handle.setPriority((urgency << 1) | (incremental ? 1 : 0));
     }
 
-    const stream = new QuicStream(kPrivateConstructor, handle, this, direction, true /* isLocal */);
+    const stream = new QuicStream(kPrivateConstructor, handle, this, direction, true);
     inner.streams.add(stream);
     if (typeof this.#inner.onerror === "function") {
       markPromiseAsHandled(stream.closed);
     }
 
-    // If the body was a FileHandle, store it on the stream so it is
-    // closed automatically when the stream finishes.
     if (FileHandle.isFileHandle(body)) {
       stream[kAttachFileHandle](body);
     }
 
-    // Set the high water mark for backpressure.
     stream.highWaterMark = highWaterMark;
 
-    // Set stream callbacks before sending headers to avoid missing events.
     if (onheaders) stream.onheaders = onheaders;
     if (ontrailers) stream.ontrailers = ontrailers;
     if (oninfo) stream.oninfo = oninfo;
@@ -3530,9 +3174,6 @@ class QuicSession {
       stream.sendHeaders(headers, { terminal: validatedBody === undefined && !deferredBody });
     }
 
-    // Start pumping a deferred (Blob/FileHandle) body. Runs after
-    // sendHeaders so the HEADERS frame precedes body bytes; the pump's
-    // first write lands in a later microtask.
     if (deferredBody) {
       stream.setBody(body);
     }
@@ -3598,15 +3239,10 @@ class QuicSession {
 
     const maxDatagramSize = this.#inner.state.maxDatagramSize;
 
-    // The peer max datagram size is either unknown or they have explicitly
-    // indicated that they do not support datagrams by setting it to 0. In
-    // either case, we do not send the datagram.
     if (maxDatagramSize === 0) return kNilDatagramId;
 
     if (isPromise(datagram)) {
       datagram = await datagram;
-      // Session may have closed while awaiting. Since datagrams are
-      // inherently unreliable, silently return rather than throwing.
       if (this.#isClosedOrClosing) return kNilDatagramId;
     }
 
@@ -3620,12 +3256,8 @@ class QuicSession {
       ? DataViewPrototypeGetByteLength(datagram)
       : TypedArrayPrototypeGetByteLength(datagram);
 
-    // If the view has zero length (e.g. detached buffer), there's
-    // nothing to send.
     if (length === 0) return kNilDatagramId;
 
-    // The peer max datagram size is less than the datagram we want to send,
-    // so... don't send it.
     if (length > maxDatagramSize) return kNilDatagramId;
 
     const id = this.#handle.sendDatagram(datagram);
@@ -3643,9 +3275,6 @@ class QuicSession {
     return id;
   }
 
-  /**
-   * Initiate a key update.
-   */
   updateKey() {
     assertIsQuicSession(this);
     if (this.#isClosedOrClosing) {
@@ -3748,16 +3377,6 @@ class QuicSession {
   destroy(error, options) {
     assertIsQuicSession(this);
     const inner = this.#inner;
-    // Two distinct guards (see also `QuicStream.destroy`):
-    //   * `#destroying` flips synchronously here so any re-entrant call
-    //     (e.g. from a user `onerror` callback or from a cascading
-    //     `stream.destroy(error)` whose own `onerror` re-enters
-    //     `session.destroy()`) hits this guard and returns immediately
-    //     without running the teardown twice.
-    //   * `destroyed` (i.e. `#handle === undefined`) signals
-    //     "fully torn down". Defense-in-depth for paths that may have
-    //     finished teardown without setting `#destroying` and for
-    //     repeat invocations after this method has fully run.
     if (inner.destroying || this.destroyed) return;
 
     if (options !== undefined) options = validateCloseOptions(options);
@@ -3779,12 +3398,9 @@ class QuicSession {
       }
     }
 
-    // First, forcefully and immediately destroy all open streams, if any.
     for (const stream of inner.streams) {
       stream.destroy(error);
     }
-    // The streams should remove themselves when they are destroyed but let's
-    // be doubly sure.
     const streamCount = inner.streams.size;
     if (streamCount) {
       process.emitWarning(
@@ -3796,33 +3412,16 @@ class QuicSession {
     }
     inner.streams.clear();
 
-    // Remove this session immediately from the endpoint
     inner.endpoint[kRemoveSession](this);
     inner.endpoint = undefined;
     inner.isPendingClose = false;
 
-    // If the handshake never completed, reject the opened promise. The
-    // session is being destroyed, so the handshake will never complete
-    // and `await session.opened` would otherwise hang forever. The
-    // documented contract is that opened rejects when the session is
-    // destroyed before opening; see the `session.opened` docs in
-    // doc/api/quic.md. `[kHandshake]` clears `#pendingOpen.reject` once
-    // the handshake completes successfully, so this branch only runs if
-    // we are racing against a still-pending handshake.
-    //
-    // Mark the rejection as handled before rejecting so that callers who
-    // never explicitly `await session.opened` do not get an unhandled
-    // rejection warning - common for server-side sessions delivered via
-    // `onsession`, which often do not await opened. The rejection is
-    // still observable via `await session.opened`.
     if (inner.pendingOpen.reject) {
       markPromiseAsHandled(inner.pendingOpen.promise);
       inner.pendingOpen.reject(error ?? new ERR_INVALID_STATE("Session was destroyed before it opened"));
     }
 
     if (error) {
-      // If the session is still waiting to be closed, and error
-      // is specified, reject the closed promise.
       inner.pendingClose.reject?.(error);
     } else {
       inner.pendingClose.resolve?.();
@@ -3863,12 +3462,6 @@ class QuicSession {
     inner.peerCertificate = undefined;
     inner.ephemeralKeyInfo = undefined;
 
-    // Destroy the underlying C++ handle. Pass close error options if
-    // provided so the CONNECTION_CLOSE frame carries the correct code.
-    // Note: #onqlog is intentionally NOT cleared here because the native side
-    // emits the final qlog statement during conn destruction,
-    // and the deferred callback must still be reachable. The reference
-    // is released when the QuicSession object is garbage collected.
     this.#handle.destroy(options);
     this.#handle = undefined;
 
@@ -3913,8 +3506,6 @@ class QuicSession {
    * @param {string} [reason]
    */
   [kFinishClose](errorType, code, reason, errorName) {
-    // If code is zero, then we closed without an error. Yay! We can destroy
-    // safely without specifying an error.
     if (code === 0n) {
       debug("finishing closing the session with no error");
       this.destroy();
@@ -3923,44 +3514,26 @@ class QuicSession {
 
     debug("finishing closing the session with an error", errorType, code, reason, errorName);
 
-    // If the local side initiated this close with an error code (via
-    // close({ code })), this is an intentional shutdown; not an error.
-    // The closed promise should resolve, not reject.
     if (this.#inner.selfInitiatedClose) {
       this.destroy();
       return;
     }
 
-    // Otherwise, errorType indicates the type of error that occurred, code indicates
-    // the specific error, and reason is an optional string describing the error.
-    // code !== 0n here (the early return above handles code === 0n).
-    // The errorType values map to QUIC error types:
-    //   0 = NGTCP2_CCERR_TYPE_TRANSPORT
-    //   1 = NGTCP2_CCERR_TYPE_APPLICATION
-    //   2 = NGTCP2_CCERR_TYPE_VERSION_NEGOTIATION
-    //   3 = NGTCP2_CCERR_TYPE_IDLE_CLOSE
-    //   4 = NGTCP2_CCERR_TYPE_DROP_CONN
-    //   5 = NGTCP2_CCERR_TYPE_RETRY
-    // The DROP_CONN/RETRY cases are typically intercepted before reaching
-    // here (DROP_CONN tears the connection down without notifying us, RETRY
-    // is server-only). The default branch is a safety net so any
-    // unexpected value still completes the close path - without it the
-    // session would leak with `closed` hanging forever.
     switch (errorType) {
-      case 0 /* Transport Error */:
+      case 0:
         this.destroy(
           makeQuicError("ERR_QUIC_TRANSPORT_ERROR", "QUIC transport error", "transport", code, reason, errorName),
         );
         break;
-      case 1 /* Application Error */:
+      case 1:
         this.destroy(
           makeQuicError("ERR_QUIC_APPLICATION_ERROR", "QUIC application error", "application", code, reason, errorName),
         );
         break;
-      case 2 /* Version Negotiation Error */:
+      case 2:
         this.destroy(new ERR_QUIC_VERSION_NEGOTIATION_ERROR());
         break;
-      case 3 /* Idle close */:
+      case 3:
         this.destroy();
         break;
       default:
@@ -3988,8 +3561,6 @@ class QuicSession {
    * @param {boolean} early A boolean indicating whether this datagram was received before the handshake completed
    */
   [kDatagram](u8, early) {
-    // The datagram event should only be called if the session has
-    // an ondatagram callback. The callback should always exist here.
     const inner = this.#inner;
     assert(typeof inner.ondatagram === "function", "Unexpected datagram event");
     if (this.destroyed) return;
@@ -4011,8 +3582,6 @@ class QuicSession {
    */
   [kDatagramStatus](id, status) {
     const inner = this.#inner;
-    // The datagram status event should only be called if the session has
-    // an ondatagramstatus callback. The callback should always exist here.
     assert(typeof inner.ondatagramstatus === "function", "Unexpected datagram status event");
     if (this.destroyed) return;
     if (onSessionReceiveDatagramStatusChannel.hasSubscribers) {
@@ -4139,8 +3708,6 @@ class QuicSession {
     if (typeof onversionnegotiation === "function") {
       safeCallbackInvoke(onversionnegotiation, this, version, requestedVersions, supportedVersions);
     }
-    // Version negotiation is always a fatal event - the session must be
-    // destroyed regardless of whether the callback is set.
     this.destroy(new ERR_QUIC_VERSION_NEGOTIATION_ERROR());
   }
 
@@ -4199,7 +3766,6 @@ class QuicSession {
       earlyDataAccepted,
     };
 
-    // Stash timing-relevant handshake info for the perf entry detail.
     inner.handshakeInfo = {
       __proto__: null,
       servername,
@@ -4221,10 +3787,6 @@ class QuicSession {
       safeCallbackInvoke(onhandshake, this, info);
     }
 
-    // In 'auto' mode, reject the connection if peer certificate validation
-    // failed. In 'manual' mode, resolve regardless and let the application
-    // decide. In 'strict' mode, the handshake already failed at the C++
-    // level (SSL_VERIFY_PEER) so we won't reach here.
     if (inner.verifyPeer === "auto" && validationErrorReason !== undefined) {
       const err = makeQuicError(
         "ERR_QUIC_TRANSPORT_ERROR",
@@ -4266,13 +3828,10 @@ class QuicSession {
    */
   [kNewStream](handle, direction) {
     const inner = this.#inner;
-    const stream = new QuicStream(kPrivateConstructor, handle, this, direction, false /* isLocal */);
+    const stream = new QuicStream(kPrivateConstructor, handle, this, direction, false);
 
-    // Set the default high water mark for received streams.
     stream.highWaterMark = kDefaultHighWaterMark;
 
-    // A new stream was received. If we don't have an onstream callback, then
-    // there's nothing we can do about it. Destroy the stream in this case.
     if (typeof inner.onstream !== "function") {
       process.emitWarning("A new stream was received but no onstream callback was provided");
       stream.destroy();
@@ -4280,16 +3839,10 @@ class QuicSession {
     }
 
     inner.streams.add(stream);
-    // If the session has an onerror handler, mark the stream's closed
-    // promise as handled. See the onerror setter for explanation.
     if (typeof inner.onerror === "function") {
       markPromiseAsHandled(stream.closed);
     }
 
-    // streamIdleTimeout (listen option): destroy peer-initiated streams
-    // that sit idle. One-shot from creation — the option is opt-in and an
-    // idle stream by definition sees no activity that would restart the
-    // window; the timer is cancelled when the stream closes normally.
     const idleTimeout = this[kStreamIdleTimeout];
     if (idleTimeout > 0) {
       const timer = setTimeout(() => {
@@ -4304,8 +3857,6 @@ class QuicSession {
       PromisePrototypeThen(stream.closed, clear, clear);
     }
 
-    // Apply default stream callbacks set at listen time before
-    // notifying onstream, so the user sees them already set.
     const scbs = this[kStreamCallbacks];
     if (scbs) {
       const { onheaders, ontrailers, oninfo, onwanttrailers } = scbs;
@@ -4364,10 +3915,6 @@ class QuicSession {
   }
 }
 
-// The QuicEndpoint represents a local UDP port binding. It can act as both a
-// server for receiving peer sessions, or a client for initiating them. The
-// local UDP port will be lazily bound only when connect() or listen() are
-// called.
 class QuicEndpoint {
   #handle;
   #inner = {
@@ -4376,8 +3923,6 @@ class QuicEndpoint {
     busy: false,
     isPendingClose: false,
     listening: false,
-    // `true` (HTTP/3) or `false` (raw) once a client connect fixed this
-    // endpoint's lsquic client-engine mode; `undefined` until then.
     clientHttp: undefined,
     pendingClose: PromiseWithResolvers(),
     pendingError: undefined,
@@ -4469,7 +4014,6 @@ class QuicEndpoint {
 
     validateOneOf(blockListPolicy, "options.blockListPolicy", ["deny", "allow"]);
 
-    // Non-negative integer (number or bigint) options.
     for (const [name, v] of [
       ["retryTokenExpiration", retryTokenExpiration],
       ["tokenExpiration", tokenExpiration],
@@ -4483,7 +4027,6 @@ class QuicEndpoint {
       }
     }
 
-    // Non-negative rate/burst options (fractions and Infinity allowed).
     for (const [name, v] of [
       ["retryRate", retryRate],
       ["retryBurst", retryBurst],
@@ -4517,7 +4060,6 @@ class QuicEndpoint {
       validateInteger(udpTTL, "options.udpTTL", 0, 255);
     }
 
-    // 16-byte secrets (any ArrayBufferView shape).
     for (const [name, v] of [
       ["resetTokenSecret", resetTokenSecret],
       ["tokenSecret", tokenSecret],
@@ -4531,7 +4073,6 @@ class QuicEndpoint {
       }
     }
 
-    // All of the other options will be validated internally by the C++ code
     if (address !== undefined && !SocketAddress.isSocketAddress(address)) {
       if (typeof address === "string") {
         address = SocketAddress.parse(address);
@@ -4547,7 +4088,6 @@ class QuicEndpoint {
       address: address?.[kSocketAddressHandle],
       retryTokenExpiration,
       tokenExpiration,
-      // Connection limits are set on the state buffer, not passed to C++.
       maxConnectionsPerHost,
       maxConnectionsTotal,
       disableStatelessReset,
@@ -4562,7 +4102,6 @@ class QuicEndpoint {
       immediateCloseBurst,
       sessionCreationRate,
       sessionCreationBurst,
-      // Pass the C++ handle, not the JS BlockList wrapper.
       blockList: blockList?.[kBlockListHandle],
       blockListPolicy,
       rxDiagnosticLoss,
@@ -4583,7 +4122,6 @@ class QuicEndpoint {
   #newSession(handle) {
     const session = new QuicSession(kPrivateConstructor, handle, this);
     this.#inner.sessions.add(session);
-    // Set default pending datagram queue size.
     session.maxPendingDatagrams = kDefaultMaxPendingDatagrams;
     return session;
   }
@@ -4599,9 +4137,6 @@ class QuicEndpoint {
     inner.stats = new QuicEndpointStats(kPrivateConstructor, this.#handle.stats);
     inner.state = new QuicEndpointState(kPrivateConstructor, this.#handle.state);
 
-    // Connection limits are stored in the shared state buffer so they
-    // can be read by C++ and mutated from JS after construction.
-    // Use the public setters which validate the range.
     const { maxConnectionsPerHost, maxConnectionsTotal } = options;
     if (maxConnectionsPerHost !== undefined) {
       this.maxConnectionsPerHost = maxConnectionsPerHost;
@@ -4609,9 +4144,6 @@ class QuicEndpoint {
     if (maxConnectionsTotal !== undefined) {
       this.maxConnectionsTotal = maxConnectionsTotal;
     }
-    // Seconds a client endpoint stays alive after its last session closes
-    // before self-destroying (0 = immediately). Listening endpoints never
-    // idle out.
     inner.idleTimeout =
       typeof options.idleTimeout === "bigint" ? Number(options.idleTimeout) : (options.idleTimeout ?? 0);
 
@@ -4661,8 +4193,6 @@ class QuicEndpoint {
   set busy(val) {
     assertIsQuicEndpoint(this);
     assertEndpointNotClosedOrClosing(this);
-    // The val is allowed to be any truthy value
-    // Non-op if there is no change
     const inner = this.#inner;
     if (!!val !== inner.busy) {
       debug("toggling endpoint busy status to ", !inner.busy);
@@ -4755,7 +4285,6 @@ class QuicEndpoint {
       ongoaway,
       onkeylog,
       onqlog,
-      // Stream-level callbacks applied to each incoming stream.
       onheaders,
       ontrailers,
       oninfo,
@@ -4763,7 +4292,6 @@ class QuicEndpoint {
       ...rest
     } = options;
 
-    // Store session and stream callbacks to apply to each new incoming session.
     inner.sessionCallbacks = {
       __proto__: null,
       onerror,
@@ -4784,9 +4312,6 @@ class QuicEndpoint {
       ontrailers,
       oninfo,
       onwanttrailers,
-      // Milliseconds before an idle peer-initiated stream is destroyed
-      // (0/undefined disables). Stamped on each session by
-      // applySessionCallbacks, applied per-stream in [kNewStream].
       streamIdleTimeout:
         typeof rest.streamIdleTimeout === "bigint" ? Number(rest.streamIdleTimeout) : rest.streamIdleTimeout || 0,
     };
@@ -4814,10 +4339,7 @@ class QuicEndpoint {
       throw new ERR_QUIC_CONNECTION_FAILED();
     }
     const session = this.#newSession(handle);
-    // Set callbacks before any async work to avoid missing events
-    // that fire during or immediately after the handshake.
     applyCallbacks(session, options);
-    // Store the verifyPeer policy for use in the handshake handler.
     const { verifyPeer } = options;
     if (verifyPeer !== undefined) {
       session[kVerifyPeer] = verifyPeer;
@@ -4877,12 +4399,10 @@ class QuicEndpoint {
     return this.#inner.listening;
   }
 
-  /** See `kClientHttp`'s declaration. `undefined` until a client connect. */
   get [kClientHttp]() {
     return this.#inner.clientHttp;
   }
 
-  /** Record the client-engine mode this endpoint's first connect() picked. */
   [kNoteClientHttp](wantHttp) {
     this.#inner.clientHttp ??= wantHttp;
   }
@@ -4905,51 +4425,15 @@ class QuicEndpoint {
     assertIsQuicEndpoint(this);
     debug("destroying the endpoint");
     const inner = this.#inner;
-    // Record the error before deciding whether to initiate a close. If
-    // `close()` was already called (e.g. the user kicked off a graceful
-    // shutdown and then a fatal error was reported afterwards via
-    // `destroy(err)`) we still want that error to surface on
-    // `endpoint.closed` rather than being silently swallowed when the
-    // last in-flight session finishes draining. Only the *first* error
-    // is recorded, matching how other Node subsystems handle a
-    // double-error race.
     if (error !== undefined) inner.pendingError ??= error;
-    // Force all sessions to be abruptly closed *before* signalling the
-    // endpoint to close gracefully. The order matters: each session's
-    // `destroy(error, options)` asks the C++ side to emit a
-    // `CONNECTION_CLOSE` frame via `endpoint.Send(...)`. Once the
-    // endpoint has entered its closing state (after `close()`) it
-    // can drop those outgoing packets, in which case the peer would
-    // never learn of the teardown until its own idle timer fires
-    // (pimterry's B8).
-    //
-    // Important: only pass close options to sessions whose handshake
-    // has actually completed. Pre-handshake sessions cannot create a
-    // valid CONNECTION_CLOSE packet on the C++ side; the fallback
-    // synchronously fires `EmitClose` -> JS `[kFinishClose]` ->
-    // `destroy()`, which trips the `#destroying` guard and leaves the
-    // C++ side asserting an inconsistent destroyed state.
     const closeOptions = errorToCloseOptions(error);
-    // Once a graceful close is already in flight the endpoint no longer
-    // puts packets on the wire (Node's Endpoint::Send drops them in the
-    // closing state), so a destroy(err) arriving after close() tears the
-    // sessions down silently — the peers clean up via their idle timers.
+    // Node's Endpoint::Send drops packets in the closing state.
     const alreadyClosing = this.#isClosedOrClosing;
     for (const session of inner.sessions) {
-      // Mark each cascaded session's `closed` as handled before
-      // destroying it. This prevents unhandled-rejection warnings when
-      // the session is collateral damage from an endpoint-level destroy
-      // (e.g. a synchronous throw out of a user `onsession` callback
-      // routed through safeCallbackInvoke). The rejection is still
-      // observable to any caller that explicitly awaits `session.closed`.
       markPromiseAsHandled(session.closed);
       session.destroy(error, !alreadyClosing && session[kHandshakeCompleted] ? closeOptions : undefined);
     }
     if (!this.#isClosedOrClosing) {
-      // Trigger a graceful close of the endpoint that'll ensure that the
-      // endpoint is closed down after all sessions are closed... All
-      // sessions were just forcefully destroyed above, so this should
-      // resolve promptly with nothing left to drain.
       this.close();
     }
     return this.closed;
@@ -4972,8 +4456,6 @@ class QuicEndpoint {
     const { replace = false } = options;
     validateBoolean(replace, "options.replace");
 
-    // Process each entry through the identity options validator,
-    // then build a full TLS options object (shared + identity).
     const processed = { __proto__: null };
     for (const hostname of ObjectKeys(entries)) {
       validateString(hostname, "entries key");
@@ -5008,11 +4490,6 @@ class QuicEndpoint {
     inner.listening = false;
     inner.isPendingClose = false;
 
-    // As QuicSessions are closed they are expected to remove themselves
-    // from the sessions collection. Just in case they don't, let's force
-    // it by resetting the set so we don't leak memory. Let's emit a warning,
-    // tho, if the set is not empty at this point as that would indicate a
-    // bug in Node.js that should be fixed.
     const sessionCount = inner.sessions.size;
     if (sessionCount > 0) {
       process.emitWarning(
@@ -5024,10 +4501,6 @@ class QuicEndpoint {
     }
     inner.sessions.clear();
 
-    // If destroy was called with an error, then the this.#pendingError will be
-    // set. Or, if context indicates an error condition that caused the endpoint
-    // to be closed, the status will indicate the error code. In either case,
-    // we will reject the pending close promise at this point.
     const maybeCloseError = maybeGetCloseError(context, status, inner.pendingError);
     if (maybeCloseError !== undefined) {
       if (onEndpointErrorChannel.hasSubscribers) {
@@ -5039,7 +4512,6 @@ class QuicEndpoint {
       }
       inner.pendingClose.reject(maybeCloseError);
     } else {
-      // Otherwise we are good to resolve the pending close promise!
       inner.pendingClose.resolve();
     }
     if (onEndpointClosedChannel.hasSubscribers && !inner.suppressCloseChannels) {
@@ -5050,8 +4522,6 @@ class QuicEndpoint {
       });
     }
 
-    // Note that we are intentionally not clearing the
-    // this.#pendingClose.promise here.
     inner.pendingClose.resolve = undefined;
     inner.pendingClose.reject = undefined;
     inner.pendingError = undefined;
@@ -5061,9 +4531,6 @@ class QuicEndpoint {
     const inner = this.#inner;
     assert(typeof inner.onsession === "function", "onsession callback not specified");
     const session = this.#newSession(handle);
-    // Apply session callbacks stored at listen time before notifying
-    // the onsession callback, to avoid missing events that fire
-    // during or immediately after the handshake.
     const { sessionCallbacks } = inner;
     if (sessionCallbacks) {
       applyCallbacks(session, sessionCallbacks);
@@ -5076,34 +4543,19 @@ class QuicEndpoint {
         address: session.path?.remote,
       });
     }
-    // Route through safeCallbackInvoke so that a synchronous throw or a
-    // rejected promise from the user's onsession callback destroys this
-    // endpoint with the error rather than surfacing as an unhandled
-    // exception or unhandled rejection coming out of the C++ -> JS
-    // boundary.
     safeCallbackInvoke(inner.onsession, this, session);
   }
 
-  // Called by the QuicSession when it closes to remove itself from
-  // the active sessions tracked by the QuicEndpoint.
   [kRemoveSession](session) {
     const inner = this.#inner;
     inner.sessions.delete(session);
-    // A non-listening endpoint destroys itself once its last session
-    // closes: immediately by default, or after `idleTimeout` seconds.
     if (inner.sessions.size !== 0 || inner.listening || this.destroyed || inner.isPendingClose) {
       return;
     }
-    // With the default idleTimeout (0) the endpoint stays alive but the
-    // native side unrefs its UDP handle, so an idle endpoint does not hold
-    // the event loop open (Node parity: idle endpoints are unref'd, not
-    // destroyed — see test-quic-endpoint-idle-timeout).
+    // Node parity: idle endpoints are unref'd, not destroyed — see test-quic-endpoint-idle-timeout.
     if (!inner.idleTimeout) {
       return;
     }
-    // With idleTimeout > 0 the endpoint destroys itself after staying idle
-    // that long. The automatic teardown is silent:
-    // `quic.endpoint.closing/closed` report user-initiated closes only.
     const timer = setTimeout(() => {
       if (!this.destroyed && !inner.listening && inner.sessions.size === 0) {
         inner.suppressCloseChannels = true;
@@ -5159,12 +4611,6 @@ function alpnWantsHttp(alpn) {
   return typeof first !== "string" || first === "h3" || StringPrototypeStartsWith(first, "h3-");
 }
 
-/**
- * Find an existing endpoint from the registry that is suitable for reuse
- * as an implicit client endpoint. Listening (server) endpoints are never
- * reused, and neither is one whose client engine is already fixed in the
- * other HTTP/3-vs-raw mode (see `kClientHttp`).
- */
 function findSuitableEndpoint(wantHttp) {
   for (const endpoint of endpointRegistry) {
     if (!endpoint.destroyed && !endpoint.closing && !endpoint.busy) {
@@ -5172,10 +4618,6 @@ function findSuitableEndpoint(wantHttp) {
       if (mode !== undefined && mode !== wantHttp) {
         continue;
       }
-      // Never reuse a listening (server) endpoint as an implicit client
-      // endpoint: a wildcard-bound server would otherwise be picked for a
-      // connection to itself (e.g. target 127.0.0.1 vs bind 0.0.0.0),
-      // looping packets through both of its engines.
       if (endpoint.listening) {
         continue;
       }
@@ -5193,16 +4635,11 @@ function findSuitableEndpoint(wantHttp) {
  */
 function processEndpointOption(endpoint, reuseEndpoint = true, forServer = false, wantHttp = true) {
   if (isQuicEndpoint(endpoint)) {
-    // We were given an existing endpoint. Use it as-is.
     return endpoint;
   }
   if (endpoint !== undefined) {
-    // We were given endpoint options. If reuse is enabled, we could
-    // look for a matching endpoint, but endpoint options imply the
-    // caller wants specific configuration. Create a new one.
     return new QuicEndpoint(endpoint);
   }
-  // No endpoint specified. Try to reuse an existing one if allowed.
   if (reuseEndpoint && !forServer) {
     const existing = findSuitableEndpoint(wantHttp);
     if (existing !== undefined) return existing;
@@ -5271,7 +4708,6 @@ function processTlsOptions(tls, forServer) {
     enableEarlyData = true,
     tlsTrace = false,
     sni,
-    // Client-only: identity options are specified directly (no sni map)
     keys,
     certs,
     ca,
@@ -5294,9 +4730,6 @@ function processTlsOptions(tls, forServer) {
   validateBoolean(enableEarlyData, "options.enableEarlyData");
   validateBoolean(tlsTrace, "options.tlsTrace");
 
-  // Encode the ALPN option to wire format (length-prefixed protocol names).
-  // Server: array of protocol names. Client: single protocol name.
-  // If not specified, the C++ default (h3) is used.
   let encodedAlpn;
   if (alpn !== undefined) {
     const protocols = forServer ? (ArrayIsArray(alpn) ? alpn : [alpn]) : [alpn];
@@ -5311,7 +4744,6 @@ function processTlsOptions(tls, forServer) {
       }
       totalLen += 1 + protocols[i].length;
     }
-    // Build wire format: [len1][name1][len2][name2]...
     const buf = Buffer.allocUnsafe(totalLen);
     let offset = 0;
     for (let i = 0; i < protocols.length; i++) {
@@ -5319,9 +4751,6 @@ function processTlsOptions(tls, forServer) {
       buf.write(protocols[i], offset, "ascii");
       offset += protocols[i].length;
     }
-    // Pass the Buffer itself: a latin1 string round-trips through
-    // to_utf8_bytes() natively, which two-byte-encodes any length prefix
-    // >= 0x80 (a 128-255 char protocol name) and desyncs the wire format.
     encodedAlpn = buf;
   }
 
@@ -5343,7 +4772,6 @@ function processTlsOptions(tls, forServer) {
     }
   }
 
-  // Shared TLS options (same for all identities on the endpoint).
   const shared = {
     __proto__: null,
     servername,
@@ -5359,23 +4787,16 @@ function processTlsOptions(tls, forServer) {
     crl,
   };
 
-  // For servers, identity options come from the sni map.
-  // The '*' entry is the optional default/fallback identity. If omitted,
-  // only connections with a servername matching a specific entry will
-  // succeed; all others will be rejected at the TLS level.
   if (forServer) {
     if (sni === undefined || typeof sni !== "object") {
       throw new ERR_MISSING_ARGS("options.sni");
     }
 
-    // Must have at least one identity entry (wildcard or hostname-specific).
-    // A server with no identity at all cannot serve any connections.
     const sniKeys = ObjectKeys(sni);
     if (sniKeys.length === 0) {
       throw new ERR_MISSING_ARGS("options.sni");
     }
 
-    // Process the default ('*') identity if present.
     let defaultIdentity = {};
     if (sni["*"] !== undefined) {
       defaultIdentity = processIdentityOptions(sni["*"], "options.sni['*']");
@@ -5387,10 +4808,7 @@ function processTlsOptions(tls, forServer) {
       }
     }
 
-    // Build the SNI entries (excluding '*') as full TLS options objects.
-    // Each inherits the shared options and overrides the identity fields.
-    // Non-wildcard entries that are authoritative (the default) are also
-    // advertised to HTTP/3 clients via an ORIGIN frame (RFC 9412).
+    // Non-wildcard authoritative entries are advertised via an ORIGIN frame (RFC 9412).
     const sniEntries = { __proto__: null };
     const origins = [];
     for (const hostname of sniKeys) {
@@ -5403,13 +4821,10 @@ function processTlsOptions(tls, forServer) {
       if (identity.certs === undefined) {
         throw new ERR_MISSING_ARGS(`options.sni['${hostname}'].certs`);
       }
-      // Extract ORIGIN frame options from the SNI entry.
       const { port, authoritative } = sni[hostname];
       if (authoritative !== false) {
-        // The https default port (443) is omitted from the origin string.
         ArrayPrototypePush(origins, `https://${hostname}${port !== undefined && port !== 443 ? `:${port}` : ""}`);
       }
-      // Build a full TLS options object: shared + identity + origin options.
       sniEntries[hostname] = {
         __proto__: null,
         ...shared,
@@ -5428,8 +4843,6 @@ function processTlsOptions(tls, forServer) {
     };
   }
 
-  // For clients, identity options are specified directly (no sni map).
-  // CA and CRL are in the shared options, not per-identity.
   const clientIdentity = processIdentityOptions(
     {
       keys,
@@ -5515,12 +4928,7 @@ function processSessionOptions(options, config = kEmptyObject) {
     maxDatagramSendAttempts = 5,
     streamIdleTimeout,
     verifyPeer = "auto",
-    // HTTP/3 application-specific options. Nested under `application`
-    // to separate protocol-specific settings from transport-level ones.
     application = kEmptyObject,
-    // Session callbacks that can be set at construction time to avoid
-    // race conditions with events that fire during or immediately
-    // after the handshake.
     onerror,
     onstream,
     ondatagram,
@@ -5535,7 +4943,6 @@ function processSessionOptions(options, config = kEmptyObject) {
     ongoaway,
     onkeylog,
     onqlog,
-    // Stream-level callbacks.
     onheaders,
     ontrailers,
     oninfo,
@@ -5562,10 +4969,7 @@ function processSessionOptions(options, config = kEmptyObject) {
 
   validateInteger(maxDatagramSendAttempts, "options.maxDatagramSendAttempts", 1, 255);
 
-  // Validate preferred address in transport params if provided.
-  // Validate numeric transport params. Node accepts number | bigint and
-  // rejects everything else with ERR_INVALID_ARG_TYPE. Negative values are
-  // rejected with ERR_OUT_OF_RANGE.
+  // Node accepts number | bigint and rejects everything else with ERR_INVALID_ARG_TYPE.
   for (const name of [
     "initialMaxStreamDataBidiLocal",
     "initialMaxStreamDataBidiRemote",
@@ -5627,15 +5031,10 @@ function processSessionOptions(options, config = kEmptyObject) {
     }
   }
 
-  // `true` is a don't-care for servers (`processEndpointOption` never
-  // consults the registry for them).
   const wantHttp = forServer || alpnWantsHttp(options.alpn);
   const actualEndpoint = processEndpointOption(endpoint, reuseEndpoint, forServer, wantHttp);
 
-  // Normalize the application (HTTP/3) options into the null-prototype
-  // shape Node stores and returns from `session.applicationOptions`:
-  // numeric fields become BigInt and the `DTable` input spelling is
-  // normalized to `Dtable`.
+  // Normalize into the shape Node stores and returns from `session.applicationOptions`.
   const {
     maxHeaderPairs = 128n,
     maxHeaderLength = 16384n,
@@ -5650,10 +5049,6 @@ function processSessionOptions(options, config = kEmptyObject) {
     if (!isArrayBufferView(sessionTicket)) {
       throw new ERR_INVALID_ARG_TYPE("options.sessionTicket", ["ArrayBufferView"], sessionTicket);
     }
-    // Structural check of the resumption blob delivered by
-    // `onsessionticket` (big-endian): version tag (4) + format version (4,
-    // must be 1) + ticket length (4) + ticket + transport-params length
-    // (4) + transport params. Anything else cannot resume a session.
     const tb = new DataView(sessionTicket.buffer, sessionTicket.byteOffset, sessionTicket.byteLength);
     let ok = sessionTicket.byteLength >= 16 && DataViewPrototypeGetUint32(tb, 4) === 1;
     if (ok) {
@@ -5694,14 +5089,7 @@ function processSessionOptions(options, config = kEmptyObject) {
     },
     tls: {
       ...processTlsOptions(options, forServer),
-      // Forward strict mode to C++ so SSL_VERIFY_PEER is set on the
-      // client SSL_CTX. For 'auto' and 'manual' modes, the handshake
-      // completes regardless and the result is handled in JS.
       verifyPeerStrict: verifyPeer === "strict",
-      // Enable hostname verification for 'strict' and 'auto' modes.
-      // SSL_set1_host tells OpenSSL to verify the server certificate's
-      // SAN/CN matches the servername. Without this, a valid cert for
-      // any domain would be accepted.
       verifyHostname: verifyPeer !== "manual",
     },
     verifyPeer,
@@ -5741,8 +5129,6 @@ function processSessionOptions(options, config = kEmptyObject) {
     onwanttrailers,
   };
 }
-
-// ============================================================================
 
 /**
  * @param {OnSessionCallback} callback
@@ -5795,8 +5181,6 @@ async function connect(address, options = kEmptyObject) {
 
   const session = endpoint[kConnect](address[kSocketAddressHandle], rest);
 
-  // Only now is the endpoint's client-engine mode really fixed (a connect
-  // that throws never builds the engine); record it for `findSuitableEndpoint`.
   endpoint[kNoteClientHttp](alpnWantsHttp(options.alpn));
 
   if (onEndpointClientSessionChannel.hasSubscribers) {
@@ -5840,8 +5224,6 @@ ObjectDefineProperties(QuicStream, {
   },
 });
 
-// ============================================================================
-
 export default {
   listen,
   connect,
@@ -5854,7 +5236,6 @@ export default {
   CC_ALGO_BBR,
   DEFAULT_CIPHERS,
   DEFAULT_GROUPS,
-  // These are exported only for internal testing purposes.
   getQuicStreamState,
   getQuicSessionState,
   getQuicEndpointState,

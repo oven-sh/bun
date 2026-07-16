@@ -1,11 +1,4 @@
-//! `QuicSession` native handle (lsquic-backed) — Node's
-//! `internalBinding('quic').Session` analog (node/src/quic/session.{h,cc}).
-//!
-//! Phase 2 (handshake-only): the JS-facing surface is complete so codegen and
-//! the JS layer link, and the lsquic conn lifecycle (`on_new_conn` →
-//! `on_hsk_done` → `on_conn_closed`) drives `onSessionHandshake` /
-//! `onSessionClose`. Streams, datagrams, tokens, and the rest are stubbed
-//! until later phases.
+//! Node's `internalBinding('quic').Session` analog (node/src/quic/session.{h,cc}).
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
@@ -27,12 +20,8 @@ use super::tls;
 
 bun_core::declare_scope!(quic_session, hidden);
 
-/// `Session::State.listener_flags` bits the JS layer sets when the matching
-/// callback is installed (`src/js/internal/quic/state.ts`).
 /// DATAGRAM frame overhead: type byte + 2-byte length varint (RFC 9221 §4).
 const DATAGRAM_FRAME_OVERHEAD: u64 = 3;
-/// Conservative per-packet datagram payload budget: 1200-byte minimum QUIC
-/// packet minus short header + AEAD tag overhead.
 const DATAGRAM_PAYLOAD_BUDGET: u64 = 1150;
 /// QUIC CRYPTO_ERROR base (RFC 9001 §4.8) + TLS certificate_required(116).
 const CRYPTO_ERROR_CERTIFICATE_REQUIRED: u64 = 0x0100 + 116;
@@ -50,13 +39,10 @@ const LISTENER_FLAG_ORIGIN: u32 = 0x20;
 /// the ASCII origin.
 const ORIGIN_LEN_PREFIX: usize = 2;
 
-/// Stream-id bit 1 selects the direction: 0 = bidirectional,
-/// 1 = unidirectional (RFC 9000 §2.1).
+/// Stream-id bit 1 selects the direction (RFC 9000 §2.1).
 const STREAM_ID_UNI_BIT: u64 = 0x2;
 
-/// HTTP/3 application error codes (RFC 9114 §8.1): H3_NO_ERROR and
-/// H3_INTERNAL_ERROR, surfaced as `state.no_error_code` /
-/// `state.internal_error_code` when the session negotiates h3.
+/// HTTP/3 application error codes (RFC 9114 §8.1).
 const H3_NO_ERROR: u64 = 0x100;
 const H3_INTERNAL_ERROR: u64 = 0x102;
 
@@ -65,14 +51,8 @@ const H3_INTERNAL_ERROR: u64 = 0x102;
 const DEFAULT_MAX_HEADER_PAIRS: u64 = 128;
 const DEFAULT_MAX_HEADER_LENGTH: u64 = 16384;
 
-/// `lsquic_conn_status` error-description scratch size (matches lsquic's
-/// own errbuf sizing in test tools).
 const CONN_STATUS_ERRBUF_LEN: usize = 256;
 
-/// Spacing between the first and subsequent session-ticket callbacks (see
-/// `pending_tickets`): long enough for a JS `close()` issued on receipt of
-/// the first ticket to win even on slow debug builds. A session that opens
-/// a stream (i.e. keeps working) receives held tickets immediately.
 const TICKET_DELIVERY_DELAY_NS: u64 = 500_000_000;
 
 /// Indices into the session stats buffer — must match
@@ -102,7 +82,6 @@ const IDX_STATS_SESSION_PKT_SENT: usize = 28;
 const IDX_STATS_SESSION_PKT_RECV: usize = 29;
 const IDX_STATS_SESSION_PKT_LOST: usize = 30;
 const IDX_STATS_SESSION_BYTES_RECV: usize = 31;
-// Wired by the in-flight keepalive work (lsquic_conn_pings_received).
 const IDX_STATS_SESSION_PING_RECV: usize = 33;
 
 /// `sizeof(struct sockaddr_in)` / `sizeof(struct sockaddr_in6)` — the
@@ -153,7 +132,6 @@ impl StoredAddr {
     pub(super) fn is_set(&self) -> bool {
         self.len > 0
     }
-    /// Returns `(family, port, ip-bytes)` when this is a recognized AF.
     pub(super) fn decode(&self) -> Option<(u16, u16, &[u8])> {
         use crate::socket::socket_address::inet;
         if self.len == 0 {
@@ -259,30 +237,18 @@ pub(crate) const SESSION_STATS_FIELDS: &[&str] = &[
     "PKT_DISCARDED",
 ];
 
-/// TLS handshake facts snapshotted while the SSL object is still alive
-/// (lsquic frees it at handshake confirmation).
 pub(super) struct HskSnapshot {
     sni: Option<Vec<u8>>,
     cipher: Option<Vec<u8>>,
     alpn: Option<Vec<u8>>,
     validation: Option<&'static str>,
-    /// Peer leaf certificate (DER) — `getPeerCertificate` serves this once
-    /// the live SSL is gone.
     peer_cert_der: Option<Vec<u8>>,
-    /// Our own leaf certificate (DER) — `certificate` serves this once the
-    /// live SSL is gone.
     local_cert_der: Option<Vec<u8>>,
-    /// `(type, name, bits)` for `getEphemeralKeyInfo`.
     ephemeral: Option<(&'static str, Option<&'static str>, u32)>,
     /// `(early_data_attempted, early_data_accepted)` (RFC 8446 §2.3).
     early_data: (bool, bool),
 }
 
-/// Queued events that lsquic callbacks push (never call JS from inside an
-/// lsquic callback — it can re-enter `process_conns`). Dispatched after
-/// `lsquic_engine_process_conns` returns.
-/// A wire abort (RESET_STREAM / STOP_SENDING) deferred to the next process
-/// tick for a stream destroyed before anything reached lsquic.
 pub(super) struct DeferredAbort {
     /// The raw lsquic stream — alive until the conn dies (entries are
     /// cleared first) and only ever passed back to lsquic, never
@@ -290,7 +256,6 @@ pub(super) struct DeferredAbort {
     ls: *mut lsquic::lsquic_stream,
     reset: Option<u64>,
     stop: Option<u64>,
-    /// `write_marker` at defer time.
     marker: u64,
 }
 
@@ -304,101 +269,64 @@ pub(super) enum SessionEvent {
         reason: Vec<u8>,
     },
     Closed,
-    /// A locally-pending stream bound to its lsquic id, or a remote stream
-    /// was created. `remote=true` fires `onStreamCreated`.
     StreamReady {
         stream: *mut super::stream::QuicStream,
         remote: bool,
     },
-    /// New inbound data or FIN/reset for the JS reader; fire its wakeup.
     StreamWake {
         stream: *mut super::stream::QuicStream,
     },
-    /// Outbound drained below the high-water mark; fire `onStreamDrain`.
     StreamDrain {
         stream: *mut super::stream::QuicStream,
     },
-    /// Writes stalled on flow control; fire `onStreamBlocked` once per
-    /// episode.
     StreamBlocked {
         stream: *mut super::stream::QuicStream,
     },
-    /// Peer reset our readable side (RST_STREAM); fire `onStreamReset`.
     StreamReset {
         stream: *mut super::stream::QuicStream,
         code: u64,
     },
-    /// Peer sent STOP_SENDING; the `writeEnded` flip is applied here (at
-    /// dispatch) so a same-batch announce still sees a live writer.
     StreamStopSending {
         stream: *mut super::stream::QuicStream,
         code: u64,
     },
-    /// Body drained on a stream that requested trailers; fire
-    /// `onStreamTrailers` so JS can `sendTrailers()`.
     StreamWantsTrailers {
         stream: *mut super::stream::QuicStream,
     },
-    /// HTTP/3 only: a complete header block (initial / informational /
-    /// trailing) was decoded for `stream`; fire `onStreamHeaders`.
     StreamHeaders {
         stream: *mut super::stream::QuicStream,
-        /// Flat `[name, value, name, value, ...]` raw octets for `parseHeaderPairs`.
         pairs: Vec<Vec<u8>>,
-        /// `QUIC_STREAM_HEADERS_KIND_*`.
         kind: u32,
     },
-    /// Server sent a NEW_TOKEN; fire `onSessionNewToken`.
     NewToken(Vec<u8>),
-    /// One NSS key log line; fire `onSessionKeyLog`.
     Keylog(Vec<u8>),
-    /// lsquic has serialized session-resume info (TLS ticket + transport
-    /// params); fire `onSessionTicket`.
     SessionResume(Vec<u8>),
-    /// lsquic's `on_close` for the stream; fire `onStreamClose`.
     StreamClosed {
         stream: *mut super::stream::QuicStream,
     },
-    /// Client handshake confirmed (HANDSHAKE_DONE received).
     HandshakeConfirmed,
-    /// Peer sent GOAWAY (HTTP/3 only); fire `onSessionGoaway`.
     GoawayReceived,
-    /// A DATAGRAM frame from the peer.
     Datagram {
         payload: Vec<u8>,
         early: bool,
     },
-    /// A queued datagram was handed to lsquic (`status: "sent"`); lsquic does
-    /// not surface ack/loss per datagram.
-    /// A queued datagram was handed to lsquic (`sent`) or could not fit the
-    /// packet budget (`!sent` — reported as "abandoned").
     DatagramStatus {
         id: u64,
         sent: bool,
     },
-    /// A packet carrying `count` DATAGRAM frames was acknowledged or lost
-    /// (from `lsquic_send_ctl`; correlated FIFO with the sent order).
     DatagramAckStatus {
         count: u32,
         acked: bool,
     },
-    /// The server rejected our early data: every 0-RTT stream is cancelled
-    /// with an application error before its close event dispatches.
     EarlyDataFailed,
-    /// A complete HTTP/3 ORIGIN frame payload (RFC 9412) arrived; fire
-    /// `onSessionOrigin`.
+    /// HTTP/3 ORIGIN frame payload (RFC 9412).
     Origin(Vec<u8>),
-    /// The server answered our unsupported-version probe with a Version
-    /// Negotiation packet (RFC 8999 sec 6); fire
-    /// `onSessionVersionNegotiation`.
+    /// Version Negotiation packet (RFC 8999 sec 6).
     VersionNegotiation {
         server_versions: Vec<u32>,
     },
-    /// The connection switched to a new network path; fire
-    /// `onSessionPathValidation`.
     PathValidation {
         validated: bool,
-        /// Client migrated to the server's preferred address.
         preferred: bool,
         new_local: StoredAddr,
         new_remote: StoredAddr,
@@ -414,7 +342,6 @@ pub struct QuicSession {
     /// MUST stay the first field — the C shim's thunks recover the vtable via
     /// `*(us_nq_vtable**)conn_ctx`.
     vtable: *const lsquic::NqVtable,
-    /// The lsquic connection this wraps; null after close.
     pub(super) conn: Cell<*mut lsquic::lsquic_conn>,
     /// The owning endpoint (raw pointer; the JS-side Strong keeps it alive).
     endpoint: Cell<*mut QuicEndpoint>,
@@ -425,99 +352,37 @@ pub struct QuicSession {
     /// Borrowed views into JSC-owned ArrayBuffers (see endpoint.rs `state`).
     state: Cell<*mut SessionState>,
     stats: Cell<*mut u64>,
-    /// Events queued by lsquic callbacks for dispatch after `process_conns`.
     events: JsCell<Vec<SessionEvent>>,
-    /// Partial HTTP/3 ORIGIN frame payload accumulated across `on_origin`
-    /// chunks until the final one arrives.
     origin_buf: JsCell<Vec<u8>>,
-    /// Wire aborts for streams destroyed before anything reached lsquic,
-    /// deferred to the next process tick (Node parity: the reset of a
-    /// same-turn-abandoned stream flushes at end of turn — or not at all if
-    /// other stream data was written first). Entries hold the raw lsquic
-    /// stream (its `QuicStream` ctx is already gone) and are cleared when
-    /// the conn dies.
     deferred_aborts: JsCell<Vec<DeferredAbort>>,
-    /// Bumped whenever any stream on this session enqueues outbound data;
-    /// deferred aborts recorded under an older value are dropped silently.
     write_marker: Cell<u64>,
-    /// `(requested_version, min_version)` when this session is a
-    /// version-negotiation probe (connect with an unsupported `version`
-    /// option): no lsquic conn exists; the endpoint answers the server's
-    /// Version Negotiation packet by firing `onSessionVersionNegotiation`.
     pub(super) verneg: Cell<Option<(u32, u32)>>,
-    /// The CONNECTION_CLOSE the peer sent, if any (stored on receipt; reported
-    /// when `on_conn_closed` fires).
     peer_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
-    /// What `gracefulClose(options)` sent, echoed by `onSessionClose`.
     self_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
-    /// `options.datagramDropPolicy === 'drop-newest'` (default drop-oldest).
     datagram_drop_newest: Cell<bool>,
-    /// `options.qlog`: emit synthesized JSON-SEQ qlog chunks via
-    /// `onSessionQlog` (header at handshake, fin record at close).
     qlog_enabled: Cell<bool>,
     qlog_fin_sent: Cell<bool>,
-    /// Outgoing datagram payloads waiting for lsquic's `on_dg_write`.
     datagram_queue: JsCell<VecDeque<(u64, Vec<u8>)>>,
     /// Monotonic id assigned by `sendDatagram` (Node returns it as a BigInt).
     next_datagram_id: Cell<u64>,
-    /// Ids of datagrams handed to lsquic, awaiting the peer's ACK. FIFO —
-    /// the ack/loss notifications from `lsquic_send_ctl` carry only frame
-    /// counts, so ids are correlated in sent order.
     inflight_datagrams: JsCell<VecDeque<u64>>,
-    /// The first session ticket has been delivered to JS. BoringSSL bundles
-    /// both of the server's NewSessionTickets into the handshake flight, so
-    /// without spacing they would both surface in one batch; Node's timing
-    /// (OpenSSL post-handshake tickets) lets an immediate `close()` observe
-    /// exactly one. Tickets after the first are held in `pending_tickets`.
     ticket_delivered: Cell<bool>,
-    /// `(deliver_at_ns, ticket)` for tickets after the first; dropped if the
-    /// session starts closing before the delivery time.
     pending_tickets: JsCell<VecDeque<(u64, Vec<u8>)>>,
-    /// HTTP/3 graceful shutdown: GOAWAY sent, CONNECTION_CLOSE deferred
-    /// until every stream closes (not merely delivers).
     close_after_streams: Cell<bool>,
-    /// `lsquic_conn_status` captured in `on_conn_closed` while the conn was
-    /// still live (it is freed right after that callback, before the Closed
-    /// event dispatches).
     final_conn_status: JsCell<Option<(c_int, Vec<u8>)>>,
-    /// Locally-initiated streams that `openStream` queued before lsquic's
-    /// `on_new_stream` bound them, in FIFO order.
-    /// Locally-opened streams awaiting an `on_new_stream` fulfillment, kept
-    /// per direction: lsquic drains its delayed bidi and uni backlogs
-    /// independently, so a single FIFO hands a uni wrapper to a bidi stream
-    /// once either direction is credit-limited.
     pending_local_bidi: JsCell<VecDeque<*mut super::stream::QuicStream>>,
     pending_local_uni: JsCell<VecDeque<*mut super::stream::QuicStream>>,
-    /// All bound streams, for event dispatch and teardown.
     streams: JsCell<Vec<*mut super::stream::QuicStream>>,
     handshake_reported: Cell<bool>,
-    /// Client-only: the HandshakeDone event has been requeued once (see
-    /// `process_events`).
-    /// One NEW_TOKEN forwarded per session (lsquic emits several).
     new_token_reported: Cell<bool>,
-    /// `close()` arrived before the provisional session's conn bound; close
-    /// the conn as soon as it does.
     close_when_bound: Cell<bool>,
-    /// Graceful close deferred until every local stream's outbound is
-    /// delivered (lsquic_conn_close resets streams with unacked FINs).
-    /// `(app_error, code, NUL-terminated reason)`.
     deferred_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
-    /// Local handshake completed; the report (which settles `opened`) is
-    /// deferred until confirmation — HANDSHAKE_DONE received (client) or
-    /// acked (server).
     handshake_pending_ok: Cell<bool>,
-    /// TLS facts captured at handshake COMPLETION (lsquic frees the SSL
-    /// object at confirmation, so a deferred report can't query it live).
     hsk_snapshot: JsCell<Option<HskSnapshot>>,
     close_reported: Cell<bool>,
     destroyed: Cell<bool>,
-    /// Processed `application` options reflected back by `applicationOptions`.
     application_options_js: JsCell<Option<Strong>>,
     this_value: JsCell<JsRef>,
-    /// Unused with lsquic (the endpoint's timer drives `process_conns`); kept
-    /// so the existing `EventLoopTimerTag::QuicSession` dispatch arm in
-    /// `dispatch.rs` and the `impl_timer_owner!` field-offset macro stay
-    /// satisfied. Never armed.
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
     global: Cell<*const JSGlobalObject>,
 }
@@ -573,11 +438,8 @@ impl QuicSession {
         }
     }
 
-    /// Timer-fire dispatch target (never armed under lsquic; see field docs).
     pub(crate) fn on_timer_fire(_this: *mut Self) {}
 
-    /// Create a session and its JS wrapper. Called from `on_new_conn` (server)
-    /// and from `endpoint.connect()` (client, after `lsquic_engine_connect`).
     pub(super) fn create(
         global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
@@ -612,15 +474,9 @@ impl QuicSession {
         )]
         this.state.set(state_ptr.cast::<SessionState>());
         this.with_state(|s| {
-            // The DefaultApplication's error codes (raw QUIC; HTTP/3 sets
-            // 0/0x100). The JS layer derives the destroy/reset code from
-            // `internalErrorCode` for non-QuicError throws.
             s.no_error_code = 0;
             s.internal_error_code = 1;
             s.stream_open_allowed = 1;
-            // 0 = "unknown" until ALPN settles: pre-handshake pending
-            // streams may sendHeaders (h3-pending-stream); the non-h3 path
-            // sets 2 ("no") in `maybe_report_handshake`.
             s.headers_supported = 0;
         });
         #[expect(
@@ -636,27 +492,17 @@ impl QuicSession {
         this.this_value.with_mut(|r| r.set_strong(handle, global));
         this.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
         let _ = this.vtable;
-        // Cache the path now — lsquic owns the sockaddr storage and frees it
-        // with the conn, so the JS getters need a copy.
         if !conn.is_null() {
             this.cache_sockaddrs(conn);
         }
         Ok((raw, handle))
     }
 
-    /// Copy lsquic's sockaddr storage so the JS getters can read it after the
-    /// conn is freed. Called from `create()` (server) and from
-    /// `connect()` once `lsquic_engine_connect` returns a conn (client
-    /// sessions are created with `conn = null`).
-    /// Bind a promoted lsquic conn to a provisional server session
-    /// (announced at Initial receipt with `conn = null`).
     pub(super) fn bind_conn(&self, conn: *mut lsquic::lsquic_conn) {
         self.conn.set(conn);
         // SAFETY: `conn` is the live conn lsquic just promoted; `self` is
         // the heap-allocated session (conn-ctx contract).
         unsafe { lsquic::lsquic_conn_set_ctx(conn, core::ptr::from_ref(self).cast_mut().cast()) };
-        // Handshake keylog lines fired during the mini-conn phase were
-        // buffered on the endpoint (no conn-ctx yet) — claim them now.
         // SAFETY: `conn` is the live conn lsquic just promoted.
         let promoted = unsafe { lsquic::Conn::from_raw(conn) };
         if let (Some(ep), Some(c)) = (self.endpoint_ref(), promoted) {
@@ -665,7 +511,6 @@ impl QuicSession {
             }
         }
         self.cache_sockaddrs(conn);
-        // JS asked to close while the handshake was still in flight.
         if self.close_when_bound.get() {
             if let Some(c) = self.conn() {
                 c.close();
@@ -728,7 +573,6 @@ impl QuicSession {
     pub(super) fn handle(&self) -> JSValue {
         self.this_value.get().get()
     }
-    /// Read per-session options that aren't transport params or TLS.
     pub(super) fn apply_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
         if !options.is_object() {
             return Ok(());
@@ -758,11 +602,10 @@ impl QuicSession {
     pub(super) fn push_event(&self, event: SessionEvent) {
         self.events.with_mut(|e| e.push(event));
     }
-    /// Ask the endpoint to drive `process_conns` on the next turn.
-    /// The owning endpoint, if still attached. The `endpoint_js` Strong
-    /// keeps it alive while this session holds the back-pointer; teardown
-    /// nulls the pointer before that Strong is dropped, so a non-null
-    /// pointer is always dereferenceable on the JS thread.
+    /// The `endpoint_js` Strong keeps it alive while this session holds the
+    /// back-pointer; teardown nulls the pointer before that Strong is
+    /// dropped, so a non-null pointer is always dereferenceable on the JS
+    /// thread.
     fn endpoint_ref(&self) -> Option<&super::endpoint::QuicEndpoint> {
         let p = self.endpoint.get();
         // SAFETY: see doc comment.
@@ -773,14 +616,10 @@ impl QuicSession {
             ep.schedule_process();
         }
     }
-    /// Another stream on this session enqueued outbound data — deferred
-    /// aborts recorded before this call are dropped at flush time.
     pub(super) fn note_stream_write(&self) {
         self.write_marker
             .set(self.write_marker.get().wrapping_add(1));
     }
-    /// Record (or extend) a deferred wire abort for a stream that never
-    /// reached lsquic; applied by `flush_deferred_aborts`.
     pub(super) fn defer_stream_abort(
         &self,
         ls: *mut lsquic::lsquic_stream,
@@ -805,9 +644,6 @@ impl QuicSession {
     pub(super) fn has_deferred_abort(&self, ls: *mut lsquic::lsquic_stream) -> bool {
         self.deferred_aborts.get().iter().any(|e| e.ls == ls)
     }
-    /// Apply (or drop) deferred stream aborts. Runs at the start of the
-    /// endpoint's process tick, before `process_conns` puts the frames on
-    /// the wire.
     pub(super) fn flush_deferred_aborts(&self) {
         if self.deferred_aborts.get().is_empty() {
             return;
@@ -824,9 +660,7 @@ impl QuicSession {
                 continue;
             };
             if e.marker != marker {
-                // Other stream data was written since the destroy: the
-                // peer must never learn of the abandoned stream (Node
-                // parity — the queued frames are dropped).
+                // Node parity — the queued frames are dropped.
                 s.shutdown_internal();
                 continue;
             }
@@ -840,17 +674,10 @@ impl QuicSession {
             }
         }
     }
-    /// Next locally-initiated stream waiting for lsquic to bind it (FIFO).
     pub(super) fn take_pending_local_stream(
         &self,
         uni: bool,
     ) -> Option<*mut super::stream::QuicStream> {
-        // Skip tombstones: a destroyed pending stream keeps its FIFO slot
-        // (its `lsquic_conn_make_stream` request was already issued) but its
-        // fulfillment is discarded.
-        // Exactly one slot per lsquic fulfillment: a tombstone is consumed and
-        // reported as None (the caller shuts the lsquic stream internally)
-        // rather than skipped, or the FIFO would drift out of order.
         let queue = if uni {
             &self.pending_local_uni
         } else {
@@ -861,15 +688,9 @@ impl QuicSession {
             _ => None,
         }
     }
-    /// Remove `stream` from the live set (called from QuicStream::teardown
-    /// before its wrapper Strong is dropped). Pending entries become
-    /// tombstones so the `make_stream` FIFO stays aligned with lsquic's
-    /// fulfillment order.
     pub(super) fn remove_stream(&self, stream: *mut super::stream::QuicStream) {
         self.streams.with_mut(|v| v.retain(|&s| s != stream));
     }
-    /// `on_new_stream` for a remote-initiated stream: create a QuicStream and
-    /// queue it for `onStreamCreated`. Returns the stream-ctx for lsquic.
     fn bump_stream_stat(&self, id: u64, local: bool) {
         let idx = match (id & STREAM_ID_UNI_BIT != 0, local) {
             (false, false) => IDX_STATS_SESSION_BIDI_IN_STREAM_COUNT,
@@ -908,9 +729,6 @@ impl QuicSession {
         ) {
             Ok((qs, _handle)) => {
                 self.streams.with_mut(|v| v.push(qs));
-                // The peer opened this stream, so it has wire presence even
-                // before we write: `abort_for_destroy` must reset on it rather
-                // than defer as if nothing had reached lsquic.
                 // SAFETY: `qs` was just created.
                 unsafe { (*qs).mark_wrote_to_lsquic() };
                 // SAFETY: `raw` is the live stream lsquic just created.
@@ -921,9 +739,6 @@ impl QuicSession {
                     stream: qs,
                     remote: true,
                 });
-                // If the stream was already reset before on_new_stream
-                // (RST arrived before any data), queue StreamReset now —
-                // AFTER StreamReady so JS's onstream has set `onreset`.
                 // SAFETY: `qs` was just created.
                 if let Some(code) = unsafe { (*qs).pre_reset_code() } {
                     self.push_event(SessionEvent::StreamReset { stream: qs, code });
@@ -934,9 +749,6 @@ impl QuicSession {
         }
     }
 
-    /// Dispatch queued events to JS. Called by the endpoint after
-    /// `lsquic_engine_process_conns` returns.
-    /// Copy lsquic's conn-level counters into the stats ArrayBuffer.
     fn refresh_conn_stats(&self) {
         let conn = self.conn.get();
         if conn.is_null() {
@@ -956,8 +768,6 @@ impl QuicSession {
         self.write_stat(IDX_STATS_SESSION_LATEST_RTT, us_to_ns(info.rtt));
         self.write_stat(IDX_STATS_SESSION_MIN_RTT, us_to_ns(info.rtt_min));
         self.write_stat(IDX_STATS_SESSION_RTTVAR, us_to_ns(info.rttvar));
-        // lsquic has no separate smoothed RTT; the rtt field is the
-        // smoothed estimate.
         self.write_stat(IDX_STATS_SESSION_SMOOTHED_RTT, us_to_ns(info.rtt));
         self.write_stat(IDX_STATS_SESSION_PKT_SENT, info.pkts_sent);
         self.write_stat(IDX_STATS_SESSION_PKT_RECV, info.pkts_rcvd);
@@ -968,24 +778,16 @@ impl QuicSession {
         }
     }
 
-    /// Whether `stream` is still in the live set (so its raw pointer is safe
-    /// to dereference). Stream events queued before teardown can outlive the
-    /// stream itself.
     fn stream_is_live(&self, stream: *mut super::stream::QuicStream) -> bool {
         self.streams.get().contains(&stream)
     }
-    /// Upgrade a queued stream pointer to a reference, verifying it is still
-    /// registered in `self.streams` — teardown removes a stream from the
-    /// registry before its allocation is freed, so a registered pointer is
-    /// live on the JS thread.
+    /// Teardown removes a stream from the registry before its allocation is
+    /// freed, so a registered pointer is live on the JS thread.
     fn live_stream(&self, p: *mut super::stream::QuicStream) -> Option<&super::stream::QuicStream> {
         // SAFETY: see doc comment.
         self.stream_is_live(p).then(|| unsafe { &*p })
     }
 
-    /// Set `state.max_datagram_size` from the peer's (possibly 0-RTT
-    /// remembered) `max_datagram_frame_size` transport parameter, so a
-    /// resuming client can `sendDatagram` before the handshake completes.
     pub(super) fn apply_peer_datagram_budget(&self) {
         let Some(tp) = self.conn().and_then(|c| c.peer_transport_params()) else {
             return;
@@ -997,8 +799,6 @@ impl QuicSession {
         self.with_state(|s| s.max_datagram_size = sz);
     }
 
-    /// Deliver held session tickets whose spacing delay has elapsed (see
-    /// `pending_tickets`); drop them all once the session starts closing.
     fn deliver_pending_tickets(&self, global: &JSGlobalObject) {
         if self.pending_tickets.get().is_empty() {
             return;
@@ -1010,9 +810,6 @@ impl QuicSession {
             self.pending_tickets.with_mut(VecDeque::clear);
             return;
         }
-        // An actively-used session (it has streams) receives held tickets
-        // immediately — the spacing exists only so a session that is closed
-        // right after the first ticket never observes the second.
         let now = if self.streams.get().is_empty() {
             now_ns()
         } else {
@@ -1038,7 +835,6 @@ impl QuicSession {
             }
         }
         if !self.pending_tickets.get().is_empty() {
-            // Not due yet — keep the endpoint timer ticking.
             self.schedule_process();
         }
     }
@@ -1069,8 +865,6 @@ impl QuicSession {
             }
             match event {
                 SessionEvent::HandshakeDone { ok } => {
-                    // Capture TLS facts now — lsquic frees the SSL object at
-                    // confirmation, so later queries need the snapshot.
                     if ok {
                         self.capture_hsk_snapshot();
                         if self.is_server.get() {
@@ -1080,12 +874,7 @@ impl QuicSession {
                             self.maybe_report_handshake(global, true);
                         } else {
                             // Node's client `opened` settles only for
-                            // connections the server actually accepted: a
-                            // refusing server (busy/limits) never finishes
-                            // the handshake in Node, so defer the report to
-                            // HANDSHAKE_DONE receipt — a refusal's close
-                            // preempts it and `opened` rejects through the
-                            // close path.
+                            // connections the server actually accepted.
                             self.handshake_pending_ok.set(true);
                         }
                     } else {
@@ -1095,13 +884,6 @@ impl QuicSession {
                 SessionEvent::HandshakeConfirmed => {
                     self.with_state(|s| s.handshake_confirmed = 1);
                     if self.handshake_pending_ok.get() {
-                        // A peer that closed immediately after the handshake
-                        // — refusal, or `close()` right after `opened` with
-                        // no application activity — preempts the report, and
-                        // `opened` settles through the close path instead. A
-                        // close AFTER stream/datagram activity is a normal
-                        // close of an opened session, even when a slow batch
-                        // delivers both in one dispatch.
                         let close_wins = self.streams.get().is_empty()
                             && self.events.with_mut(|e| {
                                 for ev in e.iter() {
@@ -1198,9 +980,6 @@ impl QuicSession {
                         continue;
                     }
                     if self.ticket_delivered.replace(true) {
-                        // Subsequent tickets are spaced out (see
-                        // `pending_tickets`) and dropped if the session
-                        // starts closing first.
                         self.pending_tickets
                             .with_mut(|q| q.push_back((now_ns() + TICKET_DELIVERY_DELAY_NS, blob)));
                         self.schedule_process();
@@ -1215,9 +994,6 @@ impl QuicSession {
                     }
                 }
                 SessionEvent::StreamReset { stream, code } => {
-                    // The JS layer asserts `inner.onreset` is set; only fire
-                    // when the `wants_reset` state bit was set by the
-                    // `onreset` setter.
                     let Some(stream) = self
                         .live_stream(stream)
                         .filter(|s| s.wants_reset() && !s.is_announce_suppressed())
@@ -1268,10 +1044,7 @@ impl QuicSession {
                         continue;
                     };
                     let handle = stream.handle();
-                    // The JS layer's `parseHeaderPairs` expects a flat
-                    // `[name, value, ...]` array.
-                    // Latin-1, as node does for HTTP headers: h3 header octets
-                    // need not be valid UTF-8, and a lossy decode would corrupt them.
+                    // Latin-1, as node does for HTTP headers.
                     let to_js = |s: &Vec<u8>| {
                         bun_core::String::clone_latin1(s)
                             .to_js(global)
@@ -1301,8 +1074,6 @@ impl QuicSession {
                     }
                 }
                 SessionEvent::StreamBlocked { stream } => {
-                    // The JS layer only registers interest via the
-                    // `onblocked` setter (`wants_block` state bit).
                     let Some(stream) = self.live_stream(stream).filter(|s| s.wants_block()) else {
                         continue;
                     };
@@ -1350,9 +1121,6 @@ impl QuicSession {
                 SessionEvent::DatagramStatus { id, sent } => {
                     if sent {
                         self.add_stat(IDX_STATS_SESSION_DATAGRAMS_SENT, 1);
-                        // The "acknowledged"/"lost" status arrives later via
-                        // DatagramAckStatus when the carrying packet is
-                        // ACKed or declared lost.
                         self.inflight_datagrams.with_mut(|q| q.push_back(id));
                         continue;
                     }
@@ -1377,10 +1145,8 @@ impl QuicSession {
                     }
                 }
                 SessionEvent::EarlyDataFailed => {
-                    // Cancel every stream opened during the 0-RTT phase
-                    // (Node parity: their `closed` promises reject with an
-                    // application error). lsquic tears them down on the
-                    // wire; the local reset code drives the JS mapping.
+                    // Node parity: their `closed` promises reject with an
+                    // application error.
                     let code = self.with_state(|s| {
                         if s.internal_error_code != 0 {
                             s.internal_error_code
@@ -1475,7 +1241,6 @@ impl QuicSession {
                         let n = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
                         off += ORIGIN_LEN_PREFIX;
                         if off + n > payload.len() {
-                            // Malformed entry: stop parsing, keep what we have.
                             break;
                         }
                         if let Ok(s) =
@@ -1578,8 +1343,6 @@ impl QuicSession {
                         vm.event_loop_ref()
                             .run_callback(cb, global, handle, &[JSValue::UNDEFINED]);
                     }
-                    // The JS callback may have torn it down already; this is
-                    // a no-op then.
                     self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
                     // Registry entry gone and `raw` already null, so nothing
                     // else reaches this stream: drop the self-root and let the
@@ -1595,12 +1358,6 @@ impl QuicSession {
         if self.handshake_reported.replace(true) || self.destroyed.get() {
             return;
         }
-        // `verifyClient`: don't open the stream window until the peer's
-        // certificate is confirmed present (the abort below tears the
-        // session down, but stream_open_allowed must never be 1 for an
-        // unauthenticated connection in the interim).
-        // Ensure the SSL-derived facts are captured before any query (the
-        // SSL object is freed at handshake confirmation).
         if ok {
             self.capture_hsk_snapshot();
         }
@@ -1617,10 +1374,6 @@ impl QuicSession {
                 true
             }
         };
-        // The datagram budget is the peer's max_datagram_frame_size minus
-        // DATAGRAM frame overhead (type byte + length varint), clamped to
-        // the per-packet budget (1200-byte packets minus short-header +
-        // AEAD overhead). 0 (or absent) disables.
         let peer_frame_size = if !ok || self.conn.get().is_null() {
             0
         } else {
@@ -1641,13 +1394,8 @@ impl QuicSession {
         self.write_stat(IDX_STATS_SESSION_HANDSHAKE_COMPLETED_AT, now_ns());
         self.write_stat(IDX_STATS_SESSION_HANDSHAKE_CONFIRMED_AT, now_ns());
         if !ok {
-            // A failed handshake closes the session; `on_conn_closed` follows.
             return;
         }
-        // The SSL-derived facts were snapshotted at handshake completion
-        // (the SSL object may already be freed by now — see HskSnapshot).
-        // Borrowed, not taken: the JS getters (peerCertificate,
-        // ephemeralKeyInfo) keep serving from the snapshot afterwards.
         self.capture_hsk_snapshot();
         let (snap_sni, snap_cipher, alpn_bytes, snap_validation, early_data, have_peer_cert) = {
             let s = self.hsk_snapshot.get();
@@ -1685,8 +1433,6 @@ impl QuicSession {
                 s.internal_error_code = H3_INTERNAL_ERROR;
             });
         } else {
-            // Raw QUIC: headers definitively unsupported now that ALPN is
-            // settled (the JS layer's `headersSupported === 2` check throws).
             self.with_state(|s| s.headers_supported = 2);
         }
         let alpn = alpn_bytes
@@ -1738,9 +1484,6 @@ impl QuicSession {
         }
 
         if self.qlog_enabled.get() {
-            // Header record (qlog_version/qlog_format) + first event, in one
-            // chunk. Synthesized — lsquic's qlog module is a global logger,
-            // not per-connection.
             let t = now_ns() / 1_000_000;
             let chunk = format!(
                 "\u{1e}{{\"qlog_version\":\"0.3\",\"qlog_format\":\"JSON-SEQ\",\"title\":\"bun node:quic\"}}\n\u{1e}{{\"time\":{t},\"name\":\"connectivity:connection_started\",\"data\":{{}}}}\n"
@@ -1748,14 +1491,9 @@ impl QuicSession {
             self.emit_qlog(global, &chunk, false);
         }
 
-        // 0-RTT was attempted but the server rejected it (e.g. changed
-        // transport parameters): Node destroys the early streams and fires
-        // `onearlyrejected` / the `quic.session.early.rejected` channel —
-        // on the CLIENT only (the server's TLS also reports the attempt).
+        // Node destroys the early streams and fires `onearlyrejected` — on
+        // the CLIENT only.
         if early_data.0 && !early_data.1 && !self.is_server.get() {
-            // The 0-RTT streams were already cancelled by the
-            // EarlyDataFailed event (fired the moment the rejection was
-            // detected); here only the JS notification remains.
             if let Some(callback) = callbacks::get(global, "onSessionEarlyDataRejected") {
                 let vm = global.bun_vm().as_mut();
                 vm.event_loop_ref()
@@ -1763,14 +1501,9 @@ impl QuicSession {
             }
         }
 
-        // `verifyClient` post-handshake enforcement: in TLS 1.3 the client's
-        // certificate arrives with its final flight, so a missing cert is
-        // rejected only after the handshake completes — matching Node, where
-        // the server session exists and then closes with a
+        // Matching Node: the server session exists and then closes with a
         // certificate_required transport error.
         if !cert_ok && !self.destroyed.get() && !self.conn.get().is_null() {
-            // Record so report_close surfaces the error on OUR side too —
-            // both peers' `closed` reject with the transport error.
             self.self_close.with_mut(|s| {
                 *s = Some((
                     false,
@@ -1789,9 +1522,6 @@ impl QuicSession {
         }
     }
 
-    /// Snapshot the SSL-derived handshake facts while the SSL object is
-    /// still alive (lsquic frees it once the handshake is confirmed).
-    /// Idempotent; safe to call from event dispatch on the JS thread.
     fn capture_hsk_snapshot(&self) {
         if self.hsk_snapshot.get().is_some() {
             return;
@@ -1803,8 +1533,6 @@ impl QuicSession {
         let cipher = conn.cipher().map(|s| s.to_bytes().to_vec());
         let ssl = conn.ssl().cast();
         let alpn = tls::negotiated_alpn(ssl).or_else(|| {
-            // lsquic doesn't run the ALPN callback for raw-QUIC clients;
-            // fall back to what we configured if BoringSSL has nothing.
             self.endpoint_ref()
                 .and_then(|ep| ep.configured_alpn(self.is_server.get()))
         });
@@ -1863,8 +1591,6 @@ impl QuicSession {
             );
             self.emit_qlog(global, &chunk, true);
         }
-        // The JS layer's `onSessionClose(type, code, reason, errorName)` shape
-        // (`type`: 0=transport, 1=application, 2=version-neg, 3=idle).
         let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match self
             .peer_close
             .with_mut(Option::take)
@@ -1872,9 +1598,6 @@ impl QuicSession {
         {
             Some((app, code, reason)) => (if app { 1 } else { 0 }, code, Some(reason)),
             None if self.conn.get().is_null() => {
-                // The conn is already freed; use the status captured in
-                // `on_conn_closed` (a session that never had a conn — or
-                // whose conn closed with no local error — reports clean).
                 match self.final_conn_status.with_mut(Option::take) {
                     Some((status, msg)) => {
                         map_conn_status(status, msg, self.handshake_reported.get())
@@ -1904,9 +1627,6 @@ impl QuicSession {
             .filter(|r| !r.is_empty())
             .and_then(|r| bun_core::String::clone_utf8(&r).to_js(global).ok())
             .unwrap_or(JSValue::UNDEFINED);
-        // Unregister first: the JS close callback runs `destroy()` →
-        // `teardown()`, which clears `self.endpoint`, so the pointer would be
-        // gone afterward.
         let endpoint = self.endpoint.get();
         if !endpoint.is_null() {
             // SAFETY: endpoint is alive (endpoint_js Strong still held).
@@ -1960,8 +1680,6 @@ impl QuicSession {
         self.this_value.with_mut(|r| r.downgrade());
     }
 
-    // ── JS-facing surface ────────────────────────────────────────────────
-
     pub(crate) fn get_remote_address(
         &self,
         global: &JSGlobalObject,
@@ -1976,11 +1694,6 @@ impl QuicSession {
     ) -> JsResult<JSValue> {
         Ok(self.local_addr.get().to_js_socket_address(global))
     }
-    /// Send CONNECTION_CLOSE for `options` (`{type, code, reason}` or
-    /// undefined → transport NO_ERROR) and record it for `onSessionClose`.
-    /// Parse `{type, code, reason}` (undefined → transport NO_ERROR) into
-    /// `(app_error, code, NUL-terminated reason)` and record it for
-    /// `onSessionClose`.
     fn parse_close_options(
         &self,
         global: &JSGlobalObject,
@@ -2013,12 +1726,9 @@ impl QuicSession {
         Ok((app, code, reason))
     }
 
-    /// Send CONNECTION_CLOSE for previously parsed close options.
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
         let Some(c) = self.conn() else { return };
         if app || code != 0 || reason.len() > 1 {
-            // `reason` is NUL-terminated; an interior NUL truncates,
-            // matching the previous raw-pointer pass.
             let creason = core::ffi::CStr::from_bytes_until_nul(reason).unwrap_or(c"close");
             c.abort_error(app, code.min(u32::MAX as u64) as core::ffi::c_uint, creason);
         } else {
@@ -2032,7 +1742,6 @@ impl QuicSession {
         Ok(())
     }
 
-    /// Whether any registered stream still has undelivered outbound bytes.
     fn any_stream_undelivered(&self) -> bool {
         self.streams.get().iter().any(|&s| {
             // SAFETY: pointers in `streams` are unregistered before their
@@ -2041,7 +1750,6 @@ impl QuicSession {
         })
     }
 
-    /// Complete a deferred graceful close once all streams have delivered.
     pub(super) fn maybe_finish_deferred_close(&self) {
         if self.deferred_close.get().is_none() || self.destroyed.get() {
             return;
@@ -2067,14 +1775,8 @@ impl QuicSession {
             self.with_state(|s| s.graceful_close = 1);
             if self.conn.get().is_null() {
                 if self.is_server.get() && !self.close_reported.get() {
-                    // Provisional session: the mini-conn handshake is still
-                    // in flight. Defer — `bind_conn` closes the conn the
-                    // moment it exists, and the JS `closed` promise settles
-                    // through the normal close flow.
                     self.close_when_bound.set(true);
                 } else {
-                    // Client (or already-detached) session with no conn:
-                    // nothing on the wire — settle `closed` now.
                     self.report_close(global);
                 }
             } else {
@@ -2085,10 +1787,7 @@ impl QuicSession {
                     .map(|ep| ep.is_http(self.is_server.get()))
                     .unwrap_or(false);
                 if is_http && !app && code == 0 && !self.streams.get().is_empty() {
-                    // HTTP/3 graceful shutdown with streams still open:
-                    // GOAWAY goes out now (peers see the shutdown notice and
-                    // fire `ongoaway`), the CONNECTION_CLOSE once the
-                    // remaining streams finish (RFC 9114 §5.2).
+                    // RFC 9114 §5.2.
                     if let Some(c) = self.conn() {
                         c.going_away();
                     }
@@ -2096,9 +1795,6 @@ impl QuicSession {
                     self.deferred_close
                         .with_mut(|d| *d = Some((app, code, reason)));
                 } else if self.any_stream_undelivered() {
-                    // lsquic_conn_close resets streams whose FINs aren't yet
-                    // acked; hold the CONNECTION_CLOSE until they deliver
-                    // (checked after every process_conns).
                     self.deferred_close
                         .with_mut(|d| *d = Some((app, code, reason)));
                 } else {
@@ -2125,34 +1821,20 @@ impl QuicSession {
         if !self.close_reported.get() && !self.conn.get().is_null() {
             let options = frame.arguments_as_array::<1>()[0];
             if options.is_object() {
-                // Explicit close options: put the CONNECTION_CLOSE on the
-                // wire before destroying (Node's Destroy with close options).
+                // Node's Destroy with close options.
                 self.close_with_options(global, options)?;
-                // `abort_error` only QUEUES the frame; `teardown()` below kills
-                // the conn, so without a synchronous engine pass the frame can
-                // lose the race to the scheduled tick and never reach the wire
-                // — the peer then idles out and sees a graceful close.
                 if let Some(endpoint) = self.endpoint_ref() {
                     endpoint.drive_engines_once();
                 }
             } else if let Some(c) = self.conn() {
-                // Flush the delayed ACK for the peer's last packets before
-                // dying: Node's server acks the packet that triggered the
-                // destroying callback, so the peer quietly idles out
-                // instead of retransmitting into a stateless reset.
+                // Node's server acks the packet that triggered the destroying
+                // callback.
                 c.ack_now();
                 if let Some(endpoint) = self.endpoint_ref() {
                     endpoint.drive_engines_once();
                 }
-                // The engine pass can close the conn (a handshake failure or
-                // pending error ticks to completion); `on_conn_closed` nulls
-                // `self.conn`, so re-acquire instead of using the pre-drive
-                // handle.
                 if let Some(c) = self.conn() {
-                    // Plain destroy(): silent — no CONNECTION_CLOSE. The
-                    // peer discovers the death via stateless reset or idle
-                    // timeout (Node parity: Session::Destroy without close
-                    // options).
+                    // Node parity: Session::Destroy without close options.
                     c.abort_silent();
                 }
             }
@@ -2161,10 +1843,6 @@ impl QuicSession {
         self.teardown(global);
         Ok(JSValue::UNDEFINED)
     }
-    /// `openStream(direction, body)` — locally initiate a stream. lsquic only
-    /// supports bidi via `lsquic_conn_make_stream`; uni-stream creation needs
-    /// an lsquic patch (see project memory). The stream is created in the
-    /// pending state; lsquic's `on_new_stream` binds it.
     pub(crate) fn open_stream(
         &self,
         global: &JSGlobalObject,
@@ -2174,9 +1852,6 @@ impl QuicSession {
             return Ok(JSValue::UNDEFINED);
         }
         let [direction, body] = frame.arguments_as_array::<2>();
-        // direction: 0=bidi, 1=uni. Decided once: it selects the queue this
-        // request parks in AND the `make_*_stream` call it is fulfilled by, so
-        // the two must not be able to disagree.
         let unidirectional = direction.is_number() && direction.as_number() == 1.0;
         let (qs, handle) = super::stream::QuicStream::create(
             global,
@@ -2191,10 +1866,7 @@ impl QuicSession {
             self.pending_local_bidi.with_mut(|q| q.push_back(qs));
         }
         self.streams.with_mut(|v| v.push(qs));
-        // The stream id isn't assigned yet, so use the requested direction.
         self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
-        // Queue a one-shot body if given (the JS layer also calls
-        // attachSource for non-buffer sources afterwards).
         if let Some(buf) = body.as_array_buffer(global) {
             // SAFETY: `qs` was just created.
             unsafe {
@@ -2216,9 +1888,6 @@ impl QuicSession {
         self.schedule_process();
         Ok(handle)
     }
-    /// `sendDatagram(view)` — queue an unreliable datagram. Returns its id as
-    /// a BigInt (`0n` when it could not be queued). Transmission happens via
-    /// lsquic's `on_dg_write` on the next `process_conns`.
     pub(crate) fn send_datagram(
         &self,
         global: &JSGlobalObject,
@@ -2236,10 +1905,6 @@ impl QuicSession {
         let is_http = self
             .endpoint_ref()
             .is_some_and(|ep| ep.is_http(self.is_server.get()));
-        // Only an explicit peer SETTINGS_H3_DATAGRAM=0 (or absent from a
-        // received SETTINGS frame) refuses; while the peer's SETTINGS have
-        // not yet arrived (they race the first application data) the
-        // datagram is queued optimistically.
         if is_http && self.conn().and_then(|c| c.peer_h3_datagram()) == Some(false) {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
@@ -2259,10 +1924,8 @@ impl QuicSession {
         // SAFETY: state buffer is live.
         let max_pending = self.with_state(|s| s.max_pending_datagrams);
         if max_pending > 0 && self.datagram_queue.get().len() >= max_pending as usize {
-            // Queue full. With drop-newest (default false → drop-oldest;
-            // true → drop-newest), abandon either this datagram or the
-            // oldest queued one. Node reports the abandonment synchronously
-            // from within sendDatagram.
+            // Node reports the abandonment synchronously from within
+            // sendDatagram.
             if self.datagram_drop_newest.get() {
                 self.report_datagram_abandoned(global, id);
                 // SAFETY: as above.
@@ -2283,9 +1946,6 @@ impl QuicSession {
         self.schedule_process();
         JSValue::from_uint64_no_truncate(global, id)
     }
-    /// Fire `onSessionDatagramStatus(id, "abandoned")` synchronously —
-    /// sendDatagram's queue-overflow contract (unlike wire-driven statuses,
-    /// which queue through `SessionEvent::DatagramStatus`).
     fn report_datagram_abandoned(&self, global: &JSGlobalObject, id: u64) {
         if !self.has_listener(LISTENER_FLAG_DATAGRAM_STATUS) {
             return;
@@ -2303,10 +1963,7 @@ impl QuicSession {
         }
     }
 
-    /// `session.updateKey()` — always reports "not updated". lsquic only
-    /// *responds* to a peer-initiated key update (it flips `esi_key_phase` on
-    /// receipt in `lsquic_enc_sess_ietf.c`); it exposes no way to initiate
-    /// one. Node's JS layer discards this return value, matching upstream.
+    /// Node's JS layer discards this return value, matching upstream.
     pub(crate) fn update_key(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_boolean(false))
     }
@@ -2318,8 +1975,6 @@ impl QuicSession {
         if let Some(der) = self.conn_ssl().and_then(tls::local_certificate_der) {
             return ArrayBuffer::create_buffer(global, der.as_slice());
         }
-        // The SSL object is freed at handshake confirmation; serve the DER
-        // snapshotted at completion.
         if let Some(der) = self
             .hsk_snapshot
             .get()
@@ -2341,18 +1996,12 @@ impl QuicSession {
             if let Some(der) = tls::leaf_certificate_der(conn.server_cert_chain()) {
                 return ArrayBuffer::create_buffer(global, &der);
             }
-            // lsquic only tracks the SERVER's chain; for a server session
-            // the client's certificate (requested via verifyClient) comes
-            // from the TLS session directly.
             if let Some(ssl) = self.conn_ssl() {
                 if let Some(der) = tls::peer_certificate_der(ssl) {
                     return ArrayBuffer::create_buffer(global, &der);
                 }
             }
         }
-        // The SSL object is freed at handshake confirmation (and the conn
-        // itself once the peer closes); serve the DER snapshotted at
-        // completion.
         if let Some(der) = self
             .hsk_snapshot
             .get()
@@ -2368,7 +2017,6 @@ impl QuicSession {
         global: &JSGlobalObject,
         _f: &CallFrame,
     ) -> JsResult<JSValue> {
-        // Live SSL when available; snapshot after confirmation frees it.
         let Some((kind, name, bits)) = self
             .conn_ssl()
             .and_then(tls::ephemeral_key_info)
@@ -2413,8 +2061,6 @@ impl QuicSession {
                 return Ok(stored);
             }
         }
-        // No application configured: return the default-application object so
-        // the JS layer's `applicationOptions !== undefined` check passes.
         let obj = JSValue::create_empty_object_with_null_prototype(global);
         let big = |v: u64| JSValue::from_uint64_no_truncate(global, v);
         // Match Node's DefaultApplication normalized defaults (`session.cc`).
@@ -2426,7 +2072,6 @@ impl QuicSession {
         obj.put(global, b"qpackBlockedStreams", big(0)?);
         obj.put(global, b"enableConnectProtocol", JSValue::js_boolean(false));
         obj.put(global, b"enableDatagrams", JSValue::js_boolean(true));
-        // Cache it so subsequent calls return the same object.
         self.application_options_js
             .set(Some(Strong::create(obj, global)));
         Ok(obj)
@@ -2484,7 +2129,6 @@ impl QuicSession {
     }
 }
 
-/// `Some(bytes)` → JS string; `None` → `undefined`.
 fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     match bytes {
         Some(b) => bun_core::String::clone_utf8(b)
@@ -2494,7 +2138,6 @@ fn opt_bytes_to_js(global: &JSGlobalObject, bytes: Option<&[u8]>) -> JSValue {
     }
 }
 
-/// Build the raw `["application", code]` array `convertQuicError` expects.
 fn make_application_error(global: &JSGlobalObject, code: u64) -> JsResult<JSValue> {
     let kind = bun_core::String::static_(b"application").to_js(global)?;
     let code = JSValue::from_uint64_no_truncate(global, code)?;
@@ -2543,22 +2186,13 @@ impl QuicSession {
         reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
     )]
     pub(crate) fn finalize(self: Box<Self>) {
-        // Same hazard as QuicEndpoint::finalize: a GC'd session must not
-        // leave its timer registered in the global heap. ACTIVE is the
-        // canonical "in the heap" state (see `All::update`).
         if self.event_loop_timer.get().state == crate::timer::EventLoopTimerState::ACTIVE {
             crate::jsc_hooks::timer_all_mut().remove(self.event_loop_timer.as_ptr());
         }
     }
 }
 
-// ── lsquic callback targets (see node_quic_shim.c thunks) ────────────────
-
 lsquic_callback! {
-    /// `on_new_conn`: allocate a QuicSession, install it as the conn-ctx. The JS
-    /// `onSessionNew` callback is fired by the endpoint after `process_conns`
-    /// returns (server side); for clients the endpoint's `connect()` returns the
-    /// handle directly.
     pub(super) fn on_new_conn(
         endpoint: &QuicEndpoint,
         c: *mut lsquic::lsquic_conn,
@@ -2592,8 +2226,6 @@ fn map_conn_status(
     handshake_reported: bool,
 ) -> (i32, u64, Option<Vec<u8>>) {
     match status {
-        // A timeout before the handshake ever completed is a failed
-        // connection attempt (blocked/blackholed peer), not an idle close —
         // Node rejects `opened` with a transport error.
         lsquic::LSCONN_ST_TIMED_OUT if !handshake_reported => (
             0,
@@ -2657,10 +2289,6 @@ lsquic_callback! {
 }
 
 lsquic_callback! {
-    /// The node-quic-accessors.patch makes lsquic pass the conn to
-    /// `on_new_token` (upstream passes the engine-wide `enp_stream_if_ctx`,
-    /// which would let one client session receive another's token). The shim
-    /// recovers the per-conn QuicSession via `lsquic_conn_get_ctx`.
     pub(super) fn on_new_token(session: &QuicSession, t: *const u8, n: usize) {
         if t.is_null() || n == 0 {
             return;
@@ -2681,11 +2309,6 @@ lsquic_callback! {
 }
 
 lsquic_callback! {
-    /// `lsquic_stream_if::on_dg_write` — fill `buf[..sz]` with the next queued
-    /// datagram, return bytes written (0 to stop). lsquic calls this after
-    /// `want_datagram_write(true)`; `es_rw_once` governs whether it loops.
-    // -1, not 0: lsquic loops while the datagram writer keeps succeeding and
-    // reads 0 as "wrote a 0-byte datagram", not "stop".
     pub(super) fn on_dg_write(session: &QuicSession, buf: *mut c_void, sz: usize) -> isize = -1; {
         if buf.is_null() {
             return 0;
@@ -2696,9 +2319,6 @@ lsquic_callback! {
             .front()
             .map(|(id, p)| (*id, p.len()))
         else {
-            // lsquic loops `while (WANT_DG_WRITE && write_datagram())` and treats
-            // a 0 return as a 0-byte datagram (not "stop"); -1 makes
-            // `pf_gen_datagram_frame` return <0 so the loop exits.
             // SAFETY: the conn is live for this callback.
             if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
                 c.want_datagram_write(false);
@@ -2706,10 +2326,6 @@ lsquic_callback! {
             return -1;
         };
         if len > sz {
-            // `sz` is what's left in the packet lsquic is currently building, and
-            // shrinks when ACK/STREAM frames landed first. Leave the datagram
-            // queued and retry on a fresh packet instead of destroying it; only
-            // abandon it when it could not fit an empty packet either.
             let max = session.with_state(|s| s.max_datagram_size) as usize;
             if max == 0 || len > max {
                 session.datagram_queue.with_mut(VecDeque::pop_front);
@@ -2730,7 +2346,6 @@ lsquic_callback! {
         };
         session.push_event(SessionEvent::DatagramStatus { id, sent: true });
         if !session.datagram_queue.get().is_empty() {
-            // Re-arm for the rest of the queue.
             // SAFETY: the conn is live for this callback.
             if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
                 c.want_datagram_write(true);
@@ -2739,8 +2354,6 @@ lsquic_callback! {
         payload.len() as isize
     }
 
-    /// `on_datagram_status` — a packet carrying `count` DATAGRAM frames was
-    /// acknowledged (`acked != 0`) or declared lost.
     pub(super) fn on_datagram_status(session: &QuicSession, count: c_uint, acked: c_int) {
         if count == 0 {
             return;
@@ -2776,7 +2389,6 @@ lsquic_callback! {
         old_local: *const lsquic::sockaddr,
         old_peer: *const lsquic::sockaddr,
     ) {
-        // The sockaddrs point into lsquic's path storage, live for this call.
         session.push_event(SessionEvent::PathValidation {
             validated: validated != 0,
             preferred: is_preferred != 0,
@@ -2794,7 +2406,6 @@ lsquic_callback! {
         // SAFETY: `buf[..sz]` is valid for this callback (lsquic owns the
         // packet buffer).
         let payload = unsafe { core::slice::from_raw_parts(buf.cast::<u8>(), sz).to_vec() };
-        // The early flag is only valid during this callback — read it now.
         // SAFETY: `session.conn` is the live conn while this callback runs.
         let early = unsafe { lsquic::Conn::from_raw(session.conn.get()) }
             .is_some_and(|c| c.datagram_early());

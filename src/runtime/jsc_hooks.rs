@@ -338,9 +338,6 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        // Placement-new: `Box::new(init())` materializes the whole ~100 KB pool
-        // in a stack temporary and memcpys it to the heap. `ManuallyDrop<T>` is
-        // `repr(transparent)`, so init the pool straight into the allocation.
         body_value_pool: {
             let mut pool =
                 Box::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>::new_uninit();
@@ -3652,7 +3649,6 @@ unsafe fn fetch_builtin_module(
         };
     }
 
-    // ── `--expose-internals`: bundled `internal/*` modules ─────────────
     if let Some((name, tag)) = bun_jsc::module_loader::exposed_internal_tag(spec) {
         let resolved = ResolvedSource {
             source_code: bun_core::String::empty(),
@@ -4892,8 +4888,6 @@ unsafe fn _resolve<'a>(
         return Ok(());
     }
 
-    // `--expose-internals`: bundled `internal/*` modules resolve to
-    // themselves; `fetch_builtin_module` serves them by registry tag.
     if bun_jsc::module_loader::exposed_internal_tag(specifier).is_some() {
         *ret_path = specifier;
         return Ok(());
@@ -5148,8 +5142,6 @@ unsafe fn resolve_hook(
         return true;
     }
 
-    // `--expose-internals`: bundled `internal/*` modules resolve to
-    // themselves; `fetch_builtin_module` serves them by registry tag.
     if bun_jsc::module_loader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
         // SAFETY: per fn contract.
         unsafe { *res = ErrorableString::ok(specifier.dupe_ref()) };

@@ -1,10 +1,6 @@
-// Header-list helpers used by the QUIC (HTTP/3) implementation.
-// Ported from the relevant pieces of Node.js lib/internal/http2/util.js
-// (v26.3.0): kValidPseudoHeaders, kSingleValueFields,
-// isIllegalConnectionSpecificHeader, assertValidPseudoHeader and
-// buildNgHeaderString. The serialized header-string format
-// (`name\0value\0flag` triplets, pseudo-headers first) is consumed by the
-// native quic binding's sendHeaders()/openStream() implementations.
+// Ported from Node.js lib/internal/http2/util.js (v26.3.0): kValidPseudoHeaders,
+// kSingleValueFields, isIllegalConnectionSpecificHeader, assertValidPseudoHeader,
+// buildNgHeaderString.
 
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
@@ -18,13 +14,8 @@ function checkIsHttpToken(val) {
   return tokenRegExp.test(val);
 }
 
-// This set is defined strictly by the HTTP/2 specification. Only
-// :-prefixed headers defined by that specification may be added to
-// this set.
 const kValidPseudoHeaders = new Set([":status", ":method", ":authority", ":scheme", ":path", ":protocol"]);
 
-// This set contains headers that are permitted to have only a single
-// value. Multiple instances must not be specified.
 const kSingleValueFields = new Set([
   ":status",
   ":method",
@@ -97,13 +88,10 @@ function assertValidPseudoHeaderTrailer(key) {
 }
 
 const emptyArray = [];
-// NGHTTP2_NV_FLAG_NO_INDEX / NGHTTP2_NV_FLAG_NONE encoded as single chars.
 const kNeverIndexFlag = String.fromCharCode(1);
 const kNoHeaderFlags = String.fromCharCode(0);
 
-// The serialized header list is NUL-delimited (`name\0value\0flags`), so an
-// embedded NUL in a header value would desync the triplets parsed by the
-// native side. RFC 9114 forbids NUL in field values regardless (RFC 9114 §4.2).
+// RFC 9114 §4.2 forbids NUL in field values.
 function assertNoNulInValue(key, value) {
   if (value.indexOf("\0") !== -1) {
     throw $ERR_INVALID_CHAR("header content", key);

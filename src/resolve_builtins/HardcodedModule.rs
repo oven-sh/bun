@@ -808,14 +808,7 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
 
 static EXPOSE_INTERNALS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Node's `--expose-internals`: bundled `internal/*` modules resolve as
-/// builtins. Set from the CLI flag (`cli/Arguments.rs`) and from
-/// `BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING` (VirtualMachine init), alongside
-/// `IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS`.
-///
-/// Off by default on every build, exactly like that flag: an unconditional
-/// debug opt-in would make `internal/*` shadow a same-named npm package in
-/// debug builds only, which no test could ever catch (CI tests debug).
+/// Node's `--expose-internals`.
 pub fn expose_internals_enabled() -> bool {
     EXPOSE_INTERNALS.load(std::sync::atomic::Ordering::Relaxed)
 }

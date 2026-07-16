@@ -275,8 +275,6 @@ impl BlockList {
         Ok(JSValue::js_boolean(this.check_sockaddr(address)))
     }
 
-    /// Rule-matching core shared by the JS `check` method and native
-    /// callers (node:quic's per-packet block list).
     pub(crate) fn check_sockaddr(&self, address: &sockaddr) -> bool {
         let _guard = self.mutex.lock_guard();
         for item in self.da_rules.get().iter() {

@@ -1,7 +1,4 @@
-//! Native implementation of `node:quic` (reference: node/src/quic/*, v26.3.0):
-//! the `QuicEndpoint`/`QuicSession`/`QuicStream` handle classes, per-session
-//! TLS state, and the per-VM callback registry. The JS-visible binding object
-//! itself is built by `super::node_quic_binding::create_node_quic_binding`.
+//! Native implementation of `node:quic` (reference: node/src/quic/*, v26.3.0).
 
 pub mod endpoint;
 pub(crate) mod ffi;
@@ -22,9 +19,7 @@ pub(crate) fn now_ns() -> u64 {
 pub(crate) mod callbacks {
     use bun_jsc::{JSGlobalObject, JSValue};
 
-    /// Stores the callbacks object registered via `setCallbacks()` in the
-    /// per-VM `RareData` slot. Node keeps these on the realm's `BindingData`;
-    /// per-VM storage is Bun's analog (workers each have their own VM).
+    /// Node keeps these on the realm's `BindingData`; per-VM storage is Bun's analog.
     pub(crate) fn set(global: &JSGlobalObject, holder: JSValue) {
         global
             .bun_vm()
@@ -34,8 +29,6 @@ pub(crate) mod callbacks {
             .set(global, holder);
     }
 
-    /// Look up one of the registered `on*` callbacks. Returns `None` when
-    /// `setCallbacks()` has not run or the property is not callable.
     pub(crate) fn get(global: &JSGlobalObject, name: &str) -> Option<JSValue> {
         let holder = global
             .bun_vm()

@@ -78,9 +78,6 @@ const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bi
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
-// `// Flags:` entries that gate module *resolution*, so common/index.js's
-// re-spawn happens too late for a static import. Only these are forwarded to
-// `bun run`; every other flag stays on the harness's re-spawn path.
 const resolutionGatingFlags = new Set([
   "--expose-internals",
   "--experimental-quic",
@@ -757,13 +754,6 @@ async function runTests() {
       const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
       if (isNodeTest(testPath)) {
         const testContent = readFileSync(absoluteTestPath, "utf-8");
-        // The "// Flags:" comment node's own runner reads. common/index.js
-        // re-spawns the test with these flags, but a static import of a
-        // flag-gated module (node:stream/iter, internal/*) fails resolution
-        // before the harness runs. Forward only those flags: passing the rest
-        // to `bun run` changes behavior the re-spawn already handles (e.g.
-        // --expose_gc breaks test-http-parser-bad-ref).
-        // `[^\S\r\n]` so a bare "// Flags:" line can't swallow the next one.
         const flagsMatch = /^\/\/ Flags:[^\S\r\n]+(--[^\r\n]*)$/m.exec(testContent);
         const testFlags = flagsMatch
           ? flagsMatch[1].split(/\s+/).filter(flag => resolutionGatingFlags.has(flag.split("=")[0]))
@@ -807,8 +797,6 @@ async function runTests() {
               args: [
                 subcommand,
                 "--config=" + join(import.meta.dirname, "../bunfig.node-test.toml"),
-                // Runtime flags only mean something to `bun run`; node:test
-                // files go through `bun test`, whose flag surface differs.
                 ...(subcommand === "run" ? testFlags : []),
                 absoluteTestPath,
               ],

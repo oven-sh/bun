@@ -1,13 +1,5 @@
 //! The `node:quic` native binding object — Bun's equivalent of Node's
 //! `internalBinding('quic')` (reference: node/src/quic/*, v26.3.0).
-//!
-//! The JS layer (`src/js/internal/quic/binding.ts`) loads this once per realm
-//! via `$rust("node_quic_binding.rs", "createNodeQuicBinding")` and
-//! immediately registers its callbacks through `setCallbacks()`. Constant
-//! names and values mirror Node exactly; state byte offsets are derived from
-//! the `#[repr(C)]` state structs that back the handles' `state` buffers so
-//! they cannot drift. The endpoint/session/stream implementations live in
-//! `src/runtime/node/quic/`.
 
 use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
 
@@ -109,7 +101,6 @@ macro_rules! put_state_offsets_with_size {
     };
 }
 
-/// `$rust("node_quic_binding.rs", "createNodeQuicBinding")`.
 pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global, 16);
 
@@ -130,7 +121,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
         ),
     );
 
-    // ── Endpoint constants (node/src/quic/endpoint.cc Endpoint::InitPerContext) ──
+    // Endpoint constants (node/src/quic/endpoint.cc Endpoint::InitPerContext)
     for (i, name) in endpoint::ENDPOINT_STATS_FIELDS.iter().enumerate() {
         put_num(obj, global, &format!("IDX_STATS_ENDPOINT_{name}"), i as u64);
     }
@@ -154,7 +145,6 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
     // 10 * NGTCP2_SECONDS / NGTCP2_SECONDS (node/src/quic/tokens.h).
     put_num(obj, global, "DEFAULT_RETRYTOKEN_EXPIRATION", 10);
     put_num(obj, global, "DEFAULT_REGULARTOKEN_EXPIRATION", 10);
-    // kDefaultMaxPacketLength = NGTCP2_MAX_UDP_PAYLOAD_SIZE.
     put_num(obj, global, "DEFAULT_MAX_PACKET_LENGTH", 1200);
     put_num(
         obj,
@@ -193,7 +183,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
         endpoint::CLOSECONTEXT_START_FAILURE as u64,
     );
 
-    // ── Session constants (node/src/quic/session.cc Session::InitPerContext) ──
+    // Session constants (node/src/quic/session.cc Session::InitPerContext)
     put_num(obj, global, "CC_ALGO_RENO", 0);
     put_num(obj, global, "CC_ALGO_CUBIC", 1);
     put_num(obj, global, "CC_ALGO_BBR", 2);
@@ -216,7 +206,6 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
     // node/src/node_http_common.h.
     put_num(obj, global, "DEFAULT_MAX_HEADER_LIST_PAIRS", 128);
     put_num(obj, global, "DEFAULT_MAX_HEADER_LENGTH", 8192);
-    // NGTCP2_PROTO_VER_MAX/MIN == NGTCP2_PROTO_VER_V1.
     put_num(obj, global, "QUIC_PROTO_MAX", 1);
     put_num(obj, global, "QUIC_PROTO_MIN", 1);
     put_num(obj, global, "DEFAULT_HANDSHAKE_TIMEOUT", 10_000);
@@ -256,7 +245,7 @@ pub(crate) fn create_node_quic_binding(global: &JSGlobalObject) -> JsResult<JSVa
         "MAX_PENDING_DATAGRAMS" => max_pending_datagrams,
     });
 
-    // ── Stream constants (node/src/quic/streams.cc Stream::InitPerContext) ──
+    // Stream constants (node/src/quic/streams.cc Stream::InitPerContext)
     for (i, name) in stream::STREAM_STATS_FIELDS.iter().enumerate() {
         put_num(obj, global, &format!("IDX_STATS_STREAM_{name}"), i as u64);
     }

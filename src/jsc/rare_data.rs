@@ -277,8 +277,7 @@ pub struct RareData {
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
     pub s3_default_client: Strong,
-    /// The callbacks object registered by `node:quic`'s `setCallbacks()` —
-    /// per-VM, like Node's quic `BindingData` (set once at module load).
+    /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
@@ -624,10 +623,6 @@ macro_rules! for_each_socket_group {
 }
 
 impl RareData {
-    /// Release every JS handle held here. `RareData` is dropped from
-    /// `VirtualMachine::destroy`, long after `destructOnExit` has torn down
-    /// the JSC heap — a `Strong` released there dereferences a freed
-    /// `HandleSet`. Call this while the heap is still alive.
     pub fn release_js_handles(&mut self) {
         self.s3_default_client.deinit();
         self.node_quic_callbacks.deinit();

@@ -1,53 +1,27 @@
-//! Per-endpoint TLS configuration for the lsquic-backed `node:quic`.
-//!
-//! lsquic owns the `SSL` per connection; it asks for an `SSL_CTX` via
-//! `ea_get_ssl_ctx(peer_ctx, local)` (and per-SNI via `ea_lookup_cert`). The
-//! endpoint builds one `SSL_CTX` from its processed options and hands it back
-//! from those callbacks. lsquic installs its own `SSL_QUIC_METHOD` on the
-//! context internally, so nothing here touches QUIC
-//! transport details — this is plain BoringSSL TLS 1.3 setup.
-
 use core::ffi::c_int;
 use core::ptr::null_mut;
 
 use bun_boringssl_sys as ssl;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc};
 
-/// Options the endpoint pulls out of the processed JS `tls` object.
 pub(super) struct TlsConfig {
     pub is_server: bool,
-    /// ALPN protocol list in wire format (`[len][name]...`).
     pub alpn: Vec<u8>,
-    /// SNI servername (client) — NUL-terminated when present.
     pub servername: Option<Vec<u8>>,
-    /// PEM certificate chains; each entry may contain multiple certificates.
     pub certs_pem: Vec<Vec<u8>>,
-    /// PEM private keys (PKCS#8); only the first is used.
     pub keys_pem: Vec<Vec<u8>>,
-    /// Additional trusted CA certificates (PEM).
     pub ca_pem: Vec<Vec<u8>>,
     pub crl_pem: Vec<Vec<u8>>,
-    /// `verifyPeer: 'strict'` — fail the handshake on certificate errors.
     pub verify_peer_strict: bool,
-    /// Verify the peer certificate's SAN/CN against `servername`.
     pub verify_hostname: bool,
-    /// Server: request and verify a client certificate.
     pub verify_client: bool,
-    /// Deliver NSS key-log lines to the JS layer (`keylog: true`).
     pub keylog: bool,
     /// 0-RTT early data (`enableEarlyData`, default on — RFC 8446 §2.3).
     pub enable_early_data: bool,
-    /// `ciphers` — OpenSSL-style colon-separated cipher names. QUIC is
-    /// TLS 1.3-only, where BoringSSL fixes the suite set; the requested
-    /// names map onto the closest compliance policy (see `TlsContext::new`).
     pub ciphers: Option<Vec<u8>>,
-    /// `groups` — colon-separated key-exchange group list
-    /// (`SSL_CTX_set1_groups_list` format, e.g. "P-256:X25519").
     pub groups: Option<Vec<u8>>,
 }
 
-/// Read a string-or-buffer JS value as bytes (PEM inputs may be strings,
-/// ArrayBuffers, or views).
 fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Vec<u8>>> {
     if value.is_empty_or_undefined_or_null() {
         return Ok(None);
@@ -63,7 +37,6 @@ fn value_to_bytes(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Ve
     Ok(None)
 }
 
-/// Read a single value or array of values into a vector of byte buffers.
 fn collect_pem(global: &JSGlobalObject, value: JSValue) -> JsResult<Vec<Vec<u8>>> {
     let mut out = Vec::new();
     if value.is_array() {
@@ -85,14 +58,9 @@ const TLS13_AES_128_GCM_SHA256: &[u8] = b"TLS_AES_128_GCM_SHA256";
 const TLS13_AES_256_GCM_SHA384: &[u8] = b"TLS_AES_256_GCM_SHA384";
 const TLS13_CHACHA20_POLY1305_SHA256: &[u8] = b"TLS_CHACHA20_POLY1305_SHA256";
 
-/// `enum ssl_compliance_policy_t` (vendor/boringssl/include/openssl/ssl.h):
-/// fips_202205 allows the two AES-GCM TLS 1.3 suites; wpa3_192_202304 allows
-/// only AES-256-GCM-SHA384.
 const SSL_COMPLIANCE_POLICY_FIPS_202205: c_int = 1;
 const SSL_COMPLIANCE_POLICY_WPA3_192_202304: c_int = 2;
 
-/// Map a requested cipher list onto the compliance policy whose TLS 1.3
-/// suite set matches it best. `None` = leave the default (all three suites).
 fn tls13_policy_for_ciphers(ciphers: &[u8]) -> Option<c_int> {
     let mut has_128 = false;
     let mut has_256 = false;
@@ -141,8 +109,6 @@ impl TlsConfig {
             return Ok(config);
         }
         if let Some(v) = tls.get(global, "alpn")? {
-            // The JS layer encodes ALPN to wire format (`[len][name]...`)
-            // already (`processTlsOptions`); use the bytes verbatim.
             if let Some(bytes) = value_to_bytes(global, v)? {
                 config.alpn = bytes;
             }
@@ -196,13 +162,7 @@ impl TlsConfig {
     }
 }
 
-/// `(early_data_attempted, early_data_accepted)` for the finished handshake.
-/// Attempted means the client actually offered 0-RTT (a reason other than
-/// `disabled`/`no_session_offered`/`unknown` was recorded); accepted comes
-/// straight from BoringSSL.
 pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
-    /// `enum ssl_early_data_reason_t` values that mean 0-RTT never left the
-    /// client (vendor/boringssl/include/openssl/ssl.h).
     const SSL_EARLY_DATA_UNKNOWN: c_int = 0;
     const SSL_EARLY_DATA_DISABLED: c_int = 1;
     const SSL_EARLY_DATA_NO_SESSION_OFFERED: c_int = 5;
@@ -228,8 +188,7 @@ pub(super) fn early_data_info(ssl_ptr: *mut ssl::SSL) -> (bool, bool) {
     (attempted, accepted)
 }
 
-/// The endpoint's prepared `SSL_CTX`. lsquic borrows the raw pointer; this
-/// struct owns it and frees it on Drop.
+/// lsquic borrows the raw pointer; this struct owns it and frees it on Drop.
 pub(super) struct TlsContext {
     ctx: *mut ssl::SSL_CTX,
     /// Keep the wire-format ALPN alive at a stable heap address: BoringSSL
@@ -268,11 +227,6 @@ unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_c
     // SAFETY: as above.
     let ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_ctx(conn) };
     if ctx.is_null() {
-        // Server handshake secrets fire during the mini-conn phase, before
-        // the session is bound: buffer them on the endpoint (peer_ctx),
-        // keyed by the SSL pointer — the enc session (and its SSL) is
-        // transferred to the full conn at promotion, where `bind_conn`
-        // drains the buffer.
         // SAFETY: peer_ctx is the Rust QuicEndpoint for every conn on it.
         let peer_ctx = unsafe { bun_lsquic_sys::lsquic_conn_get_peer_ctx(conn, core::ptr::null()) };
         if !peer_ctx.is_null() {
@@ -353,7 +307,6 @@ fn load_cert_chain(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static st
             return Err("failed to install certificate");
         }
         ssl::X509_free(leaf);
-        // Any remaining certificates in the PEM are the chain.
         loop {
             let extra = ssl::PEM_read_bio_X509(bio, null_mut(), None, null_mut());
             if extra.is_null() {
@@ -393,7 +346,6 @@ fn load_private_key(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static s
     Ok(())
 }
 
-/// `X509_V_FLAG_CRL_CHECK` — check the leaf certificate against loaded CRLs.
 const X509_V_FLAG_CRL_CHECK: core::ffi::c_ulong = 0x4;
 /// `X509_V_FLAG_CRL_CHECK_ALL` — also check intermediate CAs (Node sets both).
 const X509_V_FLAG_CRL_CHECK_ALL: core::ffi::c_ulong = 0x8;
@@ -464,9 +416,6 @@ fn load_ca_store(ctx: *mut ssl::SSL_CTX, pem: &[u8]) -> Result<(), &'static str>
 }
 
 impl TlsContext {
-    /// Build the `SSL_CTX` lsquic will use for every connection on this
-    /// endpoint. lsquic installs its own `SSL_QUIC_METHOD` on the returned
-    /// context, so this only sets identity, ALPN, and verification policy.
     pub(super) fn new(config: &TlsConfig) -> Result<Self, &'static str> {
         // SAFETY: each SSL_CTX call below is paired with the matching free on
         // failure via Drop (the half-built `this` is dropped on early return).
@@ -477,40 +426,26 @@ impl TlsContext {
             }
             let mut this = TlsContext { ctx, _alpn: None };
 
-            // BoringSSL has no `SSL_CTX_set_ciphersuites`; its compliance
-            // policies are the only lever that restricts the fixed TLS 1.3
-            // suite set. Applied before the proto-version pin below because
-            // the policy also resets min/max versions.
             if let Some(policy) = config.ciphers.as_deref().and_then(tls13_policy_for_ciphers) {
                 if ssl::SSL_CTX_set_compliance_policy(ctx, policy) != 1 {
                     return Err("failed to apply cipher policy");
                 }
             }
-            // QUIC requires TLS 1.3.
             if ssl::SSL_CTX_set_min_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
                 || ssl::SSL_CTX_set_max_proto_version(ctx, ssl::TLS1_3_VERSION) != 1
             {
                 return Err("failed to pin TLS 1.3");
             }
-            // Key-exchange groups (after the policy, so an explicit `groups`
-            // option overrides the policy's group restriction).
             if let Some(groups) = &config.groups {
                 if ssl::SSL_CTX_set1_groups_list(ctx, groups.as_ptr().cast()) != 1 {
                     return Err("invalid TLS groups list");
                 }
             }
-            // System roots only when the caller didn't pin a CA, so the trust
-            // set is exactly what was specified.
             if config.ca_pem.is_empty() {
                 ssl::SSL_CTX_set_default_verify_paths(ctx);
             }
 
-            // Node pairs `certs[i]` with `keys[i]`. BoringSSL's legacy API
-            // holds one credential per SSL_CTX, so a later pair replaces an
-            // earlier one — clear the accumulated chain first or the new leaf
-            // ships the previous pair's intermediates. Installing each key
-            // right after its own leaf keeps `SSL_CTX_use_PrivateKey`'s
-            // cert/key consistency check meaningful.
+            // Node pairs `certs[i]` with `keys[i]`.
             for (i, pem) in config.certs_pem.iter().enumerate() {
                 if i > 0 {
                     ssl::SSL_CTX_clear_chain_certs(ctx);
@@ -538,14 +473,7 @@ impl TlsContext {
             }
             if config.is_server {
                 if config.verify_client {
-                    // SSL_VERIFY_PEER alone: a presented-but-invalid client
-                    // cert still fails the handshake, but a MISSING cert
-                    // completes it — matching Node's TLS 1.3 semantics where
-                    // the server session is created and then closed with a
-                    // certificate_required transport error (see
-                    // `QuicSession::maybe_report_handshake`). With
-                    // FAIL_IF_NO_PEER_CERT the failure would happen on the
-                    // mini-conn, before any session exists.
+                    // SSL_VERIFY_PEER alone matches Node's TLS 1.3 semantics (see QuicSession::maybe_report_handshake).
                     ssl::SSL_CTX_set_verify(ctx, ssl::SSL_VERIFY_PEER, None);
                 }
                 if !config.alpn.is_empty() {
@@ -566,28 +494,16 @@ impl TlsContext {
                 {
                     return Err("failed to set ALPN protocols");
                 }
-                // Strict mode fails the handshake on a bad certificate. In
-                // non-strict modes BoringSSL still runs chain verification
-                // under SSL_VERIFY_NONE and keeps the (non-fatal) result,
-                // which `capture_hsk_snapshot` surfaces as
-                // `validationErrorReason/Code`.
                 let mode = if config.verify_peer_strict {
                     ssl::SSL_VERIFY_PEER
                 } else {
                     ssl::SSL_VERIFY_NONE
                 };
                 ssl::SSL_CTX_set_verify(ctx, mode, None);
-                // Chain verification alone does not check the hostname; bind
-                // the expected name on the context's verify params so a cert
-                // for the wrong host fails when `verifyHostname` is set. One
-                // SSL_CTX maps to one client engine (one endpoint, one
-                // servername), so the context-level param is sufficient.
                 if config.verify_hostname {
                     let Some(servername) = &config.servername else {
                         return Err("verifyHostname requires a servername");
                     };
-                    // `servername` is stored NUL-terminated; strip exactly
-                    // that NUL (and nothing else).
                     let host = servername.strip_suffix(b"\0").unwrap_or(servername);
                     if host.is_empty() {
                         return Err("verifyHostname requires a non-empty servername");
@@ -602,11 +518,6 @@ impl TlsContext {
                 }
             }
 
-            // Cert/key/CA parsing leaves benign errors on BoringSSL's
-            // process-global queue (e.g. PEM_read_bio reaching EOF). lsquic
-            // reads `ERR_get_error()` after `SSL_do_handshake` for ANY conn
-            // in the process, so a stale error here would be reported as a
-            // handshake failure for an unrelated mini-conn.
             ssl::ERR_clear_error();
             Ok(this)
         }
@@ -616,7 +527,6 @@ impl TlsContext {
         self.ctx
     }
 
-    /// First ALPN protocol as a NUL-terminated C string, for `ea_alpn`.
     pub(super) fn alpn_cstr(config: &TlsConfig) -> Vec<u8> {
         if config.alpn.len() < 2 {
             return Vec::new();
@@ -628,7 +538,6 @@ impl TlsContext {
     }
 }
 
-/// Negotiated ALPN protocol (without the length prefix).
 pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
@@ -651,7 +560,6 @@ pub(super) fn negotiated_alpn(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     Some(unsafe { core::slice::from_raw_parts(data, len as usize).to_vec() })
 }
 
-/// X509 verify result, or None on success.
 pub(super) fn validation_error(ssl: *mut ssl::SSL) -> Option<(i64, &'static str)> {
     if ssl.is_null() {
         return None;
@@ -672,9 +580,6 @@ pub(super) fn validation_error(ssl: *mut ssl::SSL) -> Option<(i64, &'static str)
     Some((code as i64, reason))
 }
 
-/// `{type, name?, size}` for the connection's key-exchange group. BoringSSL
-/// stubs `SSL_get_server_tmp_key` to 0 so use `SSL_get_group_id`/`_name`;
-/// TLS 1.3 (which QUIC mandates) only does (EC)DHE.
 pub(super) fn ephemeral_key_info(
     ssl: *mut ssl::SSL,
 ) -> Option<(&'static str, Option<&'static str>, u32)> {
@@ -706,7 +611,6 @@ pub(super) fn ephemeral_key_info(
     Some(("ECDH", name, bits))
 }
 
-/// DER-encode our own leaf certificate.
 pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     if ssl.is_null() {
         return None;
@@ -729,11 +633,7 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// DER of the peer's leaf certificate from a live TLS session (the client's
-/// certificate when called on a server session with `verifyClient`).
 pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
-    // `lsquic_conn_get_ssl` returns NULL before the handshake and after the
-    // conn drops its enc session; every sibling helper here guards the same way.
     if ssl_ptr.is_null() {
         return None;
     }
@@ -759,8 +659,6 @@ pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
     }
 }
 
-/// DER-encode the leaf certificate of an lsquic-supplied `STACK_OF(X509)`.
-/// Frees the stack (lsquic transfers ownership to the caller).
 pub(super) fn leaf_certificate_der(stack: *mut core::ffi::c_void) -> Option<Vec<u8>> {
     if stack.is_null() {
         return None;

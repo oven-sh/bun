@@ -671,14 +671,10 @@ impl JSValue {
     pub fn from_date_number(global: &JSGlobalObject, value: f64) -> JSValue {
         JSC__JSValue__dateInstanceFromNumber(global, value)
     }
-    /// May allocate a heap BigInt, so wrapped in `from_js_host_call` for
-    /// exception checking.
     #[track_caller]
     pub fn from_int64_no_truncate(global: &JSGlobalObject, i: i64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromInt64NoTruncate(global, i))
     }
-    /// May allocate a heap BigInt, so wrapped in `from_js_host_call` for
-    /// exception checking.
     #[track_caller]
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))

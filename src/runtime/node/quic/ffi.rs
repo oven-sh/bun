@@ -1,10 +1,5 @@
-//! The one place `node:quic` turns an lsquic/shim callback context pointer
-//! back into a Rust reference.
-
 use core::ffi::c_void;
 
-/// Recover the `&T` an lsquic/shim callback was handed as its context pointer.
-///
 /// SAFETY CONTRACT (the single audited deref for every `node:quic` callback):
 ///
 /// * Every context pointer the shim hands back — the engine's `owner`
@@ -35,25 +30,6 @@ pub(crate) unsafe fn ctx_ref<'a, T>(ctx: *mut c_void) -> Option<&'a T> {
     Some(unsafe { &*ctx.cast::<T>() })
 }
 
-/// Define an lsquic/shim callback whose first parameter is the context
-/// pointer: the macro emits the `unsafe extern "C"` shell, null-checks the
-/// context, and hands the body a safe `&T` (see [`ctx_ref`]).
-///
-/// ```ignore
-/// lsquic_callback! {
-///     pub(super) fn on_goaway_received(session: &QuicSession) {
-///         session.push_event(SessionEvent::GoawayReceived);
-///     }
-///     // a callback returning a value states the value used when ctx is NULL:
-///     pub(super) fn on_dg_write(session: &QuicSession, buf: *mut c_void, sz: usize) -> isize = 0; {
-///         ...
-///     }
-///     // `ctx: *mut c_void as session: &QuicSession` also binds the raw pointer:
-///     fn lookup_cert(owner: *mut c_void as this: &QuicEndpoint, ..) -> *mut SSL_CTX = null_mut(); {
-///         ...
-///     }
-/// }
-/// ```
 macro_rules! lsquic_callback {
     () => {};
 

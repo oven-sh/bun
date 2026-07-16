@@ -87,9 +87,6 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             int err = WSAGetLastError();
             if (ret < 0) {
                 if (err == WSAEINTR) continue;
-                /* Winsock reports through WSAGetLastError(), but callers read
-                 * errno -- lsquic closes the connection on any errno that is
-                 * neither EAGAIN/EWOULDBLOCK nor EMSGSIZE. Mirror it. */
                 switch (err) {
                     case WSAEWOULDBLOCK:  errno = EAGAIN; break;
                     case WSAEMSGSIZE:     errno = EMSGSIZE; break;
@@ -98,8 +95,6 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
                     case WSAEHOSTUNREACH: errno = EHOSTUNREACH; break;
                     default:              errno = EIO; break;
                 }
-                /* Match Linux sendmmsg: report the count sent so far; an
-                 * error is returned only when no datagram was sent. */
                 if (err == WSAEWOULDBLOCK || i > 0) return i;
                 return ret;
             }
@@ -124,8 +119,6 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
             ssize_t ret = sendmsg(fd, &sendbuf->msgvec[i].msg_hdr, flags);
             if (ret < 0) {
                 if (errno == EINTR) continue;
-                /* Match Linux sendmmsg: report the count sent so far; an
-                 * error is returned only when no datagram was sent. */
                 if (errno == EAGAIN || errno == EWOULDBLOCK || i > 0) return i;
                 return ret;
             }
@@ -144,9 +137,6 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
 
 int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int flags) {
 #if defined(_WIN32)
-    /* No recvmmsg on Winsock: drain the socket with repeated recvfrom so the
-     * caller still sees a whole read burst as one batch, exactly as recvmmsg
-     * delivers it on unix. */
     for (int i = 0; i < LIBUS_UDP_RECV_COUNT; i++) {
         while (1) {
             socklen_t addr_len = sizeof(struct sockaddr_storage);
@@ -162,8 +152,6 @@ int bsd_recvmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_recvbuf *recvbuf, int fl
                  * socket and tear down every conn that shares it (e.g. the QUIC
                  * client endpoint). Mirrors libuv's uv__udp_recv handling. */
                 if (err == WSAECONNRESET || err == WSAENETRESET) continue;
-                /* Drained (WSAEWOULDBLOCK) or a real error: report the datagrams
-                 * already read; only surface the error when none were. */
                 return i > 0 ? i : (int) ret;
             }
             recvbuf->recvlen[i] = (size_t) ret;

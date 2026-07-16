@@ -1600,8 +1600,6 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
-            // `RareData` is dropped in `destroy()`, after the heap is gone;
-            // its `Strong`s must be released against a live HandleSet.
             if let Some(rare) = self.rare_data.as_deref_mut() {
                 rare.release_js_handles();
             }
@@ -4332,8 +4330,7 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // Node's `--expose-internals`: bundled `internal/*` modules resolve
-        // to themselves; `fetchBuiltinModule` serves them by registry tag.
+        // Node's `--expose-internals`.
         if ModuleLoader::exposed_internal_tag(specifier_utf8.slice()).is_some() {
             *res = ErrorableString::ok(specifier.dupe_ref());
             return Ok(());

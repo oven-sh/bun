@@ -56,12 +56,6 @@ struct bsd_addr_t {
     int port;
 };
 
-// Windows has no recvmmsg, but bsd_recvmmsg still drains up to this many
-// datagrams per call with repeated recvfrom. Delivering one datagram per
-// on_data changes how the caller groups a read burst -- QUIC feeds every
-// datagram of a burst to the engine before ticking it, so a one-at-a-time
-// Windows read split a peer's handshake and its CONNECTION_CLOSE across
-// separate ticks. Same count as unix: the receive buffer bounds it.
 #define LIBUS_UDP_RECV_COUNT (LIBUS_RECV_BUFFER_LENGTH / LIBUS_UDP_MAX_SIZE)
 
 #ifdef __APPLE__
@@ -139,8 +133,6 @@ ssize_t sendmsg_x(int s, const struct mmsghdr *msgp, u_int cnt, int flags);
 
 struct udp_recvbuf {
 #if defined(_WIN32)
-    /* Slot i occupies buf[i * LIBUS_UDP_MAX_SIZE ..], mirroring the iov layout
-     * the unix side hands recvmmsg. */
     char *buf;
     size_t buflen;
     size_t recvlen[LIBUS_UDP_RECV_COUNT];

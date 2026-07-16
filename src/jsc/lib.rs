@@ -1066,9 +1066,6 @@ pub mod resolved_source_tag {
 
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
-        ///
-        /// Non-panicking lookup for dynamically-built specifiers (e.g. Node's
-        /// `--expose-internals` serving arbitrary `internal/*` modules).
         pub fn try_from_name(name: &[u8]) -> Option<Self> {
             INTERNAL_MODULE_TAG.get(name).copied()
         }

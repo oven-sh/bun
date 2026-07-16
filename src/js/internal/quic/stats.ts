@@ -1,5 +1,3 @@
-// Stats helper objects for the QUIC implementation. Each wraps a
-// BigUint64Array shared with the native layer.
 // Ported from Node.js lib/internal/quic/stats.js (v26.3.0).
 const { uncurryThis } = require("internal/primordials");
 const { isArrayBuffer } = require("node:util/types");
@@ -10,9 +8,6 @@ const TypedArrayPrototypeSubarray = uncurryThis(Uint8Array.prototype.subarray);
 
 const { kFinishClose, kInspect, kPrivateConstructor } = require("internal/quic/symbols");
 
-// Error constructors matching the subset of `internal/errors` codes used by
-// this file. Plain functions returning the error object so both `new ERR_X()`
-// and `ERR_X()` call styles produce the same error.
 function ERR_ILLEGAL_CONSTRUCTOR() {
   return $ERR_ILLEGAL_CONSTRUCTOR();
 }
@@ -24,9 +19,6 @@ function ERR_INVALID_ARG_TYPE(name, expected, actual) {
 }
 
 const {
-  // All of the IDX_STATS_* constants are the index positions of the stats
-  // fields in the relevant BigUint64Array's that underlie the *Stats objects.
-  // These are not exposed to end users.
   IDX_STATS_ENDPOINT_CREATED_AT,
   IDX_STATS_ENDPOINT_DESTROYED_AT,
   IDX_STATS_ENDPOINT_BYTES_RECEIVED,
@@ -135,8 +127,6 @@ class QuicEndpointStats {
    * @param {ArrayBuffer} buffer
    */
   constructor(privateSymbol, buffer) {
-    // We use the kPrivateConstructor symbol to restrict the ability to
-    // create new instances of QuicEndpointStats to internal code.
     assertIsPrivateConstructor(privateSymbol);
     if (!isArrayBuffer(buffer)) {
       throw new ERR_INVALID_ARG_TYPE("buffer", ["ArrayBuffer"], buffer);
@@ -288,8 +278,6 @@ class QuicEndpointStats {
     return {
       __proto__: null,
       connected: this.isConnected,
-      // We need to convert the values to strings because JSON does not
-      // support BigInts.
       createdAt: `${createdAt}`,
       destroyedAt: `${destroyedAt}`,
       bytesReceived: `${bytesReceived}`,
@@ -373,12 +361,7 @@ class QuicEndpointStats {
     )}`;
   }
 
-  /**
-   * True if this QuicEndpointStats object is still connected to the underlying
-   * Endpoint stats source. If this returns false, then the stats object is
-   * no longer being updated and should be considered stale.
-   * @type {boolean}
-   */
+  /** @type {boolean} */
   get isConnected() {
     assertIsQuicEndpointStats(this);
     return !this.#disconnected;
@@ -414,8 +397,6 @@ class QuicSessionStats {
    * @param {number} [byteOffset]
    */
   constructor(privateSymbol, view, byteOffset = 0) {
-    // We use the kPrivateConstructor symbol to restrict the ability to
-    // create new instances of QuicSessionStats to internal code.
     assertIsPrivateConstructor(privateSymbol);
     if (isArrayBuffer(view)) {
       this.#handle = new BigUint64Array(view);
@@ -651,8 +632,6 @@ class QuicSessionStats {
     return {
       __proto__: null,
       connected: this.isConnected,
-      // We need to convert the values to strings because JSON does not
-      // support BigInts.
       createdAt: `${createdAt}`,
       closingAt: `${closingAt}`,
       handshakeCompletedAt: `${handshakeCompletedAt}`,
@@ -771,12 +750,7 @@ class QuicSessionStats {
     )}`;
   }
 
-  /**
-   * True if this QuicSessionStats object is still connected to the underlying
-   * Session stats source. If this returns false, then the stats object is
-   * no longer being updated and should be considered stale.
-   * @type {boolean}
-   */
+  /** @type {boolean} */
   get isConnected() {
     return !this.#disconnected;
   }
@@ -813,8 +787,6 @@ class QuicStreamStats {
    * @param {number} [byteOffset] - byte offset into the shared page view
    */
   constructor(privateSymbol, view, byteOffset = 0) {
-    // We use the kPrivateConstructor symbol to restrict the ability to
-    // create new instances of QuicStreamStats to internal code.
     assertIsPrivateConstructor(privateSymbol);
     if (isArrayBuffer(view)) {
       this.#handle = new BigUint64Array(view);
@@ -890,13 +862,13 @@ class QuicStreamStats {
     return this.#handle[this.#offset + IDX_STATS_STREAM_FINAL_SIZE];
   }
 
-  /** @type {bigint} Current bytes in the receive accumulation buffer. */
+  /** @type {bigint} */
   get bytesAccumulated() {
     assertIsQuicStreamStats(this);
     return this.#handle[this.#offset + IDX_STATS_STREAM_BYTES_ACCUMULATED];
   }
 
-  /** @type {bigint} Peak bytes accumulated over the stream's lifetime. */
+  /** @type {bigint} */
   get maxBytesAccumulated() {
     assertIsQuicStreamStats(this);
     return this.#handle[this.#offset + IDX_STATS_STREAM_MAX_BYTES_ACCUMULATED];
@@ -926,8 +898,6 @@ class QuicStreamStats {
     return {
       __proto__: null,
       connected: this.isConnected,
-      // We need to convert the values to strings because JSON does not
-      // support BigInts.
       createdAt: `${createdAt}`,
       openedAt: `${openedAt}`,
       receivedAt: `${receivedAt}`,
@@ -992,12 +962,7 @@ class QuicStreamStats {
     )}`;
   }
 
-  /**
-   * True if this QuicStreamStats object is still connected to the underlying
-   * Stream stats source. If this returns false, then the stats object is
-   * no longer being updated and should be considered stale.
-   * @type {boolean}
-   */
+  /** @type {boolean} */
   get isConnected() {
     return !this.#disconnected;
   }
@@ -1009,8 +974,6 @@ class QuicStreamStats {
     this.#disconnected = true;
   }
 
-  // Creates an immediately disconnected QuicStreamStats object. Used when
-  // lazily creating stats for a stream that has already been destroyed.
   static [kCreateDisconnected]() {
     const count = IDX_STATS_STREAM_COUNT;
     const stats = new QuicStreamStats(kPrivateConstructor, new BigUint64Array(count), 0);

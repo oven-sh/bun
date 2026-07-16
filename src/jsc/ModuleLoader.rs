@@ -472,10 +472,7 @@ fn bun_aliases_get(name: &[u8]) -> Option<bun_resolve_builtins::Alias> {
     None
 }
 
-/// Node's `--expose-internals`: any bundled `internal/*` module is
-/// importable (same gate as `bun:internal-for-testing`; always-on in debug
-/// builds). Returns the registry tag name (`internal:<rest>`) when the
-/// specifier names a bundled internal module and the gate allows.
+/// Node's `--expose-internals`.
 pub fn exposed_internal_tag(spec: &[u8]) -> Option<(Vec<u8>, crate::ResolvedSourceTag)> {
     let rest = spec.strip_prefix(b"internal/")?;
     if !bun_resolve_builtins::expose_internals_enabled() {
@@ -499,8 +496,6 @@ pub(crate) unsafe extern "C" fn Bun__resolveAndFetchBuiltinModule(
     // SAFETY: C++ passed valid pointers; `jsc_vm` is the live per-thread VM.
     let specifier = unsafe { &*specifier };
     let spec_utf8 = specifier.to_utf8();
-    // Specifiers without a bundled match (e.g. `internal/test/binding`)
-    // fall through to the alias table.
     if let Some((name, tag)) = exposed_internal_tag(spec_utf8.slice()) {
         let resolved = ResolvedSource {
             source_code: bun_core::String::empty(),

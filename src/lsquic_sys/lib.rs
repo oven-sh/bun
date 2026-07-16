@@ -1,63 +1,44 @@
-//! Rust bindings for lsquic (vendor build) plus the small C shim in
-//! `packages/bun-usockets/src/node_quic_shim.c`.
-//!
-//! lsquic's `lsquic_engine_settings` / `lsquic_engine_api` / `lsquic_stream_if`
-//! / `lsquic_out_spec` structs are large and version-sensitive, so this crate
-//! does **not** mirror their layouts. Instead the shim exposes sizeof, an
-//! init-defaults call, and named setters for the handful of settings node:quic
-//! touches; everything else is opaque pointers.
-
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![allow(clippy::missing_safety_doc)]
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 
-/// Opaque `lsquic_engine_t`.
 #[repr(C)]
 pub struct lsquic_engine {
     _opaque: [u8; 0],
 }
-/// Opaque `lsquic_conn_t`.
 #[repr(C)]
 pub struct lsquic_conn {
     _opaque: [u8; 0],
 }
-/// Opaque `lsquic_stream_t`.
 #[repr(C)]
 pub struct lsquic_stream {
     _opaque: [u8; 0],
 }
-/// Opaque `struct lsquic_engine_settings` (size via [`us_nq_settings_size`]).
 #[repr(C)]
 pub struct lsquic_engine_settings {
     _opaque: [u8; 0],
 }
-/// Opaque `struct lsquic_out_spec` (accessed via `us_nq_spec_*`).
 #[repr(C)]
 pub struct lsquic_out_spec {
     _opaque: [u8; 0],
 }
-/// Opaque `struct sockaddr`.
 pub type sockaddr = c_void;
-/// Opaque `struct iovec`.
 #[repr(C)]
 pub struct iovec {
     pub iov_base: *mut c_void,
     pub iov_len: usize,
 }
-/// Opaque BoringSSL `SSL_CTX`.
 #[repr(C)]
 pub struct SSL_CTX {
     _opaque: [u8; 0],
 }
 
-/// `enum lsquic_hsk_status` (passed to `on_hsk_done`).
 pub const LSQ_HSK_FAIL: c_int = 0;
 pub const LSQ_HSK_OK: c_int = 1;
 pub const LSQ_HSK_RESUMED_OK: c_int = 2;
 pub const LSQ_HSK_RESUMED_FAIL: c_int = 3;
 
-/// `enum LSQUIC_CONN_STATUS` (return of `lsquic_conn_status`).
 pub const LSCONN_ST_HSK_IN_PROGRESS: c_int = 0;
 pub const LSCONN_ST_CONNECTED: c_int = 1;
 pub const LSCONN_ST_HSK_FAILURE: c_int = 2;
@@ -70,17 +51,13 @@ pub const LSCONN_ST_CLOSED: c_int = 8;
 pub const LSCONN_ST_PEER_GOING_AWAY: c_int = 9;
 pub const LSCONN_ST_VERNEG_FAILURE: c_int = 10;
 
-/// `enum lsquic_version` (subset).
 pub const LSQVER_I001: c_int = 5;
 pub const LSQVER_I002: c_int = 6;
-/// Sentinel "engine picks" passed to `lsquic_engine_connect`.
 pub const N_LSQVER: c_int = 8;
 
-/// `lsquic_global_init` flags.
 pub const LSQUIC_GLOBAL_CLIENT: c_int = 1;
 pub const LSQUIC_GLOBAL_SERVER: c_int = 2;
 
-/// Rust callback table the shim's `lsquic_stream_if` thunks dispatch into.
 /// **Layout must match `struct us_nq_vtable` in node_quic_shim.c exactly.**
 /// The first field of every conn-ctx and stream-ctx the Rust side returns
 /// must be a `*const NqVtable` so the thunks can recover it via
@@ -143,7 +120,6 @@ pub struct NqVtable {
 }
 
 unsafe extern "C" {
-    // ── lsquic core ───────────────────────────────────────────────────────
     pub fn lsquic_global_init(flags: c_int) -> c_int;
     pub fn lsquic_engine_destroy(engine: *mut lsquic_engine);
     pub fn lsquic_engine_conn_count(engine: *const lsquic_engine) -> c_uint;
@@ -181,7 +157,6 @@ unsafe extern "C" {
         token_sz: usize,
     ) -> *mut lsquic_conn;
 
-    // ── conn ─────────────────────────────────────────────────────────────
     pub fn lsquic_conn_get_ctx(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_get_peer_ctx(c: *const lsquic_conn, local_sa: *const c_void) -> *mut c_void;
     pub fn lsquic_conn_set_ctx(c: *mut lsquic_conn, ctx: *mut c_void);
@@ -218,7 +193,6 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn us_nq_tp_size() -> usize;
 
-    // ── stream ───────────────────────────────────────────────────────────
     pub fn lsquic_stream_id(s: *const lsquic_stream) -> u64;
     pub fn lsquic_stream_conn(s: *const lsquic_stream) -> *mut lsquic_conn;
     pub fn lsquic_stream_get_ctx(s: *const lsquic_stream) -> *mut c_void;
@@ -232,7 +206,6 @@ unsafe extern "C" {
     pub fn lsquic_stream_wantwrite(s: *mut lsquic_stream, is_want: c_int) -> c_int;
     pub fn lsquic_stream_is_pushed(s: *const lsquic_stream) -> c_int;
 
-    // ── shim ─────────────────────────────────────────────────────────────
     pub fn us_nq_enable_logging(level: *const c_char);
     pub fn us_nq_vtable_size() -> usize;
     pub fn us_nq_settings_size() -> usize;
@@ -304,19 +277,6 @@ unsafe extern "C" {
     pub fn us_nq_settings_set_delay_onclose(s: *mut lsquic_engine_settings, v: c_int);
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// Safe wrappers
-//
-// Each newtype owns the raw pointer and the single `unsafe` per FFI call, so
-// the runtime quic code works in safe Rust. The pattern follows
-// `bun_uws::udp::Socket`: the raw pointer is the only field, methods take
-// `&self` (lsquic is single-threaded — all calls happen on the JS thread),
-// and lifetime is documented per type.
-// ═══════════════════════════════════════════════════════════════════════════
-
-/// Heap-backed `lsquic_engine_settings` initialized to defaults for the given
-/// mode. Pass to [`Engine::new`]; lsquic copies the struct, so this can be
-/// dropped immediately after.
 pub struct Settings {
     bytes: Vec<u8>,
 }
@@ -360,8 +320,6 @@ impl Settings {
     }
 }
 
-/// Named setters for the fields node:quic touches. Each forwards to the
-/// matching C shim setter; the macro avoids repeating the SAFETY block.
 macro_rules! settings_setters {
     ($($name:ident => $ffi:ident : $ty:ty),* $(,)?) => {
         impl Settings {
@@ -374,7 +332,6 @@ macro_rules! settings_setters {
         }
     };
 }
-/// Read-back getters for the fields `localTransportParams` echoes.
 macro_rules! settings_getters {
     ($($name:ident => $ffi:ident : $ty:ty),* $(,)?) => {
         unsafe extern "C" { $(fn $ffi(s: *const lsquic_engine_settings) -> $ty;)* }
@@ -432,12 +389,10 @@ settings_setters! {
     delay_onclose => us_nq_settings_set_delay_onclose : c_int,
 }
 
-/// A raw-QUIC `lsquic_engine_t`. Owns the engine; [`Drop`] destroys it.
 pub struct Engine(*mut lsquic_engine);
 
 impl Engine {
-    /// Create a raw-QUIC or HTTP/3 engine. `vtable` and `alpn` must outlive
-    /// the returned engine — lsquic stores both pointers.
+    /// `vtable` and `alpn` must outlive the returned engine — lsquic stores both pointers.
     pub fn new(
         is_server: bool,
         is_http: bool,
@@ -459,8 +414,6 @@ impl Engine {
         (!raw.is_null()).then_some(Self(raw))
     }
 
-    /// Feed one received UDP packet to the engine.
-    ///
     /// # Safety
     /// `local`/`peer` must point to valid sockaddrs for the duration of the
     /// call, and `peer_ctx` must be the pointer the engine was configured with.
@@ -483,8 +436,6 @@ impl Engine {
         unsafe { lsquic_engine_process_conns(self.0) }
     }
 
-    /// Microseconds until the next required `process_conns`, or `None` when
-    /// idle.
     pub fn earliest_adv_tick(&self) -> Option<i32> {
         let mut diff: c_int = 0;
         // SAFETY: `self.0` is live; `diff` is a stack out-param.
@@ -495,9 +446,6 @@ impl Engine {
         }
     }
 
-    /// Initiate a client connection. Returns the conn-ctx that
-    /// `vtable.on_new_conn` set (lsquic calls it inside this function).
-    ///
     /// # Safety
     /// `local`/`peer` must point to valid sockaddrs for the duration of the
     /// call; `peer_ctx`/`conn_ctx` must stay valid for the connection's life.
@@ -551,8 +499,6 @@ impl Drop for Engine {
 pub struct Conn(*mut lsquic_conn);
 
 impl Conn {
-    /// Wrap a raw conn for the duration of one callback.
-    ///
     /// # Safety
     /// `raw` must be a live `lsquic_conn_t` for the lifetime of the returned
     /// value (i.e. until `on_conn_closed` returns for it).
@@ -566,8 +512,6 @@ impl Conn {
         // SAFETY: `self.0` is live (caller contract).
         unsafe { lsquic_conn_close(self.0) }
     }
-    /// HTTP mode: send GOAWAY and stop accepting new streams (no-op
-    /// otherwise). The connection stays open for existing streams.
     pub fn going_away(&self) {
         // SAFETY: as above.
         unsafe { lsquic_conn_going_away(self.0) }
@@ -576,8 +520,6 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_abort(self.0) }
     }
-    /// Abort without sending CONNECTION_CLOSE: the peer discovers the death
-    /// via stateless reset or its idle timeout.
     pub fn abort_silent(&self) {
         unsafe extern "C" {
             fn lsquic_conn_abort_silent(c: *mut lsquic_conn);
@@ -589,9 +531,7 @@ impl Conn {
         // SAFETY: as above; `reason` is NUL-terminated by construction.
         unsafe { lsquic_conn_abort_error(self.0, is_app as c_int, code, reason.as_ptr()) }
     }
-    /// SETTINGS_H3_DATAGRAM state (RFC 9297): `None` while the peer's
-    /// SETTINGS frame has not arrived, else whether it advertised support.
-    /// `Some(false)` for non-HTTP/3 connections.
+    /// SETTINGS_H3_DATAGRAM state (RFC 9297).
     pub fn peer_h3_datagram(&self) -> Option<bool> {
         unsafe extern "C" {
             fn lsquic_conn_peer_h3_datagram(c: *const lsquic_conn) -> c_int;
@@ -635,13 +575,10 @@ impl Conn {
         // SAFETY: as above.
         (!p.is_null()).then(|| unsafe { core::ffi::CStr::from_ptr(p) })
     }
-    /// PING frames received on this conn (session stats).
     pub fn pings_received(&self) -> u64 {
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_pings_received(self.0) }
     }
-    /// Set this conn's keep-alive PING cadence (µs; 0 disables), overriding
-    /// the engine-wide `ping_period_us` setting for this conn only.
     pub fn set_ping_period_us(&self, usec: u64) {
         unsafe extern "C" {
             fn lsquic_conn_set_ping_period_us(c: *mut lsquic_conn, usec: u64);
@@ -649,9 +586,6 @@ impl Conn {
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_set_ping_period_us(self.0, usec) }
     }
-    /// Force the pending delayed ACK to be scheduled on the next engine
-    /// tick (used before a silent abort so the peer's last packets are
-    /// acknowledged instead of retransmitted into a dead conn).
     pub fn ack_now(&self) {
         unsafe extern "C" {
             fn lsquic_conn_ack_now(c: *mut lsquic_conn);
@@ -659,8 +593,6 @@ impl Conn {
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_ack_now(self.0) }
     }
-    /// Opt this client conn in to migrating to the server's preferred
-    /// address after the handshake (off by default).
     pub fn use_preferred_address(&self, on: bool) {
         unsafe extern "C" {
             fn lsquic_conn_use_preferred_address(c: *mut lsquic_conn, on: c_int);
@@ -668,8 +600,6 @@ impl Conn {
         // SAFETY: `self.0` is a live conn (constructor contract).
         unsafe { lsquic_conn_use_preferred_address(self.0, on as c_int) }
     }
-    /// The DATAGRAM frame currently being delivered via `on_datagram`
-    /// arrived in a 0-RTT packet. Valid only during that callback.
     pub fn datagram_early(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_conn_datagram_early(c: *const lsquic_conn) -> c_int;
@@ -687,7 +617,6 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_get_server_cert_chain(self.0) }
     }
-    /// The per-connection BoringSSL `SSL*` (IETF QUIC only).
     pub fn ssl(&self) -> *mut c_void {
         // SAFETY: as above.
         unsafe { lsquic_conn_get_ssl(self.0) }
@@ -754,15 +683,10 @@ impl Stream {
         // SAFETY: as above.
         unsafe { lsquic_stream_flush(self.0) }
     }
-    /// `how`: 0=read, 1=write (sends FIN), 2=both.
     pub fn shutdown(&self, how: c_int) -> c_int {
         // SAFETY: as above.
         unsafe { lsquic_stream_shutdown(self.0, how) }
     }
-    /// Force-finish both sides without sending RESET_STREAM or FIN — nothing
-    /// goes on the wire, so the peer never learns the stream existed. Used to
-    /// discard a just-created local stream whose JS wrapper was destroyed
-    /// while still pending. (Exported by liblsquic but not in lsquic.h.)
     pub fn shutdown_internal(&self) {
         unsafe extern "C" {
             fn lsquic_stream_shutdown_internal(s: *mut lsquic_stream);
@@ -786,7 +710,6 @@ impl Stream {
         // SAFETY: as above.
         unsafe { us_nq_stream_reset(self.0, code) }
     }
-    /// Received error code (from RESET_STREAM or STOP_SENDING).
     pub fn error_code(&self) -> u64 {
         unsafe extern "C" {
             fn lsquic_stream_get_error_code(s: *const lsquic_stream) -> u64;
@@ -794,18 +717,11 @@ impl Stream {
         // SAFETY: as above.
         unsafe { lsquic_stream_get_error_code(self.0) }
     }
-    /// HTTP/3 only: take ownership of the decoded header set (the
-    /// `nq_hset` the shim's `ea_hsi_if` accumulated). Must be called
-    /// before any `read()` on an HTTP stream — lsquic blocks body reads
-    /// until the application claims it.
     pub fn take_header_set(&self) -> Option<HeaderSet> {
         // SAFETY: as above.
         let raw = unsafe { lsquic_stream_get_hset(self.0) };
         (!raw.is_null()).then_some(HeaderSet(raw))
     }
-    /// HTTP/3 only: send a header block built from the JS layer's
-    /// NUL-delimited `name\0value\0flags` triplets. Must precede any
-    /// `write()`.
     pub fn send_headers(&self, nul_joined: &[u8], eos: bool) -> c_int {
         // SAFETY: as above; lsquic copies the buffer before returning.
         unsafe {
@@ -862,7 +778,6 @@ impl Stream {
         // SAFETY: `self.0` is a live stream (constructor contract).
         unsafe { lsquic_stream_has_unacked_data(self.0) != 0 }
     }
-    /// A RESET_STREAM frame was received (any code, including 0).
     pub fn reset_received(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_stream_reset_received(s: *const lsquic_stream) -> c_int;
@@ -870,7 +785,6 @@ impl Stream {
         // SAFETY: `self.0` is a live stream (constructor contract).
         unsafe { lsquic_stream_reset_received(self.0) != 0 }
     }
-    /// The peer sent STOP_SENDING for this stream (`STREAM_SS_RECVD`).
     pub fn is_rejected(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_stream_is_rejected(s: *const lsquic_stream) -> c_int;
@@ -878,7 +792,6 @@ impl Stream {
         // SAFETY: `self.0` is a live stream (constructor contract).
         unsafe { lsquic_stream_is_rejected(self.0) != 0 }
     }
-    /// Any data on this stream arrived in 0-RTT (early data) packets.
     pub fn received_early_data(&self) -> bool {
         unsafe extern "C" {
             fn lsquic_stream_received_early_data(s: *mut lsquic_stream) -> c_int;
@@ -886,7 +799,6 @@ impl Stream {
         // SAFETY: `self.0` is a live stream (constructor contract).
         unsafe { lsquic_stream_received_early_data(self.0) != 0 }
     }
-    /// Queue STOP_SENDING(code) and shut the read side.
     pub fn stop_sending(&self, code: u64) {
         unsafe extern "C" {
             fn lsquic_stream_send_stop_sending(s: *mut lsquic_stream, code: u64);
@@ -896,13 +808,9 @@ impl Stream {
     }
 }
 
-/// Decoded HTTP/3 header block (the shim's `nq_hset`). Ownership is
-/// transferred from lsquic via [`Stream::take_header_set`]; [`Drop`] frees
-/// the C allocation.
 pub struct HeaderSet(*mut c_void);
 
 impl HeaderSet {
-    /// Flat `[name, value, name, value, ...]`. Header octets are returned raw:
     /// h3 permits bytes that are not valid UTF-8, so the JS boundary picks the
     /// encoding (latin1, as node does for HTTP headers).
     pub fn pairs(&self) -> Vec<Vec<u8>> {
@@ -914,8 +822,6 @@ impl HeaderSet {
         }
         // SAFETY: the shim guarantees `p[..len]` is valid until free.
         let bytes = unsafe { core::slice::from_raw_parts(p.cast::<u8>(), len) };
-        // The shim writes `name\0value\0` pairs; strip the trailing NUL so
-        // `split` doesn't yield an empty terminal element.
         let bytes = bytes.strip_suffix(&[0u8][..]).unwrap_or(bytes);
         bytes.split(|&b| b == 0).map(<[u8]>::to_vec).collect()
     }
@@ -929,13 +835,11 @@ impl Drop for HeaderSet {
     }
 }
 
-/// One-time global init (idempotent).
 pub fn global_init() {
     // SAFETY: pure library init.
     unsafe { lsquic_global_init(LSQUIC_GLOBAL_CLIENT | LSQUIC_GLOBAL_SERVER) };
 }
 
-/// Route lsquic's own debug logging to stderr.
 pub fn enable_logging(level: &core::ffi::CStr) {
     // SAFETY: `level` is a NUL-terminated string.
     unsafe { us_nq_enable_logging(level.as_ptr()) }
@@ -962,7 +866,6 @@ pub struct ConnInfo {
 }
 
 impl Conn {
-    /// Snapshot of conn-level counters; None until lsquic has data.
     pub fn info(&self) -> Option<ConnInfo> {
         let mut out = ConnInfo::default();
         // SAFETY: `self.0` is live; `out` is a stack out-param.
@@ -1000,8 +903,6 @@ pub const MAX_CID_LEN: usize = 20;
 impl NqTransportParams {
     fn cid_str(buf: &[u8; 2 * MAX_CID_LEN + 1]) -> &str {
         let nul = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-        // The C side writes hex digits only, but validate anyway: a corrupt
-        // FFI buffer must not become an invalid str.
         core::str::from_utf8(&buf[..nul]).unwrap_or("")
     }
     pub fn initial_scid_str(&self) -> &str {
@@ -1024,7 +925,6 @@ impl Default for NqTransportParams {
 }
 
 impl Conn {
-    /// Peer transport params, or None before the handshake.
     pub fn peer_transport_params(&self) -> Option<NqTransportParams> {
         let mut out = NqTransportParams::default();
         // SAFETY: `self.0` is live; `out` is a stack out-param.
@@ -1036,7 +936,6 @@ impl Conn {
     }
 }
 
-/// Debug-only check that the C and Rust definitions of `us_nq_vtable` agree.
 pub fn debug_assert_layout() {
     debug_assert_eq!(
         // SAFETY: pure size query.

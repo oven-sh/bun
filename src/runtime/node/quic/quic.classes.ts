@@ -2,7 +2,6 @@ import { define } from "../../../codegen/class-definitions";
 
 // Native handle classes for node:quic, mirroring Node's internalBinding('quic')
 // Endpoint/Session/Stream objects (node/src/quic/{endpoint,session,streams}.h).
-// The JS layer (src/js/internal/quic/quic.ts) wraps these handles.
 export default [
   define({
     name: "QuicEndpoint",

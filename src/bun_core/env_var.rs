@@ -191,6 +191,9 @@ pub mod feature_flag {
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE, "BUN_FEATURE_FLAG_DISABLE_ISOLATION_SOURCE_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE", {});
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO, "BUN_FEATURE_FLAG_DISABLE_DNS_CACHE_LIBINFO", {});
+    // Test hook: make the macOS libinfo async DNS path never deliver its reply,
+    // to exercise the stale-request sweep fallback.
+    new_feature_flag!(pub BUN_INTERNAL_DNS_LIBINFO_SIMULATE_STALL, "BUN_INTERNAL_DNS_LIBINFO_SIMULATE_STALL", {});
     // Force the event loop to use epoll_pwait(2) instead of epoll_pwait2(2).
     // Escape hatch for seccomp policies that block syscall 441 without
     // returning a checkable errno (Android app sandbox, some container

@@ -289,6 +289,13 @@ void us_internal_timer_sweep(struct us_loop_t *loop) {
         loop_data->iterator = group->next;
         outer_continue:;
     }
+
+#ifdef __APPLE__
+    /* Fall any in-flight libinfo getaddrinfo_async requests that have outlived
+     * their mach-port reply back to the blocking resolver, so one lost message
+     * cannot wedge every connect to that host:port for the life of the process. */
+    Bun__addrinfo_sweepStaleLibinfo(loop);
+#endif
 }
 
 /* We do not want to block the loop with tons and tons of CPU-intensive work for SSL handshakes.

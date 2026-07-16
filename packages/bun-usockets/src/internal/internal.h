@@ -142,6 +142,9 @@ extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_
 extern int Bun__addrinfo_cancel(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket);
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
 extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_request* addrinfo_req);
+#ifdef __APPLE__
+extern void Bun__addrinfo_sweepStaleLibinfo(struct us_loop_t* loop);
+#endif
 
 
 /* Loop related */

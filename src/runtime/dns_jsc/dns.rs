@@ -140,6 +140,7 @@ pub(super) mod lib_info {
         context: *mut c_void,
     ) -> i32;
     pub(crate) type GetaddrinfoAsyncHandleReply = unsafe extern "C" fn(*mut mach_port) -> i32;
+    pub(crate) type GetaddrinfoAsyncCancel = unsafe extern "C" fn(mach_port);
 
     // PORTING.md §Global mutable state: lazy dlopen, JS-thread-only.
     // null = "tried and failed / not yet loaded"; LOADED disambiguates.
@@ -179,6 +180,15 @@ pub(super) mod lib_info {
         sys::dlsym_with_handle!(
             GetaddrinfoAsyncHandleReply,
             "getaddrinfo_async_handle_reply",
+            get_handle()
+        )
+    }
+
+    pub(crate) fn getaddrinfo_async_cancel() -> Option<GetaddrinfoAsyncCancel> {
+        bun_core::Environment::only_mac();
+        sys::dlsym_with_handle!(
+            GetaddrinfoAsyncCancel,
+            "getaddrinfo_async_cancel",
             get_handle()
         )
     }
@@ -2238,10 +2248,22 @@ pub mod internal {
     // a borrowed C-ABI view (`info` points at `result_buf[0]`). Do NOT free via
     // this field.
 
-    #[derive(Default)]
     pub struct MacAsyncDNS {
         pub file_poll: Option<NonNull<FilePoll>>, // OWNED hive slot (FilePoll::init)
         pub machport: mach_port,
+        /// The uws loop whose FilePoll hive owns `file_poll`; the periodic
+        /// stale-request sweep only processes entries created by its own loop.
+        pub loop_: *mut Loop,
+    }
+
+    impl Default for MacAsyncDNS {
+        fn default() -> Self {
+            Self {
+                file_poll: None,
+                machport: 0,
+                loop_: ptr::null_mut(),
+            }
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -2827,6 +2849,29 @@ pub mod internal {
             return false;
         }
 
+        // Test hook: simulate a lost mach-port reply. The poll is created but
+        // never registered, so only the sweep can complete the request.
+        if env_var::feature_flag::BUN_INTERNAL_DNS_LIBINFO_SIMULATE_STALL
+            .get()
+            .unwrap_or(false)
+        {
+            let poll = FilePoll::init(
+                crate::api::bun::process::event_loop_handle_to_ctx(loop_),
+                sys::Fd::from_native(machport as i32),
+                Default::default(),
+                Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
+            );
+            // SAFETY: `req` is the live heap-allocated request owned by the caller.
+            unsafe {
+                (*req).libinfo = MacAsyncDNS {
+                    file_poll: NonNull::new(poll),
+                    machport,
+                    loop_: loop_.r#loop(),
+                };
+            }
+            return true;
+        }
+
         let poll = FilePoll::init(
             crate::api::bun::process::event_loop_handle_to_ctx(loop_),
             // bitcast u32 mach_port → i32 fd
@@ -2842,6 +2887,12 @@ pub mod internal {
             // `FilePoll::init` above; nothing else aliases it. Registration
             // failed, so it was never armed — release the slot back to the hive.
             unsafe { (*poll).deinit() };
+            // Release the port + async work unit so libinfo does not send to a
+            // port nobody watches.
+            if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
+                // SAFETY: `machport` is the receive right allocated above.
+                unsafe { cancel(machport) };
+            }
             return false;
         }
 
@@ -2851,6 +2902,7 @@ pub mod internal {
             (*req).libinfo = MacAsyncDNS {
                 file_poll: NonNull::new(poll),
                 machport,
+                loop_: loop_.r#loop(),
             };
         }
         #[cfg(not(target_os = "macos"))]
@@ -2940,6 +2992,15 @@ pub mod internal {
                     }
                 }
             }
+        }
+        // SAFETY: `req` is live and we are on the JS thread (via `on_machport_change`);
+        // release the hive slot `lookup_libinfo` allocated (previously leaked).
+        unsafe {
+            if let Some(poll) = (*req).libinfo.file_poll.take() {
+                (*poll.as_ptr()).deinit();
+            }
+            (*req).libinfo.machport = 0;
+            (*req).libinfo.loop_ = ptr::null_mut();
         }
         after_result(req, addr_info, status_int);
     }
@@ -3093,6 +3154,71 @@ pub mod internal {
             work_pool_callback(r.0)
         });
         Some(req)
+    }
+
+    /// In-flight libinfo age at which the sweep cancels the async work unit
+    /// and re-issues the lookup via the work-pool (blocking libc) path.
+    #[cfg(target_os = "macos")]
+    const LIBINFO_STALE_SECONDS: u32 = 5;
+
+    /// Called from `us_internal_timer_sweep` (macOS, every ~4s while any socket
+    /// is linked). Runs on `loop_`'s thread and only processes entries whose
+    /// `FilePoll` was allocated from that loop's hive.
+    #[cfg(target_os = "macos")]
+    fn sweep_stale_libinfo(loop_: *mut Loop) {
+        let now = GlobalCache::get_cache_timestamp();
+        let mut stale: Vec<*mut Request> = Vec::new();
+        {
+            let guard = global_cache().lock();
+            for &entry in &guard.cache[..guard.len] {
+                // SAFETY: entries 0..len are live heap Requests while the lock is held.
+                unsafe {
+                    if (*entry).result.is_none()
+                        && (*entry).libinfo.file_poll.is_some()
+                        && (*entry).libinfo.loop_ == loop_
+                        && now.saturating_sub((*entry).created_at) > LIBINFO_STALE_SECONDS
+                    {
+                        stale.push(entry);
+                    }
+                }
+            }
+        }
+        for req in stale {
+            // SAFETY: `req` is still live — its in-flight refcount (released
+            // only by `after_result`) cannot drop on this thread between the
+            // scan above and this block, and we only run on `loop_`'s thread.
+            unsafe {
+                let Some(poll) = (*req).libinfo.file_poll.take() else {
+                    continue;
+                };
+                let machport = core::mem::take(&mut (*req).libinfo.machport);
+                (*req).libinfo.loop_ = ptr::null_mut();
+                if machport != 0 {
+                    if let Some(cancel) = lib_info::getaddrinfo_async_cancel() {
+                        cancel(machport);
+                    }
+                }
+                // Unregister the knote + return the hive slot; deferred-free
+                // protects against any event already queued for this poll.
+                (*poll.as_ptr()).deinit();
+
+                bun_output::scoped_log!(
+                    dns,
+                    "sweep_stale_libinfo: falling back to work pool for {}",
+                    bstr::BStr::new(
+                        (*req)
+                            .key
+                            .host
+                            .as_ref()
+                            .map(|h| h.as_bytes())
+                            .unwrap_or(b"")
+                    )
+                );
+            }
+            let _ = bun_threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| {
+                work_pool_callback(r.0)
+            });
+        }
     }
 
     #[host_fn]
@@ -3293,6 +3419,11 @@ pub mod internal {
         req: *mut Request,
     ) -> *mut RequestResult {
         get_request_result(req)
+    }
+    #[cfg(target_os = "macos")]
+    #[unsafe(no_mangle)]
+    pub(crate) extern "C" fn Bun__addrinfo_sweepStaleLibinfo(loop_: *mut Loop) {
+        sweep_stale_libinfo(loop_)
     }
     /// QUIC analogue of `Bun__addrinfo_set` — link-time export so `bun_http`
     /// (lower-tier crate) can register without a `bun_runtime` dep cycle.

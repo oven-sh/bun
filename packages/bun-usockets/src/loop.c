@@ -114,16 +114,10 @@ void us_internal_disable_sweep_timer(struct us_loop_t *loop) {
 
 #define LIBUS_TIMEOUT_GRANULARITY_NS ((long long) LIBUS_TIMEOUT_GRANULARITY * 1000000000LL)
 
-uint64_t us_internal_monotonic_ns(void) {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t) ts.tv_sec * 1000000000ULL + (uint64_t) ts.tv_nsec;
-}
-
 void us_internal_enable_sweep_timer(struct us_loop_t *loop) {
     loop->data.sweep_timer_count++;
     if (loop->data.sweep_timer_count == 1) {
-        loop->data.sweep_next_tick_ns = (long long) us_internal_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
+        loop->data.sweep_next_tick_ns = (long long) us_loop_monotonic_ns() + LIBUS_TIMEOUT_GRANULARITY_NS;
         Bun__internal_ensureDateHeaderTimerIsEnabled(loop);
     }
 }
@@ -141,7 +135,7 @@ long long us_internal_sweep_timeout_ns(struct us_loop_t *loop) {
     }
     /* Its own reading, deliberately: this bounds the poll so the sweep is not
      * starved, and a caller's older reading would round the deadline up. */
-    long long diff = loop->data.sweep_next_tick_ns - (long long) us_internal_monotonic_ns();
+    long long diff = loop->data.sweep_next_tick_ns - (long long) us_loop_monotonic_ns();
     return diff > 0 ? diff : 0;
 }
 
@@ -149,7 +143,7 @@ void us_internal_sweep_if_due(struct us_loop_t *loop) {
     if (loop->data.sweep_next_tick_ns < 0) {
         return;
     }
-    long long now = (long long) us_internal_monotonic_ns();
+    long long now = (long long) us_loop_monotonic_ns();
     if (now < loop->data.sweep_next_tick_ns) {
         return;
     }

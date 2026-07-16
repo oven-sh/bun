@@ -392,9 +392,9 @@ void Worker::eventLoopUtilization(double& idleMs, double& activeMs)
 {
     idleMs = 0;
     activeMs = 0;
-    // After terminate()/close the worker VM is being torn down; report zeros
-    // like Node does once the loop has stopped.
-    if (!impl_ || m_terminateRequested.load() || m_state.load() >= State::Closing)
+    // Node reports zeros until 'online' fires (kIsOnline) and again once the
+    // worker terminates; !isOnline() covers both Pending and Closing/Closed.
+    if (!impl_ || m_terminateRequested.load() || !isOnline())
         return;
     WebWorker__getEventLoopUtilization(impl_, &idleMs, &activeMs);
 }

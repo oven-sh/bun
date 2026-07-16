@@ -1377,6 +1377,7 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   expect(enumerable).not.toContain("startCpuProfileInternal");
   expect(enumerable).not.toContain("stopCpuProfileInternal");
   expect(enumerable).not.toContain("cpuUsageInternal");
+  expect(enumerable).not.toContain("eventLoopUtilizationInternal");
 });
 
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
@@ -1748,6 +1749,18 @@ test("worker.performance.eventLoopUtilization() reports the worker's activity", 
 
     expect(elu2.active).toBeGreaterThan(50);
     expect(elu2.utilization).toBeGreaterThan(0.5);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() returns zeros before 'online' fires", async () => {
+  const worker = new Worker("require('worker_threads').parentPort.on('message', () => {})", { eval: true });
+  try {
+    // Sampled in the same tick as construction, the worker VM cannot have come
+    // online yet; Node gates on kIsOnline and reports zeros here.
+    expect(worker.performance.eventLoopUtilization()).toEqual({ idle: 0, active: 0, utilization: 0 });
   } finally {
     await worker.terminate();
   }

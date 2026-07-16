@@ -1147,7 +1147,7 @@ class Worker extends EventEmitter {
 
   get performance() {
     if (this.#performance === undefined) {
-      const getRaw = () => this.#worker.eventLoopUtilization();
+      const getRaw = () => this.#worker.eventLoopUtilizationInternal();
       this.#performance = {
         eventLoopUtilization(utilization1, utilization2) {
           const raw = getRaw();

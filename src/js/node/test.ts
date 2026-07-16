@@ -16,7 +16,11 @@ function run() {
 // Port of Node.js lib/internal/test_runner/mock/mock.js (v26.3.0):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/test_runner/mock/mock.js
 // API reference: https://nodejs.org/api/test.html#class-mocktracker
-let trackMockCall: (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => unknown;
+const ReflectConstruct = Reflect.construct;
+const ReflectGet = Reflect.get;
+
+let nextMockImpl: (ctx: MockFunctionContext) => Function;
+let pushMockCall: (ctx: MockFunctionContext, call: unknown) => void;
 
 class MockFunctionContext {
   #calls: unknown[];
@@ -84,12 +88,7 @@ class MockFunctionContext {
   }
 
   static {
-    trackMockCall = function trackMockCall(
-      ctx: MockFunctionContext,
-      thisArg: unknown,
-      args: unknown[],
-      target: unknown,
-    ) {
+    nextMockImpl = function nextMockImpl(ctx: MockFunctionContext) {
       const callIndex = ctx.#calls.length;
       let implementation = ctx.#onceImplementations.get(callIndex);
       if (implementation !== undefined) {
@@ -103,30 +102,10 @@ class MockFunctionContext {
       if (callIndex + 1 === ctx.#times) {
         ctx.restore();
       }
-      // node records the call in a finally *after* invoking, so a reentrant
-      // implementation observes callCount() === N (not N+1), recursive calls
-      // record in completion order, and the stack is captured post-invoke.
-      let result: unknown;
-      let error: unknown;
-      try {
-        result =
-          target === undefined
-            ? (implementation as Function).$apply(thisArg, args)
-            : Reflect.construct(implementation as Function, args, target as Function);
-        return result;
-      } catch (e) {
-        error = e;
-        throw e;
-      } finally {
-        ctx.#calls.push({
-          arguments: args,
-          error,
-          result,
-          stack: new Error(),
-          target,
-          this: thisArg,
-        });
-      }
+      return implementation;
+    };
+    pushMockCall = function pushMockCall(ctx: MockFunctionContext, call: unknown) {
+      ctx.#calls.push(call);
     };
   }
 }
@@ -139,23 +118,60 @@ function createMockFunction(
 ) {
   const context = new MockFunctionContext(original, implementation, restore, times);
   kMockContexts.push(context);
-  function mockFunction(this: unknown, ...args: unknown[]) {
-    return trackMockCall(context, this, args, new.target);
-  }
-  Object.defineProperty(mockFunction, "mock", {
-    value: context,
-    writable: false,
-    enumerable: false,
-  });
-  Object.defineProperty(mockFunction, "length", {
-    value: original.length,
-    configurable: true,
-  });
-  Object.defineProperty(mockFunction, "name", {
-    value: original.name,
-    configurable: true,
-  });
-  return mockFunction;
+  // Node returns a Proxy over the original so .prototype, statics, name,
+  // length and constructability pass through unchanged; see #setupMock in
+  // lib/internal/test_runner/mock/mock.js.
+  return new Proxy(original, {
+    __proto__: null,
+    apply(_fn: Function, thisArg: unknown, argList: unknown[]) {
+      const fn = nextMockImpl(context);
+      let result: unknown;
+      let error: unknown;
+      try {
+        result = fn.$apply(thisArg, argList);
+      } catch (err) {
+        error = err;
+        throw err;
+      } finally {
+        pushMockCall(context, {
+          arguments: argList,
+          error,
+          result,
+          stack: new Error(),
+          target: undefined,
+          this: thisArg,
+        });
+      }
+      return result;
+    },
+    construct(target: Function, argList: unknown[], newTarget: Function) {
+      const realTarget = nextMockImpl(context);
+      let result: unknown;
+      let error: unknown;
+      try {
+        result = ReflectConstruct(realTarget, argList, newTarget);
+      } catch (err) {
+        error = err;
+        throw err;
+      } finally {
+        pushMockCall(context, {
+          arguments: argList,
+          error,
+          result,
+          stack: new Error(),
+          target,
+          this: result,
+        });
+      }
+      return result;
+    },
+    get(target: Function, property: PropertyKey, receiver: unknown) {
+      if (property === "mock") {
+        return context;
+      }
+      return ReflectGet(target, property, receiver);
+    },
+  } as ProxyHandler<Function>);
 }
 
 const kMockContexts: MockFunctionContext[] = [];

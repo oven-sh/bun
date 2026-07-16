@@ -610,7 +610,8 @@ impl TextDecoder {
             // ERR_ENCODING_NOT_SUPPORTED an unknown string label does.
             // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, so the +1
             // ref `from_js` returns has to be wrapped to deref on scope exit.
-            let converted = OwnedString::new(bun_core::String::from_js(encoding_value, global_this)?);
+            let converted =
+                OwnedString::new(bun_core::String::from_js(encoding_value, global_this)?);
             let str = converted.to_utf8();
 
             // Same rule as the string branch above: "If encoding is failure or

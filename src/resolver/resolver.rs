@@ -1571,7 +1571,9 @@ impl<'a> Resolver<'a> {
                                 primary: Fs::Path::init_with_namespace(import_path, b"node"),
                                 secondary: None,
                             },
-                            module_type: options::ModuleType::Esm,
+                            // Embedded code can be CJS (the react-refresh fallback)
+                            // or ESM (bun-framework-react/*.tsx); let the parser decide.
+                            module_type: options::ModuleType::Unknown,
                             primary_side_effects_data: SideEffects::NoSideEffectsPureData,
                             flags: ResultFlags::default(),
                             ..Default::default()

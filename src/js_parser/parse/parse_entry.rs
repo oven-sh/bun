@@ -259,6 +259,10 @@ impl<'a> Options<'a> {
             hasher.update(b"no_dce");
         }
 
+        // `module_type` changes transpiled output for byte-identical sources:
+        // exports_kind and the top-level `this` substitution both depend on it.
+        hasher.update(&[self.module_type as u8]);
+
         self.features.hash_for_runtime_transpiler(hasher);
     }
 
@@ -1624,7 +1628,15 @@ impl<'a> Parser<'a> {
 
         if p.is_deoptimized_commonjs() {
             exports_kind = js_ast::ExportsKind::Cjs;
-        } else if p.esm_export_keyword.len > 0 || p.top_level_await_keyword.len > 0 {
+        } else if p.esm_export_keyword.len > 0
+            || p.top_level_await_keyword.len > 0
+            // .mjs / .mts / "type":"module" are authoritative at runtime: a bare
+            // reference to `module`/`exports` (e.g. `typeof module`) must not flip
+            // the file to CJS. Bundler excluded: its resolver can return Esm for
+            // CJS files (nameless nested "type":"commonjs", exports-map "import"
+            // key), so the content sniff below is still needed there.
+            || (p.options.module_type == options::ModuleType::Esm && !p.options.bundle)
+        {
             exports_kind = js_ast::ExportsKind::Esm;
         } else if uses_exports_ref || uses_module_ref || p.has_top_level_return || p.has_with_scope
         {

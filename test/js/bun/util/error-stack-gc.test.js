@@ -60,18 +60,16 @@ describe("error.stack after GC keeps name and message", () => {
     },
   ];
 
-  for (const { label, script, expected } of cases) {
-    test.concurrent(label, async () => {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", script],
-        env: bunEnv,
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      if (exitCode !== 0) {
-        throw new Error(`exited with ${exitCode}: ${stderr}`);
-      }
-      expect(JSON.parse(stdout)).toEqual(expected);
+  test.concurrent.each(cases)("$label", async ({ script, expected }) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stderr: "pipe",
     });
-  }
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    if (exitCode !== 0) {
+      throw new Error(`exited with ${exitCode}: ${stderr}`);
+    }
+    expect(JSON.parse(stdout)).toEqual(expected);
+  });
 });

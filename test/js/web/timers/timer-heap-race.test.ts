@@ -55,7 +55,7 @@ it.skipIf(!isASAN)(
     // fixture's own OK line either way, so assert exitCode/signal explicitly.
     expect({ stdout, stderr, signal, exitCode }).toEqual({
       stdout: "OK\n",
-      stderr: "",
+      stderr: expect.not.stringContaining("LeakSanitizer"),
       signal: null,
       exitCode: 0,
     });

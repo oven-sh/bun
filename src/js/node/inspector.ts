@@ -51,7 +51,7 @@ function open(port?: number, host?: string, wait?: boolean) {
       throw $ERR_OUT_OF_RANGE("port", ">= 0 && <= 65535", port);
     }
   }
-  const portNumber = port === undefined || port === null ? 9229 : port;
+  const portNumber = port === undefined || port === null ? process.debugPort : port;
   const hostname = typeof host === "string" && host.length > 0 ? host : "127.0.0.1";
   // Bracket bare IPv6 hosts so they survive URL parsing.
   const hostPart = hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
@@ -81,6 +81,11 @@ function open(port?: number, host?: string, wait?: boolean) {
   }
 
   activeInspectorUrl = resolvedUrl;
+  // Node writes the resolved port back so process.debugPort reflects it after
+  // open(0) picks an ephemeral port.
+  try {
+    process.debugPort = Number(new URL(resolvedUrl).port);
+  } catch {}
   process.stderr.write(`Debugger listening on ${resolvedUrl}\nFor help, see: https://nodejs.org/en/docs/inspector\n`);
 
   if (wait) {
@@ -320,8 +325,10 @@ function buildScriptCoverageList(
       }
     }
 
-    const scriptExecuted =
-      blocks.some(([, , count]) => count > 0) || functions.some(([, , executed]) => executed) ? 1 : 0;
+    // Derived from the (delta-subtracted) block counts only: the function
+    // `executed` flag is cumulative and would make a second takePreciseCoverage
+    // report 1 even when nothing ran since the first.
+    const scriptExecuted = blocks.some(([, , count]) => count > 0) ? 1 : 0;
     const entries: object[] = [];
 
     const toRange = ([startOffset, endOffset, count]: [number, number, number]) => ({
@@ -424,8 +431,8 @@ class Session extends EventEmitter {
     }
     this.#profilerEnabled = false;
     this.#connected = false;
-    this.#coverageBaseline.clear();
-    runtimeEnabledSessions.delete(this);
+    this.#coverageBaseline.$clear();
+    runtimeEnabledSessions.$delete(this);
     if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
     // Forwarded Debugger.* state (breakpoints etc.) lives on a shared backend
     // on the debugger thread; release it so a disconnected session cannot keep
@@ -492,12 +499,12 @@ class Session extends EventEmitter {
   #handleMethod(method: string, params?: object): any {
     switch (method) {
       case "Runtime.enable":
-        runtimeEnabledSessions.add(this);
+        runtimeEnabledSessions.$add(this);
         installConsoleHooks();
         return {};
 
       case "Runtime.disable":
-        runtimeEnabledSessions.delete(this);
+        runtimeEnabledSessions.$delete(this);
         if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
         return {};
 
@@ -549,7 +556,7 @@ class Session extends EventEmitter {
         }
         this.#preciseCoverageCallCount = !!(params as any)?.callCount;
         this.#preciseCoverageDetailed = !!(params as any)?.detailed;
-        this.#coverageBaseline.clear();
+        this.#coverageBaseline.$clear();
         // CDP: monotonic seconds since an arbitrary origin (V8 uses TimeTicks).
         return { timestamp: performance.now() / 1000 };
       }
@@ -560,7 +567,7 @@ class Session extends EventEmitter {
           stopPreciseCoverage();
           this.#preciseCoverageEnabled = false;
         }
-        this.#coverageBaseline.clear();
+        this.#coverageBaseline.$clear();
         return {};
       }
 
@@ -578,8 +585,8 @@ class Session extends EventEmitter {
           for (const block of script.blocks) {
             const key = `${script.scriptId}:${block[0]}:${block[1]}`;
             const raw = block[2];
-            block[2] = Math.max(0, raw - (baseline.get(key) ?? 0));
-            baseline.set(key, raw);
+            block[2] = Math.max(0, raw - (baseline.$get(key) ?? 0));
+            baseline.$set(key, raw);
           }
         }
         return {

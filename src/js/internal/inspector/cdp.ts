@@ -64,8 +64,11 @@ const SCOPE_TYPE_MAP: Record<string, string> = {
   nestedLexical: "block",
 };
 
+// No "log" entry: JSC reports console.warn/error/info/debug as
+// { type: "log", level: "warning"/"error"/... }, so a type-level match on "log"
+// would mask the level. #translateConsoleMessage falls through to
+// CONSOLE_LEVEL_MAP for those and for console.log itself.
 const CONSOLE_TYPE_MAP: Record<string, string> = {
-  log: "log",
   dir: "dir",
   dirxml: "dirxml",
   table: "table",
@@ -200,7 +203,10 @@ class InspectorCDPAdapter {
         return;
 
       case "Runtime.disable":
-        this.#sendToBackend("Runtime.disable", undefined, id, method);
+        this.#sendToBackend("Runtime.disable");
+        // Runtime.enable also enabled the Console domain; mirror it here so a
+        // client that disables Runtime stops receiving consoleAPICalled.
+        this.#sendToBackend("Console.disable", undefined, id, method);
         return;
 
       case "Runtime.runIfWaitingForDebugger":
@@ -290,6 +296,7 @@ class InspectorCDPAdapter {
             objectId: params.objectId,
             functionDeclaration: params.functionDeclaration,
             arguments: params.arguments,
+            doNotPauseOnExceptionsAndMuteConsole: params.silent,
             returnByValue: params.returnByValue,
             generatePreview: params.generatePreview,
             awaitPromise: params.awaitPromise,

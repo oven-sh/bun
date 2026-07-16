@@ -871,6 +871,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_postNodeInspectorControl, (JSGlobalObject * 
 // the debugger thread's acknowledgement here is required, not just tidy.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFrame*))
 {
+    // close() called from a callback that runs inside waitForDebugger()'s
+    // event-loop tick must disarm the Rust-side wait (wait_for_connection /
+    // poll_ref), or the wait loop spins forever against a stopped server.
+    Debugger__abandonNodeInspectorWait();
+
     auto& state = nodeInspectorState();
     {
         Locker<Lock> locker(state.lock);

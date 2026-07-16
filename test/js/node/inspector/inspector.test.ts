@@ -100,6 +100,7 @@ const events = [];
 let nextId = 1;
 let consoleEventResolve;
 const consoleEventPromise = new Promise(resolve => (consoleEventResolve = resolve));
+const consoleTypeByTag = {};
 ws.onmessage = event => {
   const message = JSON.parse(event.data);
   if (message.id) {
@@ -107,8 +108,12 @@ ws.onmessage = event => {
     pending.delete(message.id);
   } else {
     events.push(message);
-    if (message.method === "Runtime.consoleAPICalled" && message.params.args?.[0]?.value === "tagged-console-call") {
-      consoleEventResolve(message.params);
+    if (message.method === "Runtime.consoleAPICalled") {
+      const first = message.params.args?.[0]?.value;
+      if (typeof first === "string" && first.startsWith("console-tag:")) {
+        consoleTypeByTag[first.slice("console-tag:".length)] = message.params.type;
+      }
+      if (first === "tagged-console-call") consoleEventResolve(message.params);
     }
   }
 };
@@ -134,6 +139,10 @@ const awaitedNonPromise = await send("Runtime.evaluate", {
   awaitPromise: true,
   returnByValue: true,
 });
+console.warn("console-tag:warn");
+console.error("console-tag:error");
+console.info("console-tag:info");
+console.debug("console-tag:debug");
 console.log("tagged-console-call", { tagged: true });
 const consoleEvent = await consoleEventPromise;
 const unknown = await send("Totally.bogus", {});
@@ -157,6 +166,8 @@ console.log(
     awaitedResolveValue: awaitedResolve.result?.result?.value,
     awaitedNonPromiseValue: awaitedNonPromise.result?.result?.value,
     consoleEventType: consoleEvent.type,
+    consoleTypeByTag,
+    debugPort: process.debugPort,
     unknownError: unknown.error,
     urlAfterClose: inspector.url() ?? null,
   }),
@@ -210,6 +221,11 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
   expect(summary.awaitedResolveValue).toBe(42);
   expect(summary.awaitedNonPromiseValue).toBe(42);
   expect(summary.consoleEventType).toBe("log");
+  // JSC reports warn/error/info/debug as {type:"log", level:...}; the adapter
+  // must emit CDP's type, not flatten them all to "log".
+  expect(summary.consoleTypeByTag).toEqual({ warn: "warning", error: "error", info: "info", debug: "debug" });
+  // Node writes the resolved port back so it's observable after open(0).
+  expect(summary.debugPort).toBe(Number(new URL(summary.url).port));
   expect(summary.unknownError).toEqual({ code: -32601, message: "'Totally.bogus' wasn't found" });
   expect(summary.urlAfterClose).toBeNull();
 });

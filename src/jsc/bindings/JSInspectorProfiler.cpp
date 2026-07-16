@@ -11,6 +11,7 @@
 #include <JavaScriptCore/MarkedSpaceInlines.h>
 #include <JavaScriptCore/ScriptExecutable.h>
 #include <JavaScriptCore/SourceProvider.h>
+#include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/JSONValues.h>
 
 using namespace JSC;
@@ -85,34 +86,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_collectPreciseCoverage, (JSGlobalObject * gl
     if (!profiler)
         return JSValue::encode(jsNull());
 
-    // Walk the heap for live script executables to enumerate SourceIDs. Unlike
-    // V8, providers whose executables were all GC'd are not reported, and
-    // offsets index the transpiled (not on-disk) source for Bun-loaded modules.
+    // Enumerate SourceIDs by walking only the four ScriptExecutable subspaces
+    // (not the whole heap). Providers whose executables were all GC'd are not
+    // reported, and offsets index the transpiled source for Bun-loaded modules;
+    // Bun appends an inline //# sourceMappingURL, so consumers that read the
+    // script source (v8-to-istanbul) can remap.
     Vector<Ref<JSC::SourceProvider>> providers;
     HashSet<SourceID> seenSourceIDs;
     {
         HeapIterationScope iterationScope(vm.heap);
-        vm.heap.objectSpace().forEachLiveCell(iterationScope, [&](HeapCell* cell, HeapCell::Kind kind) -> IterationStatus {
-            if (!isJSCellKind(kind))
-                return IterationStatus::Continue;
-            auto* jsCell = static_cast<JSCell*>(cell);
-            switch (jsCell->type()) {
-            case ProgramExecutableType:
-            case ModuleProgramExecutableType:
-            case EvalExecutableType:
-            case FunctionExecutableType:
-                break;
-            default:
-                return IterationStatus::Continue;
-            }
-            auto* executable = static_cast<ScriptExecutable*>(jsCell);
-            auto* provider = executable->source().provider();
-            if (!provider)
-                return IterationStatus::Continue;
-            if (!seenSourceIDs.add(provider->asID()).isNewEntry)
-                return IterationStatus::Continue;
-            providers.append(*provider);
-            return IterationStatus::Continue;
+        vm.heap.forEachScriptExecutableSpace([&](auto& spaceAndSet) {
+            spaceAndSet.space.forEachLiveCell([&](HeapCell* cell, HeapCell::Kind) {
+                auto* executable = static_cast<ScriptExecutable*>(cell);
+                auto* provider = executable->source().provider();
+                if (!provider)
+                    return;
+                if (!seenSourceIDs.add(provider->asID()).isNewEntry)
+                    return;
+                providers.append(*provider);
+            });
         });
     }
 

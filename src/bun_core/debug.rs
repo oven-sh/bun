@@ -262,8 +262,6 @@ impl StackIterator {
     }
 }
 
-pub(crate) const PC_OFFSET: usize = StackIterator::PC_OFFSET;
-
 /// Capture the current thread's call stack.
 ///
 /// POSIX: walk frame pointers. Windows: `RtlCaptureStackBackTrace` via

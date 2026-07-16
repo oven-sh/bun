@@ -32,10 +32,11 @@ const summary = { from, to, count, seeds: [] };
 
 for (let seed = from; seed <= to; seed++) {
   const record = { seed, status: "identical", divergent: [] };
+  const oracleFile = join(outDir, `oracle-${seed}.jsonl`);
+  const underFile = join(outDir, `under-${seed}.jsonl`);
   let oracleOut;
   let underOut;
   try {
-    const oracleFile = join(outDir, `oracle-${seed}.jsonl`);
     execFileSync(process.execPath, [runner, "--seed", String(seed), "--count", String(count), "--out", oracleFile], {
       timeout: perSeedTimeoutMs,
       stdio: "ignore",
@@ -50,15 +51,12 @@ for (let seed = from; seed <= to; seed++) {
   }
   const header = oracleOut.slice(0, oracleOut.indexOf("\n"));
   try {
-    underOut = execFileSync(
+    execFileSync(
       bunBin,
-      [runner, "--seed", String(seed), "--count", String(count), "--capabilities", header],
-      {
-        timeout: perSeedTimeoutMs,
-        maxBuffer: 512 * 1024 * 1024,
-        encoding: "utf8",
-      },
+      [runner, "--seed", String(seed), "--count", String(count), "--capabilities", header, "--out", underFile],
+      { timeout: perSeedTimeoutMs, stdio: "ignore" },
     );
+    underOut = readFileSync(underFile, "utf8");
   } catch (e) {
     record.status = "under-test-timeout-or-error";
     record.detail = String(e && e.message ? e.message : e).slice(0, 200);
@@ -69,8 +67,8 @@ for (let seed = from; seed <= to; seed++) {
   if (oracleOut === underOut) {
     console.log(`seed ${seed}: identical`);
     summary.seeds.push(record);
-    unlinkSync(join(outDir, `oracle-${seed}.jsonl`));
-    unlinkSync(join(outDir, `under-${seed}.jsonl`));
+    unlinkSync(oracleFile);
+    unlinkSync(underFile);
     continue;
   }
   const oLines = oracleOut.trim().split("\n");

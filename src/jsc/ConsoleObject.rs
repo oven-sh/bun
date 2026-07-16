@@ -8,8 +8,9 @@ use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
+use crate::strong::Optional as StrongOptional;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
+use crate::{CallFrame, EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
 use bun_collections::HashMap;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
@@ -98,6 +99,14 @@ pub struct ConsoleObject {
 
     counts: Counter,
 
+    /// When set, formatted console output is written to this JS Writable's
+    /// `.write()` instead of the fd-backed `writer_backing`. Used by
+    /// `node:worker_threads` so console output flows through the worker's
+    /// port-backed `process.stdout`/`stderr` without replacing the global
+    /// console object.
+    stdout_override: StrongOptional,
+    stderr_override: StrongOptional,
+
     // The writer adapters above hold raw pointers into `{stderr,stdout}_buffer`;
     // moving the struct would dangle them. `PhantomPinned` opts out of `Unpin`
     // so `Pin<Box<Self>>` (returned by `init`) actually enforces that.
@@ -138,6 +147,8 @@ impl ConsoleObject {
             writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
             counts: Counter::default(),
+            stdout_override: StrongOptional::empty(),
+            stderr_override: StrongOptional::empty(),
             _pin: core::marker::PhantomPinned,
         });
         let p: *mut ConsoleObject = &raw mut *out;
@@ -173,6 +184,8 @@ impl ConsoleObject {
             writer_backing: Output::QuietWriterAdapter::uninit(),
             default_indent: 0,
             counts: Counter::default(),
+            stdout_override: StrongOptional::empty(),
+            stderr_override: StrongOptional::empty(),
             _pin: core::marker::PhantomPinned,
         });
         let p: *mut ConsoleObject = out;
@@ -202,6 +215,63 @@ impl ConsoleObject {
     pub fn writer(&mut self) -> &mut bun_core::io::Writer {
         self.writer_backing.new_interface()
     }
+
+    #[inline]
+    fn override_for(&self, use_stderr: bool) -> Option<JSValue> {
+        if use_stderr {
+            self.stderr_override.get()
+        } else {
+            self.stdout_override.get()
+        }
+    }
+
+    /// Release the JS stream overrides. Must run while the JSC VM is still
+    /// alive; the `StrongOptional` Drop path would otherwise touch a freed
+    /// `HandleSet` when the `ConsoleObject` box is destroyed after VM teardown.
+    pub fn clear_output_streams(&mut self) {
+        self.stdout_override.deinit();
+        self.stderr_override.deinit();
+    }
+}
+
+/// Hand the buffered bytes to a JS Writable stream's `.write()`. A stream
+/// whose `write` is not callable is a programmer error in the binding, not a
+/// user-visible condition, so fall through silently rather than throw.
+fn write_to_js_stream(global: &JSGlobalObject, stream: JSValue, buf: &[u8]) -> JsResult<()> {
+    if buf.is_empty() {
+        return Ok(());
+    }
+    let Some(write_fn) = stream.get(global, b"write")? else {
+        return Ok(());
+    };
+    if !write_fn.is_callable() {
+        return Ok(());
+    }
+    let str = crate::bun_string_jsc::create_utf8_for_js(global, buf)?;
+    let _ = write_fn.call(global, stream, core::slice::from_ref(&str))?;
+    Ok(())
+}
+
+/// `$newRustFunction("ConsoleObject.rs", "setOutputStreams", 2)`.
+/// Rebinds this VM's native console output sink to a pair of JS Writable
+/// streams so formatting and the Bun-specific console surface are preserved
+/// while output still flows through `process.stdout`/`stderr`.
+pub fn set_output_streams(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let [stdout, stderr] = callframe.arguments_as_array::<2>();
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box.
+    let this = unsafe { vm_console_mut(global) };
+    if stdout.is_object() {
+        this.stdout_override.set(global, stdout);
+    } else {
+        this.stdout_override.deinit();
+    }
+    if stderr.is_object() {
+        this.stderr_override.set(global, stderr);
+    } else {
+        this.stderr_override.deinit();
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 #[repr(u32)]
@@ -455,6 +525,42 @@ fn message_with_type_and_level_(
     // time. We do this the slightly annoying way to avoid assigning a pointer.
     let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
         || message_type == MessageType::Assert;
+
+    // Snapshot before borrowing the writer; `default_indent` is not mutated
+    // again until the deferred `_indent_guard` runs on scope exit, so the two
+    // later reads (FormatOptions / TablePrinter) can use this cached copy
+    // instead of re-dereferencing the raw `console` pointer.
+    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
+    let (default_indent, override_stream) = {
+        let c = unsafe { vm_console_mut(global) };
+        (c.default_indent, c.override_for(use_stderr))
+    };
+
+    if let Some(stream) = override_stream {
+        // The override sink is a JS Writable (port-backed `process.stdout` in a
+        // `node:worker_threads` worker). It is not a shared fd, so the stream
+        // lock is unnecessary; and it is never a TTY, so colors are off.
+        if message_type == MessageType::Clear {
+            return Ok(());
+        }
+        let mut buf: Vec<u8> = Vec::new();
+        if message_type == MessageType::Assert && len == 0 {
+            buf.extend_from_slice(b"Assertion failed\n");
+        } else {
+            write_message_body(
+                &mut buf,
+                message_type,
+                level,
+                global,
+                vals,
+                len,
+                false,
+                default_indent,
+            )?;
+        }
+        return write_to_js_stream(global, stream, &buf);
+    }
+
     let _stream_lock = ConsoleStreamLock::acquire(use_stderr);
 
     if message_type == MessageType::Clear {
@@ -483,13 +589,6 @@ fn message_with_type_and_level_(
         Output::enable_ansi_colors_stdout()
     };
 
-    // Snapshot before borrowing the writer; `default_indent` is not mutated
-    // again until the deferred `_indent_guard` runs on scope exit, so the two
-    // later reads (FormatOptions / TablePrinter) can use this cached copy
-    // instead of re-dereferencing the raw `console` pointer.
-    // SAFETY: see [`vm_console`] — single-JS-thread; no other `&mut` is live.
-    let default_indent = unsafe { vm_console_mut(global) }.default_indent;
-
     // SAFETY: see [`vm_console`] — `console` points at the live boxed
     // `ConsoleObject` for this VM; JS-thread-only. Kept as a raw deref (not
     // `vm_console_mut`) so the resulting `writer` borrow does not pin a
@@ -513,6 +612,29 @@ fn message_with_type_and_level_(
         (hooks.console_on_before_print)();
     }
 
+    write_message_body(
+        writer,
+        message_type,
+        level,
+        global,
+        vals,
+        len,
+        enable_colors,
+        default_indent,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_message_body(
+    writer: &mut dyn bun_io::Write,
+    message_type: MessageType,
+    level: MessageLevel,
+    global: &JSGlobalObject,
+    vals: *const JSValue,
+    len: usize,
+    enable_colors: bool,
+    default_indent: u16,
+) -> JsResult<()> {
     let mut print_length = len;
     // Get console depth from CLI options or bunfig, fallback to default.
     let console_depth = bun_options_types::context::try_get()
@@ -587,12 +709,8 @@ fn message_with_type_and_level_(
             print_options,
         )?;
     } else if message_type == MessageType::Log {
-        // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
-        // the only later uses are in the mutually-exclusive `Trace` block, and
-        // `message_type == Log` here.
-        let w = unsafe { (*console).writer() };
-        let _ = w.write_all(b"\n");
-        let _ = w.flush();
+        let _ = writer.write_all(b"\n");
+        let _ = writer.flush();
     } else if message_type != MessageType::Trace {
         let _ = writer.write_all(b"undefined\n");
     }
@@ -5863,21 +5981,35 @@ pub extern "C" fn Bun__ConsoleObject__count(
     ptr: *const u8,
     len: usize,
 ) {
-    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
-    // set-once `VirtualMachine.console` box.
-    let this = unsafe { vm_console_mut(global_this) };
     // SAFETY: caller passes a valid (ptr, len) pair.
     let slice = unsafe { bun_core::ffi::slice(ptr, len) };
     let hash = bun_wyhash::hash(slice);
-    // we don't want to store these strings, it will take too much memory
-    let counter = this.counts.get_or_put(hash).expect("unreachable");
-    let current: u32 = if counter.found_existing {
-        *counter.value_ptr
-    } else {
-        0
-    } + 1;
-    *counter.value_ptr = current;
+    // SAFETY: top-level JS-thread host call ⇒ exclusive access to the
+    // set-once `VirtualMachine.console` box. The borrow is scoped so it ends
+    // before the override path calls back into JS (which may re-enter here).
+    let (current, override_stream) = {
+        let this = unsafe { vm_console_mut(global_this) };
+        // we don't want to store these strings, it will take too much memory
+        let counter = this.counts.get_or_put(hash).expect("unreachable");
+        let current: u32 = if counter.found_existing {
+            *counter.value_ptr
+        } else {
+            0
+        } + 1;
+        *counter.value_ptr = current;
+        (current, this.stdout_override.get())
+    };
 
+    if let Some(stream) = override_stream {
+        let mut buf: Vec<u8> = Vec::new();
+        let w: &mut dyn bun_io::Write = &mut buf;
+        let _ = writeln!(w, "{}: {}", bstr::BStr::new(slice), current);
+        let _ = write_to_js_stream(global_this, stream, &buf);
+        return;
+    }
+
+    // SAFETY: fd path; no JS re-entry below.
+    let this = unsafe { vm_console_mut(global_this) };
     let writer = this.writer();
     if Output::enable_ansi_colors_stdout() {
         let _ = writeln!(

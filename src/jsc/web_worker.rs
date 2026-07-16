@@ -1297,6 +1297,13 @@ impl WebWorker {
             // worker VM is dealloc'd-without-Drop so anything still in
             // self.tasks leaks. Mirrors the global_exit() ordering.
             vm.event_loop_mut().release_queued_tasks_for_shutdown();
+            // The console's JS stream overrides hold Strong handles into this
+            // VM's heap; release them while JSC is still alive so the
+            // ConsoleObject box (freed in step 5) doesn't touch a dead HandleSet.
+            if !vm.console.is_null() {
+                // SAFETY: set-once per-VM box; sole owner.
+                unsafe { (*vm.console).clear_output_streams() };
+            }
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }

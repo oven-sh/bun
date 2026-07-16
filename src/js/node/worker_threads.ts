@@ -469,10 +469,12 @@ function setupWorkerStdio(stdio) {
     enumerable: true,
   });
   // node routes console.log through process.stdout/stderr; Bun's global console
-  // writes the fd directly, so rebind it to the captured streams when present.
+  // writes the fd directly. Rebind its output sink to the port-backed streams
+  // so console output is captured by worker.stdout/stderr, while keeping Bun's
+  // formatter and the Bun-specific console surface (console.write,
+  // Symbol.asyncIterator) intact.
   if (stdout || stderr) {
-    const { Console } = require("node:console");
-    globalThis.console = new Console(process.stdout, process.stderr);
+    $newRustFunction("ConsoleObject.rs", "setOutputStreams", 2)(process.stdout, process.stderr);
   }
 }
 

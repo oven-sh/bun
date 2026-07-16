@@ -41,6 +41,11 @@ export const zstd: Dependency = {
     commit: ZSTD_COMMIT,
   }),
 
+  patches: (cfg: import("../config.ts").Config) => {
+    if (cfg.ohos) return ["zstd/ohos-qsort-r"];
+    return [];
+  },
+
   build: cfg => {
     const sources = [...SOURCES];
     const defines: Record<string, number | true> = {

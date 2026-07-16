@@ -511,8 +511,9 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
                 }
             }
         } else if (c == '\n') {
-            // Restore styles after newline
-            if (escapeCode) {
+            // Restore styles after newline (only open codes; close/unknown codes
+            // have no close mapping and are not re-emitted, matching npm wrap-ansi)
+            if (escapeCode && getCloseCode(*escapeCode)) {
                 result.append("\x1b["_s);
                 result.append(String::number(*escapeCode));
                 result.append('m');

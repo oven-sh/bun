@@ -2803,10 +2803,13 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     // termination exception could not be cleared (tryClearException is a no-op
     // for termination) reaches here via the common `call -> Err ->
     // take_exception -> error_handler.call` pattern; bail so Rust sees the
-    // same Err it already handles instead of aborting. See
+    // same Err it already handles instead of aborting. Any other pending
+    // exception is a caller bug the assert below should still surface. See
     // test/js/bun/net/socket-handler-worker-terminate.test.ts.
-    if (scope.exception()) [[unlikely]]
+    if (scope.exception()) [[unlikely]] {
+        scope.assertNoExceptionExceptTermination();
         return {};
+    }
 
     ASSERT_WITH_MESSAGE(!vm.isCollectorBusyOnCurrentThread(), "Cannot call function inside a finalizer or while GC is running on same thread.");
 

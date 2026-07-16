@@ -40,6 +40,8 @@ static JSC::VM& getVM(Ticket& ticket)
 void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
     auto& scheduler = clientData->deferredWorkTimer;
+    if (scheduler.m_isShuttingDown.load(std::memory_order_acquire)) [[unlikely]]
+        return;
     Locker<Lock> holder { scheduler.m_lock };
     if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
         Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1);
@@ -50,6 +52,18 @@ void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref
 }
 void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket ticket, Task&& task)
 {
+    auto& scheduler = clientData->deferredWorkTimer;
+    // The event loop is past its last tick; a JSCDeferredWorkTask enqueued now
+    // would never run and its ConcurrentTask wrapper would leak once the Bun
+    // VirtualMachine box is dealloc'd. Reached from ~VM -> WaiterListManager::
+    // unregister -> Waiter::cancelAndClear for every outstanding
+    // Atomics.waitAsync on a terminating worker, and from collectNow ->
+    // JSFinalizationRegistry::finalizeUnconditionally. Balance onAddPendingWork
+    // so the ticket-set entry and event-loop ref are released.
+    if (scheduler.m_isShuttingDown.load(std::memory_order_acquire)) [[unlikely]] {
+        onCancelPendingWork(clientData, ticket);
+        return;
+    }
     auto* job = new JSCDeferredWorkTask(*ticket, WTF::move(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
 }
@@ -99,6 +113,14 @@ extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
     auto clientData = WebCore::clientData(vm);
 
     runPendingWork(clientData->bunVM, clientData->deferredWorkTimer, job);
+}
+
+// Reclaim a queued-but-never-dispatched job during shutdown. Called while the
+// JSC VM is still alive, so ~Ref<TicketData> and the captured Task lambda may
+// safely touch TZone-allocated / JSC-owned state.
+extern "C" void Bun__deleteDeferredWorkTask(Bun::JSCDeferredWorkTask* job)
+{
+    delete job;
 }
 
 }

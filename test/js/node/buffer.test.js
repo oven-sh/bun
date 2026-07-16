@@ -2427,6 +2427,61 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.lastIndexOf("b", [])).toBe(-1);
       });
 
+      it("lastIndexOf/indexOf(Buffer, negativeOffset, 'ucs2') wraps against the raw byte length on odd-length haystacks", () => {
+        // Node's IndexOfBuffer wraps a negative byteOffset against the full byte
+        // length and only then floors to 16-bit units; truncating to even first
+        // makes `-byteLength` land before the start and miss present data.
+        const h3 = Buffer.from("bbc", "latin1"); // <62 62 63>
+        const n = Buffer.from("bb", "latin1"); // <62 62>
+        for (const enc of ["ucs2", "utf16le"]) {
+          expect(h3.lastIndexOf(n, -3, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, -2, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, 0, enc)).toBe(0);
+          expect(h3.lastIndexOf(n, -4, enc)).toBe(-1);
+          expect(h3.indexOf(n, -3, enc)).toBe(0);
+          expect(h3.indexOf(n, -2, enc)).toBe(-1);
+          expect(h3.indexOf(n, -1, enc)).toBe(-1);
+          expect(h3.indexOf(n, 1, enc)).toBe(-1);
+        }
+
+        // Even-length haystack is unchanged.
+        expect(Buffer.from("bbcc", "latin1").lastIndexOf(n, -4, "ucs2")).toBe(0);
+
+        // 5-byte haystack: the wrapped offset must also floor to the correct
+        // 16-bit unit so the rightmost match is found.
+        const h5 = Buffer.from([0x62, 0x62, 0x62, 0x62, 0x63]);
+        expect(h5.lastIndexOf(n, -5, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(n, -3, "ucs2")).toBe(2);
+        expect(h5.lastIndexOf(n, -6, "ucs2")).toBe(-1);
+        // Odd-length needle: only the whole 16-bit unit participates.
+        const n3 = Buffer.from([0x62, 0x62, 0x62]);
+        expect(h5.lastIndexOf(n3, -5, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(n3, 0, "ucs2")).toBe(0);
+
+        // Empty Buffer needle on an odd-length haystack: the clamped result
+        // must reflect the raw-byte wrap, bounded by the even search end.
+        const empty = Buffer.alloc(0);
+        expect(h3.lastIndexOf(empty, -3, "ucs2")).toBe(0);
+        expect(h3.lastIndexOf(empty, -1, "ucs2")).toBe(2);
+        expect(h3.lastIndexOf(empty, 3, "ucs2")).toBe(2);
+        expect(h3.lastIndexOf(empty, undefined, "ucs2")).toBe(2);
+
+        // 1-byte haystack has no 16-bit units.
+        const h1 = Buffer.from([0x62]);
+        expect(h1.lastIndexOf(n, 0, "ucs2")).toBe(-1);
+        expect(h1.lastIndexOf(n, -1, "ucs2")).toBe(-1);
+        expect(h1.lastIndexOf(empty, 0, "ucs2")).toBe(0);
+
+        // String needles: Node's IndexOfString truncates the haystack length to
+        // even BEFORE wrapping (unlike IndexOfBuffer), so -byteLength on an
+        // odd-length haystack is before the start.
+        const sn = "\u6262"; // encodes as <62 62> in ucs2
+        expect(h3.lastIndexOf(sn, -3, "ucs2")).toBe(-1);
+        expect(h3.lastIndexOf(sn, -2, "ucs2")).toBe(0);
+        expect(h5.lastIndexOf(sn, -5, "ucs2")).toBe(-1);
+        expect(h5.lastIndexOf(sn, -3, "ucs2")).toBe(0);
+      });
+
       it("lastIndexOf(value, encoding) defaults to searching from the end", () => {
         // When the second argument is an encoding string (no byteOffset), the
         // search must start from the end of the buffer, matching Node.js.

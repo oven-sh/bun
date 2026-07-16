@@ -434,11 +434,11 @@ static String computeErrorInfoWithoutPrepareStackTrace(
                         nameValue = getDirectPropertyInFinalizer(prototype, vm.propertyNames->name);
                 }
                 if (nameValue && nameValue.isString())
-                    name = asString(nameValue)->tryGetValue();
+                    name = asString(nameValue)->tryGetValueWithoutGC();
 
                 JSValue messageValue = getDirectPropertyInFinalizer(instance, vm.propertyNames->message);
                 if (messageValue && messageValue.isString())
-                    message = asString(messageValue)->tryGetValue();
+                    message = asString(messageValue)->tryGetValueWithoutGC();
             } else {
                 if (!lexicalGlobalObject) {
                     lexicalGlobalObject = errorInstance->globalObject();

@@ -1132,7 +1132,10 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      const lines = stdout.trim().split("\n").map(l => JSON.parse(l));
+      const lines = stdout
+        .trim()
+        .split("\n")
+        .map(l => JSON.parse(l));
       // On regression ASAN aborts the process before any line is printed.
       // db.close(): deferred on the first authorizer call (catches nothing),
       //   throws ERR_INVALID_STATE on the second (db already marked closed).

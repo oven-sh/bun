@@ -302,9 +302,10 @@ void webStreamControllerError(JSGlobalObject* globalObject, JSReadableStream* st
         readableByteStreamControllerError(globalObject, byteControllerOf(stream), error);
         return;
     case ControllerKind::Direct:
-        // onClose(reason) is the direct controller's error path: it tears down the sink,
-        // rejects any pending read, and errors the stream.
-        uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->onClose(globalObject, error);
+        // handleError is what the direct controller's own error() method dispatches to:
+        // it tears the sink down, rejects any pending read, and errors the stream.
+        // onClose() is the graceful end() path and would resolve the read instead.
+        uncheckedDowncast<WebCore::JSDirectStreamController>(stream->m_controller.get())->handleError(globalObject, error);
         return;
     case ControllerKind::None:
     case ControllerKind::NativeSink:

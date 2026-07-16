@@ -1840,9 +1840,9 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamClosedPromise, (JSGlobalObject * globalObjec
     return JSValue::encode(throwTypeError(globalObject, scope, "Expected a ReadableStream or WritableStream"_s));
 }
 
-// node:stream's addAbortSignal() errors a WHATWG stream when the signal fires. Callers in
-// internal/streams/add-abort-signal.ts gate on isReadableStream()/isWritableStream() first,
-// so the argument is always one of the two.
+// node:stream's addAbortSignal() errors a WHATWG stream when the signal fires. Its isWebStream()
+// gate also admits TransformStream, but $inheritsTransformStream() is false for a native one, so
+// addAbortSignal() rejects it with ERR_INVALID_ARG_TYPE first; the throw below is a backstop.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamControllerError, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

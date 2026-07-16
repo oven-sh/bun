@@ -760,10 +760,7 @@ pub fn js_get_unpacked_settings<'s>(
 }
 
 #[bun_jsc::host_fn(scoped)]
-pub fn js_assert_settings<'s>(
-    scope: &mut Scope<'s>,
-    callframe: &CallFrame,
-) -> JsResult<Local<'s>> {
+pub fn js_assert_settings<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
     let global_object = scope.unscoped_global();
     let args_list = callframe.scoped_arguments::<1>(scope);
     if args_list.len < 1 {
@@ -6619,9 +6616,8 @@ impl H2FrameParser {
             return Ok(scope.boolean(signal_ref.is_aborted()));
         }
         // closed with cancel = aborted
-        Ok(scope.boolean(
-            stream.state == StreamState::CLOSED && stream.rst_code == ErrorCode::CANCEL.0,
-        ))
+        Ok(scope
+            .boolean(stream.state == StreamState::CLOSED && stream.rst_code == ErrorCode::CANCEL.0))
     }
 
     #[bun_jsc::host_fn(method, scoped)]

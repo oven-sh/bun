@@ -289,10 +289,9 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let global_this = scope.unscoped_global();
         let args = callframe.scoped_arguments::<1>(scope);
         if args.len > 0 && args.ptr[0].is_object() {
-            if let Some(high_water_mark) =
-                args.ptr[0]
-                    .raw()
-                    .get_optional_int::<i64>(global_this, "highWaterMark")?
+            if let Some(high_water_mark) = args.ptr[0]
+                .raw()
+                .get_optional_int::<i64>(global_this, "highWaterMark")?
             {
                 this.high_water_mark = high_water_mark;
             }

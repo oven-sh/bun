@@ -2018,10 +2018,7 @@ impl JSValkeyClient {
                 .map(|v| scope.local(v));
         }
 
-        Ok(scope.local(JSPromise::resolved_promise_value(
-            global,
-            new_client_js,
-        )))
+        Ok(scope.local(JSPromise::resolved_promise_value(global, new_client_js)))
     }
 
     // script(subcommand: "LOAD", script: RedisValue)

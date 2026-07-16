@@ -7,9 +7,7 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult, Local, Scope,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult, Local, Scope};
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -109,10 +107,7 @@ where
 }
 
 #[bun_jsc::host_fn(scoped)]
-pub(crate) fn presign<'s>(
-    scope: &mut Scope<'s>,
-    callframe: &CallFrame,
-) -> JsResult<Local<'s>> {
+pub(crate) fn presign<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
     let global = scope.unscoped_global();
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.

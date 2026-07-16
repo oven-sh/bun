@@ -169,10 +169,16 @@ pub fn render_to_ansi<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsRes
         if let Some(v) = theme_value.raw().get_boolean_loose(global_this, "colors")? {
             theme.colors = v;
         }
-        if let Some(v) = theme_value.raw().get_boolean_loose(global_this, "hyperlinks")? {
+        if let Some(v) = theme_value
+            .raw()
+            .get_boolean_loose(global_this, "hyperlinks")?
+        {
             theme.hyperlinks = v;
         }
-        if let Some(v) = theme_value.raw().get_boolean_loose(global_this, "kittyGraphics")? {
+        if let Some(v) = theme_value
+            .raw()
+            .get_boolean_loose(global_this, "kittyGraphics")?
+        {
             theme.kitty_graphics = v;
         }
         if let Some(v) = theme_value.raw().get_boolean_loose(global_this, "light")? {

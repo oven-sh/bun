@@ -220,8 +220,8 @@ pub(crate) fn create_stats_for_ino<'s>(
     // SAFETY: all-zero is a valid PosixStat (repr(C) POD with no NonNull/NonZero fields).
     let mut stat_: PosixStat = bun_core::ffi::zeroed();
     stat_.ino = ino_arg.raw().to_uint64_no_truncate();
-    let v = Stats::init(&stat_, big_arg.to_boolean())
-        .to_js_newly_created(scope.unscoped_global())?;
+    let v =
+        Stats::init(&stat_, big_arg.to_boolean()).to_js_newly_created(scope.unscoped_global())?;
     Ok(scope.local(v))
 }
 

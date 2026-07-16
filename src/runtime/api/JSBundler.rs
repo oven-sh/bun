@@ -1927,7 +1927,9 @@ impl BuildArtifact {
         scope: &mut Scope<'s>,
         callframe: &CallFrame,
     ) -> JsResult<Local<'s>> {
-        let v = this.blob.get_array_buffer(scope.unscoped_global(), callframe)?;
+        let v = this
+            .blob
+            .get_array_buffer(scope.unscoped_global(), callframe)?;
         Ok(scope.local(v))
     }
 
@@ -1986,8 +1988,7 @@ impl BuildArtifact {
         let mut cursor = &mut buf[..];
         write!(cursor, "{}", bun_core::fmt::truncated_hash32(this.hash)).expect("Unexpected");
         let written = 512 - cursor.len();
-        let v =
-            jsc::bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), &buf[..written])?;
+        let v = jsc::bun_string_jsc::create_utf8_for_js(scope.unscoped_global(), &buf[..written])?;
         Ok(scope.local(v))
     }
 

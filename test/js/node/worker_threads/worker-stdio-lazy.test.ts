@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { once } from "node:events";
 import { Worker } from "node:worker_threads";
 

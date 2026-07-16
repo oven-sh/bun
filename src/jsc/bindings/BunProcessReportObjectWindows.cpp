@@ -40,6 +40,7 @@ using namespace JSC;
 
 // External functions
 extern "C" EncodedJSValue Bun__Process__createArgv(JSGlobalObject*);
+extern "C" uint64_t Bun__readOriginTimer(void*);
 
 JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process)
 {
@@ -82,8 +83,9 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
         }
 
         // Command line
-        header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__createArgv(globalObject)), 0);
+        JSValue commandLine = JSValue::decode(Bun__Process__createArgv(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
+        header->putDirect(vm, Identifier::fromString(vm, "commandLine"_s), commandLine, 0);
 
         // Node version
         header->putDirect(vm, Identifier::fromString(vm, "nodejsVersion"_s), jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)), 0);
@@ -348,6 +350,8 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         resourceUsage->putDirect(vm, Identifier::fromString(vm, "available_memory"_s), jsNumber(availableMemory), 0);
 
+        double userSeconds = 0;
+        double kernelSeconds = 0;
         FILETIME createTime, exitTime, kernelTime, userTime;
         if (GetProcessTimes(hProcess, &createTime, &exitTime, &kernelTime, &userTime)) {
             ULARGE_INTEGER ul_user, ul_kernel;
@@ -356,15 +360,19 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
             ul_kernel.LowPart = kernelTime.dwLowDateTime;
             ul_kernel.HighPart = kernelTime.dwHighDateTime;
 
-            double userSeconds = ul_user.QuadPart / 10000000.0;
-            double kernelSeconds = ul_kernel.QuadPart / 10000000.0;
-
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "userCpuSeconds"_s), jsNumber(userSeconds), 0);
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "kernelCpuSeconds"_s), jsNumber(kernelSeconds), 0);
-        } else {
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "userCpuSeconds"_s), jsNumber(0), 0);
-            resourceUsage->putDirect(vm, Identifier::fromString(vm, "kernelCpuSeconds"_s), jsNumber(0), 0);
+            userSeconds = ul_user.QuadPart / 10000000.0;
+            kernelSeconds = ul_kernel.QuadPart / 10000000.0;
         }
+
+        double uptime = static_cast<double>(Bun__readOriginTimer(globalObject->bunVM())) / 1e9;
+        double userPercent = uptime > 0 ? (userSeconds / uptime) * 100.0 : 0.0;
+        double kernelPercent = uptime > 0 ? (kernelSeconds / uptime) * 100.0 : 0.0;
+
+        resourceUsage->putDirect(vm, Identifier::fromString(vm, "userCpuSeconds"_s), jsNumber(userSeconds), 0);
+        resourceUsage->putDirect(vm, Identifier::fromString(vm, "kernelCpuSeconds"_s), jsNumber(kernelSeconds), 0);
+        resourceUsage->putDirect(vm, Identifier::fromString(vm, "cpuConsumptionPercent"_s), jsNumber(userPercent + kernelPercent), 0);
+        resourceUsage->putDirect(vm, Identifier::fromString(vm, "userCpuConsumptionPercent"_s), jsNumber(userPercent), 0);
+        resourceUsage->putDirect(vm, Identifier::fromString(vm, "kernelCpuConsumptionPercent"_s), jsNumber(kernelPercent), 0);
 
         JSObject* pageFaults = constructEmptyObject(globalObject);
         pageFaults->putDirect(vm, Identifier::fromString(vm, "IORequired"_s), jsNumber(pmc.PageFaultCount), 0);

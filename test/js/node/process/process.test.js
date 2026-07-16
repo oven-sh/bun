@@ -1018,8 +1018,7 @@ describe.concurrent(() => {
 
     // header.commandLine is a fresh copy of argv, not execArgv and not process.argv itself
     expect(Array.isArray(header.commandLine)).toBe(true);
-    expect(header.commandLine.length).toBeGreaterThan(0);
-    expect(header.commandLine[0]).toBe(process.argv[0]);
+    expect(header.commandLine).toEqual(process.argv);
     expect(header.commandLine).not.toBe(process.argv);
 
     // javascriptHeap reflects real JSC heap stats, not physical RAM / zeros
@@ -1041,9 +1040,9 @@ describe.concurrent(() => {
     expect(ru.total_memory).toBe(os.totalmem());
     expect(ru.free_memory).toBeGreaterThan(0);
     expect(ru.free_memory).toBeLessThanOrEqual(ru.total_memory);
-    expect(ru.rss).toBeGreaterThan(1 << 20);
+    expect(ru.rss).toBeGreaterThan(1024 * 1024);
     expect(ru.rss).toBeLessThan(ru.total_memory);
-    expect(ru.maxRss).toBeGreaterThanOrEqual(ru.rss >> 1);
+    expect(ru.maxRss).toBeGreaterThanOrEqual(ru.rss / 2);
     expect(typeof ru.userCpuSeconds).toBe("number");
     expect(typeof ru.kernelCpuSeconds).toBe("number");
     const memFields = new Set([ru.free_memory, ru.total_memory, ru.rss, ru.available_memory, ru.maxRss]);

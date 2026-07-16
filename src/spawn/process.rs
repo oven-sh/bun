@@ -633,6 +633,11 @@ impl Process {
         }
         #[cfg(windows)]
         {
+            // After uv_close(uv_process_t), libuv's exit path checks
+            // UV_HANDLE_CLOSING and skips exit_cb, so on_exit() (the only
+            // other close_discard_pipes caller) is unreachable from here.
+            // Idempotent: on_exit()'s call becomes a no-op if close() ran first.
+            self.close_discard_pipes();
             // Hoist the libuv handle state into locals so the `&self.poller`
             // borrow ends before we need `&mut self` for `ref_()` /
             // `self.poller = …`. No raw-pointer round-trip needed.

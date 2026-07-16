@@ -6971,14 +6971,14 @@ pub fn open_dir_at_windows_nt_path(
 ) -> Maybe<Fd> {
     let first = open_dir_at_windows_nt_path_impl(dir_fd, path, options);
     // Plain opens request FILE_ADD_FILE|FILE_ADD_SUBDIRECTORY for later use,
-    // which a read-only ACL grant (the normal sandboxed project-tree shape)
-    // cannot satisfy; retry read-only, so creates fail at create time instead.
+    // which a read-only ACL grant (sandboxed project trees, Program Files,
+    // read-only shares) cannot satisfy; retry read-only, so creates fail at
+    // create time instead.
     if let Err(ref e) = first {
         if !options.read_only
             && !options.can_rename_or_delete
             && options.op == WindowsOpenDirOp::OnlyOpen
             && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES)
-            && crate::windows::is_app_container()
         {
             return open_dir_at_windows_nt_path_impl(
                 dir_fd,
@@ -7289,7 +7289,10 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let nonblock = (flags & O::NONBLOCK) != 0;
     let overwrite = (flags & O::WRONLY) != 0 && (flags & O::APPEND) == 0;
 
-    let mut access_mask: u32 = w::READ_CONTROL | w::FILE_WRITE_ATTRIBUTES | w::SYNCHRONIZE;
+    // Matches libuv fs__open: O_RDONLY asks for read access only. GENERIC_WRITE
+    // already includes FILE_WRITE_ATTRIBUTES for the write-mode branches; the
+    // fs.futimes path goes through uv_fs_futime which ReOpenFiles for it.
+    let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
         access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
     } else if (flags & O::APPEND) != 0 {
@@ -7335,7 +7338,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
         attributes |= w::FILE_ATTRIBUTE_READONLY;
     }
 
-    let first = open_file_at_windows_nt_path(
+    open_file_at_windows_nt_path(
         dir,
         norm,
         NtCreateFileOptions {
@@ -7345,32 +7348,7 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
             attributes,
             ..Default::default()
         },
-    );
-
-    // Read-only opens still request FILE_WRITE_ATTRIBUTES (fd timestamp
-    // writes), which an RX-only ACL grant - the normal sandbox shape - denies.
-    // Retry a pure read-only open without it.
-    if let Err(ref e) = first {
-        let read_only = (flags & (O::RDWR | O::WRONLY | O::APPEND | O::CREAT)) == 0;
-        if read_only
-            && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES)
-            && crate::windows::is_app_container()
-        {
-            return open_file_at_windows_nt_path(
-                dir,
-                norm,
-                NtCreateFileOptions {
-                    access_mask: access_mask & !w::FILE_WRITE_ATTRIBUTES,
-                    disposition,
-                    options: opts,
-                    attributes,
-                    ..Default::default()
-                },
-            )
-            .or(first);
-        }
-    }
-    first
+    )
 }
 
 /// `openatWindows` — UTF-16 input.

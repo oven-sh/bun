@@ -269,7 +269,7 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     this.schedule_process();
 }
 extern "C" fn on_close(_socket: *mut uws::udp::Socket) {}
-extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int) {}
+extern "C" fn on_recv_error(_socket: *mut uws::udp::Socket, _errno: c_int, _is_errqueue: c_int) {}
 
 thread_local! {
     /// A server may advertise another local endpoint's address as its

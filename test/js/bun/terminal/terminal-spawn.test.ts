@@ -193,9 +193,7 @@ describe("Bun.Terminal subprocess integration", () => {
     const printTerm = `process.stdout.write('CHILD_TERM=[' + (process.env.TERM ?? '<unset>') + ']')`;
     // Windows env var names are case-insensitive; strip every case variant so a
     // stray `Term`/`term` from the runner env isn't treated as an explicit TERM.
-    const envNoTerm = Object.fromEntries(
-      Object.entries(bunEnv).filter(([key]) => key.toUpperCase() !== "TERM"),
-    );
+    const envNoTerm = Object.fromEntries(Object.entries(bunEnv).filter(([key]) => key.toUpperCase() !== "TERM"));
 
     async function collectTerm(opts: { env?: Record<string, string | undefined>; terminal: { name?: string } }) {
       let output = "";

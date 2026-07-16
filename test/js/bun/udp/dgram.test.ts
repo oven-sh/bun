@@ -23,10 +23,7 @@ async function runClusterFixture(fixture: string, deadlineMs: number) {
     proc.kill("SIGKILL");
     return "deadline" as const;
   });
-  const result = await Promise.race([
-    Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
-    timedOut,
-  ]);
+  const result = await Promise.race([Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]), timedOut]);
   if (result === "deadline") {
     const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
     return { stdout, stderr, exitCode: null as number | null, signalCode: proc.signalCode };

@@ -1857,6 +1857,12 @@ static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const ch
     auto* globalObject = db->globalObject();
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // sqlite3WalkExprNN maps WRC_Prune to continue for sibling columns in
+    // one expression (SELECT a + b), so a throw on `a` re-fires the
+    // authorizer for `b` with the exception still pending — same guard as
+    // xFunc / applyChangesetXConflict.
+    if (scope.exception()) [[unlikely]]
+        return SQLITE_DENY;
 
     auto* fn = db->m_authorizer.get();
     if (!fn) [[unlikely]]

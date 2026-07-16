@@ -507,6 +507,17 @@ impl UDPSocket {
     pub fn udp_socket(global_this: &JSGlobalObject, options: JSValue) -> JsResult<JSValue> {
         bun_output::scoped_log!(UdpSocket, "udpSocket");
 
+        // node:dgram's `bindSync()` needs the bound socket synchronously. The
+        // bind itself is already synchronous; this only skips the
+        // resolved-Promise wrap on return.
+        let sync = if options.is_object() {
+            options
+                .get_boolean_loose(global_this, "sync")?
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
         let vm = global_this.bun_vm_ptr();
         let this_ptr = Self::new(Self {
             socket: Cell::new(None),
@@ -600,21 +611,32 @@ impl UDPSocket {
                 let code: &'static str = SystemErrno::init(err as i64)
                     .map(Into::into)
                     .unwrap_or("UNKNOWN");
+                let message = if config.port > 0 {
+                    BunString::create_format(format_args!(
+                        "bind {} {}:{}",
+                        code, config.hostname, config.port
+                    ))
+                } else {
+                    BunString::create_format(format_args!("bind {} {}", code, config.hostname))
+                };
                 let sys_err = SystemError {
                     errno: err,
                     code: BunString::static_(code),
-                    message: BunString::create_format(format_args!(
-                        "bind {} {}",
-                        code, config.hostname
-                    )),
+                    message,
                     path: BunString::empty(),
-                    syscall: BunString::empty(),
+                    syscall: BunString::static_("bind"),
                     hostname: BunString::empty(),
                     fd: c_int::MIN,
                     dest: BunString::empty(),
                 };
                 let error_value = sys_err.to_error_instance(global_this);
                 error_value.put(global_this, b"address", config.hostname.to_js(global_this)?);
+                // Node's ExceptionWithHostPort only sets `port` when it's > 0;
+                // test-dgram-error-message-address.js asserts `e.port === undefined`
+                // for a port-0 bind failure.
+                if config.port > 0 {
+                    error_value.put(global_this, b"port", JSValue::js_number(config.port as f64));
+                }
 
                 return Err(global_this.throw_value(error_value));
             }
@@ -651,6 +673,9 @@ impl UDPSocket {
         scopeguard::ScopeGuard::into_inner(guard);
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        if sync {
+            return Ok(this_value);
+        }
         Ok(bun_jsc::JSPromise::resolved_promise_value(
             global_this,
             this_value,

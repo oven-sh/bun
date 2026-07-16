@@ -1463,12 +1463,14 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
   it.each([
     ["SHARE_ENV", "written-by-worker"],
     ["snapshot", "absent"],
-  ])("a %s worker's env write is %s to a child process", async (mode, want) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker, SHARE_ENV, isMainThread, parentPort } = require("worker_threads");
+  ])(
+    "a %s worker's env write is %s to a child process",
+    async (mode, want) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker, SHARE_ENV, isMainThread, parentPort } = require("worker_threads");
          const { execFileSync } = require("child_process");
          if (isMainThread) {
            const opts = ${JSON.stringify(mode)} === "SHARE_ENV" ? { env: SHARE_ENV, eval: true } : { eval: true };
@@ -1481,14 +1483,16 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
              console.log(out);
            });
          }`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(want);
-    expect(exitCode).toBe(0);
-  }, 60_000);
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(want);
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 
   // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
   // they land in JSObject's indexed storage and never touch the shared store.

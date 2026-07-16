@@ -557,12 +557,13 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
               port1.postMessage(ab, [ab]);
             } catch (e) {
               error = e;
+            } finally {
+              port1.close();
+              port2.close();
             }
             expect(error).toBeInstanceOf(DOMException);
             expect((error as DOMException).name).toBe("DataCloneError");
             expect(ab.byteLength).toBe(1 << 16);
-            port1.close();
-            port2.close();
             await promise;
           });
           test("a sibling ArrayBuffer in the same transfer list is not detached on rejection", async () => {

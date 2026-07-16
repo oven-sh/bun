@@ -122,8 +122,8 @@ pub(crate) fn crc32<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResul
                 JSValue::UNDEFINED,
             ));
         }
-        if data.is_string() {
-            // `is_string()` guarantees `as_string()` is non-null and points to a
+        if data.is_string_literal() {
+            // `is_string_literal()` guarantees `as_string()` is non-null and points to a
             // live JSString cell on the JSC heap. `JSString` is an `opaque_ffi!`
             // ZST handle; `opaque_ref` is the centralised deref proof.
             break 'blk bun_jsc::JSString::opaque_ref(data.as_string()).to_slice(global_this);

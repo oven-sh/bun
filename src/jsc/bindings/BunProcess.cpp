@@ -2673,7 +2673,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 
 #if OS(WINDOWS)
     auto pathW = fullPath.wideCharacters();
-    FILE* fp = _wfopen(pathW.data(), L"wb");
+    FILE* fp = _wfopen(pathW.span().data(), L"wb");
 #else
     CString pathUtf8 = fullPath.utf8();
     FILE* fp = fopen(pathUtf8.data(), "wb");

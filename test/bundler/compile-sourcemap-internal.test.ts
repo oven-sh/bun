@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, tempDir } from "harness";
 import { join } from "path";
 
 // Asserts that `bun build --compile --sourcemap` embeds an InternalSourceMap

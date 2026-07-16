@@ -226,16 +226,10 @@ impl DirInfo {
 
     pub fn get_file_descriptor(&self) -> Fd {
         if FeatureFlags::STORE_FILE_DESCRIPTORS {
-            // Route through `entries_at` directly (returns `Option<&mut EntriesOption>`)
-            // instead of round-tripping the safe `&mut DirEntry` through `get_entries`'s
-            // `*mut` return just to deref it back here. With `generation = 0` the
-            // generation-check re-read in `entries_at` is a no-op, so this is the
-            // same lookup `get_entries(0)` performs.
-            if let Some(fs::EntriesOption::Entries(entries)) =
-                fs::FileSystem::instance().fs.entries_at(self.entries, 0)
-            {
-                return entries.fd;
-            }
+            // `entries_at(_, 0)` never re-reads (`u16 < 0` is always false), so the
+            // lock it would take covers no mutation; go through the same plain
+            // `at_index` lookup `get_entries_const` uses.
+            return self.get_entries_const().map_or(Fd::INVALID, |e| e.fd);
         }
         Fd::INVALID
     }
@@ -264,6 +258,19 @@ impl DirInfo {
         let entries_ptr = fs::FileSystem::instance()
             .fs
             .entries_at(self.entries, generation)?;
+        match entries_ptr {
+            fs::EntriesOption::Entries(entries) => Some(&**entries),
+            fs::EntriesOption::Err(_) => None,
+        }
+    }
+
+    /// [`get_entries_ref`](Self::get_entries_ref) for call sites that already
+    /// hold `entries_mutex` (the mutex is non-recursive); see
+    /// [`RealFS::entries_at_locked`](fs::RealFS::entries_at_locked).
+    pub fn get_entries_ref_locked(&self, generation: Generation) -> Option<&'static fs::DirEntry> {
+        let entries_ptr = fs::FileSystem::instance()
+            .fs
+            .entries_at_locked(self.entries, generation)?;
         match entries_ptr {
             fs::EntriesOption::Entries(entries) => Some(&**entries),
             fs::EntriesOption::Err(_) => None,

@@ -141,7 +141,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   });
 
   test("the link uses rustc's lld-link sibling when rustc's LLVM is newer than clang's", () => {
-    // resolveConfig swaps cfg.ld so lld-link can read the LLVM-22 bitcode
+    // resolveConfig swaps cfg.ld so lld-link can read the newer bitcode
     // rustc emits under -Clinker-plugin-lto (bitcode is forward-compatible
     // only). rustc's gcc-ld/ ships every lld flavor; windows needs the
     // lld-link sibling of the host-flavored rust-lld that findRustLld()
@@ -151,7 +151,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
       "gcc-ld/lld-link": "",
     });
     const rustLld = join(String(dir), "gcc-ld", "ld.lld");
-    const cfg = resolveWindowsCross({ lto: true }, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
+    const cfg = resolveWindowsCross({ lto: true }, mockToolchain({ rustLld, rustLlvmVersion: "23.1.0" }));
     expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
     // Cargo-driven links (bun_shim_impl.exe) must NOT follow the swap: rustc
     // treats a linker inside its own gcc-ld/ as rust-lld and prepends
@@ -160,7 +160,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
 
     // Without LTO there's no bitcode skew to work around — keep the host
     // LLVM's lld-link.
-    const plain = resolveWindowsCross({ lto: false }, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
+    const plain = resolveWindowsCross({ lto: false }, mockToolchain({ rustLld, rustLlvmVersion: "23.1.0" }));
     expect(plain.ld).toBe("/fake/llvm/bin/lld-link");
 
     // If rustc's gcc-ld/ ever stops shipping lld-link, fall back to the host
@@ -169,7 +169,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     using bare = tempDir("win-cross-rust-lld-bare", { "gcc-ld/ld.lld": "" });
     const bareCfg = resolveWindowsCross(
       { lto: true },
-      mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "22.1.4" }),
+      mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "23.1.0" }),
     );
     expect(bareCfg.ld).toBe("/fake/llvm/bin/lld-link");
   });

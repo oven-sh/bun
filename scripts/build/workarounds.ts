@@ -90,26 +90,6 @@ export const workarounds: Workaround[] = [
       `components, and delete this entry.`,
   },
   {
-    id: "rust-lld-for-crosslang-lto",
-    issue: "https://rustc-dev-guide.rust-lang.org/backend/updating-llvm.html",
-    description:
-      "rustc's bundled LLVM is newer than clang's, so clang's ld.lld can't read " +
-      "-Clinker-plugin-lto bitcode (forward-compatible only). Link with rust-lld instead.",
-    applies: cfg => cfg.crossLangLto && cfg.rustLlvmVersion !== undefined && cfg.clangVersion !== undefined,
-    expectedToBeFixed: cfg => {
-      // Obsolete once clang's LLVM major catches up to (or passes) rustc's —
-      // at that point clang's own ld.lld reads rustc's bitcode and the
-      // rust-lld swap in resolveConfig() never fires.
-      const clangMajor = Number(cfg.clangVersion!.split(".")[0]);
-      const rustMajor = Number(cfg.rustLlvmVersion!.split(".")[0]);
-      return clangMajor >= rustMajor;
-    },
-    cleanup:
-      `Delete the rust-lld swap block in resolveConfig() (config.ts), findRustLld() and its call ` +
-      `in resolveLlvmToolchain() (tools.ts), the rustLld/rustLlvmVersion fields on Toolchain/Config, ` +
-      `and this entry.`,
-  },
-  {
     id: "darwin-cross-cpu-model",
     issue: "https://github.com/llvm/llvm-project/tree/main/compiler-rt/lib/builtins/cpu_model",
     description:

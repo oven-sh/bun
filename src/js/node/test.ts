@@ -389,6 +389,8 @@ delete assert.CallTracker;
 delete assert.strict;
 
 let checkNotInsideTest: (ctx: TestContext | undefined, fn: string) => void;
+let abortTestContext: (ctx: TestContext) => void;
+let resetTestContextSignal: (ctx: TestContext) => void;
 
 /**
  * @link https://nodejs.org/api/test.html#class-testcontext
@@ -531,6 +533,15 @@ class TestContext {
     checkNotInsideTest = (ctx: TestContext | undefined, fn: string) => {
       if (ctx) ctx.#checkNotInsideTest(fn);
     };
+    // Node aborts `t.signal` when its test ends (timed out, failed, or
+    // passed). Create the controller if `t.signal` was never read so a
+    // late reader still sees an already-aborted signal.
+    abortTestContext = (ctx: TestContext) => {
+      (ctx.#abortController ??= new AbortController()).abort();
+    };
+    resetTestContextSignal = (ctx: TestContext) => {
+      ctx.#abortController = undefined;
+    };
   }
 }
 
@@ -668,6 +679,17 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const runTest = (done: (error?: unknown) => void) => {
     const originalContext = ctx;
     ctx = context;
+    // `--retry` and `repeats` reuse this `context` for every attempt; start
+    // each one with a fresh, unaborted signal.
+    resetTestContextSignal(context);
+    // bun:test owns the per-test timeout, so use its per-test completion
+    // hook; it runs for timed out tests too, where `endTest` never does.
+    try {
+      bunTest().onTestFinished(() => abortTestContext(context));
+    } catch {
+      // onTestFinished() throws inside a concurrent test, where the runner
+      // cannot attribute a per-test hook; the signal is simply never aborted.
+    }
     const endTest = (error?: unknown) => {
       try {
         done(error);

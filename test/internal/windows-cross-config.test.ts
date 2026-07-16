@@ -24,8 +24,8 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
   return {
     cc: "/fake/llvm/bin/clang-cl",
     cxx: "/fake/llvm/bin/clang-cl",
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "22.1.8",
+    clangResourceDir: "/fake/llvm/lib/clang/22",
     ar: "/fake/llvm/bin/llvm-lib",
     ranlib: undefined,
     ld: "/fake/llvm/bin/lld-link",

@@ -97,7 +97,7 @@ The workflow runs all three formatters simultaneously:
 
 ```bash
 # Test the clang-format script
-export LLVM_VERSION_MAJOR=19
+export LLVM_VERSION_MAJOR=22
 ./scripts/run-clang-format.sh format
 
 # Test with check mode (no modifications)

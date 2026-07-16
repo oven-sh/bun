@@ -3643,9 +3643,10 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
     // Node publishes the "module.import" tracing channel around dynamic import().
     // Only consider it once node:diagnostics_channel has been loaded; otherwise
     // dynamic import behaves exactly as before.
-    if (globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::NodeDiagnosticsChannel).get()) [[unlikely]] {
+    JSValue dcModule = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::NodeDiagnosticsChannel).get();
+    if (!dcModule.isUndefined()) [[unlikely]] {
         JSValue moduleTracing = globalObject->internalModuleRegistry()->internalField(InternalModuleRegistry::Field::InternalModuleTracing).get();
-        if (moduleTracing && moduleTracing.isObject()) {
+        if (moduleTracing.isObject()) {
             JSObject* moduleTracingObject = asObject(moduleTracing);
             JSValue importChannel = moduleTracingObject->getIfPropertyExists(globalObject, Identifier::fromString(vm, "importChannel"_s));
             if (scope.exception()) [[unlikely]] {

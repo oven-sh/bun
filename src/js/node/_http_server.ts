@@ -772,9 +772,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
               server,
             });
           }
-          if (onServerResponseFinishChannel.hasSubscribers) {
-            http_res.once("finish", publishServerResponseFinish.bind(undefined, http_req, http_res, socket, server));
-          }
+          // Node's resOnFinish is always attached and checks hasSubscribers at
+          // 'finish' time, so a subscriber added mid-request still observes it.
+          http_res.once("finish", publishServerResponseFinish.bind(undefined, http_req, http_res, socket, server));
         }
 
         if (reachedRequestsLimit) {
@@ -1487,6 +1487,7 @@ function _writeHead(statusCode, reason, obj, response) {
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
 function publishServerResponseFinish(request, response, socket, server) {
+  if (!onServerResponseFinishChannel.hasSubscribers) return;
   onServerResponseFinishChannel.publish({
     request,
     response,

@@ -197,10 +197,9 @@ export function run(dir: string, test: string) {
     cmd: [bunExe(), "run", test],
     cwd: dir,
     stderr: "inherit",
-    // Many vendored tests report diagnostics via console.log (e.g. the
-    // "Mismatched function calls" messages emitted by common.mustCall's
-    // process-exit checker). Capture stdout so a failure carries its
-    // diagnostic instead of presenting as a bare nonzero exit code.
+    // Vendored tests report diagnostics via console.log (e.g. common.mustCall's
+    // process-exit "Mismatched function calls"). Capture stdout so a failure
+    // carries its diagnostic instead of a bare nonzero exit code.
     stdout: "pipe",
     stdin: "inherit",
     env: envFor(test),

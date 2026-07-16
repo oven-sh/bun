@@ -5,6 +5,7 @@ const { validateFunction } = require("internal/validators");
 
 const SafeMap = Map;
 const SafeFinalizationRegistry = FinalizationRegistry;
+const SafeDisposableStack = DisposableStack;
 
 const ArrayPrototypeAt = Array.prototype.at;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
@@ -98,7 +99,7 @@ class RunStoresScope {
   #stack;
 
   constructor(activeChannel, data) {
-    const stack = new DisposableStack();
+    const stack = new SafeDisposableStack();
     const stores = activeChannel._stores;
 
     try {

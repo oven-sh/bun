@@ -269,9 +269,9 @@ impl Options {
             }
             if slice.slice().contains(&0) {
                 drop(slice);
-                return Err(global_object.throw(format_args!(
-                    "Terminal name must not contain null bytes"
-                )));
+                return Err(
+                    global_object.throw(format_args!("Terminal name must not contain null bytes"))
+                );
             }
             options.term_name = slice;
         }

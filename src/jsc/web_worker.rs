@@ -204,12 +204,17 @@ unsafe extern "C" {
     // ABI-identical to non-null `*const`); C++ mutating VM state through it is
     // interior to the cell.
     safe fn WebWorker__teardownJSCVM(global: &JSGlobalObject);
+    // safe: opaque `&JSGlobalObject` handle (see above); takes the contexts-map
+    // lock and flips an atomic flag, no Rust-visible state touched.
+    safe fn ScriptExecutionContext__markTerminating(global: &JSGlobalObject);
     // safe: `cpp_worker` is an opaque round-trip pointer owned by C++ (allocated
     // there, stored in `WebWorker.cpp_worker`, and only ever passed back to C++
     // — never dereferenced as Rust data); same contract as `JSC__VM__holdAPILock`'s
     // `ctx`. `&JSGlobalObject` is the non-null handle proof; remaining args are
     // by-value scalars/`#[repr(C)]` PODs.
     safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
+    // safe: no args; frees this thread's lazily-allocated HPACK scratch buffer.
+    safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
@@ -1281,6 +1286,15 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Stop cross-thread posters first: markTerminating() serializes
+            // with postTaskTo() on the contexts-map lock, so after this call
+            // every task another thread has already enqueued is visible to the
+            // drain below and no new one can land. teardownJSCVM() will call
+            // it again (redundantly) after the drain; without this earlier
+            // call a parent-side MessagePort ack (worker stdio backpressure)
+            // posted in the gap would sit in concurrent_tasks past the raw VM
+            // dealloc and leak under LSan.
+            ScriptExecutionContext__markTerminating(vm.global());
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when
             // terminate() lands, and any Worker dispatchExit close task from a
@@ -1298,6 +1312,15 @@ impl WebWorker {
             // `JSGlobalObject` is an opaque ZST handle; `opaque_ref` is the
             // centralised non-null deref proof (JSC VM still alive here).
             WebWorker__teardownJSCVM(JSGlobalObject::opaque_ref(global));
+        }
+
+        // The finalizers JSC just ran close the sockets that `close_all_socket_groups` leaves
+        // alone (a Listener owns its listen socket and closes it in `finalize`). `us_socket_close`
+        // only queues onto `loop->data.closed_head`; step 5's `on_thread_exit()` frees the loop
+        // out from under whatever is still queued, so drain it now, while the loop is alive.
+        if !vm_ptr.is_null() {
+            // SAFETY: `vm_ptr` was unpublished under `vm_lock`; sole owner, `destroy()` is below.
+            unsafe { (*vm_ptr).uws_loop_mut().drain_closed_sockets() };
         }
 
         // JSC is down; no more resolver/module-loader access past this point.
@@ -1365,6 +1388,10 @@ impl WebWorker {
             drop(unsafe { bun_core::heap::take(env_map) });
         }
         bun_core::delete_all_pools_for_thread_exit();
+        // Same reason as the uWS loop below: this thread's C++ thread_local destructors are not
+        // guaranteed to run before the process exits, so free the HPACK scratch buffer that any
+        // http2 session on this thread allocated.
+        Bun__freeSharedHeaderBufferForThreadExit();
         // Free this thread's lazily-created uWS loop and its 512 KiB recv
         // buffer. The C++ thread_local `~LoopCleaner` does not fire here:
         // we return normally and

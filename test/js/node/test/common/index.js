@@ -152,27 +152,7 @@ if (process.argv.length === 2 &&
       }
       if (flag === "--expose-internals" && process.versions.bun) {
         process.env.SKIP_FLAG_CHECK = "1";
-        // Serve require("internal/*") from bun's internal module registry
-        // (via bun:internal-for-testing, which is expose-internals-gated:
-        // always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
-        // for release). Unknown internal/* specifiers fall through to the
-        // original require and fail exactly as before.
-        const BunModule = require('module');
-        const originalRequire = BunModule.prototype.require;
-        let exposedInternals;
-        BunModule.prototype.require = function require(id) {
-          if (typeof id === 'string' && id.startsWith('internal/')) {
-            exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
-            if (exposedInternals[id] !== undefined) {
-              return exposedInternals[id];
-            }
-          }
-          return originalRequire.apply(this, arguments);
-        };
-        // http2-specific internal modules (internal/http2/util, …) are
-        // served separately via Bun.plugin module shims backed by the
-        // node:http2 implementation's own internals.
-        installBunExposeInternalsShim();
+        installBunExposeInternalsRequireInterceptor();
         break;
       }
       if (flag === "test") {
@@ -194,6 +174,43 @@ if (process.argv.length === 2 &&
       }
     }
   }
+}
+
+// Bun: cluster workers re-run the test file but skip the flag-check block
+// above (it is gated on cluster.isPrimary), so tests gated on
+// `// Flags: --expose-internals` would lose access to internal/* in the
+// worker. Install the same require interceptor for workers.
+if (process.versions.bun &&
+    process.argv.length === 2 &&
+    isMainThread &&
+    !require('cluster').isPrimary &&
+    fs.existsSync(process.argv[1]) &&
+    parseTestFlags().includes('--expose-internals')) {
+  installBunExposeInternalsRequireInterceptor();
+}
+
+// Serve require("internal/*") from bun's internal module registry
+// (via bun:internal-for-testing, which is expose-internals-gated:
+// always available in debug builds, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING=1
+// for release). Unknown internal/* specifiers fall through to the
+// original require and fail exactly as before.
+function installBunExposeInternalsRequireInterceptor() {
+  const BunModule = require('module');
+  const originalRequire = BunModule.prototype.require;
+  let exposedInternals;
+  BunModule.prototype.require = function require(id) {
+    if (typeof id === 'string' && id.startsWith('internal/')) {
+      exposedInternals ??= originalRequire.call(this, 'bun:internal-for-testing').exposedInternals;
+      if (exposedInternals[id] !== undefined) {
+        return exposedInternals[id];
+      }
+    }
+    return originalRequire.apply(this, arguments);
+  };
+  // http2-specific internal modules (internal/http2/util, …) are
+  // served separately via Bun.plugin module shims backed by the
+  // node:http2 implementation's own internals.
+  installBunExposeInternalsShim();
 }
 
 const isWindows = process.platform === 'win32';
@@ -1316,6 +1333,38 @@ function installBunExposeInternalsShim() {
       build.module("internal/timers", () => ({
         loader: "object",
         exports: { kTimeout: Symbol.for("::buntimeout::") },
+      }));
+      // node's internal/http: serve the very same symbols Bun's _http_outgoing
+      // attaches to OutgoingMessage instances, so tests poke at real state.
+      build.module("internal/http", () => {
+        const { kOutHeaders, kHighWaterMark } = require("node:_http_outgoing");
+        return {
+          loader: "object",
+          exports: { kOutHeaders, kHighWaterMark },
+        };
+      });
+      // node's internal/streams/state: getDefaultHighWaterMark is also part of
+      // the public node:stream API, so reuse that (same function in Bun).
+      build.module("internal/streams/state", () => ({
+        loader: "object",
+        exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
+      }));
+      // node's internal/options: map the few CLI options vendored http tests ask
+      // about onto the equivalent runtime values. Unknown options return undefined.
+      build.module("internal/options", () => ({
+        loader: "object",
+        exports: {
+          getOptionValue(name) {
+            switch (name) {
+              case "--max-http-header-size":
+                return require("node:http").maxHeaderSize;
+              case "--insecure-http-parser":
+                return false;
+              default:
+                return undefined;
+            }
+          },
+        },
       }));
     },
   });

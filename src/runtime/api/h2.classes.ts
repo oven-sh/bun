@@ -69,6 +69,10 @@ export default [
         fn: "noTrailers",
         length: 1,
       },
+      setStreamReading: {
+        fn: "setStreamReading",
+        length: 2,
+      },
       setStreamPriority: {
         fn: "setStreamPriority",
         length: 2,

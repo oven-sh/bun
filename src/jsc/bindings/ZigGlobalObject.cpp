@@ -193,6 +193,7 @@
 #include "JSCipher.h"
 #include "JSKeyObject.h"
 #include "JSSecretKeyObject.h"
+#include "JSAsymmetricKeyObjectPrototype.h"
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
@@ -523,7 +524,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
@@ -646,7 +646,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
@@ -1949,6 +1948,10 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 
 void GlobalObject::finishCreation(VM& vm)
 {
+    // Node.js defaults to 10. Must run before Base::finishCreation() materializes
+    // errorConstructor(), which snapshots this value into Error.stackTraceLimit.
+    setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
+
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
@@ -2024,6 +2027,11 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSSecretKeyObjectClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             setupSecretKeyObjectClassStructure(init);
+        });
+
+    m_JSAsymmetricKeyObjectPrototype.initLater(
+        [](const Initializer<JSObject>& init) {
+            setupAsymmetricKeyObjectPrototype(init);
         });
 
     m_JSPublicKeyObjectClassStructure.initLater(
@@ -3093,6 +3101,11 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void JSC__JSGlobalObject__addGc(JSC::JSGlobal
 {
     auto& vm = JSC::getVM(globalObject);
     globalObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "gc"_s), 0, functionJsGc, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
+}
+
+extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JSGlobalObject* globalObject)
+{
+    return globalObject->jsDateNow();
 }
 
 // ====================== end conditional builtin globals ======================

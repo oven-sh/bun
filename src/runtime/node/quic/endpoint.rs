@@ -307,7 +307,11 @@ pub struct QuicEndpoint {
     /// Keylog lines fired during the mini-conn phase (no conn-ctx yet),
     /// keyed by the SSL pointer; drained by `QuicSession::bind_conn` at
     /// promotion (the enc session's SSL is transferred to the full conn).
-    early_keylog: JsCell<Vec<(*mut c_void, Vec<u8>)>>,
+    /// Handshake secrets seen during the server mini-conn phase, before a
+    /// session exists. Keyed by `SSL*` (precise: the enc session moves to the
+    /// full conn at promotion) plus the peer address, which is all the
+    /// mini-conn failure path has to discard them by.
+    early_keylog: JsCell<Vec<(*mut c_void, StoredAddr, Vec<u8>)>>,
     block_list_js: JsCell<Option<bun_jsc::Strong>>,
     /// `blockListPolicy: 'allow'` — the list is an allow-list instead.
     block_list_allow: Cell<bool>,
@@ -595,6 +599,7 @@ lsquic_callback! {
             return;
         }
         let peer = stored_addr_from_sockaddr(peer_sa);
+        this.discard_early_keylog(&peer);
         let peer_decoded = peer.decode();
         let failed = this.provisional.with_mut(|v| {
             let idx = v.iter().position(|p| p.peer.decode() == peer_decoded);
@@ -2021,14 +2026,26 @@ impl QuicEndpoint {
         }
     }
 
-    pub(super) fn buffer_early_keylog(&self, ssl: *mut c_void, line: Vec<u8>) {
-        self.early_keylog.with_mut(|v| v.push((ssl, line)));
+    pub(super) fn buffer_early_keylog(&self, ssl: *mut c_void, peer: StoredAddr, line: Vec<u8>) {
+        self.early_keylog.with_mut(|v| v.push((ssl, peer, line)));
+    }
+
+    /// A mini-conn died without promoting, so nothing will ever drain its
+    /// buffered lines: drop them. Without this they outlive the freed `SSL*`
+    /// and a later handshake landing on the recycled address claims a dead
+    /// handshake's secrets. The peer address is all the failure path carries,
+    /// so a concurrent handshake from the same peer loses its buffered lines
+    /// too -- acceptable for a debug feature, and better than leaking them.
+    pub(super) fn discard_early_keylog(&self, peer: &StoredAddr) {
+        let peer_decoded = peer.decode();
+        self.early_keylog
+            .with_mut(|v| v.retain(|(_, p, _)| p.decode() != peer_decoded));
     }
     /// Remove and return every buffered keylog line for `ssl`.
     pub(super) fn take_early_keylog(&self, ssl: *mut c_void) -> Vec<Vec<u8>> {
         self.early_keylog.with_mut(|v| {
             let mut out = Vec::new();
-            v.retain_mut(|(s, line)| {
+            v.retain_mut(|(s, _, line)| {
                 if *s == ssl {
                     out.push(core::mem::take(line));
                     false

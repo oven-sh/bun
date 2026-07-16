@@ -482,7 +482,12 @@ pub struct QuicSession {
     final_conn_status: JsCell<Option<(c_int, Vec<u8>)>>,
     /// Locally-initiated streams that `openStream` queued before lsquic's
     /// `on_new_stream` bound them, in FIFO order.
-    pending_local_streams: JsCell<VecDeque<*mut super::stream::QuicStream>>,
+    /// Locally-opened streams awaiting an `on_new_stream` fulfillment, kept
+    /// per direction: lsquic drains its delayed bidi and uni backlogs
+    /// independently, so a single FIFO hands a uni wrapper to a bidi stream
+    /// once either direction is credit-limited.
+    pending_local_bidi: JsCell<VecDeque<*mut super::stream::QuicStream>>,
+    pending_local_uni: JsCell<VecDeque<*mut super::stream::QuicStream>>,
     /// All bound streams, for event dispatch and teardown.
     streams: JsCell<Vec<*mut super::stream::QuicStream>>,
     handshake_reported: Cell<bool>,
@@ -548,7 +553,8 @@ impl QuicSession {
             pending_tickets: JsCell::new(VecDeque::new()),
             close_after_streams: Cell::new(false),
             final_conn_status: JsCell::new(None),
-            pending_local_streams: JsCell::new(VecDeque::new()),
+            pending_local_bidi: JsCell::new(VecDeque::new()),
+            pending_local_uni: JsCell::new(VecDeque::new()),
             streams: JsCell::new(Vec::new()),
             handshake_reported: Cell::new(false),
             new_token_reported: Cell::new(false),
@@ -835,14 +841,22 @@ impl QuicSession {
         }
     }
     /// Next locally-initiated stream waiting for lsquic to bind it (FIFO).
-    pub(super) fn take_pending_local_stream(&self) -> Option<*mut super::stream::QuicStream> {
+    pub(super) fn take_pending_local_stream(
+        &self,
+        uni: bool,
+    ) -> Option<*mut super::stream::QuicStream> {
         // Skip tombstones: a destroyed pending stream keeps its FIFO slot
         // (its `lsquic_conn_make_stream` request was already issued) but its
         // fulfillment is discarded.
         // Exactly one slot per lsquic fulfillment: a tombstone is consumed and
         // reported as None (the caller shuts the lsquic stream internally)
         // rather than skipped, or the FIFO would drift out of order.
-        match self.pending_local_streams.with_mut(VecDeque::pop_front) {
+        let queue = if uni {
+            &self.pending_local_uni
+        } else {
+            &self.pending_local_bidi
+        };
+        match queue.with_mut(VecDeque::pop_front) {
             Some(p) if !p.is_null() && self.streams.get().contains(&p) => Some(p),
             _ => None,
         }
@@ -1031,13 +1045,15 @@ impl QuicSession {
 
     pub(super) fn process_events(&self, global: &JSGlobalObject) {
         self.refresh_conn_stats();
-        self.deliver_pending_tickets(global);
         // Every callback below can run user JS that synchronously destroys
         // this session (safeCallbackInvoke catches a thrown user callback
         // and calls `session.destroy(err)`, dropping the wrapper Strong),
         // and `run_callback`'s microtask drain can trigger GC. Hold a
-        // Strong on the wrapper for the duration so `self` survives.
+        // Strong on the wrapper for the duration so `self` survives --
+        // including `deliver_pending_tickets`, which fires onSessionTicket
+        // and then touches `self` again to re-arm the timer.
         let _keep_alive = Strong::create(self.handle(), global);
+        self.deliver_pending_tickets(global);
         loop {
             let Some(event) = self.events.with_mut(|e| {
                 if e.is_empty() {
@@ -1921,7 +1937,8 @@ impl QuicSession {
             // teardown is idempotent.
             unsafe { (*qs).teardown(_global) };
         }
-        self.pending_local_streams.with_mut(VecDeque::clear);
+        self.pending_local_bidi.with_mut(VecDeque::clear);
+        self.pending_local_uni.with_mut(VecDeque::clear);
         let conn = self.conn.replace(null_mut());
         if !conn.is_null() {
             // SAFETY: `conn` is live until lsquic frees it inside
@@ -2157,6 +2174,10 @@ impl QuicSession {
             return Ok(JSValue::UNDEFINED);
         }
         let [direction, body] = frame.arguments_as_array::<2>();
+        // direction: 0=bidi, 1=uni. Decided once: it selects the queue this
+        // request parks in AND the `make_*_stream` call it is fulfilled by, so
+        // the two must not be able to disagree.
+        let unidirectional = direction.is_number() && direction.as_number() == 1.0;
         let (qs, handle) = super::stream::QuicStream::create(
             global,
             self.vtable,
@@ -2164,18 +2185,14 @@ impl QuicSession {
             frame.this(),
             null_mut(),
         )?;
-        self.pending_local_streams.with_mut(|q| q.push_back(qs));
+        if unidirectional {
+            self.pending_local_uni.with_mut(|q| q.push_back(qs));
+        } else {
+            self.pending_local_bidi.with_mut(|q| q.push_back(qs));
+        }
         self.streams.with_mut(|v| v.push(qs));
-        // direction: 0=bidi, 1=uni; the stream id isn't assigned yet so use
-        // the requested direction.
-        self.bump_stream_stat(
-            if direction.to_int32() == 1 {
-                STREAM_ID_UNI_BIT
-            } else {
-                0
-            },
-            true,
-        );
+        // The stream id isn't assigned yet, so use the requested direction.
+        self.bump_stream_stat(if unidirectional { STREAM_ID_UNI_BIT } else { 0 }, true);
         // Queue a one-shot body if given (the JS layer also calls
         // attachSource for non-buffer sources afterwards).
         if let Some(buf) = body.as_array_buffer(global) {
@@ -2188,7 +2205,6 @@ impl QuicSession {
                 });
             }
         }
-        let unidirectional = direction.is_number() && direction.as_number() == 1.0;
         // SAFETY: `conn` is non-null (checked above) and live.
         if let Some(conn) = unsafe { lsquic::Conn::from_raw(self.conn.get()) } {
             if unidirectional {

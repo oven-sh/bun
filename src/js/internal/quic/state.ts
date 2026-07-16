@@ -8,9 +8,6 @@ const { inspect } = require("node:util");
 const JSONStringify = JSON.stringify;
 const DataViewPrototypeGetBigInt64 = uncurryThis(DataView.prototype.getBigInt64);
 const DataViewPrototypeGetBigUint64 = uncurryThis(DataView.prototype.getBigUint64);
-const DataViewPrototypeGetByteLength = uncurryThis(
-  Object.getOwnPropertyDescriptor(DataView.prototype, "byteLength").get,
-);
 const DataViewPrototypeGetUint16 = uncurryThis(DataView.prototype.getUint16);
 const DataViewPrototypeGetUint32 = uncurryThis(DataView.prototype.getUint32);
 const DataViewPrototypeGetUint8 = uncurryThis(DataView.prototype.getUint8);
@@ -847,14 +844,14 @@ class QuicStreamState {
       wantsHeaders,
       wantsTrailers,
       early,
-      resetCode,
+      resetCode: `${resetCode}`,
       writeDesiredSize,
       highWaterMark,
     };
   }
 
   [kInspect](depth, options) {
-    if (DataViewPrototypeGetByteLength(this.#handle) === 0) {
+    if (this.#handle === undefined) {
       return "QuicStreamState { <Closed> }";
     }
 

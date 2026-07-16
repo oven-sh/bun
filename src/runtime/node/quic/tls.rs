@@ -278,7 +278,22 @@ unsafe extern "C" fn keylog_cb(ssl: *const ssl::SSL, line: *const core::ffi::c_c
         if !peer_ctx.is_null() {
             // SAFETY: as above.
             let endpoint = unsafe { &*peer_ctx.cast::<super::endpoint::QuicEndpoint>() };
-            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), bytes);
+            let mut local = core::ptr::null();
+            let mut peer = core::ptr::null();
+            // SAFETY: `conn` is live; out-params point at stack slots.
+            let peer_addr = if unsafe {
+                bun_lsquic_sys::lsquic_conn_get_sockaddr(
+                    conn,
+                    core::ptr::from_mut(&mut local),
+                    core::ptr::from_mut(&mut peer),
+                )
+            } == 0
+            {
+                super::endpoint::stored_addr_from_sockaddr(peer)
+            } else {
+                return;
+            };
+            endpoint.buffer_early_keylog(ssl.cast_mut().cast(), peer_addr, bytes);
         }
         return;
     }
@@ -714,13 +729,17 @@ pub(super) fn local_certificate_der(ssl: *mut ssl::SSL) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
-/// DER-encode the leaf certificate of an lsquic-supplied `STACK_OF(X509)`.
-/// Frees the stack (lsquic transfers ownership to the caller).
 /// DER of the peer's leaf certificate from a live TLS session (the client's
 /// certificate when called on a server session with `verifyClient`).
 pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
-    // SAFETY: `ssl_ptr` is live (caller contract); SSL_get_peer_certificate
-    // returns an owned +1 X509 reference we release below.
+    // `lsquic_conn_get_ssl` returns NULL before the handshake and after the
+    // conn drops its enc session; every sibling helper here guards the same way.
+    if ssl_ptr.is_null() {
+        return None;
+    }
+    // SAFETY: `ssl_ptr` is non-null (checked above) and live for this call;
+    // SSL_get_peer_certificate returns an owned +1 X509 reference we release
+    // below.
     unsafe {
         let cert = ssl::SSL_get_peer_certificate(ssl_ptr);
         if cert.is_null() {
@@ -740,6 +759,8 @@ pub(super) fn peer_certificate_der(ssl_ptr: *mut ssl::SSL) -> Option<Vec<u8>> {
     }
 }
 
+/// DER-encode the leaf certificate of an lsquic-supplied `STACK_OF(X509)`.
+/// Frees the stack (lsquic transfers ownership to the caller).
 pub(super) fn leaf_certificate_der(stack: *mut core::ffi::c_void) -> Option<Vec<u8>> {
     if stack.is_null() {
         return None;

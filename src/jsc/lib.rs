@@ -1067,16 +1067,16 @@ pub mod resolved_source_tag {
         /// Map a canonical builtin-module specifier (e.g. `b"node:fs"`) to its
         /// InternalModuleRegistry tag (`(1 << 9) | id`).
         ///
-        /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
-        /// callers feed only `HardcodedModule` strum values, so a miss means a
-        /// `HardcodedModule` variant has no matching entry in the generated
-        /// module table (`INTERNAL_MODULE_TAG`).
         /// Non-panicking lookup for dynamically-built specifiers (e.g. Node's
         /// `--expose-internals` serving arbitrary `internal/*` modules).
         pub fn try_from_name(name: &[u8]) -> Option<Self> {
             INTERNAL_MODULE_TAG.get(name).copied()
         }
 
+        /// Unrecognised names debug-panic / release-fall-back to `Javascript`;
+        /// callers feed only `HardcodedModule` strum values, so a miss means a
+        /// `HardcodedModule` variant has no matching entry in the generated
+        /// module table (`INTERNAL_MODULE_TAG`).
         pub fn from_name(name: &[u8]) -> Self {
             if let Some(&tag) = INTERNAL_MODULE_TAG.get(name) {
                 return tag;

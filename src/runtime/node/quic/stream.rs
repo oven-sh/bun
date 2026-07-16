@@ -1152,7 +1152,9 @@ pub(super) unsafe extern "C" fn on_new_stream(
     // session knows which side it is.
     let is_local = (id & 1 == 0) != session.is_server();
     if is_local {
-        if let Some(qs) = session.take_pending_local_stream() {
+        // Bit 1 of the id is the direction; lsquic drains its delayed bidi and
+        // uni backlogs independently, so take from the matching queue.
+        if let Some(qs) = session.take_pending_local_stream(id & STREAM_ID_UNI_BIT as u64 != 0) {
             // SAFETY: pending streams are kept alive by their wrapper Strong.
             unsafe { (*qs).bind_raw(s) };
             session.push_event(SessionEvent::StreamReady {
@@ -1273,7 +1275,7 @@ lsquic_callback! {
 
     pub(super) fn on_stream_reset(ctx: *mut c_void as qs: &QuicStream, how: c_int, code: u64) {
         // `how`: 0=read side reset (RST_STREAM), 1=write side stopped
-        // (STOP_SENDING). lsquic doesn't pass the error code here.
+        // (STOP_SENDING), 2=both.
         if how == 0 || how == 2 {
             qs.mark_reset(code);
             if let Some(s) = qs.ls() {

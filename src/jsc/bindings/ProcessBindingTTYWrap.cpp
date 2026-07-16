@@ -219,20 +219,21 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 
     JSValue mode = callFrame->argument(1);
 
-    // The per-stream state buffer node:tty hands back on every call. Holding it
-    // in JS keeps its lifetime tied to the stream that owns the mode.
-    auto* state = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(2));
-    if (!state || state->isDetached() || state->length() < Bun__ttyStateSize()) {
-        throwTypeError(globalObject, scope, "state must be a Uint8Array of rawModeStateSize bytes"_s);
-        return {};
-    }
-
     auto fdToUse = fd.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     // Nodejs does not throw when ttySetMode fails. An Error event is emitted instead.
     int mode_ = mode.toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    // The per-stream state buffer node:tty hands back on every call. Holding it
+    // in JS keeps its lifetime tied to the stream that owns the mode. Validated
+    // after the coercions above so a detach triggered from inside them is caught.
+    auto* state = dynamicDowncast<JSC::JSUint8Array>(callFrame->argument(2));
+    if (!state || state->isDetached() || state->length() < Bun__ttyStateSize()) {
+        throwTypeError(globalObject, scope, "state must be a Uint8Array of rawModeStateSize bytes"_s);
+        return {};
+    }
     int err = Bun__ttySetMode(fdToUse, mode_, state->typedVector());
     return JSValue::encode(jsNumber(err));
 #endif

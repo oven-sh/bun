@@ -2,6 +2,7 @@ import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import os from "node:os";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -1003,7 +1004,6 @@ describe.concurrent(() => {
   });
 
   it("process.report.getReport() returns real diagnostic data", () => {
-    const os = require("node:os");
     const report = process.report.getReport();
 
     // header.dumpEventTime is an ISO date string, dumpEventTimeStamp is epoch millis as a string
@@ -1016,10 +1016,11 @@ describe.concurrent(() => {
     expect(Number.isFinite(stampMs)).toBe(true);
     expect(Math.abs(stampMs - Date.now())).toBeLessThan(60_000);
 
-    // header.commandLine is process.argv, not execArgv
+    // header.commandLine is a fresh copy of argv, not execArgv and not process.argv itself
     expect(Array.isArray(header.commandLine)).toBe(true);
     expect(header.commandLine.length).toBeGreaterThan(0);
     expect(header.commandLine[0]).toBe(process.argv[0]);
+    expect(header.commandLine).not.toBe(process.argv);
 
     // javascriptHeap reflects real JSC heap stats, not physical RAM / zeros
     const jh = report.javascriptHeap;

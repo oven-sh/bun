@@ -2530,8 +2530,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObje
     }
 
     JSValue errArg = callFrame->argument(0);
-    if (!errArg.isUndefined() && (errArg.isNull() || !errArg.isObject())) {
-        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "err"_s, "Object"_s, errArg);
+    if (!errArg.isUndefined()) {
+        Bun::V::validateObject(scope, globalObject, errArg, "err"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     // TODO: node:vm
@@ -2550,7 +2551,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     // writeReport([filename][, err])
     JSValue fileArg;
     JSValue errArg;
-    if (arg0.isObject()) {
+    if (arg0.isObject() && !arg0.isCallable()) {
         errArg = arg0;
         fileArg = jsUndefined();
     } else {
@@ -2567,9 +2568,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     }
 
     if (!errArg.isUndefined()) {
-        if (errArg.isNull() || !errArg.isObject()) {
-            return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "err"_s, "Object"_s, errArg);
-        }
+        Bun::V::validateObject(scope, globalObject, errArg, "err"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     bool compact = false;
@@ -2670,9 +2670,14 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     }
 
     CString fileUtf8 = file.utf8();
-    CString pathUtf8 = fullPath.utf8();
 
+#if OS(WINDOWS)
+    auto pathW = fullPath.wideCharacters();
+    FILE* fp = _wfopen(pathW.data(), L"wb");
+#else
+    CString pathUtf8 = fullPath.utf8();
     FILE* fp = fopen(pathUtf8.data(), "wb");
+#endif
     if (!fp) {
         int err = errno;
         if (!directory.isEmpty()) {

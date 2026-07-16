@@ -1139,6 +1139,10 @@ console.log(typeof body.header.processId);
 try { process.report.writeReport(123); } catch (e) { console.log(e.code, /file/.test(e.message)); }
 try { process.report.writeReport("x.json", "notErr"); } catch (e) { console.log(e.code); }
 try { process.report.writeReport("x.json", null); } catch (e) { console.log(e.code); }
+try { process.report.writeReport(() => {}); } catch (e) { console.log(e.code, /file/.test(e.message)); }
+try { process.report.writeReport([]); } catch (e) { console.log(e.code, /err/.test(e.message)); }
+try { process.report.getReport(() => {}); } catch (e) { console.log(e.code); }
+try { process.report.getReport([]); } catch (e) { console.log(e.code); }
 `,
         ],
         env: bunEnv,
@@ -1147,6 +1151,10 @@ try { process.report.writeReport("x.json", null); } catch (e) { console.log(e.co
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(stdout.trim().split("\n")).toEqual([
+        "ERR_INVALID_ARG_TYPE true",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE",
+        "ERR_INVALID_ARG_TYPE true",
         "ERR_INVALID_ARG_TYPE true",
         "ERR_INVALID_ARG_TYPE",
         "ERR_INVALID_ARG_TYPE",

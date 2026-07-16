@@ -1,0 +1,276 @@
+// Pinned regression cases: every real divergence the differential engine has
+// found, with the SPEC-correct expected result recorded. Each entry runs in
+// both engines; `expected` is what a correct engine produces. Entries under
+// `knownBunFailures` document current bun/JSC bugs (asserted separately so a
+// fix shows up as an unexpected pass to be moved into `cases`).
+//
+// Add every future regex bug here with the smallest reproducer.
+
+// A case is { name, source, flags, input, op, expected } where op is one of
+// "exec" | "match" | "split" | "iterate" | "construct" and expected is the
+// JSON-serializable normalized result (see normalize() in regressions.test.ts /
+// run-regressions-under-node.mjs).
+
+export const cases = [
+  // -- Leftmost alternative wins even when a later alternative is longer.
+  {
+    name: "leftmost-alt-wins",
+    source: "a|ab",
+    flags: "",
+    input: "xabc",
+    op: "exec",
+    expected: { match: ["a"], index: 1 },
+  },
+  {
+    name: "leftmost-alt-wins-anchor",
+    source: "a|ab|^x",
+    flags: "",
+    input: "xabc",
+    op: "exec",
+    expected: { match: ["x"], index: 0 },
+  },
+
+  // -- Optional groups after \B (control cases without ^ pass on all engines).
+  {
+    name: "nonword-boundary-optional-group",
+    source: "\\B(?:x)??",
+    flags: "",
+    input: "xx",
+    op: "exec",
+    expected: { match: [""], index: 1 },
+  },
+  {
+    name: "nonword-boundary-lazy-x",
+    source: "\\Bx??",
+    flags: "",
+    input: "xx",
+    op: "exec",
+    expected: { match: [""], index: 1 },
+  },
+
+  // -- Empty-iteration capture clearing (spec RepeatMatcher); the .*{0,2}\\1
+  //    variant is fixed in newer JSC but not stock bun -- see knownBunFailures.
+  {
+    name: "quantified-group-capture-last-iteration",
+    source: "(?:(a)|b){2}",
+    flags: "",
+    input: "ab",
+    op: "exec",
+    expected: { match: ["ab", null], index: 0 },
+  },
+  {
+    name: "quantified-group-capture-both",
+    source: "(?:(a)|(b)){2}",
+    flags: "",
+    input: "ab",
+    op: "exec",
+    expected: { match: ["ab", null, "b"], index: 0 },
+  },
+
+  // -- Lookbehind basics (bun issue #5197 area).
+  {
+    name: "lookbehind-price",
+    source: "(?<=\\$)\\d+(?:\\.\\d\\d)?",
+    flags: "",
+    input: "cost: $19.99 ok",
+    op: "exec",
+    expected: { match: ["19.99"], index: 7 },
+  },
+  {
+    name: "neg-lookbehind",
+    source: "(?<!not )\\bgood\\b",
+    flags: "",
+    input: "it is good",
+    op: "exec",
+    expected: { match: ["good"], index: 6 },
+  },
+  {
+    name: "neg-lookbehind-blocks",
+    source: "(?<!not )\\bgood\\b",
+    flags: "",
+    input: "not good",
+    op: "exec",
+    expected: null,
+  },
+  {
+    name: "lookbehind-capture-backward",
+    source: "(?<=(\\d)(\\d))x",
+    flags: "",
+    input: "12x",
+    op: "exec",
+    expected: { match: ["x", "1", "2"], index: 2 },
+  },
+  {
+    name: "lookbehind-alt-and-boundary",
+    source: "(?<=^|\\s)word\\b",
+    flags: "g",
+    input: "word words a word",
+    op: "iterate",
+    expected: [
+      { match: ["word"], index: 0, lastIndex: 4 },
+      { match: ["word"], index: 13, lastIndex: 17 },
+    ],
+  },
+
+  // -- Large alternations (dispatch/factoring territory) must keep leftmost-wins order.
+  {
+    name: "big-alternation-order",
+    source: "abcd|abc|ab|a",
+    flags: "",
+    input: "abcx",
+    op: "exec",
+    expected: { match: ["abc"], index: 0 },
+  },
+  {
+    name: "big-alternation-shared-prefix-capture",
+    source: "a(1)|a(2)|a(3)|q",
+    flags: "",
+    input: "a2",
+    op: "exec",
+    expected: { match: ["a2", null, "2", null], index: 0 },
+  },
+  {
+    name: "alternation-backtrack-into-earlier",
+    source: "(?:ab|abc|abcd)d",
+    flags: "",
+    input: "abcdd",
+    op: "exec",
+    expected: { match: ["abcd"], index: 0 },
+  },
+  {
+    name: "anchored-stringlist",
+    source: "^(?:GET|POST|PUT|SEND)",
+    flags: "",
+    input: "Pzz",
+    op: "exec",
+    expected: null,
+  },
+  {
+    name: "anchored-stringlist-hit",
+    source: "^(?:GET|POST|PUT|SEND)",
+    flags: "",
+    input: "POST x",
+    op: "exec",
+    expected: { match: ["POST"], index: 0 },
+  },
+
+  // -- Unicode / surrogate handling.
+  {
+    name: "u-flag-astral-dot",
+    source: ".",
+    flags: "u",
+    input: "😀a",
+    op: "exec",
+    expected: { match: ["😀"], index: 0 },
+  },
+  {
+    name: "v-flag-astral-dot",
+    source: ".",
+    flags: "v",
+    input: "😀a",
+    op: "exec",
+    expected: { match: ["😀"], index: 0 },
+  },
+  { name: "split-empty-v", source: "(?:)", flags: "v", input: "a😀", op: "split", expected: ["a", "😀"] },
+  {
+    name: "ignorecase-astral",
+    source: "\\u{1F600}",
+    flags: "iu",
+    input: "x😀",
+    op: "exec",
+    expected: { match: ["😀"], index: 1 },
+  },
+
+  // -- Sticky / global lastIndex semantics.
+  { name: "sticky-fail-resets", source: "a", flags: "y", input: "ba", op: "exec", expected: null },
+  {
+    name: "global-empty-advances",
+    source: "x*",
+    flags: "g",
+    input: "abc",
+    op: "iterate",
+    expected: [{ match: [""], index: 0, lastIndex: 0 }],
+  },
+
+  // -- Named groups & backreferences.
+  {
+    name: "named-backref",
+    source: "(?<t>\\w)\\k<t>",
+    flags: "",
+    input: "abccd",
+    op: "exec",
+    expected: { match: ["cc", "c"], index: 2, groups: { t: "c" } },
+  },
+  {
+    name: "backref-unmatched-optional",
+    source: "(x)?\\1y",
+    flags: "",
+    input: "y",
+    op: "exec",
+    expected: { match: ["y", null], index: 0 },
+  },
+];
+
+// Documented current bun/JSC failures with their spec-correct expectation.
+// The test asserts these still FAIL (with the current wrong result), so that
+// an engine fix produces an unexpected pass and the case gets promoted above.
+export const knownBunFailures = [
+  {
+    // Fixed in WebKit main; still present in bun's currently-pinned JSC.
+    name: "empty-iteration-clears-capture",
+    source: "(.*){0,2}\\1",
+    flags: "",
+    input: "ab",
+    op: "exec",
+    expected: { match: ["", null], index: 0 },
+    currentBun: { match: ["", ""], index: 0 },
+  },
+  {
+    name: "jit-nonword-boundary-optional-BOL-group",
+    source: "\\B(?:^)?",
+    flags: "",
+    input: "xx",
+    op: "exec",
+    expected: { match: [""], index: 1 },
+    currentBun: null,
+  },
+  {
+    name: "jit-nonword-boundary-lazy-BOL-group",
+    source: "\\B(?:^x)??",
+    flags: "",
+    input: "xx",
+    op: "exec",
+    expected: { match: [""], index: 1 },
+    currentBun: null,
+  },
+  {
+    name: "interp-leftmost-alt-with-caret-alternative",
+    source: "a|ab|^a",
+    flags: "",
+    input: "xabc",
+    op: "exec",
+    expected: { match: ["a"], index: 1 },
+    currentBun: { match: ["ab"], index: 1 },
+    // Only wrong on the bytecode interpreter path (JIT is correct), so it may
+    // pass depending on tiering; recorded but not asserted-failing.
+    tierDependent: true,
+  },
+  {
+    name: "v-mode-lookbehind-code-point-step",
+    source: "(?<=.)",
+    flags: "v",
+    input: "😀😀",
+    op: "exec",
+    expected: { match: [""], index: 2 },
+    currentBun: { match: [""], index: 1 },
+  },
+  {
+    name: "v-mode-fold-before-subtract",
+    source: "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+    flags: "vi",
+    input: "FooBĀĂĄr",
+    op: "exec",
+    expected: null,
+    currentBun: { match: ["FooBĀĂĄr", "BĀĂĄ"], index: 0 },
+  },
+];

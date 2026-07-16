@@ -365,7 +365,11 @@ function makePortReadable(port, incrementsPortRef) {
   // unconsumed captured stream never pins the loop on its own (node's model).
   port.on("message", onMessage);
   port.unref();
-  stream.on("end", () => {
+  // 'close' covers natural EOF and destroy(); release the read-time ref and
+  // drop the listener so a destroyed captured stream can't pin an unref'd worker.
+  stream.on("close", () => {
+    ended = true;
+    port.off("message", onMessage);
     if (startedReading && incrementsPortRef) {
       startedReading = false;
       port.unref();

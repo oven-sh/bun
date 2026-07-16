@@ -2097,7 +2097,9 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlob
 
 JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, JSValue errValue)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    // Best-effort: a user-supplied err with throwing getters or Symbol
+    // values must not fail the whole diagnostic; Node swallows per-property.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* javascriptStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2120,10 +2122,14 @@ JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, 
     } else {
         JSObject* errObj = errValue.getObject();
         JSValue stackVal = errObj->get(globalObject, vm.propertyNames->stack);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (!stackVal.isUndefinedOrNull()) {
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination()) return {};
+        } else if (!stackVal.isUndefinedOrNull()) {
             stackProperty = stackVal.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            if (scope.exception()) [[unlikely]] {
+                if (!scope.clearExceptionExceptTermination()) return {};
+                stackProperty = String();
+            }
         }
     }
 
@@ -2155,16 +2161,29 @@ JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, 
         JSObject* errObj = errValue.getObject();
         JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         errObj->methodTable()->getOwnPropertyNames(errObj, globalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, {});
-        for (unsigned i = 0; i < names.size(); i++) {
-            const auto& name = names[i];
-            if (name == vm.propertyNames->name || name == vm.propertyNames->message || name == vm.propertyNames->stack)
-                continue;
-            JSValue v = errObj->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, {});
-            JSString* str = v.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            errorProperties->putDirect(vm, name, str, 0);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination()) return {};
+        } else {
+            for (unsigned i = 0; i < names.size(); i++) {
+                const auto& name = names[i];
+                if (name == vm.propertyNames->name || name == vm.propertyNames->message || name == vm.propertyNames->stack)
+                    continue;
+                if (parseIndex(name)) [[unlikely]]
+                    continue;
+                JSValue v = errObj->get(globalObject, name);
+                if (scope.exception()) [[unlikely]] {
+                    if (!scope.clearExceptionExceptTermination()) return {};
+                    continue;
+                }
+                if (v.isSymbol())
+                    continue;
+                JSString* str = v.toString(globalObject);
+                if (scope.exception()) [[unlikely]] {
+                    if (!scope.clearExceptionExceptTermination()) return {};
+                    continue;
+                }
+                errorProperties->putDirect(vm, name, str, 0);
+            }
         }
     }
     javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
@@ -2594,7 +2613,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     String configFilename;
     JSValue reportObjValue = zigGlobal->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "report"_s));
     RETURN_IF_EXCEPTION(scope, {});
-    if (JSObject* thisObj = reportObjValue.isObject() ? reportObjValue.getObject() : nullptr) {
+    if (JSObject* thisObj = (reportObjValue && reportObjValue.isObject()) ? reportObjValue.getObject() : nullptr) {
         JSValue v;
         v = thisObj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "compact"_s));
         RETURN_IF_EXCEPTION(scope, {});

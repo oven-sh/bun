@@ -1281,6 +1281,38 @@ console.log(JSON.stringify({
       expect(exitCode).toBe(0);
     });
 
+    it.concurrent("getReport(err) tolerates index keys, Symbol values, and throwing getters", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+const e = new Error("x");
+e[0] = "indexed";
+e.before = "a";
+e.sym = Symbol("y");
+Object.defineProperty(e, "bad", { enumerable: true, get() { throw new Error("boom"); } });
+e.after = "b";
+const rep = process.report.getReport(e);
+console.log(JSON.stringify(rep.javascriptStack.errorProperties));
+
+const e2 = {};
+Object.defineProperty(e2, "stack", { get() { throw new Error("no stack"); } });
+const rep2 = process.report.getReport(e2);
+console.log(JSON.stringify({ msg: rep2.javascriptStack.message, stack: rep2.javascriptStack.stack }));
+`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout.trim().split("\n");
+      expect(JSON.parse(lines[0])).toEqual({ before: "a", after: "b" });
+      expect(JSON.parse(lines[1])).toEqual({ msg: "", stack: [] });
+      expect(exitCode).toBe(0);
+    });
+
     it.concurrent("detached call still honors process.report config", async () => {
       await using proc = Bun.spawn({
         cmd: [

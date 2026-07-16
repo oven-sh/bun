@@ -334,15 +334,16 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
         bool inEscape = false;
         bool inOscEscape = false;
         for (size_t i = 0; i < size; ++i) {
-            if (data[i] == 0x1b || data[i] == 0x9b || inEscape) {
-                ansiOnly.append(data[i]);
-                if (data[i] == 0x1b) {
+            const Char c = data[i];
+            if (c == 0x1b || c == 0x9b || inEscape) {
+                ansiOnly.append(c);
+                if (c == 0x1b) {
                     inEscape = true;
                     inOscEscape = (i + 1 < size && data[i + 1] == ']');
-                } else if (data[i] == 0x9b) {
+                } else if (c == 0x9b) {
                     inEscape = true;
                     inOscEscape = false;
-                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
+                } else if (isAnsiEscapeTerminator(c, inOscEscape)) {
                     inEscape = false;
                     inOscEscape = false;
                 }
@@ -358,15 +359,16 @@ static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
         bool inEscape = false;
         bool inOscEscape = false;
         for (size_t i = lastVisibleEnd; i < size; ++i) {
-            if (data[i] == 0x1b || data[i] == 0x9b || inEscape) {
-                trailingAnsi.append(data[i]);
-                if (data[i] == 0x1b) {
+            const Char c = data[i];
+            if (c == 0x1b || c == 0x9b || inEscape) {
+                trailingAnsi.append(c);
+                if (c == 0x1b) {
                     inEscape = true;
                     inOscEscape = (i + 1 < size && data[i + 1] == ']');
-                } else if (data[i] == 0x9b) {
+                } else if (c == 0x9b) {
                     inEscape = true;
                     inOscEscape = false;
-                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
+                } else if (isAnsiEscapeTerminator(c, inOscEscape)) {
                     inEscape = false;
                     inOscEscape = false;
                 }

@@ -2941,6 +2941,14 @@ pub mod internal {
                 }
             }
         }
+        // Every path that reaches here has finished with the mach-port poll;
+        // return its hive slot (mirrors `get_addr_info_async_callback`).
+        // SAFETY: `req` is live; we are on the loop thread that owns the poll.
+        if let Some(poll) = unsafe { (*req).libinfo.file_poll.take() } {
+            // SAFETY: `poll` is the hive slot `lookup_libinfo` allocated; nothing
+            // else aliases it. `deinit` handles being called during dispatch.
+            unsafe { (*poll.as_ptr()).deinit() };
+        }
         after_result(req, addr_info, status_int);
     }
 

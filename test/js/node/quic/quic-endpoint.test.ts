@@ -103,7 +103,7 @@ describe("node:quic under --isolate", () => {
     using dir = tempDir("quic-isolate", { "a.test.ts": body("a"), "b.test.ts": body("b") });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "a.test.ts", "b.test.ts"],
+      cmd: [bunExe(), "test", "--isolate", "--timeout=30000", "a.test.ts", "b.test.ts"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",

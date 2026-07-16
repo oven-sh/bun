@@ -361,16 +361,33 @@ public:
             });
         }
 
+        // Connect before dispatching: a batch that arrives while this
+        // connection is still Pending would otherwise dispatch through the
+        // shared controller without this connection registered as a frontend,
+        // so the reply is routed to nobody.
+        if (connectIfNeeded && this->status == ConnectionStatus::Pending) {
+            this->doConnect(context);
+        }
+
         auto& dispatcher = globalObject->inspectorDebuggable();
         Inspector::JSGlobalObjectDebugger* debugger = reinterpret_cast<Inspector::JSGlobalObjectDebugger*>(globalObject->debugger());
 
-        if (!debugger) {
-            if (connectIfNeeded && this->status == ConnectionStatus::Pending) {
-                this->doConnect(context);
-                return;
+        // JSC's frontendInitialized() only calls unpauseForResolvedAutomaticInspection
+        // when m_isAutomaticInspection is true, but disconnectFrontend() on any
+        // connection clears it. A previous connection's disconnect task can land
+        // between this connection's connect and its Inspector.initialized dispatch,
+        // so resolve waitForDebugger directly when we see the command instead of
+        // relying on that JSC path.
+        auto resolveWaitIfInitialized = [](const WTF::String& message) {
+            if (waitingForConnection && message.contains("\"Inspector.initialized\""_s)) {
+                waitingForConnection = false;
+                Debugger__didConnect();
             }
+        };
 
+        if (!debugger) {
             for (auto message : messages) {
+                resolveWaitIfInitialized(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
 
                 if (!debugger) {
@@ -384,6 +401,7 @@ public:
             }
         } else {
             for (auto message : messages) {
+                resolveWaitIfInitialized(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
             }
         }

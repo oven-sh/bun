@@ -374,13 +374,11 @@ export function initializeNextTickQueue(
           var args = tock.args;
           var frame = tock.frame;
           var asyncId = tock.asyncId;
-          var hooks;
           var restore = $getInternalField($asyncContext, 0);
           $putInternalField($asyncContext, 0, frame);
-          if (asyncId !== undefined && tickHooks.length !== 0) {
-            hooks = tickHooks.slice();
+          if (asyncId !== undefined) {
             asyncHooksTick.currentAsyncId = asyncId;
-            emitTickHook(hooks, "before", asyncId);
+            if (tickHooks.length !== 0) emitTickHook(tickHooks.slice(), "before", asyncId);
           }
           try {
             if (args === undefined) {
@@ -407,12 +405,15 @@ export function initializeNextTickQueue(
           } catch (e) {
             reportUncaughtException(e);
           } finally {
-            $putInternalField($asyncContext, 0, restore);
-            if (hooks !== undefined) {
-              emitTickHook(hooks, "after", asyncId);
+            if (asyncId !== undefined) {
+              // node: emitAfter runs before popAsyncContext, so `after` sees
+              // the tock's ALS frame; destroy runs after the pop.
+              if (tickHooks.length !== 0) emitTickHook(tickHooks.slice(), "after", asyncId);
               asyncHooksTick.currentAsyncId = 0;
-              emitTickHook(hooks, "destroy", asyncId);
-              hooks = undefined;
+            }
+            $putInternalField($asyncContext, 0, restore);
+            if (asyncId !== undefined && tickHooks.length !== 0) {
+              emitTickHook(tickHooks.slice(), "destroy", asyncId);
             }
           }
         }

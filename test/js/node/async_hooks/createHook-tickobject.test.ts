@@ -133,4 +133,43 @@ describe.concurrent("async_hooks.createHook TickObject lifecycle", () => {
     expect(JSON.parse(stdout.trim())).toEqual({ inits: 1, destroys: 1 });
     expect(exitCode).toBe(0);
   });
+
+  test("TickObject: disable() inside the callback skips that tick's after/destroy", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+    const ah = require("async_hooks");
+    const events = [];
+    const h = ah.createHook({
+      before(id) { events.push("before"); },
+      after(id)  { events.push("after"); },
+      destroy(id){ events.push("destroy"); },
+    }).enable();
+    process.nextTick(() => { h.disable(); events.push("cb"); });
+    setImmediate(() => console.log(events.join(",")));
+  `);
+    expect({ stdout, stderr }).toEqual({ stdout: "before,cb\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("TickObject: before/after hooks observe the tock's AsyncLocalStorage store", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+    const { AsyncLocalStorage, createHook } = require("async_hooks");
+    const als = new AsyncLocalStorage();
+    const seen = [];
+    createHook({
+      before() { seen.push(["before", als.getStore()]); },
+      after()  { seen.push(["after",  als.getStore()]); },
+      destroy(){ seen.push(["destroy", als.getStore()]); },
+    }).enable();
+    als.run("X", () => process.nextTick(() => {}));
+    setImmediate(() => console.log(JSON.stringify(seen)));
+  `);
+    expect(stderr).toBe("");
+    // node: after sees the tock's store, destroy runs after the context pop.
+    expect(JSON.parse(stdout.trim())).toEqual([
+      ["before", "X"],
+      ["after", "X"],
+      ["destroy", null],
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });

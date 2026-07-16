@@ -30,9 +30,10 @@ void Bun__internal_dispatch_ready_poll(void* loop, void* poll);
 #include <stdint.h>
 #include <errno.h>
 #include <string.h> // memset
+#include <mimalloc.h>
 #endif
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout);
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns);
 
 /* Pointer tags are used to indicate a Bun pointer versus a uSockets pointer */
 #define UNSET_BITS_49_UNTIL_64 0x0000FFFFFFFFFFFF
@@ -354,9 +355,9 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm);
+extern void Bun__JSC_onBeforeWait(void * _Nonnull jsc_vm, uint64_t now_ns);
 
-void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
+void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout, uint64_t now_ns) {
     if (loop->num_polls == 0)
         return;
 
@@ -385,8 +386,27 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     const unsigned int had_wakeups = __atomic_exchange_n(&loop->pending_wakeups, 0, __ATOMIC_ACQUIRE);
     const int will_idle_inside_event_loop = had_wakeups == 0 && (!timeout || (timeout->tv_nsec != 0 || timeout->tv_sec != 0));
+    /* `now_ns` is the reading the JS side took to pick `timeout`
+     * (timer::All::get_timeout), reused here to rate-limit the idle sweep; 0
+     * if it had none to share. Nothing measures a deadline against it. */
     if (will_idle_inside_event_loop && loop->data.jsc_vm)
-        Bun__JSC_onBeforeWait(loop->data.jsc_vm);
+        Bun__JSC_onBeforeWait(loop->data.jsc_vm, now_ns);
+
+    /* The scavenger sweeps our heaps while we are in the kernel. Must come after
+     * Bun__JSC_onBeforeWait, which allocates: nothing may touch our heaps until the matching
+     * _end. mimalloc paces the sweep itself, so this costs a compare-and-swap per tick.
+     * With no scavenger to hand off to, fall back to sweeping inline -- but only on a tick that
+     * really parks, and rate-limited, because doing it between ticks is what we are avoiding. */
+    const int handed_off = mi_on_thread_idle_start();
+    if (!handed_off && will_idle_inside_event_loop) {
+        static const uint64_t idle_sweep_interval_ns = 100 * 1000000ULL;
+        static _Thread_local uint64_t last_idle_sweep_ns = 0;
+        const uint64_t sweep_now_ns = now_ns ? now_ns : us_internal_monotonic_ns();
+        if (sweep_now_ns >= last_idle_sweep_ns + idle_sweep_interval_ns) {
+            last_idle_sweep_ns = sweep_now_ns;
+            mi_on_thread_idle();
+        }
+    }
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
@@ -407,6 +427,10 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
+
+    /* Before anything can allocate again. */
+    if (handed_off)
+        mi_on_thread_idle_end();
 
     us_internal_dispatch_ready_polls(loop);
     us_internal_drain_ready_polls(loop);

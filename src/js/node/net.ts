@@ -1386,7 +1386,9 @@ function Socket(options?) {
 
   this[kSetNoDelay] = Boolean(noDelay);
   this[kSetKeepAlive] = Boolean(keepAlive);
-  this[kSetKeepAliveInitialDelay] = ~~(keepAliveInitialDelay / 1000);
+  // Bun's native _handle.setKeepAlive takes milliseconds (it is the public
+  // Bun.Socket), so store ms here. Node stores seconds because libuv does.
+  this[kSetKeepAliveInitialDelay] = MathMax(0, ~~keepAliveInitialDelay);
 
   this[khandlers] = SocketHandlers2;
   this.bytesRead = 0;
@@ -2238,7 +2240,10 @@ Socket.prototype.resetAndDestroy = function resetAndDestroy() {
 
 Socket.prototype.setKeepAlive = function setKeepAlive(enable = false, initialDelayMsecs = 0) {
   enable = Boolean(enable);
-  const initialDelay = ~~(initialDelayMsecs / 1000);
+  // Bun's native _handle.setKeepAlive takes milliseconds; the ms→seconds
+  // conversion for TCP_KEEPIDLE lives in the native binding. Clamp to 0 so
+  // negatives and ~~ overflow match Node's no-validate behavior.
+  const initialDelay = MathMax(0, ~~initialDelayMsecs);
 
   if (!this._handle) {
     this[kSetKeepAlive] = enable;
@@ -3151,7 +3156,7 @@ function Server(options?, connectionListener?) {
   // https://github.com/nodejs/node/blob/843dc5f0d5ad/lib/net.js#L1880
   this.allowHalfOpen = allowHalfOpen;
   this.keepAlive = Boolean(keepAlive);
-  this.keepAliveInitialDelay = ~~(keepAliveInitialDelay / 1000);
+  this.keepAliveInitialDelay = MathMax(0, ~~keepAliveInitialDelay);
   this.highWaterMark = highWaterMark;
   this.pauseOnConnect = Boolean(pauseOnConnect);
   this.noDelay = Boolean(noDelay);

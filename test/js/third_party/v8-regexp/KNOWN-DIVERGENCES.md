@@ -96,3 +96,43 @@ Found by the differential harness (case reduced from a generated pattern):
 
 The counted capture `(.){2,}` in the second alternative is essential; a plain
 `(y)` there does not trigger it.
+
+## 9. JIT-only, live on WebKit main: optional group containing only `^` never matches
+
+Found by the differential harness. The bytecode interpreter and V8 agree; the
+JIT returns null:
+
+```js
+/(?:^)?a/.exec("ba")     // V8 + JSC interpreter: ["a", 1];  JSC JIT: null
+/(?:^)*a/.exec("ba")     // same
+/\B(?:^)?/.exec("xx")    // V8 + interp: [""] at 1;         JSC JIT: null
+```
+
+Not triggered when the group has other content (`/(?:^|z)?a/`) or is not the
+first term of the alternative (`/x(?:^)?a/`), pointing at the zero-length-match
+handling of a quantified group whose only term is an assertion. #4 above is the
+same family reached through `\B`.
+
+## 10. JIT-only, live on WebKit main: astral alternative lost next to a broad-class sibling (`/u`)
+
+Found by the differential harness. In unicode mode, an alternative that
+starts with an astral (non-BMP) literal is never matched when a sibling
+alternative starts with a broad or inverted class (`\P{L}`, `[^...]`, `.`);
+the JIT even prefers the later alternative's later match:
+
+```js
+/😀|\P{L}y/u.exec("z 😀0 q")     // V8 + JSC interpreter: ["😀", 2];   JSC JIT: null
+/😀.|.y/u.exec("z 😀0 q")        // V8 + interp: ["😀0", 2];             JSC JIT: null
+/😀.|\P{L}q/u.exec("z 😀0 q")    // V8 + interp: ["😀0", 2];             JSC JIT: [" q", 5]
+```
+
+Fine when the sibling starts with an ASCII literal (`/😀.|xy/u`) or the same
+category (`\p{L}`), implicating the JIT's non-BMP first-character lead search.
+
+## 11. bun runtime (not the regex engine): lost newline in console.log to a redirected stdout
+
+Found while building the soak: a stream of many long `console.log` lines to a
+redirected stdout lost one line's trailing newline (fusing two records); the
+same content written through node:fs or a single stdout write is intact.
+Deterministic reproducer and analysis are in the PR description; tracked
+separately from the regex work.

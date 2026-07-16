@@ -463,7 +463,12 @@ describe("captured stdio backpressure", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    expect({
+      stdout: stdout.trim(),
+      stderr: exitCode === 0 ? "" : stderr,
+      exitCode,
+      signalCode: proc.signalCode,
+    }).toEqual({
       stdout: JSON.stringify({ code: 0, cb: true, out: "o", err: "e" }),
       stderr: "",
       exitCode: 0,

@@ -1044,19 +1044,21 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // like .e_import_identifier tracking works
                         // Reminder that this can only be done after
                         // `target` is visited.
-                        if let Some(rewrite) = p.maybe_rewrite_property_access(
-                            expr.loc,
-                            e_.target,
-                            s.data.slice(),
-                            unwrapped.loc,
-                            IdentifierOpts::default()
-                                .with_is_call_target(is_call_target)
-                                // .is_template_tag = is_template_tag,
-                                .with_is_delete_target(is_delete_target)
-                                .with_assign_target(in_.assign_target),
-                        ) {
-                            *e = rewrite;
-                            return;
+                        if e_.optional_chain.is_none() {
+                            if let Some(rewrite) = p.maybe_rewrite_property_access(
+                                expr.loc,
+                                e_.target,
+                                s.data.slice(),
+                                unwrapped.loc,
+                                IdentifierOpts::default()
+                                    .with_is_call_target(is_call_target)
+                                    // .is_template_tag = is_template_tag,
+                                    .with_is_delete_target(is_delete_target)
+                                    .with_assign_target(in_.assign_target),
+                            ) {
+                                *e = rewrite;
+                                return;
+                            }
                         }
                     }
                 }
@@ -1256,7 +1258,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         let side_effects = SideEffects::to_boolean(p, &e_.value.data);
-                        if side_effects.ok {
+                        if side_effects.ok
+                            && (side_effects.side_effects == SideEffects::NoSideEffects
+                                || p.expr_can_be_removed_if_unused(&e_.value))
+                        {
                             *e = p.new_expr(
                                 E::Boolean {
                                     value: !side_effects.value,

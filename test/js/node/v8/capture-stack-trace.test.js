@@ -297,6 +297,75 @@ test("capture stack trace edge cases", () => {
   expect(Error.captureStackTrace({}, true)).toBe(undefined);
 });
 
+test("Error.captureStackTrace installs .stack as non-enumerable", () => {
+  // V8 installs .stack with enumerable: false regardless of target type.
+  const expectNonEnumerableStack = target => {
+    const d = Object.getOwnPropertyDescriptor(target, "stack");
+    expect({ enumerable: d.enumerable, configurable: d.configurable }).toEqual({
+      enumerable: false,
+      configurable: true,
+    });
+    // V8 installs an accessor (no `writable`), Bun installs a data property; both
+    // must allow assignment. Only `writable: false` would be a regression.
+    expect(d.writable).not.toBe(false);
+    expect(Object.prototype.propertyIsEnumerable.call(target, "stack")).toBe(false);
+  };
+
+  // plain object target
+  const o = { a: 1 };
+  Error.captureStackTrace(o);
+  expect(Object.keys(o)).toEqual(["a"]);
+  expect(JSON.stringify(o)).toBe('{"a":1}');
+  const forIn = [];
+  for (const k in o) forIn.push(k);
+  expect(forIn).toEqual(["a"]);
+  expectNonEnumerableStack(o);
+  expect(typeof o.stack).toBe("string");
+  o.stack = "overwritten";
+  expect(o.stack).toBe("overwritten");
+  expectNonEnumerableStack(o);
+
+  // plain object with Error.prepareStackTrace set. Inside the callback, .stack
+  // holds the temporary default-formatted string; observing it there pins the
+  // attribute on that write, which the final putDirect would otherwise mask.
+  let insidePrepare;
+  Error.prepareStackTrace = (err, sites) => {
+    insidePrepare = {
+      keys: Object.keys(err),
+      enumerable: Object.getOwnPropertyDescriptor(err, "stack").enumerable,
+    };
+    return "from-prepare";
+  };
+  try {
+    const o2 = {};
+    Error.captureStackTrace(o2);
+    expect(insidePrepare).toEqual({ keys: [], enumerable: false });
+    expect(Object.keys(o2)).toEqual([]);
+    expectNonEnumerableStack(o2);
+    expect(o2.stack).toBe("from-prepare");
+  } finally {
+    Error.prepareStackTrace = origPrepareStackTrace;
+  }
+
+  // Object.keys must run before any descriptor lookup: getOwnPropertyDescriptor trips
+  // ErrorInstance::materializeErrorInfoIfNeeded, which overwrites with its own DontEnum
+  // and would mask the attribute captureStackTrace installed on the accessor path.
+  const lazy = new Error("lazy");
+  Error.captureStackTrace(lazy);
+  expect(Object.keys(lazy)).toEqual([]);
+  expectNonEnumerableStack(lazy);
+
+  // ErrorInstance whose .stack has already been materialized
+  const materialized = new Error("materialized");
+  void materialized.stack;
+  Error.captureStackTrace(materialized);
+  expect(Object.keys(materialized)).toEqual([]);
+  expectNonEnumerableStack(materialized);
+  materialized.stack = "overwritten";
+  expect(materialized.stack).toBe("overwritten");
+  expectNonEnumerableStack(materialized);
+});
+
 test("prepare stack trace call sites", () => {
   function f1() {
     f2();
@@ -892,8 +961,7 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
     function recurse(depth) {
       if (depth === 0) return target();
       // Not a tail call — keeps each frame on the stack.
-      const r = recurse(depth - 1);
-      return { ...r };
+      return recurse(depth - 1) || null;
     }
     noInline(recurse);
 
@@ -923,6 +991,32 @@ test("captureStackTrace does not crash when stackTraceLimit is non-numeric", () 
   } finally {
     Error.stackTraceLimit = origLimit;
   }
+});
+
+test("Error.stackTraceLimit default matches the limit captureStackTrace applies", async () => {
+  // Run in a fresh process so nothing has written to Error.stackTraceLimit yet.
+  const src = `
+    function depth(n) {
+      if (n) return 0 + depth(n - 1);
+      const e = {};
+      Error.captureStackTrace(e);
+      return e.stack.split("\\n").length - 1;
+    }
+    const reported = Error.stackTraceLimit;
+    const before = depth(30);
+    Error.stackTraceLimit = Error.stackTraceLimit;
+    const after = depth(30);
+    process.stdout.write(JSON.stringify({ reported, before, after }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { reported, before, after } = JSON.parse(stdout);
+  // Node.js defaults to 10 and the reported value must match the applied limit.
+  expect({ reported, before, after, exitCode }).toEqual({ reported: 10, before: 10, after: 10, exitCode: 0 });
 });
 
 test("call sites inside a WebSocket message listener only contain script frames when the message arrives with the upgrade response", async () => {

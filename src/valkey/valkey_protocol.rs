@@ -32,7 +32,6 @@ pub enum RedisError {
     ConnectionTimeout,
     IdleTimeout,
     NestingDepthExceeded,
-    LineTooLong,
 }
 
 bun_core::impl_tag_error!(RedisError);
@@ -249,20 +248,15 @@ impl<'a> ValkeyReader<'a> {
 
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
-        let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
-        let start = self.crlf_skip.min(limit);
+        let start = self.crlf_skip.min(buffer.len());
         self.crlf_skip = 0;
-        for (i, &byte) in buffer.iter().enumerate().take(limit).skip(start) {
+        for (i, &byte) in buffer.iter().enumerate().skip(start) {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
                 let result = &buffer[0..i];
                 self.pos += i + 2;
                 return Ok(result);
             }
         }
-        if buffer.len() > Self::MAX_LINE_LEN + 1 {
-            return Err(RedisError::LineTooLong);
-        }
-
         Err(RedisError::InvalidResponse)
     }
 
@@ -343,8 +337,6 @@ impl<'a> ValkeyReader<'a> {
     /// machine stops buffering instead of growing the read buffer toward an
     /// attacker-chosen size.
     const MAX_BULK_LEN: i64 = 512 * 1024 * 1024;
-
-    const MAX_LINE_LEN: usize = 512 * 1024;
 
     /// Caps an aggregate's `Vec::with_capacity` so the total bytes reserved
     /// across the whole parse — every nesting level combined — never exceed

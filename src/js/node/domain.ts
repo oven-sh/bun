@@ -89,12 +89,7 @@ function isCurrentExecution(box: any): boolean {
 // before() never enters one — the _errorHandler check is the same filter
 // fatalErrorDispatch and domainWouldClaim already apply.
 function isRestoredPairing(box: any): boolean {
-  return (
-    box !== undefined &&
-    box.token !== currentToken &&
-    box.d != null &&
-    typeof box.d._errorHandler === "function"
-  );
+  return box !== undefined && box.token !== currentToken && box.d != null && typeof box.d._errorHandler === "function";
 }
 
 // adopt() (below) may have entered a paired domain on the global stack for

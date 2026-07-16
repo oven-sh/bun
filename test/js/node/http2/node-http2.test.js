@@ -3381,6 +3381,7 @@ it("http2 server sends each session's frames to its own peer under interleaved r
   const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
   const streams = [];
   const bothStreams = Promise.withResolvers();
+  server.on("error", bothStreams.reject);
   server.on("stream", stream => {
     stream.on("error", () => {});
     streams.push(stream);
@@ -3392,18 +3393,22 @@ it("http2 server sends each session's frames to its own peer under interleaved r
       [0, 1].map(
         i =>
           new Promise(resolve => {
-            const client = http2.connect(`https://127.0.0.1:${server.address().port}`, TLS_OPTIONS);
-            client.on("error", e => resolve({ i, status: undefined, total: 0, err: String(e) }));
-            const req = client.request({ ":path": "/" });
             let total = 0;
             let status;
+            const fail = e => {
+              bothStreams.reject(e);
+              resolve({ i, status, total, err: String(e) });
+            };
+            const client = http2.connect(`https://127.0.0.1:${server.address().port}`, TLS_OPTIONS);
+            client.on("error", fail);
+            const req = client.request({ ":path": "/" });
             req.on("response", h => (status = h[":status"]));
             req.on("data", c => (total += c.length));
             req.on("end", () => {
               client.close();
               resolve({ i, status, total });
             });
-            req.on("error", e => resolve({ i, status, total, err: String(e) }));
+            req.on("error", fail);
             req.end();
           }),
       ),

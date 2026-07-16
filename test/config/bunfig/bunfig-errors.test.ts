@@ -21,11 +21,7 @@ describe.concurrent("bunfig.toml type-mismatch error messages", () => {
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const errorLine = stderr.split("\n").find(l => l.startsWith("error:")) ?? stderr;
     expect(errorLine).toBe(`error: ${expected}`);

@@ -2,8 +2,8 @@ import { spawn, spawnSync } from "bun";
 import { beforeEach, describe, expect, it } from "bun:test";
 import { exists, stat } from "fs/promises";
 import { bunExe, bunEnv as env, tls, tmpdirSync } from "harness";
-import * as nodetls from "node:tls";
 import { once } from "node:events";
+import * as nodetls from "node:tls";
 import { join } from "path";
 import { gzipSync } from "zlib";
 
@@ -129,12 +129,7 @@ it("handles a close-delimited GitHub tarball body split across packets", async (
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
     socket.once("data", () => {
-      socket.write(
-        "HTTP/1.1 200 OK\r\n" +
-          "content-type: application/x-gzip\r\n" +
-          "connection: close\r\n" +
-          "\r\n",
-      );
+      socket.write("HTTP/1.1 200 OK\r\n" + "content-type: application/x-gzip\r\n" + "connection: close\r\n" + "\r\n");
       // First body packet.
       socket.write(gz.subarray(0, Math.floor(gz.length / 2)));
       // Second body packet on a later tick so it arrives as a separate TLS

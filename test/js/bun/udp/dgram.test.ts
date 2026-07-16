@@ -251,16 +251,16 @@ describe.skipIf(isWindows)("cluster", () => {
   // Multi-worker traffic + close: exercises the DGRAM_FDS Owned/Adopted state
   // machine and SharedHandle teardown. A regression removing the double-close
   // guard would EBADF an IPC pipe and hang this fixture.
-  test("multi-worker shared socket receives traffic then tears down cleanly", async () => {
+  test("multi-worker shared socket adopts and tears down cleanly", async () => {
     // Assert the success line, not just exit 0: the fixture has bail-out paths
     // that also exit 0. 25s deadline sits between the fixture's 20s watchdog
     // and this test's own timeout so the watchdog's diagnostic reaches stderr.
     const { stdout, stderr, exitCode } = await runClusterFixture("dgram-cluster-shared-fd-fixture.ts", 25_000);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: "ok: all 4 workers adopted and released the shared descriptor\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    expect(stderr).toBe("");
+    // Traffic receipt is best-effort (kernel-arbitrated), teardown is the
+    // contract: the success line carries received/sent for diagnostics.
+    expect(stdout).toStartWith("ok: all 4 workers adopted and released the shared descriptor ");
+    expect(exitCode).toBe(0);
   }, 40_000);
 });
 

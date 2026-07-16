@@ -1005,8 +1005,7 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
     ["ec", "P-256", 65, 32],
     ["ec", "P-384", 97, 48],
   ])("raw key format %s %s", (keyType, namedCurve, pubLen, privLen) => {
-    const gen = () =>
-      crypto.generateKeyPairSync(keyType, keyType === "ec" ? { namedCurve } : undefined);
+    const gen = () => crypto.generateKeyPairSync(keyType, keyType === "ec" ? { namedCurve } : undefined);
 
     it("round-trips through raw-public and raw-private", () => {
       const { publicKey, privateKey } = gen();
@@ -1083,7 +1082,12 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
       crypto.createPrivateKey({ key: "not a buffer", format: "raw-private", asymmetricKeyType: "ed25519" }),
     ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
     expect(() =>
-      crypto.createPrivateKey({ key: Buffer.alloc(31), format: "raw-private", asymmetricKeyType: "ec", namedCurve: "P-256" }),
+      crypto.createPrivateKey({
+        key: Buffer.alloc(31),
+        format: "raw-private",
+        asymmetricKeyType: "ec",
+        namedCurve: "P-256",
+      }),
     ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
     expect(() =>
       crypto.createPrivateKey({

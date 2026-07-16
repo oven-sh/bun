@@ -916,7 +916,13 @@ impl NetworkTask {
             // (cleared immediately below); `put()` runs `Task::drop` on the
             // slot — the Task was fully initialized via
             // `enqueue::create_extract_task_for_streaming` so this is sound.
+            // `request.extract` is the active union member (tag Extract, set in
+            // `init_extract_task`) and owns `tarball.integrity_alternates`;
+            // drop it explicitly because `Task::drop` never reaches
+            // `ManuallyDrop` union payloads. `deinit_payload()` must not be
+            // used here: `data` is still zeroed on this never-ran task.
             unsafe {
+                ManuallyDrop::drop(&mut (*self.streaming_extract_task).request.extract);
                 manager
                     .preallocated_resolve_tasks
                     .put(self.streaming_extract_task);

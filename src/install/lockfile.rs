@@ -1235,8 +1235,8 @@ impl Lockfile {
             }
 
             // Carry the integrity-alternates side-table across the rebuild. It
-            // is keyed by the primary digest bytes, and `Package::clone` copies
-            // `meta.integrity` verbatim, so the keys stay valid.
+            // is keyed by (name hash, primary digest bytes); `Package::clone`
+            // copies both verbatim, so the keys stay valid.
             if !old.integrity_alternates.is_empty() {
                 new.integrity_alternates = core::mem::take(&mut old.integrity_alternates);
             }

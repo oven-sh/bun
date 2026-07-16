@@ -327,7 +327,7 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
         } else if this.flags.get().contains(Flags::IS_ACTIVE) {
             // Reconnected: `connect_finish` re-armed `this_value`/`poll_ref`, so
             // skip the idle teardown and only release what we took.
-            this.set_active_flag(false);
+            this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if !VirtualMachine::get().is_shutting_down() {
                 self.entered.mark_inactive();
             }
@@ -1226,52 +1226,11 @@ impl<const SSL: bool> NewSocket<SSL> {
         Self::handle_connect_error(this, errno, socket.dns_error())
     }
 
-    /// Single chokepoint for `Flags::IS_ACTIVE`: every set/clear must go
-    /// through here so the per-thread `getActiveResourcesInfo()` socket count
-    /// can never drift from the flag. Idempotent (counts only transitions).
-    fn set_active_flag(&self, active: bool) {
-        let flags = self.flags.get();
-        if flags.contains(Flags::IS_ACTIVE) == active {
-            return;
-        }
-        self.update_flags(|f| f.set(Flags::IS_ACTIVE, active));
-        // Routing keys off IS_PIPE, so a reconnect that changes address family
-        // must go through `set_pipe_flag` to keep add/remove paired.
-        match (active, flags.contains(Flags::IS_PIPE)) {
-            (true, false) => crate::jsc_hooks::active_resources_add_tcp_socket(),
-            (false, false) => crate::jsc_hooks::active_resources_remove_tcp_socket(),
-            (true, true) => crate::jsc_hooks::active_resources_add_pipe(),
-            (false, true) => crate::jsc_hooks::active_resources_remove_pipe(),
-        }
-    }
-
-    /// Restamp `IS_PIPE` when a socket is reused for a reconnect.
-    ///
-    /// `set_active_flag` routes the `ActiveResources` add/remove off the
-    /// *current* `IS_PIPE`, so flipping the flag while `IS_ACTIVE` is still set
-    /// (a reconnect to a different address family from inside `onClose`, where
-    /// `detach_for_reconnect` early-returns because the socket is already
-    /// `DETACHED`) would make teardown decrement the bucket the socket was
-    /// never counted in. Move the outstanding count across instead.
-    pub(crate) fn set_pipe_flag(&self, is_pipe: bool) {
-        let flags = self.flags.get();
-        if flags.contains(Flags::IS_PIPE) == is_pipe {
-            return;
-        }
-        if flags.contains(Flags::IS_ACTIVE) {
-            self.set_active_flag(false);
-            self.update_flags(|f| f.set(Flags::IS_PIPE, is_pipe));
-            self.set_active_flag(true);
-        } else {
-            self.update_flags(|f| f.set(Flags::IS_PIPE, is_pipe));
-        }
-    }
-
     pub fn mark_active(&self) {
         if !self.flags.get().contains(Flags::IS_ACTIVE) {
             let handlers = self.get_handlers();
             handlers.mark_active();
-            self.set_active_flag(true);
+            self.update_flags(|f| f.insert(Flags::IS_ACTIVE));
             // Keep the JS wrapper alive while the socket is active.
             // `getThisValue` may not have been called yet (e.g. server-side
             // sockets without default data), in which case the ref is still
@@ -1320,7 +1279,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
-            self.set_active_flag(false);
+            self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             if let Some(h) = self.handlers_opt() {
                 if h.mark_inactive() {
                     self.handlers.set(None);
@@ -1341,7 +1300,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 return;
             }
 
-            self.set_active_flag(false);
+            self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             // Allow the JS wrapper to be GC'd now that the socket is idle.
             // Do this before touching `handlers`: for the last server-side
             // connection on a stopped listener, `mark_inactive` releases the
@@ -3506,7 +3465,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             server_name: JsCell::new(
                 cfg.and_then(|c| c.server_name_bytes().map(Box::<[u8]>::from)),
             ),
-            flags: Cell::new(initial_flags | (this.flags.get() & Flags::IS_PIPE)),
+            flags: Cell::new(initial_flags),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3576,7 +3535,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         original_data.ensure_still_alive();
         if this.flags.get().contains(Flags::IS_ACTIVE) {
             this.poll_ref.with_mut(|p| p.disable());
-            this.set_active_flag(false);
+            this.update_flags(|f| f.remove(Flags::IS_ACTIVE));
             // Do NOT markInactive raw_handlers — ownership of the
             // active_connections=1 it holds is transferring to `raw`.
             this.this_value.with_mut(|r| r.downgrade());
@@ -3607,12 +3566,11 @@ impl<const SSL: bool> NewSocket<SSL> {
             local_binding: JsCell::new(None),
             protos: JsCell::new(None),
             server_name: JsCell::new(None),
-            // No poll_ref — `tls` keeps the loop alive. active_connections=1
-            // was already on raw_handlers from `this`. The active flag is armed
-            // below via `set_active_flag(true)`.
-            flags: Cell::new(
-                Flags::BYPASS_TLS | Flags::OWNED_PROTOS | (this.flags.get() & Flags::IS_PIPE),
-            ),
+            // is_active so the chained `raw.onClose` → `markInactive` path
+            // releases `raw_handlers`. No poll_ref — `tls` keeps the loop
+            // alive. active_connections=1 was already on raw_handlers from
+            // `this`.
+            flags: Cell::new(Flags::BYPASS_TLS | Flags::IS_ACTIVE | Flags::OWNED_PROTOS),
             this_value: JsCell::new(JsRef::empty()),
             poll_ref: JsCell::new(KeepAlive::init()),
             ref_pollref_on_connect: Cell::new(true),
@@ -3624,9 +3582,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         });
         let raw_ref = raw;
         raw_ref.ref_();
-        // `raw` deliberately bypasses `mark_active` (active_connections=1 was
-        // already taken on raw_handlers by `this`), so arm the flag here.
-        raw_ref.set_active_flag(true);
         // SAFETY: `raw` came from `TLSSocket::new` (heap::alloc); intrusive +1 held.
         tls.twin
             .set(Some(unsafe { IntrusiveRc::from_raw(raw.as_ptr()) }));
@@ -4031,10 +3986,6 @@ bitflags::bitflags! {
         /// even though its `Handlers` mode is `Client` (no listener), so the
         /// client-only server-identity check must not run against its peer.
         const TLS_SERVER_ROLE      = 1 << 14;
-        /// AF_UNIX / Windows named-pipe socket. `set_active_flag` routes these
-        /// to the `pipes` counter so `getActiveResourcesInfo()` reports
-        /// "PipeWrap" like Node instead of lumping them under TCPSocketWrap.
-        const IS_PIPE              = 1 << 15;
     }
 }
 

@@ -69,66 +69,6 @@ pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
 }
 
-/// Live user-timer counts for process.getActiveResourcesInfo():
-/// "Timeout" covers setTimeout + setInterval, "Immediate" covers
-/// setImmediate. O(1) via the same per-kind refcounts Node uses
-/// (timeout_info[0] / immediate_info()->ref_count()); the counters are
-/// maintained by `set_enable_keeping_event_loop_alive`, which already
-/// encodes Node's during-callback visibility rule (Immediate drops off
-/// before its callback, Timeout after). Per-thread.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(
-    timeouts: *mut usize,
-    immediates: *mut usize,
-) {
-    let state = crate::jsc_hooks::runtime_state();
-    // SAFETY: out-params are valid pointers from the C++ caller; `state` is
-    // the live per-thread RuntimeState (null before runtime init).
-    unsafe {
-        if state.is_null() {
-            *timeouts = 0;
-            *immediates = 0;
-            return;
-        }
-        let timer = &(*state).timer;
-        *timeouts = timer.user_timeout_ref_count.max(0) as usize;
-        *immediates = timer.immediate_ref_count.max(0) as usize;
-    }
-}
-
-/// Live socket / listener / FS-request counts for
-/// process.getActiveResourcesInfo(). Sockets are counted while open
-/// (`Flags::IS_ACTIVE`), listeners while listening, FS tasks while in
-/// flight. Bun's accepted-server sockets do not arm an independent
-/// `poll_ref` (the listener's ref keeps the loop alive), so an explicit
-/// `socket.unref()` is not yet reflected here — Node would drop such a
-/// socket from the list. Per-thread.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__getActiveResourceCounts(
-    tcp_sockets: *mut usize,
-    tcp_servers: *mut usize,
-    pipes: *mut usize,
-    fs_requests: *mut usize,
-) {
-    let (s, l, p, f) = crate::jsc_hooks::active_resources()
-        .map(|ar| {
-            (
-                ar.tcp_sockets.get(),
-                ar.tcp_listeners.get(),
-                ar.pipes.get(),
-                ar.fs_requests.get(),
-            )
-        })
-        .unwrap_or((0, 0, 0, 0));
-    // SAFETY: out-params are valid pointers from the C++ caller.
-    unsafe {
-        *tcp_sockets = s;
-        *tcp_servers = l;
-        *pipes = p;
-        *fs_requests = f;
-    }
-}
-
 /// `--redirect-warnings=<path>` value, if set. Returns false when unset.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {

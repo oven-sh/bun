@@ -620,11 +620,6 @@ pub struct All {
     /// TimerObjectInternals.epoch. Masked to 25 bits on increment.
     pub epoch: u32,
     pub immediate_ref_count: i32,
-    /// Ref'd user Timeout/Interval count for process.getActiveResourcesInfo()
-    /// (Node's timeout_info[0] analogue). `active_timer_count` is also bumped
-    /// by dns/subprocess so it can't be reused for this. Bumped only inside
-    /// `set_enable_keeping_event_loop_alive`, which is user-timer-only.
-    pub user_timeout_ref_count: i32,
     #[cfg(windows)]
     pub uv_idle: bun_sys::windows::libuv::uv_idle_t,
     pub event_loop_delay: EventLoopDelayMonitor,
@@ -647,7 +642,6 @@ impl All {
             warned_not_number: false,
             epoch: 0,
             immediate_ref_count: 0,
-            user_timeout_ref_count: 0,
             #[cfg(windows)]
             uv_idle: bun_core::ffi::zeroed(),
             event_loop_delay: EventLoopDelayMonitor::default(),

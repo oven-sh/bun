@@ -101,74 +101,7 @@ pub struct RuntimeState {
     /// still-occupied slot while still freeing the pool allocation itself.
     pub body_value_pool: Box<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>,
     pub isolation_handles: IsolationHandles,
-    /// Live native handles/requests for `process.getActiveResourcesInfo()`.
-    pub active_resources: ActiveResources,
 }
-
-/// Per-thread counts of live native handles/requests, surfaced to JS via
-/// `process.getActiveResourcesInfo()`. Counters are bumped at the resource's
-/// own active/inactive transition (no stored pointers, no query-time deref).
-#[derive(Default)]
-pub struct ActiveResources {
-    /// Open TCP `NewSocket<_>` count (`Flags::IS_ACTIVE` set, `IS_PIPE` clear).
-    pub tcp_sockets: Cell<usize>,
-    /// Listening TCP `Listener` count.
-    pub tcp_listeners: Cell<usize>,
-    /// Unix-domain / named-pipe sockets and listeners combined — Node's
-    /// PipeWrap uses one MemoryInfoName for SOCKET / SERVER / IPC modes.
-    pub pipes: Cell<usize>,
-    /// In-flight `AsyncFSTask` / `UVFSRequest` count.
-    pub fs_requests: Cell<usize>,
-}
-
-// One-line registration helpers so resource create/destroy sites don't each
-// repeat the `if let Some(ar) = active_resources()` block. No-ops before
-// `init_runtime_state` installs the per-thread registry. `remove_*` asserts
-// the pairing invariant in debug (a wrap to usize::MAX would OOM the
-// diagnostic array in `Process_functionGetActiveResourcesInfo`) and saturates
-// in release so a mispair never panics user code.
-macro_rules! active_resource_fns {
-    ($(($add:ident, $remove:ident, $field:ident)),+ $(,)?) => {$(
-        #[inline]
-        pub(crate) fn $add() {
-            if let Some(ar) = active_resources() {
-                ar.$field.set(ar.$field.get() + 1);
-            }
-        }
-        #[inline]
-        pub(crate) fn $remove() {
-            if let Some(ar) = active_resources() {
-                debug_assert!(
-                    ar.$field.get() > 0,
-                    concat!("ActiveResources::", stringify!($remove), " without matching add"),
-                );
-                ar.$field.set(ar.$field.get().saturating_sub(1));
-            }
-        }
-    )+};
-}
-active_resource_fns!(
-    (
-        active_resources_add_tcp_socket,
-        active_resources_remove_tcp_socket,
-        tcp_sockets
-    ),
-    (
-        active_resources_add_tcp_listener,
-        active_resources_remove_tcp_listener,
-        tcp_listeners
-    ),
-    (
-        active_resources_add_pipe,
-        active_resources_remove_pipe,
-        pipes
-    ),
-    (
-        active_resources_add_fs_request,
-        active_resources_remove_fs_request,
-        fs_requests
-    ),
-);
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IsolationHandle {
@@ -245,19 +178,6 @@ pub(crate) fn isolation_handles() -> Option<&'static mut IsolationHandles> {
     }
     // SAFETY: live boxed per-thread `RuntimeState`.
     Some(unsafe { &mut (*state).isolation_handles })
-}
-
-/// Per-thread [`ActiveResources`] registry. None only before
-/// [`init_runtime_state`] (e.g. `bun_jsc` unit tests with no high tier).
-/// Single JS thread; callers must not hold the borrow across JS re-entry.
-#[inline]
-pub(crate) fn active_resources() -> Option<&'static mut ActiveResources> {
-    let state = runtime_state();
-    if state.is_null() {
-        return None;
-    }
-    // SAFETY: live boxed per-thread `RuntimeState`.
-    Some(unsafe { &mut (*state).active_resources })
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -421,7 +341,6 @@ unsafe fn init_runtime_state(
             crate::webcore::body::HiveAllocator::init(),
         )),
         isolation_handles: IsolationHandles::default(),
-        active_resources: ActiveResources::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
 

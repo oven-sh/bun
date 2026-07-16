@@ -153,7 +153,7 @@ pub fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSVal
 /// `unhandledRejection`.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
 pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_evaluated_as_cjs || this.main().is_empty() {
+    if this.entry_point_result.evaluated_as_cjs || this.main().is_empty() {
         return;
     }
     let global = this.global();
@@ -164,7 +164,7 @@ pub fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
     };
     let specifier_str = bun_core::OwnedString::new(specifier_str);
     if specifier_str.eql_utf8(this.main()) {
-        this.entry_evaluated_as_cjs = true;
+        this.entry_point_result.evaluated_as_cjs = true;
     }
 }
 

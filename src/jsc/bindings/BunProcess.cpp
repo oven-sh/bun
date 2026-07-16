@@ -136,8 +136,6 @@ extern "C" bool Bun__Node__ProcessTraceDeprecation;
 extern "C" bool Bun__Node__ProcessPendingDeprecation;
 extern "C" bool Bun__Node__getRedirectWarnings(BunString* out);
 extern "C" size_t Bun__Node__getDisabledWarnings(const uint8_t** bufs, size_t* lens, size_t cap);
-extern "C" void Bun__Timer__getActiveTimerCounts(size_t* timeouts, size_t* immediates);
-extern "C" void Bun__getActiveResourceCounts(size_t* tcpSockets, size_t* tcpServers, size_t* pipes, size_t* fsRequests);
 extern "C" bool Bun__getEnvValue(JSC::JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
 extern "C" int32_t bun_stdio_tty[3];
@@ -4168,49 +4166,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_setSourceMapsEnabled, (JSC::JSGlobalObject * le
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(Process_functionGetActiveResourcesInfo, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    size_t timeouts = 0;
-    size_t immediates = 0;
-    Bun__Timer__getActiveTimerCounts(&timeouts, &immediates);
-    size_t tcpSockets = 0;
-    size_t tcpServers = 0;
-    size_t pipes = 0;
-    size_t fsRequests = 0;
-    Bun__getActiveResourceCounts(&tcpSockets, &tcpServers, &pipes, &fsRequests);
-    auto* array = JSC::constructEmptyArray(globalObject, nullptr,
-        static_cast<unsigned>(timeouts + immediates + tcpSockets + tcpServers + pipes + fsRequests));
-    RETURN_IF_EXCEPTION(scope, {});
-    unsigned index = 0;
-    auto append = [&](size_t count, ASCIILiteral name) -> bool {
-        if (!count)
-            return true;
-        auto* str = jsString(vm, String(name));
-        for (size_t i = 0; i < count; i++) {
-            array->putDirectIndex(globalObject, index++, str);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
-        return true;
-    };
-    // Order mirrors Node's listOnTimeout / handle / request grouping closely
-    // enough for tests that only filter or count.
-    if (!append(timeouts, "Timeout"_s))
-        return {};
-    if (!append(immediates, "Immediate"_s))
-        return {};
-    if (!append(tcpSockets, "TCPSocketWrap"_s))
-        return {};
-    if (!append(tcpServers, "TCPServerWrap"_s))
-        return {};
-    if (!append(pipes, "PipeWrap"_s))
-        return {};
-    if (!append(fsRequests, "FSReqCallback"_s))
-        return {};
-    return JSValue::encode(array);
-}
-
 JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(JSC::constructEmptyArray(globalObject, nullptr));
@@ -4797,7 +4752,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   exitCode                         processExitCode                                     CustomAccessor|DontDelete
   _fatalException                  Process_functionFatalException                      Function 1
   features                         constructFeatures                                   PropertyCallback
-  getActiveResourcesInfo           Process_functionGetActiveResourcesInfo              Function 0
+  getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
   getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback

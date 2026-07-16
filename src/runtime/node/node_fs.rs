@@ -717,7 +717,6 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            crate::jsc_hooks::active_resources_add_fs_request();
             let _ = vm;
             task.tracker.did_schedule(global_object);
 
@@ -1014,7 +1013,6 @@ mod _async_tasks {
             let this_ref = unsafe { &mut *this };
             // `bun_sys::Error` frees its path on Drop.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            crate::jsc_hooks::active_resources_remove_fs_request();
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1298,7 +1296,6 @@ mod _async_tasks {
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            crate::jsc_hooks::active_resources_add_fs_request();
             let _ = vm;
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
@@ -1382,7 +1379,6 @@ mod _async_tasks {
             // `bun_sys::Error` frees its path on Drop.
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            crate::jsc_hooks::active_resources_remove_fs_request();
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1612,7 +1608,6 @@ mod _async_tasks {
             });
             if !IS_SHELL {
                 task.r#ref.ref_(event_loop_handle_to_ctx(task.evtloop));
-                crate::jsc_hooks::active_resources_add_fs_request();
             }
             task.tracker.did_schedule(global_object);
 
@@ -1815,7 +1810,6 @@ mod _async_tasks {
                 this_ref
                     .r#ref
                     .unref(event_loop_handle_to_ctx(this_ref.evtloop));
-                crate::jsc_hooks::active_resources_remove_fs_request();
             }
             // `args.deinit()` → `Drop` on `args::Cp` (via `heap::take` below).
             // `Drop for ThreadSafe<args::Cp>` releases the `protect()` taken by
@@ -2395,7 +2389,6 @@ mod _async_tasks {
                 pending_err_mutex: bun_threading::Mutex::default(),
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
-            crate::jsc_hooks::active_resources_add_fs_request();
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -2666,7 +2659,6 @@ mod _async_tasks {
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
             this_ref.r#ref.unref(bun_io::js_vm_ctx());
-            crate::jsc_hooks::active_resources_remove_fs_request();
             // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
             this_ref.free_root_path();
             this_ref.clear_result_list();

@@ -7,7 +7,7 @@ import { join } from "path";
 // `bunfig.toml` at the project root was ignored when running `bun` from a
 // subdirectory, which broke `preload` (and every other config entry) in
 // monorepos where commands are invoked from inside a package directory.
-test.each([
+test.concurrent.each([
   { label: "bun file.ts", argv: ["src/index.ts"] },
   { label: "bun run file.ts", argv: ["run", "src/index.ts"] },
 ])("preload in bunfig.toml is respected from a subdirectory ($label)", async ({ argv }) => {
@@ -32,7 +32,7 @@ test.each([
   expect(exitCode).toBe(0);
 });
 
-test("bunfig.toml preload with relative path works from project root", async () => {
+test.concurrent("bunfig.toml preload with relative path works from project root", async () => {
   using dir = tempDir("bun-issue-29308-root", {
     "bunfig.toml": `preload = ["./preload.ts"]\n`,
     "preload.ts": `console.log("preload script executed!");\n`,
@@ -55,7 +55,7 @@ test("bunfig.toml preload with relative path works from project root", async () 
 
 // A --preload flag on the CLI must be merged with, not replaced by, preload
 // entries the ancestor bunfig.toml contributes.
-test("CLI --preload is merged with ancestor bunfig.toml preload entries", async () => {
+test.concurrent("CLI --preload is merged with ancestor bunfig.toml preload entries", async () => {
   using dir = tempDir("bun-issue-29308-merge", {
     "bunfig.toml": `preload = ["./setup.ts"]\n`,
     "setup.ts": `console.log("setup from bunfig");\n`,
@@ -83,7 +83,7 @@ test("CLI --preload is merged with ancestor bunfig.toml preload entries", async 
 // directory with its own lockfile or .git is that project's root, and a
 // bunfig.toml beyond it (e.g. in a repo that vendors the project) must not
 // apply. Covers both marker kinds.
-test.each([
+test.concurrent.each([
   { label: "lockfile", marker: { "vendor/app/bun.lock": "" } },
   { label: ".git", marker: { "vendor/app/.git/HEAD": "" } },
 ])("ancestor walk stops at a nested project boundary ($label)", async ({ marker }) => {
@@ -111,7 +111,7 @@ test.each([
 
 // A lockfile at the project root must not hide a bunfig.toml sitting next to
 // it: within one directory the bunfig check wins over the boundary check.
-test("bunfig.toml next to the lockfile at the project root still applies", async () => {
+test.concurrent("bunfig.toml next to the lockfile at the project root still applies", async () => {
   using dir = tempDir("bun-issue-29308-root-lock", {
     "bunfig.toml": `preload = ["./preload.ts"]\n`,
     "preload.ts": `console.log("preload script executed!");\n`,
@@ -137,7 +137,7 @@ test("bunfig.toml next to the lockfile at the project root still applies", async
 // Guard against the ancestor walk stopping at a DIRECTORY named bunfig.toml.
 // Without the regular-file check, the walk would treat the directory as a hit
 // and the real bunfig.toml higher in the tree would be silently skipped.
-test("directory named bunfig.toml in an ancestor does not short-circuit the walk", async () => {
+test.concurrent("directory named bunfig.toml in an ancestor does not short-circuit the walk", async () => {
   using dir = tempDir("bun-issue-29308-dir-named-bunfig", {
     "bunfig.toml": `preload = ["./preload.ts"]\n`,
     "preload.ts": `console.log("preload script executed!");\n`,

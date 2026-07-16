@@ -288,7 +288,10 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     // Parked for the JS `checkServerIdentity` verdict: buffer early decrypted
     // bytes for `resume_after_cert_check` to replay (see `HTTPClient::on_data`).
     if this.state.flags.is_waiting_for_cert_check {
-        scoped_log!(http_proxy_tunnel, "ProxyTunnel onData buffering while parked");
+        scoped_log!(
+            http_proxy_tunnel,
+            "ProxyTunnel onData buffering while parked"
+        );
         let _ = this.state.response_message_buffer.append(decoded_data);
         return;
     }

@@ -1159,12 +1159,24 @@ impl Route {
                     )
                 };
 
-            if abs_path_str.is_empty() {
+            'fill: {
+                if !abs_path_str.is_empty() {
+                    break 'fill;
+                }
                 // The reads of `cache().fd` and the `set_abs_path` write below
                 // rewrite the cached `Entry`; serialize them on the per-entry
                 // mutex (the same lock every other `Entry` rewrite path takes).
                 // SAFETY: see fn-level NOTE — read-only reborrow.
                 let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
+                // Re-check under the lock: the bundler's resolver may have
+                // filled `abs_path` between the initial locked read above and
+                // this acquire, in which case the open + get_fd_path + intern
+                // below would recompute an equivalent value.
+                let cached = unsafe { &*entry }.abs_path();
+                if !cached.is_empty() {
+                    abs_path_str = cached.as_bytes();
+                    break 'fill;
+                }
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.

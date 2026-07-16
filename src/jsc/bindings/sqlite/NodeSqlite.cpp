@@ -3196,6 +3196,10 @@ bool JSNodeSqliteSession::isStale() const
 void JSNodeSqliteSession::deleteSession()
 {
     if (!m_record || m_record->handle == nullptr) return;
+    // A changeset()/patchset() is on the C stack for this handle;
+    // sqlite3session_delete would free it under sessionGenerateChangeset().
+    // close() throws ERR_INVALID_STATE for this; Symbol.dispose no-ops.
+    if (m_record->inUse) return;
     if (!m_record->dbGone) {
         auto* db = m_database.get();
         db->untrackSession(m_record.get());
@@ -3254,15 +3258,29 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
     if (self->isStale()) {
         return throwNodeState(globalObject, scope, "database is not open"_s);
     }
-    if (self->session() == nullptr) {
+    auto* record = self->record();
+    if (!record || record->handle == nullptr) {
         return throwNodeState(globalObject, scope, "session is not open"_s);
     }
+    if (record->inUse) {
+        return throwNodeState(globalObject, scope, "session is already generating a changeset"_s);
+    }
+    // sqlite3session_changeset/patchset internally run SAVEPOINT + prepared
+    // SELECTs on the connection, which fires the authorizer. A BusyScope
+    // defers db.close()'s sqlite3_close_v2/deleteTrackedSessions; inUse
+    // refuses session.close() and makes the db's session sweep skip this
+    // handle so it isn't freed under sessionGenerateChangeset().
+    JSDatabaseSync::BusyScope busy { db };
+    record->inUse = true;
+    sqlite3* conn = db->connection();
     int nChangeset = 0;
     void* pChangeset = nullptr;
-    int r = fn(self->session(), &nChangeset, &pChangeset);
+    int r = fn(record->handle, &nChangeset, &pChangeset);
+    record->inUse = false;
+    CHECK_UDF_EXCEPTION(scope);
     if (r != SQLITE_OK) {
         if (pChangeset) sqlite3_free(pChangeset);
-        throwSqliteReturnCodeError(globalObject, scope, db->connection(), r);
+        throwSqliteReturnCodeError(globalObject, scope, conn, r);
         return {};
     }
     auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), static_cast<size_t>(nChangeset));
@@ -3293,6 +3311,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSessionClose, (JSGlobalObject * globalObject, CallFra
     }
     if (self->session() == nullptr) {
         return throwNodeState(globalObject, scope, "session is not open"_s);
+    }
+    if (self->record()->inUse) {
+        return throwNodeState(globalObject, scope, "session is currently generating a changeset"_s);
     }
     self->deleteSession();
     return JSValue::encode(jsUndefined());

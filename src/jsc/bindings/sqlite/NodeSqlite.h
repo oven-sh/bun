@@ -58,10 +58,16 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 //   dbGone      — the database freed the handle (close()/deserialize()/teardown)
 //   wrapperGone — the JS wrapper was swept without close(); the database
 //                 deletes the orphaned handle on its next entry point
+//   inUse       — a sqlite3session_changeset/patchset is on the C stack for
+//                 this handle (it re-enters the authorizer via its internal
+//                 SAVEPOINT/SELECT); session.close() refuses and
+//                 deleteTrackedSessions() skips so the handle isn't freed
+//                 under sessionGenerateChangeset()
 struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord> {
     sqlite3_session* handle { nullptr };
     bool dbGone { false };
     bool wrapperGone { false };
+    bool inUse { false };
 };
 
 struct DatabaseSyncOpenConfiguration {
@@ -632,6 +638,7 @@ public:
     ~JSNodeSqliteSession();
 
     sqlite3_session* session() const { return m_record ? m_record->handle : nullptr; }
+    NodeSqliteSessionRecord* record() const { return m_record.get(); }
     JSDatabaseSync* database() const { return m_database.get(); }
     // True once the owning database has freed this session's handle out
     // from under the wrapper — close(), close()+open(), a successful

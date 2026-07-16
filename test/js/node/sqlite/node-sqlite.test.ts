@@ -1095,6 +1095,61 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     dst.close();
   });
 
+  test.skipIf(!sqliteHasSession)(
+    "re-entering close() from the authorizer during changeset()/patchset() does not free the session mid-generate",
+    async () => {
+      // sqlite3session_changeset runs SAVEPOINT + prepared SELECTs on the
+      // connection, which fires the authorizer. A BusyScope defers
+      // db.close()'s session sweep; record->inUse refuses session.close() so
+      // sessionGenerateChangeset never reads a freed sqlite3_session*.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { DatabaseSync } = require("node:sqlite");
+            for (const what of ["db", "sess", "dispose"]) {
+              const db = new DatabaseSync(":memory:");
+              db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, x)");
+              const sess = db.createSession();
+              db.prepare("INSERT INTO t VALUES (1, 'a')").run();
+              let caught;
+              db.setAuthorizer(() => {
+                try {
+                  if (what === "db") db.close();
+                  else if (what === "sess") sess.close();
+                  else sess[Symbol.dispose]();
+                } catch (e) { caught = e.code; }
+                return 0;
+              });
+              const cs = sess.changeset();
+              console.log(JSON.stringify({ what, len: cs.length, caught: caught ?? null, dbOpen: db.isOpen }));
+              try { db.close(); } catch {}
+            }
+          `,
+        ],
+        env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1" },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = stdout.trim().split("\n").map(l => JSON.parse(l));
+      // On regression ASAN aborts the process before any line is printed.
+      // db.close(): deferred on the first authorizer call (catches nothing),
+      //   throws ERR_INVALID_STATE on the second (db already marked closed).
+      // sess.close(): record->inUse → ERR_INVALID_STATE.
+      // Symbol.dispose: inUse → silent no-op (tolerant).
+      expect({ lines, stderr, exitCode }).toEqual({
+        lines: [
+          { what: "db", len: 20, caught: "ERR_INVALID_STATE", dbOpen: false },
+          { what: "sess", len: 20, caught: "ERR_INVALID_STATE", dbOpen: true },
+          { what: "dispose", len: 20, caught: null, dbOpen: true },
+        ],
+        stderr: expect.any(String),
+        exitCode: 0,
+      });
+    },
+  );
+
   test("default onConflict aborts and returns false", () => {
     const src = new DatabaseSync(":memory:");
     const dst = new DatabaseSync(":memory:");

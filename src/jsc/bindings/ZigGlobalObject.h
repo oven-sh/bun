@@ -394,8 +394,6 @@ public:
         Bun__TestScope__Describe2__bunTestCatch,
         Bun__BodyValueBufferer__onRejectStream,
         Bun__BodyValueBufferer__onResolveStream,
-        Bun__onResolveEntryPointResult,
-        Bun__onRejectEntryPointResult,
         Bun__NodeHTTPRequest__onResolve,
         Bun__NodeHTTPRequest__onReject,
         Bun__FileStreamWrapper__onRejectRequestStream,

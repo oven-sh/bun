@@ -1964,7 +1964,7 @@ registry = "${verdaccio.registryUrl()}"
     ]);
 
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cmd: [bunExe(), `--config=${bunfigPath}`, "install"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
@@ -2017,7 +2017,7 @@ registry = "${verdaccio.registryUrl()}"
     ]);
 
     const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), `-c=${bunfigPath}`, "install"],
+      cmd: [bunExe(), `--config=${bunfigPath}`, "install"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",

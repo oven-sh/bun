@@ -263,6 +263,15 @@ pub enum Values {
     One,
     Many,
     OneOptional,
+    /// Like [`Values::One`], but a separate following argument that starts
+    /// with '-' is never consumed as the value (Node's behavior for `-e`):
+    /// the parse fails with a missing value instead.
+    OneNoDashValue,
+    /// Like [`Values::OneOptional`], but a separate following argument is
+    /// consumed as the value when it does not start with '-' (Node's behavior
+    /// for `-p`), and in a short cluster the attached remainder stays part of
+    /// the cluster (`-pe` is `-p` followed by `-e`).
+    OneOptionalNoDashValue,
 }
 
 /// Represents a parameter for the command line.
@@ -652,14 +661,14 @@ where
 {
     match param.takes_value {
         Values::None => {}
-        Values::One => {
+        Values::One | Values::OneNoDashValue => {
             write!(
                 w,
                 " <{}>",
                 bstr::BStr::new(value_text(context, param).map_err(Into::into)?)
             )?;
         }
-        Values::OneOptional => {
+        Values::OneOptional | Values::OneOptionalNoDashValue => {
             write!(
                 w,
                 " <{}>?",

@@ -1,9 +1,10 @@
 import { SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep } from "path";
+import { inspect } from "util";
 
 for (const flag of ["-e", "--print"]) {
   describe(`bun ${flag}`, () => {
@@ -32,7 +33,13 @@ for (const flag of ["-e", "--print"]) {
         file: join(process.cwd(), "[eval]"),
         require: ref.version,
       };
-      expect(stdout.toString("utf8")).toEqual(JSON.stringify(json) + "\n<hello>world</hello>\n");
+      // --print formats its result like Node (node:util inspect), while
+      // console.log keeps Bun's JSX pretty-printing.
+      const trailing =
+        flag === "--print"
+          ? inspect((ref as any).createElement("hello", null, "world")) + "\n"
+          : "<hello>world</hello>\n";
+      expect(stdout.toString("utf8")).toEqual(JSON.stringify(json) + "\n" + trailing);
     });
 
     test("error has source map info 1", async () => {
@@ -53,7 +60,13 @@ for (const flag of ["-e", "--print"]) {
         });
 
         expect(stderr.toString("utf8")).toBe("");
-        expect(JSON.parse(stdout.toString("utf8"))).toEqual(expected);
+        if (flag === "--print") {
+          // --print formats with node:util inspect (single quotes), so compare
+          // against the same formatting instead of parsing as JSON.
+          expect(stdout.toString("utf8")).toBe(inspect(expected) + "\n");
+        } else {
+          expect(JSON.parse(stdout.toString("utf8"))).toEqual(expected);
+        }
         expect(exitCode).toBe(0);
       }
 
@@ -275,4 +288,285 @@ test("process._eval (undefined for normal run)", async () => {
   expect(stdout.toString("utf8")).toEqual("undefined\n");
 
   rmSync(cwd, { recursive: true, force: true });
+});
+
+describe("node-style CLI argument errors", () => {
+  // Node exits with code 9 and `<execPath>: <flag> requires an argument` when a
+  // flag that needs a value is passed without one. Bun matches that contract for
+  // the runtime flags it shares with Node.
+  test.each(["-e", "--eval", "--inspect-port", "--debug-port"])(
+    "%s without a value exits with code 9 and Node's error message",
+    flag => {
+      const { stdout, stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), flag],
+        env: bunEnv,
+      });
+      expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: ${flag} requires an argument`);
+      expect(stdout.toString("utf8")).toBe("");
+      expect(exitCode).toBe(9);
+    },
+  );
+
+  test.each(["--inspect-port=", "--debug-port="])("%s (empty value) exits with code 9", flag => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(`${process.execPath}: ${flag} requires an argument`);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  test.each(["--allow-fs-read=*", "--allow-fs-write=*"])("%s without --permission exits with code 1", flag => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, "-e", "console.log('ran')"],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toContain("--permission is required");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--allow-fs-read with --permission does not error at argument parsing", () => {
+    // The permission model itself is not implemented; --permission is accepted
+    // and ignored (same as before these flags were recognized), so existing
+    // scripts that pass it keep running.
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--permission", "--allow-fs-read=*", "-e", "console.log('ran')"],
+      env: bunEnv,
+    });
+    expect(stdout.toString("utf8")).toBe("ran\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("--check / -c (syntax check)", () => {
+  test.each(["--check", "-c"])("%s exits 0 and prints nothing for a valid file", flag => {
+    using dir = tempDir("check-good", {
+      "good.js": "var foo = 'bar';\nif (foo) {\n  console.log('never runs');\n}\n",
+    });
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, join(String(dir), "good.js")],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("does not execute the file", () => {
+    using dir = tempDir("check-no-exec", {
+      "side-effect.js": "console.log('executed'); process.exitCode = 7;",
+    });
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check", join(String(dir), "side-effect.js")],
+      env: bunEnv,
+    });
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(["--check", "-c"])("%s reports a SyntaxError starting with the file path", flag => {
+    using dir = tempDir("check-bad", {
+      "bad.js": "var foo bar;\n",
+    });
+    const file = join(String(dir), "bad.js");
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, file],
+      env: bunEnv,
+    });
+    const errorOutput = stderr.toString("utf8");
+    expect(errorOutput.startsWith(file)).toBe(true);
+    expect(errorOutput).toMatch(/^SyntaxError: Unexpected identifier\b/m);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("checks stdin as [stdin]", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("var foo bar;"),
+    });
+    expect(stderr.toString("utf8").startsWith("[stdin]")).toBe(true);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("valid stdin exits 0 without running the code", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check"],
+      env: bunEnv,
+      stdin: Buffer.from('throw new Error("should not run");'),
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("--input-type=module reports the module-parse error", () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--input-type=module", "--check"],
+      env: bunEnv,
+      stdin: Buffer.from("export var p = 5; var foo bar;"),
+    });
+    expect(stderr.toString("utf8")).toMatch(/^SyntaxError: Unexpected identifier\b/m);
+    expect(exitCode).toBe(1);
+  });
+
+  test("top-level return passes (CommonJS wrapper), and -r can override the wrapper", () => {
+    using dir = tempDir("check-wrapper", {
+      "ret.js": "var x = 1;\nif (x) {\n  return;\n}\n",
+      "no-wrapper.js": "require('module').wrapper = ['', ''];\n",
+    });
+    const file = join(String(dir), "ret.js");
+
+    const ok = Bun.spawnSync({ cmd: [bunExe(), "--check", file], env: bunEnv });
+    expect(ok.stderr.toString("utf8")).toBe("");
+    expect(ok.exitCode).toBe(0);
+
+    const overridden = Bun.spawnSync({
+      cmd: [bunExe(), "--require", join(String(dir), "no-wrapper.js"), "--check", file],
+      env: bunEnv,
+    });
+    expect(overridden.stderr.toString("utf8")).toMatch(/^SyntaxError: /m);
+    expect(overridden.exitCode).toBe(1);
+  });
+
+  test("missing file reports Cannot find module with exit code 1", () => {
+    using dir = tempDir("check-missing", {});
+    const file = join(String(dir), "nope.js");
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "--check", file],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toMatch(/^Error: Cannot find module/m);
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--check with --eval is rejected with exit code 9", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-c", "-e", "foo"],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(
+      `${process.execPath}: either --check or --eval can be used, not both`,
+    );
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+});
+
+describe("NODE_OPTIONS validation", () => {
+  // Node refuses options in NODE_OPTIONS that change what the process
+  // executes; Bun matches that error contract (exit code 9, same message).
+  test.each(["-e", "--print", "--check", "--test", "--"])("%s in NODE_OPTIONS exits with code 9", opt => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log('ran')"],
+      env: { ...bunEnv, NODE_OPTIONS: opt },
+    });
+    expect(stderr.toString("utf8").split(/\r?\n/)[0]).toBe(
+      `${process.execPath}: ${opt} is not allowed in NODE_OPTIONS`,
+    );
+    expect(stdout.toString("utf8")).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  test("allowed NODE_OPTIONS values do not fail startup", () => {
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "-e", "console.log('ok')"],
+      env: { ...bunEnv, NODE_OPTIONS: "--no-warnings --max-old-space-size=4096 --stack-trace-limit=100" },
+    });
+    expect(stdout.toString("utf8")).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("node-style -e / -p composition", () => {
+  async function runBun(args: string[]) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...args], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Matches Node: -p/--print is print mode whose script may also come from
+  // -e/--eval or be omitted entirely.
+  test.each(["-p", "--print"])("bare %s prints undefined like Node", async flag => {
+    const { stdout, stderr, exitCode } = await runBun([flag]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each([[["-pe", "40 + 2"]], [["-p", "-e", "40 + 2"]], [["-p", "40 + 2"]], [["--print", "--eval=40 + 2"]]])(
+    "%j prints the result",
+    async args => {
+      const { stdout, stderr, exitCode } = await runBun(args);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("42\n");
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("--print --eval=-42 keeps the negative value", async () => {
+    const { stdout, exitCode } = await runBun(["--print", "--eval=-42"]);
+    expect(stdout).toBe("-42\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test('-p "\\-42" unescapes the leading dash', async () => {
+    const { stdout, exitCode } = await runBun(["-p", "\\-42"]);
+    expect(stdout).toBe("-42\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test('-e "" runs an empty program', async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-e", ""]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("-e followed by another option is a missing argument (exit 9)", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-e", "-p"]);
+    expect(stderr.split(/\r?\n/)[0]).toBe(`${process.execPath}: -e requires an argument`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  // Node only unescapes a leading "\-" for a separate argument, so the '=' form
+  // keeps the backslash and the expression is a syntax error.
+  test("--eval=\\-42 does not unescape the leading dash", async () => {
+    const { stdout, exitCode } = await runBun(["--eval=\\-42"]);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+
+  // An empty value is distinct from an absent one: `-e ""` is an empty program,
+  // but `--eval=` is a missing argument.
+  test("--eval= (empty value) exits with code 9", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["--eval="]);
+    expect(stderr.split(/\r?\n/)[0]).toBe(`${process.execPath}: --eval= requires an argument`);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(9);
+  });
+
+  // --print is a boolean upstream, so an empty '=' value is no value at all
+  // rather than the error --eval= raises.
+  test("--print= (empty value) prints undefined", async () => {
+    const { stdout, stderr, exitCode } = await runBun(["--print="]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Node does not consume an empty argument as -p's script, so the empty string
+  // stays a positional and ends option parsing: the -e never applies.
+  test('-p "" leaves the following -e unparsed', async () => {
+    const { stdout, stderr, exitCode } = await runBun(["-p", "", "-e", "42"]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("undefined\n");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -1777,13 +1777,11 @@ pub fn to_executable(
     if fd == Fd::INVALID {
         // inject() already printed the specific failure to stderr.
         return Ok(CompileResult::fail_fmt(format_args!(
-            "failed to write bytecode to executable"
+            "failed to embed module graph in executable"
         )));
     }
-    // Note: a scopeguard closure capturing `fd` by value would not observe
-    // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
-    // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
-    // (both error and success paths).
+    // Explicit `fd.close()` at each return instead of a scopeguard: the Windows
+    // arm must close before `MoveFileExW`, so a drop guard would double-close.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -1799,9 +1797,7 @@ pub fn to_executable(
         let temp_path = match bun_sys::get_fd_path(fd, &mut temp_buf) {
             Ok(p) => p,
             Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
+                fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get temp file path: {}",
                     bstr::BStr::new(e.name())
@@ -1816,9 +1812,7 @@ pub fn to_executable(
         let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => &cwd_buf[..len],
             Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
+                fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get current directory: {}",
                     bstr::BStr::new(e.name())
@@ -1923,9 +1917,7 @@ pub fn to_executable(
         let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
             Ok(p) => p.to_vec(),
             Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
+                fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "failed to get path for fd: {}",
                     e
@@ -1960,9 +1952,7 @@ pub fn to_executable(
             }
         }
 
-        if fd != Fd::INVALID {
-            fd.close();
-        }
+        fd.close();
         Ok(CompileResult::Success)
     }
 }

@@ -3,8 +3,8 @@
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/threads/BinarySemaphore.h>
-#include <memory>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectDebugger.h>
 #include <JavaScriptCore/Debugger.h>
@@ -403,6 +403,7 @@ public:
         MarkedArgumentBuffer arguments;
         arguments.ensureCapacity(messageCount);
         auto& vm = debuggerGlobalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         for (auto& message : messages) {
             arguments.append(jsString(vm, message));
@@ -414,8 +415,28 @@ public:
 
         // After JSC::call, so onMessageFn (which calls into debugger.ts's
         // webSocketWriter/bufferedWriter write()) has been invoked for every
-        // message in this batch. See Bun__debugger__drain().
-        if (messageCount > 0)
+        // message in this batch. See Bun__debugger__drain(). If onMessageFn
+        // threw partway through the batch, there is no way to know how many
+        // of the messages it was given actually made it to write() before
+        // the throw, so the whole batch is conservatively treated as
+        // undelivered (the count is left pending) rather than risking an
+        // undercount that would let Bun__debugger__drain() skip a wait for a
+        // message that never actually got written. The cost of that
+        // conservatism is bounded: Bun__debugger__drain() only reads this
+        // counter once as an entry gate for waits already capped at
+        // kDrainHandoffTimeoutMs (250ms) / kDrainFlushGraceMs (150ms), so an
+        // over-retained count costs at most one extra capped wait at exit,
+        // never a stall.
+        bool delivered = true;
+        if (auto* exception = scope.exception()) [[unlikely]] {
+            delivered = false;
+            if (scope.clearExceptionExceptTermination())
+                debuggerGlobalObject->reportUncaughtExceptionAtEventLoop(debuggerGlobalObject, exception);
+            // else: termination exception -- left uncleared so it keeps
+            // propagating, and (as with any other exception here) not
+            // reported, since the process is already on its way down.
+        }
+        if (messageCount > 0 && delivered)
             totalPendingDebuggerMessages.fetch_sub(messageCount, std::memory_order_release);
     }
 
@@ -632,10 +653,15 @@ extern "C" void Bun__ensureDebugger(ScriptExecutionContextIdentifier scriptId, b
 // so nothing is deliberately leaked (Bun's leak-sanitizer builds treat that
 // as a bug to fix -- see fba43af684, "Fix effectively every native-code
 // memory leak in Bun"). Both the waiting thread (Bun__debugger__drain) and
-// the posted task hold a reference via std::shared_ptr; whichever finishes
-// last frees it.
-struct DebuggerDrainSignal {
+// the posted task hold a reference via WTF::Ref (ThreadSafeRefCounted);
+// whichever finishes last frees it.
+struct DebuggerDrainSignal : public ThreadSafeRefCounted<DebuggerDrainSignal> {
+public:
+    static Ref<DebuggerDrainSignal> create() { return adoptRef(*new DebuggerDrainSignal()); }
     WTF::BinarySemaphore semaphore;
+
+private:
+    DebuggerDrainSignal() = default;
 };
 
 // Cap on how long the main thread waits, on exit, for the debugger thread to
@@ -713,7 +739,7 @@ extern "C" void Bun__debugger__drain()
     // Layer (a): if a main->debugger-thread handoff is still pending, wait for
     // it to catch up via a FIFO sentinel.
     if (totalPendingDebuggerMessages.load(std::memory_order_acquire) != 0) {
-        auto signal = std::make_shared<DebuggerDrainSignal>();
+        auto signal = DebuggerDrainSignal::create();
         debuggerScriptExecutionContext->postTaskConcurrently([signal](ScriptExecutionContext&) {
             signal->semaphore.signal();
         });

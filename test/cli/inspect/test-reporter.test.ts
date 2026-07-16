@@ -166,9 +166,12 @@ class TestReporterSession extends InspectorSession {
 }
 
 // Every test spawns `bun test` under --inspect-wait; the drain test below
-// spawns a batch of them (and ASAN/debug startup alone is already several
-// seconds), so give the suite more headroom than the default.
-setDefaultTimeout(60_000);
+// spawns a batch of them, and ASAN/debug startup alone is several seconds.
+// Note setDefaultTimeout() overrides the CI runner's own --timeout (per-test
+// option > setDefaultTimeout > CLI flag), so scale for slow builds here
+// instead of using a flat value that would undercut the runner's ASAN
+// allowance.
+setDefaultTimeout(isASAN || isDebug ? 120_000 : 60_000);
 
 describe.if(isPosix)("TestReporter inspector protocol", () => {
   let proc: Subprocess | undefined;
@@ -442,7 +445,6 @@ ${body}
 
     for (const { stderr, exitCode, found, started, ended } of results) {
       expect(stderr).toContain(`${testCount} pass`);
-      expect(exitCode).toBe(0);
       // Every test must have a `found`, a `start`, and an `end` event, and
       // every `end` event must report a pass -- zero trailing loss across
       // exit at any of the three reporting stages.
@@ -450,6 +452,7 @@ ${body}
       expect(started.size).toBe(testCount);
       expect(ended.size).toBe(testCount);
       expect([...ended.values()].map(e => e.status)).toEqual(Array(testCount).fill("pass"));
+      expect(exitCode).toBe(0);
     }
   });
 });

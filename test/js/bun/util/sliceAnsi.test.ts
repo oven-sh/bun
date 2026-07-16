@@ -1120,6 +1120,41 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("unicorn", -4, undefined, E)).toBe(E + "orn");
       expect(Bun.sliceAnsi("unicorn", 0, 4, ".")).toBe("uni.");
     });
+
+    test("trailing ANSI stays after speculative-zone content when string fits exactly", () => {
+      const red = "\u001B[31m";
+      const green = "\u001B[32m";
+      const reset = "\u001B[39m";
+      // End budget lands exactly at EOF: speculative zone ("d") is kept. The
+      // trailing close code must come AFTER that content, not before it.
+      expect(Bun.sliceAnsi(`${red}abcd${reset}`, 0, 4, { ellipsis: E })).toBe(`${red}abcd${reset}`);
+      expect(Bun.sliceAnsi(`${red}abcd${reset}`, 0, 4, { ellipsis: "..." })).toBe(`${red}abcd${reset}`);
+      // SGR change between speculative-zone chars must stay interleaved.
+      expect(Bun.sliceAnsi(`${red}abcde${green}fg${reset}`, 0, 7, { ellipsis: "..." })).toBe(
+        `${red}abcde${green}fg${reset}`,
+      );
+      // Same for OSC 8 hyperlink close.
+      const hl = createHyperlink("abcd", "http://x");
+      expect(Bun.sliceAnsi(hl, 0, 4, { ellipsis: E })).toBe(hl);
+      // UTF-16 input path (force a non-ASCII char before the styled run).
+      expect(Bun.sliceAnsi(`\u5B89${red}bcd${reset}`, 0, 5, { ellipsis: E })).toBe(`\u5B89${red}bcd${reset}`);
+    });
+
+    test("SGR between speculative-zone chars is discarded with the zone when cut", () => {
+      const red = "\u001B[31m";
+      const green = "\u001B[32m";
+      const reset = "\u001B[39m";
+      // 'efg' fall in the speculative zone and are replaced by the ellipsis;
+      // the \e[32m between them applies only to discarded chars and must not
+      // leak into the output. The negative-index path already behaves this
+      // way; the lazy (positive-index) path should match.
+      const text = `${red}abcde${green}fghijk${reset}`;
+      expect(Bun.stringWidth(text)).toBe(11);
+      const viaLazy = Bun.sliceAnsi(text, 0, 7, { ellipsis: "..." });
+      const viaKnown = Bun.sliceAnsi(text, -11, -4, { ellipsis: "..." });
+      expect(viaLazy).toBe(`${red}abcd...${reset}`);
+      expect(viaLazy).toBe(viaKnown);
+    });
   });
 
   // ======================================================================

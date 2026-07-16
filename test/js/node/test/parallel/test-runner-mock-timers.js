@@ -133,7 +133,6 @@ describe('Mock Timers Test Suite', () => {
       t.mock.timers.enable();
       const fn = t.mock.fn();
       globalThis.setTimeout(fn, 1000);
-      // TODO(benjamingr) refactor to `using`
       t.mock.timers[Symbol.dispose]();
       assert.throws(() => {
         t.mock.timers.tick(1000);

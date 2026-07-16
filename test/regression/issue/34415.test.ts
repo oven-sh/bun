@@ -2,10 +2,10 @@
 // Removing Content-Length (what the npm `compression` middleware does) made the
 // server advertise `Transfer-Encoding: chunked` to HTTP/1.0 clients while the
 // body went out unframed, so nginx (proxy_http_version 1.0) returned 502.
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
+import { once } from "node:events";
 import http from "node:http";
 import net from "node:net";
-import { once } from "node:events";
 
 async function serve(handler: http.RequestListener): Promise<{ server: http.Server; port: number }> {
   const server = http.createServer(handler);
@@ -126,9 +126,7 @@ test("HTTP/1.0 response with removed Content-Length, end(data) only", async () =
 test("HTTP/1.1 response with removed Content-Length stays chunked with valid framing", async () => {
   const { server, port } = await serve(removeContentLengthHandler);
   try {
-    const res = parseResponse(
-      await rawRequest(port, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
-    );
+    const res = parseResponse(await rawRequest(port, "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"));
     expect(res.headers["transfer-encoding"]).toBe("chunked");
     expect(decodeChunked(res.body)).toBe("hello world");
   } finally {

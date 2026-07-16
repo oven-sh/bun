@@ -347,10 +347,9 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
     Error.prepareStackTrace = origPrepareStackTrace;
   }
 
-  // ErrorInstance whose .stack has not been materialized yet. Object.keys must
-  // run before any descriptor lookup: getOwnPropertyDescriptor would trip
-  // ErrorInstance::materializeErrorInfoIfNeeded, which overwrites with its own
-  // DontEnum and hides the attribute on the captureStackTrace accessor path.
+  // Object.keys must run before any descriptor lookup: getOwnPropertyDescriptor trips
+  // ErrorInstance::materializeErrorInfoIfNeeded, which overwrites with its own DontEnum
+  // and would mask the attribute captureStackTrace installed on the accessor path.
   const lazy = new Error("lazy");
   Error.captureStackTrace(lazy);
   expect(Object.keys(lazy)).toEqual([]);

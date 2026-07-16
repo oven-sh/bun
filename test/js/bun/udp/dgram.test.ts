@@ -2,9 +2,38 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
+
+// Spawn a cluster fixture with a hard deadline and no-orphan protection. The
+// toRun() matcher uses spawnSync, which a test timeout cannot interrupt, so a
+// hung fixture leaks the primary + workers onto a non-ephemeral CI agent and
+// every later UDP test in the shard then times out too. Bun.spawn lets the
+// test-level timeout actually fire, `await using` kills the primary on the way
+// out, and BUN_FEATURE_FLAG_NO_ORPHANS makes the workers follow it.
+async function runClusterFixture(fixture: string, deadlineMs: number) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), path.join(import.meta.dir, fixture)],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_NO_ORPHANS: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timedOut = Bun.sleep(deadlineMs).then(() => {
+    proc.kill("SIGKILL");
+    return "deadline" as const;
+  });
+  const result = await Promise.race([
+    Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]),
+    timedOut,
+  ]);
+  if (result === "deadline") {
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    return { stdout, stderr, exitCode: null as number | null, signalCode: proc.signalCode };
+  }
+  const [stdout, stderr, exitCode] = result;
+  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+}
 
 describe("createSocket()", () => {
   test("connect", done => {
@@ -218,7 +247,8 @@ describe.skipIf(isWindows)("cluster", () => {
   // The shared wrap's close(cb) must invoke cb (Node's HandleWrap contract) or
   // cluster's disconnect refcount never reaches zero and the worker hangs.
   test("worker.disconnect() with a shared socket lets the worker exit", async () => {
-    expect([path.join(import.meta.dir, "dgram-cluster-disconnect-fixture.ts")]).toRun();
+    const { stdout, stderr, exitCode } = await runClusterFixture("dgram-cluster-disconnect-fixture.ts", 20_000);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 0 });
   });
 
   // Multi-worker traffic + close: exercises the DGRAM_FDS Owned/Adopted state
@@ -226,10 +256,14 @@ describe.skipIf(isWindows)("cluster", () => {
   // guard would EBADF an IPC pipe and hang this fixture.
   test("multi-worker shared socket receives traffic then tears down cleanly", async () => {
     // Assert the success line, not just exit 0: the fixture has bail-out paths
-    // that also exit 0, and toRun() only compares stdout when it is given.
-    expect([path.join(import.meta.dir, "dgram-cluster-shared-fd-fixture.ts")]).toRun(
-      "ok: all 4 workers adopted and released the shared descriptor\n",
-    );
+    // that also exit 0. 25s deadline sits between the fixture's 20s watchdog
+    // and this test's own timeout so the watchdog's diagnostic reaches stderr.
+    const { stdout, stderr, exitCode } = await runClusterFixture("dgram-cluster-shared-fd-fixture.ts", 25_000);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok: all 4 workers adopted and released the shared descriptor\n",
+      stderr: "",
+      exitCode: 0,
+    });
   }, 40_000);
 });
 
@@ -533,10 +567,20 @@ test.skipIf(isWindows || !hasIPv6Loopback())(
       socket.bind({ fd: wrap.fd });
       await listening;
 
-      await new Promise<void>((resolve, reject) =>
-        sender.send("hi", socket.address().port, "::1", err => (err ? reject(err) : resolve())),
-      );
-      const rinfo = await got;
+      const port = socket.address().port;
+      let rinfo: any;
+      let sendErr: unknown;
+      // Retry so a single dropped loopback datagram surfaces as a bounded
+      // failure instead of the file-level test timeout.
+      for (let i = 0; i < 50 && rinfo === undefined; i++) {
+        await new Promise<void>((resolve, reject) =>
+          sender.send("hi", port, "::1", err => (err ? reject(err) : resolve())),
+        ).catch(e => (sendErr ??= e));
+        rinfo = await Promise.race([got, Bun.sleep(100)]);
+      }
+      if (rinfo === undefined) {
+        throw new Error(`no datagram received on adopted fd (port=${port} sendErr=${sendErr ?? "(none)"})`);
+      }
 
       expect(rinfo.family).toBe("IPv6");
       expect(rinfo.address).toBe("::1");
@@ -572,10 +616,14 @@ test.skipIf(isWindows)("bind({ fd }) with an unbound descriptor reports the auto
 
     const { promise: gotRinfo, resolve: onMessage } = Promise.withResolvers<any>();
     receiver.on("message", (_data, rinfo) => onMessage(rinfo));
-    await new Promise<void>((resolve, reject) =>
-      socket.send("hi", receiverPort, "127.0.0.1", err => (err ? reject(err) : resolve())),
-    );
-    const rinfo = await gotRinfo;
+    let rinfo: any;
+    for (let i = 0; i < 50 && rinfo === undefined; i++) {
+      await new Promise<void>((resolve, reject) =>
+        socket.send("hi", receiverPort, "127.0.0.1", err => (err ? reject(err) : resolve())),
+      );
+      rinfo = await Promise.race([gotRinfo, Bun.sleep(100)]);
+    }
+    expect(rinfo).toBeDefined();
 
     const addr = socket.address();
     expect(addr.port).toBeGreaterThan(0);

@@ -311,6 +311,16 @@ export const globalFlags: Flag[] = [
     when: c => c.asan,
     desc: "AddressSanitizer (also forwarded to deps for ABI consistency)",
   },
+  {
+    // The MS STL's std::string/std::vector container-overflow annotations
+    // call into stl_asan.lib, which is a separate VS component that the
+    // xwin splat doesn't ship (and the WebKit -asan prebuilt was built
+    // with these disabled too — keeping them in sync avoids ODR mismatch
+    // on WTF::Vector-adjacent inlines). Core ASAN checks are unaffected.
+    flag: ["-D_DISABLE_STRING_ANNOTATION", "-D_DISABLE_VECTOR_ANNOTATION"],
+    when: c => c.windows && c.asan,
+    desc: "Windows ASAN: disable MS STL container annotations (stl_asan.lib not in xwin splat)",
+  },
 
   // ─── C++ language behavior ───
   {
@@ -808,6 +818,17 @@ export const linkerFlags: Flag[] = [
     flag: "-fsanitize=address",
     when: c => c.unix && c.asan,
     desc: "Link ASAN runtime",
+  },
+  {
+    // clang-cl -fsanitize=address embeds a /INFERASANLIBS directive in each
+    // object; lld-link then searches its own lib paths for the runtime.
+    // We link the version-matched runtime from the WebKit prebuilt
+    // explicitly (bun.ts emitWindowsAsanRuntime), so suppress inference to
+    // avoid picking up a mismatched-version lib from the host toolchain or
+    // failing the link when the cross sysroot has none.
+    flag: "/INFERASANLIBS:NO",
+    when: c => c.windows && c.asan,
+    desc: "Windows ASAN: link the bundled runtime explicitly, not by inference",
   },
   {
     flag: "-fsanitize=null",

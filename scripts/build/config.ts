@@ -774,12 +774,22 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // libclang_rt.asan, and there's no -asan WebKit prebuilt for it.
   // Darwin cross: force off. The Linux LLVM toolchain doesn't ship the
   // darwin ASAN/UBSan runtime dylibs (libclang_rt.*_osx_dynamic.dylib).
-  // Windows cross: force off. The host clang doesn't ship the windows
-  // clang_rt.asan runtime libs, so the link would fail.
+  // Windows arm64: force off. LLVM ships no Windows ARM64 ASAN runtime,
+  // and there's no -asan WebKit prebuilt for it. Windows x64 is supported
+  // (native and cross) — the clang_rt.asan runtime ships inside the
+  // bun-webkit-windows-amd64-asan prebuilt, so the host clang's resource
+  // dir doesn't need it.
   const asan =
-    abi === "android" || freebsd || darwinCross || (windows && host.os !== "windows")
-      ? false
-      : (partial.asan ?? asanDefault);
+    abi === "android" || freebsd || darwinCross || (windows && arm64) ? false : (partial.asan ?? asanDefault);
+  // Windows: only a release -asan WebKit prebuilt exists (oven-sh/WebKit#240);
+  // there is no bun-webkit-windows-amd64-debug-asan. Fail early with a clear
+  // message rather than 404ing on the tarball fetch.
+  if (windows && asan && debug) {
+    throw new BuildError(
+      "Windows ASAN is release-only (no bun-webkit-windows-amd64-debug-asan prebuilt exists)",
+      { hint: "Use --profile=release-asan, or build the missing WebKit variant first" },
+    );
+  }
 
   // Assertions: default on in debug OR asan. ASAN coupling is ABI-critical:
   // the -asan WebKit prebuilt is built with ASSERT_ENABLED=1, which gates

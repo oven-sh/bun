@@ -34,6 +34,7 @@ import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
+import { windowsAsanRuntime } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -112,9 +113,41 @@ function systemLibs(cfg: Config): string[] {
       "ws2_32.lib",
       "delayimp.lib", // required for /delayload: in release
     );
+    if (cfg.asan) {
+      // The import lib and the thunk themselves are on the link line via
+      // webkit.provides.libs; the thunk additionally needs /WHOLEARCHIVE
+      // (it's the allocator-override set that clang-cl's own driver emits
+      // for `-fsanitize=address /MT`, see oven-sh/WebKit#240). slash():
+      // lld-link options take forward slashes regardless of host.
+      libs.push(`/WHOLEARCHIVE:${slash(windowsAsanRuntime(cfg).thunkLib)}`);
+    }
   }
 
   return libs;
+}
+
+/**
+ * Windows ASAN: copy clang_rt.asan_dynamic-x86_64.dll next to the linked
+ * exe. The static ASAN runtime was removed in LLVM 17, so even /MT builds
+ * load ASAN from this DLL; without it beside bun.exe the process fails at
+ * image load with STATUS_DLL_NOT_FOUND. The DLL ships inside the WebKit
+ * -asan prebuilt (version-matched to the instrumentation in JSC/WTF).
+ *
+ * Returns the emitted DLL path, or undefined when not a Windows ASAN build.
+ * Added to the `bun` phony and as an implicit input of the smoke test so
+ * native builds can actually run the binary.
+ */
+function emitWindowsAsanRuntime(n: Ninja, cfg: Config, exe: string): string | undefined {
+  if (!(cfg.windows && cfg.asan && cfg.webkit === "prebuilt")) return undefined;
+  const { dll } = windowsAsanRuntime(cfg);
+  const out = resolve(dirname(exe), "clang_rt.asan_dynamic-x86_64.dll");
+  n.rule("copy_asan_dll", {
+    command: cfg.host.os === "windows" ? `cmd /c "copy /Y $in $out >nul"` : `cp $in $out`,
+    description: "copy $out",
+    restat: true,
+  });
+  n.build({ outputs: [out], rule: "copy_asan_dll", inputs: [dll] });
+  return out;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -495,6 +528,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // flags.ts.
     linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
+  const asanDll = emitWindowsAsanRuntime(n, cfg, exe);
 
   // ─── Step 8: post-link (strip + dsymutil) ───
   // Plain release only: produce stripped `bun` alongside `bun-profile`.
@@ -516,7 +550,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // literal file named `bun` (which would collide with the phony). When
   // strip runs, `ninja bun` builds the actual stripped file; no phony needed.
   if (strippedExe === undefined) {
-    n.phony("bun", [exe]);
+    n.phony("bun", asanDll !== undefined ? [exe, asanDll] : [exe]);
   }
 
   // ─── Step 9: smoke test ───
@@ -529,7 +563,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // ASAN binaries to run from subprocesses (shadow memory layout conflict
   // with ELF_ET_DYN_BASE, see sanitizers/856). We try with setarch first,
   // fall back to direct invocation.
-  emitSmokeTest(n, cfg, exe, exeName);
+  emitSmokeTest(n, cfg, exe, exeName, asanDll);
 
   return { exe, strippedExe, dsym, deps, codegen, rustObjects, objects: allObjects };
 }
@@ -637,6 +671,7 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
     linkerMapOutput: cfg.linux && cfg.release && !cfg.asan && !cfg.valgrind ? linkerMapPath(cfg) : undefined,
   });
+  const asanDll = emitWindowsAsanRuntime(n, cfg, exe);
 
   // Strip + smoke test — same as full mode.
   let strippedExe: string | undefined;
@@ -645,8 +680,8 @@ function emitLinkOnly(n: Ninja, cfg: Config): BunOutput {
     strippedExe = emitStrip(n, cfg, exe, flags.stripflags);
     if (cfg.darwin) dsym = emitDsymutil(n, cfg, exe, exeName);
   }
-  if (strippedExe === undefined) n.phony("bun", [exe]);
-  emitSmokeTest(n, cfg, exe, exeName);
+  if (strippedExe === undefined) n.phony("bun", asanDll !== undefined ? [exe, asanDll] : [exe]);
+  emitSmokeTest(n, cfg, exe, exeName, asanDll);
 
   return {
     exe,
@@ -746,11 +781,11 @@ function emitRustAndLink(n: Ninja, cfg: Config, sources: Sources): BunOutput {
  * linker didn't catch (missing symbol only referenced at init, ICU ABI
  * mismatch, etc.).
  */
-function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): void {
+function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string, asanDll?: string): void {
   // Skip when the binary can't run on this host (different os/arch/abi) —
   // `ninja check` becomes a no-op alias for the exe.
   if (!cfg.canRunOnHost) {
-    n.phony("check", [exe]);
+    n.phony("check", asanDll !== undefined ? [exe, asanDll] : [exe]);
     return;
   }
   const stamp = resolve(cfg.buildDir, `${exeName}.smoke-test-passed`);
@@ -791,6 +826,8 @@ function emitSmokeTest(n: Ninja, cfg: Config, exe: string, exeName: string): voi
     outputs: [stamp],
     rule: "smoke_test",
     inputs: [exe],
+    // Windows ASAN: the DLL must be beside the exe before it can run.
+    ...(asanDll !== undefined ? { implicitInputs: [asanDll] } : {}),
   });
 
   // Phony target — `ninja check` runs the smoke test.

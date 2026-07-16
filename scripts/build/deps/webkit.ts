@@ -128,6 +128,25 @@ function bmallocLib(cfg: Config): string {
 }
 
 /**
+ * Windows ASAN runtime — shipped inside the -asan WebKit prebuilt
+ * (oven-sh/WebKit#240) so the link has a version-matched import lib and
+ * thunk regardless of what the host LLVM's resource dir contains. The DLL
+ * must sit next to bun.exe at runtime (the static ASAN runtime was removed
+ * in LLVM 17; /MT still uses the DLL via the static_runtime_thunk).
+ *
+ * Absolute paths against the prebuilt destDir. Prebuilt-only: local mode
+ * builds its own runtime via ENABLE_SANITIZERS and these paths won't exist.
+ */
+export function windowsAsanRuntime(cfg: Config): { importLib: string; thunkLib: string; dll: string } {
+  const lib = resolve(prebuiltDestDir(cfg), "lib");
+  return {
+    importLib: resolve(lib, "clang_rt.asan_dynamic-x86_64.lib"),
+    thunkLib: resolve(lib, "clang_rt.asan_static_runtime_thunk-x86_64.lib"),
+    dll: resolve(lib, "clang_rt.asan_dynamic-x86_64.dll"),
+  };
+}
+
+/**
  * ICU libs — prebuilt bundles them on linux/windows. macOS uses system ICU.
  * Local mode: system ICU on posix (linked via -licu* in bun.ts); built from
  * source on Windows (see icuDir/icuLibs).
@@ -397,6 +416,17 @@ export const webkit: Dependency = {
       // "file not found" at link time (not silent omission + cryptic
       // undefined symbols).
       const libs = [...coreLibs(cfg), ...prebuiltIcuLibs(cfg), bmallocLib(cfg)];
+      // Windows ASAN: the tarball also ships the clang_rt.asan import lib
+      // and /MT runtime thunk (see windowsAsanRuntime). Listing them here
+      // makes emitPrebuilt declare them as fetch outputs and flows both
+      // into depLibs for full and link-only modes. The /WHOLEARCHIVE: for
+      // the thunk is added at the link step (bun.ts).
+      if (cfg.windows && cfg.asan) {
+        libs.push(
+          "lib/clang_rt.asan_dynamic-x86_64.lib",
+          "lib/clang_rt.asan_static_runtime_thunk-x86_64.lib",
+        );
+      }
 
       const includes = ["include"];
       // Linux/windows: ICU headers under wtf/unicode. macOS: deleted by

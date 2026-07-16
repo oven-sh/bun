@@ -1,12 +1,11 @@
 // A parked write whose callback throws must not leak the pending-report count. If it
 // does, the sink's promise stays parked for the life of the stream, and every later
-// accepted write reports from a microtask while readline's no-op moveCursor reports
-// from process.nextTick, permanently reordering them.
+// accepted write reports from a chained microtask while a direct process.nextTick
+// reaches the tick queue first and jumps ahead.
 //
 // Park one write with a throwing callback, drain, then after its promise has settled
-// write once more alongside a no-op moveCursor and report which callback ran first.
+// write once more alongside a direct process.nextTick and report which ran first.
 const fs = require("node:fs");
-const readline = require("node:readline");
 
 // The parked write's callback throws inside the fulfillment handler's try/finally.
 // The finally runs the decrement, then the throw rejects the derived promise that
@@ -65,5 +64,5 @@ settled.promise
       }
     };
     process.stdout.write("A", () => done("write"));
-    readline.moveCursor(process.stdout, 0, 0, () => done("moveCursor"));
+    process.nextTick(() => done("tick"));
   });

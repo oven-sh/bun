@@ -155,9 +155,7 @@ describe.concurrent("process-stdio", () => {
     );
   });
 
-  // A write callback must never run during the write() call itself. readline's
-  // no-op cursorTo()/moveCursor() fast paths report completion with
-  // process.nextTick(), so a synchronous write callback jumps ahead of them.
+  // A write callback must never run during the write() call itself.
   for (const name of ["stdout", "stderr"] as const) {
     test(`process.${name}.write - callback is not called synchronously`, async () => {
       await using proc = spawn({
@@ -251,9 +249,9 @@ describe.concurrent("process-stdio", () => {
     );
   }
 
-  // Each fixture reports {"order": ["write","moveCursor"]} on stderr; the write is
-  // issued first, so its callback must land first.
-  async function expectWriteThenMoveCursor(fixture: string) {
+  // Each fixture reports {"order": [...]} on stderr; the write is issued first, so
+  // its callback must land first.
+  async function expectFixtureOrder(fixture: string, expected: readonly string[]) {
     using dir = tempDir("stdout-write-order-cursor", {});
     const fifo = path.join(String(dir), "stdout.fifo");
     expect(spawnSync({ cmd: ["mkfifo", fifo] }).exitCode).toBe(0);
@@ -276,7 +274,7 @@ describe.concurrent("process-stdio", () => {
       if (report === undefined) {
         throw new Error(`fixture did not report (exit code ${exitCode}):\n${stderrText}`);
       }
-      expect({ order: JSON.parse(report).order, exitCode }).toEqual({ order: ["write", "moveCursor"], exitCode: 0 });
+      expect({ order: JSON.parse(report).order, exitCode }).toEqual({ order: [...expected], exitCode: 0 });
     } finally {
       if (writeFd !== -1) fs.closeSync(writeFd);
       fs.closeSync(readFd);
@@ -286,13 +284,13 @@ describe.concurrent("process-stdio", () => {
   // A parked write whose callback throws must still settle its report accounting, or
   // the sink stays parked forever and later writes are reordered for the stream's life.
   test.skipIf(isWindows)("process.stdout - a throwing parked write callback does not wedge ordering", () =>
-    expectWriteThenMoveCursor("process-stdout-write-order-leak-fixture.js"),
+    expectFixtureOrder("process-stdout-write-order-leak-fixture.js", ["write", "tick"]),
   );
 
   // A no-op moveCursor co-issued with a write from inside a parked callback must
   // queue through the stream so it cannot overtake that write.
   test.skipIf(isWindows)("process.stdout - no-op moveCursor co-issued with a re-entrant write stays ordered", () =>
-    expectWriteThenMoveCursor("process-stdout-write-order-cursor-fixture.js"),
+    expectFixtureOrder("process-stdout-write-order-cursor-fixture.js", ["write", "moveCursor"]),
   );
 
   // `prelude` defines moveCursor(dx, dy, cb) and cursorTo(x, y, cb) bound to

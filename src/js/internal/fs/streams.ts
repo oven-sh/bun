@@ -701,14 +701,12 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       if (hasCallback) {
         const backpressurePromise = this[kBackpressurePromise];
         if (backpressurePromise === undefined) {
-          // node never invokes a write callback during write(). Deferring also keeps
-          // it ordered with readline's no-op cursorTo()/moveCursor(), which call back
-          // from process.nextTick().
+          // node never invokes a write callback during write().
           process.nextTick(cb, null);
         } else {
-          // The reports already queued on that promise can settle a microtask deeper
-          // than it. A tick lands behind them either way, and keeps a throwing callback
-          // an uncaught exception, not an unhandled rejection.
+          // The reports already queued on that promise have not run. A tick lands
+          // behind them either way, and keeps a throwing callback an uncaught
+          // exception, not an unhandled rejection.
           this[kPendingReports]!++;
           const report = () => {
             process.nextTick(cb, null);

@@ -1721,11 +1721,9 @@ function fdToStdioName(fd: number) {
   }
 }
 
-// In Node.js, all three stdio pipe streams are `net.Socket` instances (which extend
-// `stream.Duplex`). Packages such as python-shell call Readable methods like
-// `setEncoding()` on `child.stdin`, so stdin must expose the full Duplex surface even
-// though its readable side is ended. Node passes `readable: false` when creating the
-// stdin socket.
+// Node's stdio pipe streams are `net.Socket` (Duplex) instances. stdin must expose the
+// full Duplex surface (setEncoding, pause, resume) even though its readable side is
+// ended; Node passes `readable: false` when creating the stdin socket.
 const kStdinSink = Symbol("kStdinSink");
 
 function stdinStreamWrite(this: any, chunk: any, encoding: any, cb: any) {

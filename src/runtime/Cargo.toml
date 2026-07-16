@@ -107,6 +107,9 @@ bun_install_jsc.workspace = true
 bun_patch_jsc.workspace = true
 bun_css_jsc.workspace = true
 
+[target.'cfg(target_env = "ohos")'.dependencies]
+ohos_sign = { path = "../ohos_sign" }
+
 [features]
 default = []
 # Mirrors Zig `Environment.show_crash_trace` — extra debug breakpoints / params.

@@ -52,21 +52,26 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
 
     int total_sent = 0;
     while (total_sent < num) {
-        int count = bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads, lengths, addresses, num);
-        payloads += count;
-        lengths += count;
-        addresses += count;
-        num -= count;
-        // TODO nohang flag?
+        /* The send buffer holds a fixed number of mmsghdr slots, so a batch bigger
+         * than that takes several passes, each starting at the first unsent one. */
+        bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads + total_sent, lengths + total_sent, addresses + total_sent, num - total_sent);
         int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
-        if (sent < 0) {
-            return sent;
+        if (sent <= 0) {
+            /* sendmmsg reports "not one datagram could be sent" as -1 with errno,
+             * the sendmsg/sendto fallbacks as 0. Only a full send buffer is
+             * recoverable; every other errno belongs to the caller. */
+            if (sent < 0 && !bsd_would_block()) {
+                return sent;
+            }
+            /* Out of send buffer space: ask for a writable event so the drain
+             * callback fires, and report the datagrams that did go out. */
+            us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            break;
         }
         total_sent += sent;
-        if (0 <= sent && sent < num) {
-            // if we couldn't send all packets, register a writable event so we can call the drain callback
-            us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        }
+        /* A short count means the datagram at index `sent` failed and sendmmsg(2)
+         * dropped its errno. The next pass retries from that datagram, which
+         * surfaces the errno as -1 instead of hiding it in the count. */
     }
     return total_sent;
 }

@@ -384,6 +384,58 @@ describe("udpSocket()", () => {
     }
   }
 
+  // The send buffer only holds ~204 sendmmsg slots, so a bigger batch needs
+  // several passes. us_udp_socket_send used to subtract the batch size from
+  // `num` before testing it, which ended the loop after the first pass: an
+  // idle socket reported a short count (204 of 300) and never armed the
+  // writable poll, so the documented "if fewer were sent, wait for drain and
+  // resend the rest" protocol had nothing to wait for.
+  describe("sendMany sends every packet of a batch larger than one send buffer", () => {
+    test.each([205, 300, 500])("connected, %i packets", async count => {
+      using server = await udpSocket({ socket: { data() {} } });
+      using client = await udpSocket({
+        connect: { port: server.port, hostname: "127.0.0.1" },
+      });
+
+      const packets = Array.from({ length: count }, (_, i) => `packet ${i}`);
+      expect(client.sendMany(packets)).toBe(count);
+    });
+
+    test("unconnected, 300 packets", async () => {
+      using server = await udpSocket({ socket: { data() {} } });
+      using client = await udpSocket({});
+
+      const packets = Array.from({ length: 300 }, (_, i) => [`packet ${i}`, server.port, "127.0.0.1"]).flat();
+      expect(client.sendMany(packets)).toBe(300);
+    });
+  });
+
+  // sendmmsg(2) reports a datagram that fails mid-batch as a short count and
+  // drops its errno, so an oversized payload used to throw EMSGSIZE at index 0
+  // but come back as backpressure ("1 of 3 sent") anywhere after it.
+  describe("sendMany surfaces a per-packet error whatever its position", () => {
+    for (const connected of [true, false]) {
+      test.each([0, 1, 2])(`${connected ? "connected" : "unconnected"}, oversized packet at index %i`, async index => {
+        using server = await udpSocket({ socket: { data() {} } });
+        using client = await udpSocket(connected ? { connect: { port: server.port, hostname: "127.0.0.1" } } : {});
+
+        // 70000 > the 65507-byte maximum UDP payload, so the kernel always
+        // rejects this one datagram with EMSGSIZE.
+        const payloads: any[] = ["a", "b", "c"];
+        payloads[index] = Buffer.alloc(70000, 1);
+        const packets = connected ? payloads : payloads.flatMap(p => [p, server.port, "127.0.0.1"]);
+
+        let error: any;
+        try {
+          client.sendMany(packets);
+        } catch (e) {
+          error = e;
+        }
+        expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EMSGSIZE", syscall: "send" });
+      });
+    }
+  });
+
   // send()/sendMany() capture a pointer into the payload's backing store and
   // then run user JS (port `valueOf()`, address `toString()`, and for
   // sendMany also array index getters on later iterations). That JS can

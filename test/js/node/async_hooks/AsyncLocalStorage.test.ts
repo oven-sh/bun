@@ -149,21 +149,29 @@ describe("AsyncLocalStorage", () => {
 
   // Behaviour verified against Node v26.4.0.
   test("run() short-circuits when the store value is unchanged (Object.is)", () => {
-    // enterWith inside a same-value run survives past the run
     const als1 = new AsyncLocalStorage();
-    als1.enterWith("A");
-    als1.run("A", () => als1.enterWith("B"));
-    expect(als1.getStore()).toBe("B");
-
-    // exit() on a fresh storage is a same-value (undefined) run
     const als2 = new AsyncLocalStorage();
-    als2.exit(() => als2.enterWith("C"));
-    expect(als2.getStore()).toBe("C");
-
-    // defaultValue counts as the "current" store
     const als3 = new AsyncLocalStorage({ defaultValue: "d" });
-    als3.run("d", () => als3.enterWith("X"));
-    expect(als3.getStore()).toBe("X");
+    try {
+      // enterWith inside a same-value run survives past the run
+      als1.enterWith("A");
+      als1.run("A", () => als1.enterWith("B"));
+      expect(als1.getStore()).toBe("B");
+
+      // exit() on a fresh storage is a same-value (undefined) run
+      als2.exit(() => als2.enterWith("C"));
+      expect(als2.getStore()).toBe("C");
+
+      // defaultValue counts as the "current" store
+      als3.run("d", () => als3.enterWith("X"));
+      expect(als3.getStore()).toBe("X");
+    } finally {
+      // enterWith() is not scoped: splice the entries back out so later
+      // tests still start from an empty context.
+      als1.disable();
+      als2.disable();
+      als3.disable();
+    }
   });
 
   // Reaches the else-if(hasPrevious) re-enable branch in run()'s finally.
@@ -179,13 +187,18 @@ describe("AsyncLocalStorage", () => {
     // hasPrevious=true via enterWith, disable() mid-run of ANOTHER storage's callback.
     const alsA = new AsyncLocalStorage();
     const alsB = new AsyncLocalStorage();
-    alsA.enterWith("prev");
-    alsA.run("a", () => {
-      alsB.run("b", () => alsA.disable());
-      // Still inside alsA.run: finally hasn't fired yet, alsA is disabled.
-      expect(alsA.getStore()).toBeUndefined();
-    });
-    expect(alsA.getStore()).toBe("prev");
+    try {
+      alsA.enterWith("prev");
+      alsA.run("a", () => {
+        alsB.run("b", () => alsA.disable());
+        // Still inside alsA.run: finally hasn't fired yet, alsA is disabled.
+        expect(alsA.getStore()).toBeUndefined();
+      });
+      expect(alsA.getStore()).toBe("prev");
+    } finally {
+      // alsB is spliced out by its own run(); enterWith('prev') is not scoped.
+      alsA.disable();
+    }
   });
 });
 

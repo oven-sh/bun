@@ -215,6 +215,11 @@ export const cases = [
 // The test asserts these still FAIL (with the current wrong result), so that
 // an engine fix produces an unexpected pass and the case gets promoted above.
 export const knownBunFailures = [
+  // Fixed on WebKit main; wrong in stock bun (JIT+interp): a LAZY counted quantifier {0,2}?
+  // over a group with nested captures spuriously fails (greedy {0,2} is fine).
+  {"name": "lazy-counted-loop-nested-captures", "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8", "flags": "gi", "input": "xxx00Ωc-100Ωc-18", "op": "match", "expected": ["xxx00Ωc-100Ωc-18"], "currentBun": null},
+  // Fixed on WebKit main; wrong in stock bun (both tiers): over-match where V8 finds no match.
+  {"name": "over-match-backref-lookahead-lazy-quant", "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d", "flags": "iu", "input": "9z9zd", "op": "exec", "expected": null, "currentBun": {"match": ["9z9zd", "z9z", null], "index": 0}},
   // Capturing-group form of the optional-BOL-group family (#9): a capture holding only ^ under */? loses matches away from index 0. JIT-only; live on WebKit main.
   {"name": "jit-capturing-group-only-BOL-star", "source": "(^)*a", "flags": "", "input": "ba", "op": "exec", "expected": {"match": ["a", null], "index": 1}, "currentBun": null},
   // Same family reached via /v: the whole match is lost, not just the position. JIT-only.

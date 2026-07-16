@@ -1,4 +1,195 @@
 {
+ "known:lazy-counted-loop-nested-captures~lazy-quantifiers": null,
+ "known:lazy-counted-loop-nested-captures~bound-plus-one": null,
+ "known:lazy-counted-loop-nested-captures~plus-to-star": null,
+ "known:lazy-counted-loop-nested-captures~capture-to-noncapture": null,
+ "known:lazy-counted-loop-nested-captures~noncapture-to-capture": null,
+ "known:lazy-counted-loop-nested-captures~prepend-caret": null,
+ "known:lazy-counted-loop-nested-captures~append-dollar": null,
+ "known:lazy-counted-loop-nested-captures~wrap-in-optional-group": [
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  "",
+  ""
+ ],
+ "known:lazy-counted-loop-nested-captures~append-alternative": null,
+ "known:lazy-counted-loop-nested-captures~prepend-alternative": null,
+ "known:lazy-counted-loop-nested-captures~add-m": null,
+ "known:lazy-counted-loop-nested-captures~add-s": null,
+ "known:lazy-counted-loop-nested-captures~add-u": null,
+ "known:lazy-counted-loop-nested-captures~add-y": null,
+ "known:lazy-counted-loop-nested-captures~remove-flags": null,
+ "known:lazy-counted-loop-nested-captures~uppercased": null,
+ "known:lazy-counted-loop-nested-captures~with-prefix": null,
+ "known:lazy-counted-loop-nested-captures~with-suffix": null,
+ "known:lazy-counted-loop-nested-captures~doubled": null,
+ "known:lazy-counted-loop-nested-captures~with-newlines": null,
+ "known:over-match-backref-lookahead-lazy-quant~greedy-quantifiers": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~bound-plus-one": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~star-to-plus": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~noncapture-to-capture": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null,
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~prepend-caret": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~append-dollar": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~wrap-in-optional-group": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~append-alternative": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~prepend-alternative": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~add-m": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~add-s": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~add-g": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~add-y": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~remove-flags": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~uppercased": {
+  "match": [
+   "9Z9ZD",
+   "Z9Z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~with-prefix": {
+  "match": [
+   "z9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 1
+ },
+ "known:over-match-backref-lookahead-lazy-quant~with-suffix": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~doubled": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 0
+ },
+ "known:over-match-backref-lookahead-lazy-quant~with-newlines": {
+  "match": [
+   "9z9zd",
+   "z9z",
+   null
+  ],
+  "index": 1
+ },
  "known:jit-capturing-group-only-BOL-star~lazy-quantifiers": null,
  "known:jit-capturing-group-only-BOL-star~capture-to-noncapture": null,
  "known:jit-capturing-group-only-BOL-star~append-dollar": null,

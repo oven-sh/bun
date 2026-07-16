@@ -11,7 +11,10 @@ const unicodeMode = flags => /[uv]/.test(flags);
 export const knownSignatures = [
   {
     id: "optional-group-only-caret (#9)",
-    test: ({ source }) => /\((\?<[^>]+>|\?:)?\^\)[?*+]/.test(source) || /\\B\(\?:\^/.test(source),
+    // an optional/quantified group whose FIRST term is ^ (including a group
+    // holding only ^), e.g. /(?:^)?a/, /(^)*x/, /$(^b.)?/
+    test: ({ source }) =>
+      /\((\?<[^>]+>|\?:)?\^[^)]*\)[?*]/.test(source) || /\((\?<[^>]+>|\?:)?\^\)\+/.test(source) || /\\B\(\?:\^/.test(source),
   },
   {
     id: "astral-alternative-lost (#10)",

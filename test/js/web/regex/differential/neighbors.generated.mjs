@@ -5892,6 +5892,415 @@ export const neighbors = [
   "expected": null
  },
  {
+  "name": "known:lazy-counted-loop-nested-captures~lazy-quantifiers",
+  "source": "[xa_]{1,3}?(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~greedy-quantifiers",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~bound-plus-one",
+  "source": "[xa_]{2,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~plus-to-star",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]*|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~capture-to-noncapture",
+  "source": "[xa_]{1,3}(?:0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~noncapture-to-capture",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~prepend-caret",
+  "source": "^[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~append-dollar",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8$",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~wrap-in-optional-group",
+  "source": "(?:[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8)?",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18",
+   ""
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~append-alternative",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8|zz",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~prepend-alternative",
+  "source": "qq|[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~add-m",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gim",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~add-s",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gis",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~add-u",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "giu",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~add-y",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "giy",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~remove-flags",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "",
+  "input": "xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18",
+   "00Ωc-1",
+   "Ωc-"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~uppercased",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "XXX00ΩC-100ΩC-18",
+  "op": "match",
+  "expected": [
+   "XXX00ΩC-100ΩC-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~with-prefix",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "zzxxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~with-suffix",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18zz",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~doubled",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "xxx00Ωc-100Ωc-18xxx00Ωc-100Ωc-18",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18",
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~with-newlines",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "\nxxx00Ωc-100Ωc-18\n",
+  "op": "match",
+  "expected": [
+   "xxx00Ωc-100Ωc-18"
+  ]
+ },
+ {
+  "name": "known:lazy-counted-loop-nested-captures~empty",
+  "source": "[xa_]{1,3}(0{2}(Ω[c]-)[0-9z\\w]+|\\t{0}(?:.|(?:\\1)x[ca])){0,2}?8",
+  "flags": "gi",
+  "input": "",
+  "op": "match",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~lazy-quantifiers",
+  "source": "(.Ω(??:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~greedy-quantifiers",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)?|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~bound-plus-one",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){1,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~star-to-plus",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d+(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~capture-to-noncapture",
+  "source": "(?:.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~noncapture-to-capture",
+  "source": "(.Ω(^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~prepend-caret",
+  "source": "^(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~append-dollar",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d$",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~wrap-in-optional-group",
+  "source": "(?:(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d)?",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null,
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~append-alternative",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d|zz",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~prepend-alternative",
+  "source": "qq|(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~add-m",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "ium",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~add-s",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "ius",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~add-g",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iug",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~add-y",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iuy",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~remove-flags",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "",
+  "input": "9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~uppercased",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9Z9ZD",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~with-prefix",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "zz9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~with-suffix",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zdzz",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~doubled",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "9z9zd9z9zd",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~with-newlines",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "\n9z9zd\n",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:over-match-backref-lookahead-lazy-quant~empty",
+  "source": "(.Ω(?:^[^a-fba-f]|\\D(.\\d*(?:\\2)|\\/[a\\-a-f]\\B|[^baby]*){0,2}|0)??|(?:[\\wa](?:\\1))?(?![^\\-\\-x-z\\d]{2}|\\D).){2}?d",
+  "flags": "iu",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
   "name": "known:jit-capturing-group-only-BOL-star~lazy-quantifiers",
   "source": "(^)*?a",
   "flags": "",

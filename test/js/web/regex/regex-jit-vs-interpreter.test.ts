@@ -44,6 +44,8 @@ const knownTierDivergence = new Set<string>([
   "jit-capturing-group-only-BOL-star", // JIT wrong (#9 family)
   "jit-capturing-group-only-BOL-star-v", // JIT wrong (#9 family)
   "jit-u-mode-empty-match-position-in-pair", // JIT differs from interp+V8
+  "lazy-counted-loop-nested-captures", // tiers disagree (both differ from V8 in stock bun)
+  "over-match-backref-lookahead-lazy-quant", // tiers disagree
 ]);
 // Whole families known to differ between tiers: the interpreter's a|ab|^a
 // leftmost-wins bug (#3) and its neighbors, and every neighbor derived from a

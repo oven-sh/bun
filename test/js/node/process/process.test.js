@@ -372,7 +372,11 @@ it("process.env reads are never stale after a write (JIT inline-cache soundness)
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    stdout: "ok\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {

@@ -701,7 +701,11 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
      * so far, the app has to track this and call close as needed */
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+        /* READABLE must stay armed so the peer's FIN reaches the is_shut_down
+         * close path. A paused socket polls WRITABLE only, so masking with the
+         * prior events left 0 and the unread body stalled flow control forever. */
+        s->flags.is_paused = 0;
+        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
     }
 }
@@ -833,6 +837,9 @@ void us_socket_pause(struct us_socket_t *s) {
     if (s->flags.is_paused) return;
     // closed cannot be paused because it is already closed
     if (us_socket_is_closed(s)) return;
+    // a shut-down socket only reads to drain to the peer's FIN; pausing it
+    // would drop READABLE and leak the connection (see raw_shutdown above)
+    if (us_internal_poll_type(&s->p) == POLL_TYPE_SOCKET_SHUT_DOWN) return;
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;

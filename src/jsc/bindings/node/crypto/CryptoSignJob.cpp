@@ -116,6 +116,11 @@ void SignJobCtx::runTask(JSGlobalObject* globalObject)
     int32_t padding = m_padding.value_or(key.getDefaultSignPadding());
 
     if (key.isRsaVariant()) {
+        if (m_mode == Mode::Verify && padding == RSA_PKCS1_PADDING && !boringSSLSupportsRsaPkcs1Digest(m_digest)) {
+            m_opensslError = ERR_get_error();
+            return;
+        }
+
         std::optional<int> effective_salt_len = m_saltLength;
 
         // For PSS padding without explicit salt length, use RSA_PSS_SALTLEN_AUTO

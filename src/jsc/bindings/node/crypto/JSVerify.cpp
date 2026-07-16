@@ -398,6 +398,11 @@ JSC_DEFINE_HOST_FUNCTION(jsVerifyProtoFuncVerify, (JSGlobalObject * globalObject
 
     // Set RSA padding mode and salt length if applicable
     if (keyPtr.isRsaVariant()) {
+        if (padding == RSA_PKCS1_PADDING && !boringSSLSupportsRsaPkcs1Digest(mdCtx.getDigest())) {
+            throwCryptoError(globalObject, scope, ERR_peek_error(), "Failed to set signature message digest"_s);
+            return {};
+        }
+
         std::optional<int> effective_salt_len = saltLen;
 
         // For PSS padding without explicit salt length for verification,

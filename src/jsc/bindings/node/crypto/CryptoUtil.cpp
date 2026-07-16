@@ -449,6 +449,21 @@ DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSV
     return {};
 }
 
+// BoringSSL only rejects digests without a PKCS#1 v1.5 DigestInfo prefix inside
+// RSA_sign/RSA_verify, which EVP_DigestVerify maps to a plain 0 return. Probe
+// RSA_add_pkcs1_prefix so verify() can throw instead of silently returning false.
+bool boringSSLSupportsRsaPkcs1Digest(const EVP_MD* md)
+{
+    if (!md) return true;
+    uint8_t dummy[EVP_MAX_MD_SIZE] = {};
+    uint8_t* out = nullptr;
+    size_t outLen = 0;
+    int isAlloced = 0;
+    int ret = RSA_add_pkcs1_prefix(&out, &outLen, &isAlloced, EVP_MD_type(md), dummy, EVP_MD_size(md));
+    if (isAlloced) OPENSSL_free(out);
+    return ret == 1;
+}
+
 bool convertP1363ToDER(const ncrypto::Buffer<const unsigned char>& p1363Sig,
     const ncrypto::EVPKeyPointer& pkey,
     WTF::Vector<uint8_t>& derBuffer)

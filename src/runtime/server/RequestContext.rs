@@ -715,7 +715,11 @@ where
 
             Output::flush();
             if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(writer, global_this);
+                jsc::ConsoleObject::write_trace(
+                    writer,
+                    global_this,
+                    Output::enable_ansi_colors_stderr(),
+                );
             }
             Output::flush();
         }

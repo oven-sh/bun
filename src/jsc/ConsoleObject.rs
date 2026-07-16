@@ -716,7 +716,7 @@ fn write_message_body(
     }
 
     if message_type == MessageType::Trace {
-        write_trace(writer, global);
+        write_trace(writer, global, enable_colors);
         let _ = writer.flush();
     }
 
@@ -1322,7 +1322,7 @@ impl<'a> DynWriteAdapter<'a> {
     }
 }
 
-pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
+pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject, enable_colors: bool) {
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
@@ -1352,7 +1352,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let _ = VirtualMachine::print_stack_trace(
         adapter.interface(),
         &holder.zig_exception().stack,
-        Output::enable_ansi_colors_stderr(),
+        enable_colors,
     );
 
     // `ZigStringSlice` frees on `Drop`.

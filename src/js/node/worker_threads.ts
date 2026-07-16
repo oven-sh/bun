@@ -470,9 +470,11 @@ function setupWorkerStdio(stdio) {
   });
   // node routes console.log through process.stdout/stderr; Bun's global console
   // writes the fd directly. Rebind its output sink to the port-backed streams
-  // so console output is captured by worker.stdout/stderr, while keeping Bun's
-  // formatter and the Bun-specific console surface (console.write,
-  // Symbol.asyncIterator) intact.
+  // so console.log/warn/error/trace/count/time* are captured by
+  // worker.stdout/stderr, while keeping Bun's formatter and the global console
+  // object itself (so console.write, Symbol.asyncIterator, console.Console
+  // remain reachable). Those Bun-specific APIs address the process fds by
+  // design and are not routed through the port.
   if (stdout || stderr) {
     $newRustFunction("ConsoleObject.rs", "setOutputStreams", 2)(process.stdout, process.stderr);
   }

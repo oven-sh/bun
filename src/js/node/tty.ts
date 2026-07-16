@@ -7,10 +7,16 @@ const {
   setRawMode: ttySetMode,
   isatty,
   getWindowSize: _getWindowSize,
+  rawModeStateSize,
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
 const { validateInteger } = require("internal/validators");
 const fs = require("internal/fs/streams");
+
+// libuv stores the mode and the saved termios on each uv_tty_t, so a stream
+// going back to cooked never disturbs another one on the same terminal. Keep
+// that state per ReadStream rather than per process.
+const kRawModeState = Symbol("rawModeState");
 
 function ReadStream(fd): void {
   if (!(this instanceof ReadStream)) {
@@ -83,7 +89,8 @@ Object.defineProperty(ReadStream, "prototype", {
           }
         }
       } else {
-        const err = ttySetMode(this.fd, flag);
+        const state = (this[kRawModeState] ??= new Uint8Array(rawModeStateSize));
+        const err = ttySetMode(this.fd, flag, state);
         if (err) {
           this.emit("error", new Error("setRawMode failed with errno: " + err));
           return this;

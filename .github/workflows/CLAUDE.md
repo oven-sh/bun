@@ -38,9 +38,9 @@ The workflow runs all three formatters simultaneously:
 
 #### 3. Tool Installation
 
-##### Clang-format-21
+##### Clang-format-22
 
-- Installs ONLY `clang-format-21` package (not the entire LLVM toolchain)
+- Installs ONLY `clang-format-22` package (not the entire LLVM toolchain)
 - Uses `--no-install-recommends --no-install-suggests` to skip unnecessary packages
 - Quiet installation with `-qq` and `-o=Dpkg::Use-Pty=0`
 

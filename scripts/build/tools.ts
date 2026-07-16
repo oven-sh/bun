@@ -262,10 +262,10 @@ export function findTool(spec: ToolSpec): FoundTool | undefined {
 
 /**
  * LLVM version constraint. Any version in the same major.minor range is
- * accepted (e.g. Alpine 3.23 ships 21.1.2 while we target 21.1.8).
+ * accepted (e.g. Alpine 3.24 ships 22.1.3 while we target 22.1.8).
  */
-export const LLVM_VERSION = "21.1.8";
-const LLVM_MAJOR = "21";
+export const LLVM_VERSION = "22.1.8";
+const LLVM_MAJOR = "22";
 const LLVM_MINOR = "1";
 const LLVM_VERSION_RANGE = `>=${LLVM_MAJOR}.${LLVM_MINOR}.0 <${LLVM_MAJOR}.${LLVM_MINOR}.99`;
 
@@ -316,7 +316,7 @@ function llvmSearchPaths(os: OS, arch: Arch): string[] {
 }
 
 /**
- * Version-suffixed command names (e.g. clang-21, clang-21.1).
+ * Version-suffixed command names (e.g. clang-22, clang-22.1).
  * Unix distros often only ship these suffixed versions.
  */
 function llvmNameVariants(name: string): string[] {

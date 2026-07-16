@@ -66,25 +66,6 @@ export interface Workaround {
 
 export const workarounds: Workaround[] = [
   {
-    id: "asan-dyld-shim",
-    issue: "https://github.com/llvm/llvm-project/issues/182943",
-    description:
-      "macOS 26.4 Dyld.framework reimplemented dyld_shared_cache_iterate_text in Swift; " +
-      "the _Block_copy allocation deadlocks ASAN init re-entrantly",
-    applies: cfg => cfg.darwin && cfg.asan,
-    expectedToBeFixed: cfg => {
-      // Fix merged to LLVM main. Backport to release/22.x is
-      // https://github.com/llvm/llvm-project/pull/188913 — lower this
-      // threshold to the exact 22.1.x once it lands. Apple clang is
-      // already excluded: resolveLlvmToolchain only accepts Homebrew
-      // llvm (LLVM_VERSION_RANGE is >=21 <23), so cfg.clangVersion is
-      // always LLVM clang's version here.
-      const FIXED_IN_LLVM = "22.1.4";
-      return cfg.clangVersion !== undefined && satisfiesRange(cfg.clangVersion, `>=${FIXED_IN_LLVM}`);
-    },
-    cleanup: `Delete scripts/build/shims/asan-dyld-shim.c, scripts/build/shims.ts, the emitShims() calls in bun.ts, registerShimRules in rules.ts, and this entry.`,
-  },
-  {
     id: "rustc-no-regular-lto-summary",
     issue:
       "https://github.com/rust-lang/rust/issues/ (none filed yet — rustc has no equivalent of clang's shouldEmitRegularLTOSummary())",

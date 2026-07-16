@@ -256,7 +256,7 @@ function Install-CMake {
 }
 
 function Install-Llvm {
-  $LLVM_VERSION = "21.1.8"
+  $LLVM_VERSION = "22.1.8"
   if (Which clang-cl) {
     return
   }

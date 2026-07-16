@@ -26,10 +26,10 @@
           };
         };
 
-        # LLVM 21 - matching the bootstrap script (targets 21.1.8, actual version from nixpkgs-unstable)
-        llvm = pkgs.llvm_21;
-        clang = pkgs.clang_21;
-        lld = pkgs.lld_21;
+        # LLVM 22 - matching the bootstrap script (targets 22.1.8, actual version from nixpkgs-unstable)
+        llvm = pkgs.llvm_22;
+        clang = pkgs.clang_22;
+        lld = pkgs.lld_22;
 
         # Node.js 26 - matching the bootstrap script (targets 26.3.0, actual version from nixpkgs-unstable)
         nodejs = pkgs.nodejs_26;
@@ -42,7 +42,7 @@
           pkgs.pkg-config
           pkgs.ccache
 
-          # Compilers and toolchain - version pinned to LLVM 21
+          # Compilers and toolchain - version pinned to LLVM 22
           clang
           llvm
           lld

@@ -177,7 +177,7 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
     let bun_test_ptr = buntest_strong.get();
 
     let callback_mode: CallbackMode = match this.cfg.self_mode {
-        SelfMode::Skip | SelfMode::Todo => CallbackMode::Allow,
+        SelfMode::Skip | SelfMode::Todo | SelfMode::TodoRun => CallbackMode::Allow,
         _ => CallbackMode::Require,
     };
 
@@ -848,11 +848,13 @@ use bun_jsc::debugger::TestType as TestReporterKind;
 
 /// Local stringifier for `ScopeMode` — sibling `bun_test.rs` does not derive
 /// `IntoStaticStr` on it, so we can't use `<&'static str>::from`.
+/// This names the modifier in user-facing error messages, so `TodoRun` (the
+/// node:test-internal mode behind `test.todo`) reads back as `.todo`.
 fn scope_mode_str(m: SelfMode) -> &'static str {
     match m {
         SelfMode::Normal => "normal",
         SelfMode::Skip => "skip",
-        SelfMode::Todo => "todo",
+        SelfMode::Todo | SelfMode::TodoRun => "todo",
         SelfMode::Failing => "failing",
         SelfMode::FilteredOut => "filtered_out",
     }

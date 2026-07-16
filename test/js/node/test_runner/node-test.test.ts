@@ -52,7 +52,119 @@ describe("node:test", () => {
       stderr: expect.stringContaining("0 fail"),
     });
   });
+
+  // Node runs todo bodies (including a todo suite's before/after hooks) and
+  // reports every outcome as todo; a failing todo never fails the run. The
+  // fixture logs one LOG: line per body that executed, and the
+  // LOG:MUST-NOT-APPEAR lines sit in bodies that must never run (skip wins
+  // over todo at every site, including inside a todo suite).
+  test("todo test bodies run and never fail the run", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["09-todo.js"]);
+    expect({
+      exitCode,
+      logs: stdout.split("\n").filter(line => line.startsWith("LOG:")),
+      summary: summarize(stderr),
+    }).toEqual({
+      exitCode: 0,
+      logs: [
+        "LOG:passing-todo-option",
+        "LOG:failing-todo-option",
+        "LOG:passing-todo-modifier",
+        "LOG:failing-todo-modifier",
+        "LOG:todo-reason-string",
+        "LOG:todo-timeout",
+        "LOG:regular",
+        "LOG:passing-before-hook",
+        "LOG:todo-suite-modifier",
+        "LOG:todo-suite-option",
+        "LOG:before-hook",
+        // Node cancels the subtest after a failed before(); bun still runs it.
+        // Both report it as todo and exit 0.
+        "LOG:after-failed-before",
+        "LOG:inside-after-suite",
+        "LOG:after-hook",
+      ],
+      // Node agrees on fail: 0 and exit 0. Its skip count is 3 (it never
+      // evaluates a skipped suite's callback) and its todo count is 11 (it
+      // does not count the two failed hooks or the extra subtest above).
+      summary: { pass: 1, fail: 0, todo: 13, skip: 4, errors: 0 },
+    });
+  });
+
+  test("describe honors the concurrency option", async () => {
+    const { exitCode, stderr } = await runTests(["10-describe-concurrency.js"]);
+    expect({ exitCode, summary: summarize(stderr) }).toEqual({
+      exitCode: 0,
+      summary: { pass: 13, fail: 0, todo: 0, skip: 0, errors: 0 },
+    });
+  });
+
+  test("describe rejects invalid concurrency values", async () => {
+    const { exitCode, stderr } = await runTests(["11-describe-concurrency-invalid.js"]);
+    expect({ exitCode, summary: summarize(stderr) }).toEqual({
+      exitCode: 0,
+      summary: { pass: 1, fail: 0, todo: 0, skip: 0, errors: 0 },
+    });
+  });
+
+  // Sibling bodies in a concurrent suite settle in arbitrary order; if the
+  // module-level "inside a test" context were restored LIFO it would leak, and
+  // the next file's top-level test() would throw at registration.
+  test("a concurrent suite does not corrupt the next file's registration", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["10-describe-concurrency.js", "12-after-concurrent.js"]);
+    expect({
+      exitCode,
+      logs: stdout.split("\n").filter(line => line.startsWith("LOG:")),
+      summary: summarize(stderr),
+    }).toEqual({
+      exitCode: 0,
+      logs: ["LOG:after-concurrent"],
+      summary: { pass: 14, fail: 0, todo: 0, skip: 0, errors: 0 },
+    });
+  });
+
+  // A failing before() in a plain (non-todo) suite fails the run, attributed
+  // to the hook rather than counted as an unhandled error between tests, and
+  // the suite's tests do not run.
+  test("a failing before hook in a plain suite fails the run, sync or async", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["13-hook-failure.js"]);
+    expect({
+      exitCode,
+      logs: stdout.split("\n").filter(line => line.startsWith("LOG:")),
+      summary: summarize(stderr),
+    }).toEqual({
+      exitCode: 1,
+      logs: ["LOG:before", "LOG:async-before"],
+      summary: { pass: 0, fail: 2, todo: 0, skip: 0, errors: 0 },
+    });
+  });
+
+  // The bound function behind node:test's `test.todo` has an internal mode
+  // name; the error for using it outside `bun test` must still say `test.todo`.
+  test("todo outside the test runner names test.todo in its error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `require("node:test").todo("x", () => {});`],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain('Cannot use test.todo outside of the test runner. Run "bun test" to run tests.');
+    expect(exitCode).not.toBe(0);
+  });
 });
+
+/** Extracts the pass/fail/todo/skip/errors counts from a `bun test` summary. */
+function summarize(stderr: string) {
+  const count = (label: string) => Number(stderr.match(new RegExp(`(\\d+) ${label}\\n`))?.[1] ?? 0);
+  return {
+    pass: count("pass"),
+    fail: count("fail"),
+    todo: count("todo"),
+    skip: count("skip"),
+    // "Unhandled error between tests" entries: they also make the run exit 1.
+    errors: count("errors?"),
+  };
+}
 
 async function runTests(filenames: string[]) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));

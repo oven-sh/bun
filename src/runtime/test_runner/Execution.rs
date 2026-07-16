@@ -208,6 +208,15 @@ impl ExecutionSequence {
         }
         ScopeMode::Normal
     }
+
+    /// A beforeAll/afterAll of a node:test todo suite has no test entry and
+    /// inherits `TodoRun` from the suite, so fall back to the hook's own mode.
+    fn is_todo_run(&self) -> bool {
+        self.test_entry
+            .or(self.first_entry)
+            // SAFETY: arena-owned entry, alive for the lifetime of BunTest which owns Execution
+            .is_some_and(|entry| unsafe { entry.as_ref() }.base.mode == ScopeMode::TodoRun)
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, strum::IntoStaticStr)]
@@ -672,6 +681,12 @@ impl Execution {
                 _ => Result::Pass,
             };
         }
+        // Node reports a todo test as todo no matter how it finished: a passing
+        // body, a throwing body, a timeout, and a failing hook all count as todo.
+        // A passing before/after-only sequence stays Pass so it is not reported.
+        if sequence.is_todo_run() && (sequence.test_entry.is_some() || sequence.result != Result::Pass) {
+            sequence.result = Result::Todo;
+        }
         if let Some(first_entry) = sequence.first_entry {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
@@ -799,7 +814,7 @@ impl Execution {
                 }
                 HandleUncaughtExceptionResult::HideError // failing tests prevent the error from being displayed
             }
-            ScopeMode::Todo => {
+            ScopeMode::Todo | ScopeMode::TodoRun => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Todo; // executing test() callback
                 }
@@ -1058,7 +1073,7 @@ fn step_sequence_one(
                     sequence.result = Result::Skip;
                 }
             }
-            ScopeMode::Todo => {
+            ScopeMode::Todo | ScopeMode::TodoRun => {
                 if sequence.result == Result::Pending {
                     sequence.result = Result::Todo;
                 }

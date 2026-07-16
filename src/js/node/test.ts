@@ -9,6 +9,22 @@ const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
 const kDefaultOptions = kEmptyObject;
 
+/**
+ * bun:test's `test`/`describe` object. `.concurrent` and `.serial` return the
+ * same shape with the corresponding modifier applied.
+ */
+type ScopeFunction = {
+  (name: string, fn: unknown, options?: unknown): void;
+  concurrent: ScopeFunction;
+  serial: ScopeFunction;
+};
+
+// In Node a `todo` test's body runs and its outcome is reported as todo either
+// way; bun:test's `test.todo` never runs the body (or, under `--todo`, fails
+// the run when it passes). These register tests/suites with Node's semantics.
+const kTodoTest: ScopeFunction = $rust("jest.rs", "nodeTestTodo");
+const kTodoDescribe: ScopeFunction = $rust("jest.rs", "nodeDescribeTodo");
+
 function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
@@ -502,22 +518,25 @@ class TestContext {
     const { test } = bunTest();
     if (options.only) {
       test.only(name, fn);
-    } else if (options.todo) {
-      test.todo(name, fn);
     } else if (options.skip) {
       test.skip(name, fn);
+    } else if (options.todo) {
+      kTodoTest(name, fn, options);
     } else {
       test(name, fn);
     }
   }
 
   describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-    const { name, fn } = createDescribe(arg0, arg1, arg2);
+    const { name, fn, options } = createDescribe(arg0, arg1, arg2);
 
     this.#checkNotInsideTest("describe");
 
     const { describe } = bunTest();
-    describe(name, fn);
+    applyConcurrency(options.skip ? describe.skip : options.todo ? kTodoDescribe : describe, options.concurrency)(
+      name,
+      fn,
+    );
   }
 
   #checkNotInsideTest(fn: string) {
@@ -538,30 +557,50 @@ function bunTest() {
   return jest(Bun.main);
 }
 
+/**
+ * Maps Node's `concurrency` suite option onto bun:test's `.concurrent`/`.serial`
+ * modifiers: `true` or an integer >= 2 runs the suite's tests in parallel (Bun
+ * applies its global --max-concurrency cap rather than a per-suite limit),
+ * `false` or `1` forces serial, and unset inherits from the parent.
+ */
+function applyConcurrency(describe: ScopeFunction, concurrency: unknown): ScopeFunction {
+  if (concurrency === undefined || concurrency === null) {
+    return describe;
+  }
+  if (typeof concurrency !== "boolean") {
+    validateInteger(concurrency, "options.concurrency", 1);
+  }
+  return concurrency === true || (concurrency as number) >= 2 ? describe.concurrent : describe.serial;
+}
+
 let ctx: TestContext | undefined = undefined;
 
 function describe(arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe(name, fn);
+  // `skip` wins over `todo` like in Node (a skipped body must never execute).
+  applyConcurrency(options.skip ? describe.skip : options.todo ? kTodoDescribe : describe, options.concurrency)(
+    name,
+    fn,
+  );
 }
 
 describe.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe.skip(name, fn);
+  applyConcurrency(describe.skip, options.concurrency)(name, fn);
 };
 
 describe.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe.todo(name, fn);
+  applyConcurrency(options.skip ? describe.skip : kTodoDescribe, options.concurrency)(name, fn);
 };
 
 describe.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
-  const { name, fn } = createDescribe(arg0, arg1, arg2);
+  const { name, fn, options } = createDescribe(arg0, arg1, arg2);
   const { describe } = bunTest();
-  describe.only(name, fn);
+  applyConcurrency(describe.only, options.concurrency)(name, fn);
 };
 
 function test(arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -570,10 +609,11 @@ function test(arg0: unknown, arg1: unknown, arg2: unknown) {
   // Node's {only: true} is intentionally not routed to test.only() here:
   // in Node it is a no-op unless --test-only is passed, whereas bun:test's
   // test.only() unconditionally skips siblings.
-  if (options.todo) {
-    test.todo(name, fn, options);
-  } else if (options.skip) {
+  // `skip` wins over `todo` like in Node (a skipped body must never execute).
+  if (options.skip) {
     test.skip(name, fn, options);
+  } else if (options.todo) {
+    kTodoTest(name, fn, options);
   } else {
     test(name, fn, options);
   }
@@ -588,7 +628,7 @@ test.skip = function (arg0: unknown, arg1: unknown, arg2: unknown) {
 test.todo = function (arg0: unknown, arg1: unknown, arg2: unknown) {
   const { name, fn, options } = createTest(arg0, arg1, arg2);
   const { test } = bunTest();
-  test.todo(name, fn, options);
+  (options.skip ? test.skip : kTodoTest)(name, fn, options);
 };
 
 test.only = function (arg0: unknown, arg1: unknown, arg2: unknown) {
@@ -666,27 +706,24 @@ function createTest(arg0: unknown, arg1: unknown, arg2: unknown) {
   const context = new TestContext(true, name, Bun.main, ctx);
 
   const runTest = (done: (error?: unknown) => void) => {
+    // `ctx` only tracks the synchronous part of the body. Restore it before any
+    // `done` call: `done` can synchronously start the next test, and concurrent
+    // siblings settle in arbitrary order, so a LIFO restore leaks a stale context.
     const originalContext = ctx;
     ctx = context;
-    const endTest = (error?: unknown) => {
-      try {
-        done(error);
-      } finally {
-        ctx = originalContext;
-      }
-    };
-
     let result: unknown;
     try {
       result = fn(context);
     } catch (error) {
-      endTest(error);
+      ctx = originalContext;
+      done(error);
       return;
     }
+    ctx = originalContext;
     if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => endTest()).catch(error => endTest(error));
+      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
     } else {
-      endTest();
+      done();
     }
   };
 
@@ -738,20 +775,10 @@ function parseHookOptions(arg0: unknown, arg1: unknown) {
 function createHook(arg0: unknown, arg1: unknown) {
   const { fn, options } = parseHookOptions(arg0, arg1);
 
-  const runHook = (done: (error?: unknown) => void) => {
-    let result: unknown;
-    try {
-      result = fn();
-    } catch (error) {
-      done(error);
-      return;
-    }
-    if (result instanceof Promise) {
-      (result as Promise<unknown>).then(() => done()).catch(error => done(error));
-    } else {
-      done();
-    }
-  };
+  // Return the hook's result instead of signalling through a done callback: the
+  // runner attributes a throw or a rejected return to this hook's own entry,
+  // while `done(error)` is attributed to the current test, and a hook has none.
+  const runHook = () => fn();
 
   return { options, fn: runHook };
 }

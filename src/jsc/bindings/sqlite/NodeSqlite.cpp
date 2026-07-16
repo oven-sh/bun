@@ -157,6 +157,21 @@ static ALWAYS_INLINE WTF::String sqliteText(const char* p)
     return p ? sqliteText(p, strlen(p)) : WTF::String();
 }
 
+// Adopt a sqlite3_malloc'd buffer (serialize/changeset/patchset output) as a
+// Uint8Array without a copy; the ArrayBuffer destructor runs sqlite3_free.
+// Same technique bun:sqlite's serialize() uses (JSSQLStatement.cpp).
+static JSC::JSUint8Array* adoptSqliteBuffer(JSGlobalObject* globalObject, void* data, size_t len)
+{
+    auto* structure = globalObject->typedArrayStructureWithTypedArrayType<JSC::TypeUint8>();
+    if (!data || !len) {
+        if (data) sqlite3_free(data);
+        return JSC::JSUint8Array::create(globalObject, structure, 0);
+    }
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<uint8_t*>(data), len },
+        createSharedTask<void(void*)>([](void* p) { sqlite3_free(p); }));
+    return JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, len);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Error helpers (match Node.js node_sqlite.cc shapes)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1980,30 +1995,16 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject
         if (data) sqlite3_free(data);
         return {};
     }
-    if (data == nullptr) {
-        // sqlite3_serialize returns null with size==0 for a brand-new
-        // empty schema whose database file hasn't been materialised yet
-        // (e.g. serialising an ATTACHed :memory: schema that has had no
-        // DDL). Node treats that as an empty Uint8Array; anything else
-        // is a real failure on the connection.
-        if (size == 0) {
-            auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), 0);
-            RETURN_IF_EXCEPTION(scope, {});
-            return JSValue::encode(array);
-        }
+    // sqlite3_serialize returns null with size==0 for a brand-new empty
+    // schema whose database file hasn't been materialised yet (e.g.
+    // serialising an ATTACHed :memory: schema that has had no DDL) — Node
+    // treats that as an empty Uint8Array; null with size!=0 is a real
+    // failure on the connection.
+    if (data == nullptr && size != 0) {
         throwSqliteError(globalObject, scope, conn);
         return {};
     }
-
-    size_t byteLen = static_cast<size_t>(size);
-    auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), byteLen);
-    if (scope.exception()) [[unlikely]] {
-        sqlite3_free(data);
-        return {};
-    }
-    if (byteLen > 0) memcpy(array->typedVector(), data, byteLen);
-    sqlite3_free(data);
-    return JSValue::encode(array);
+    RELEASE_AND_RETURN(scope, JSValue::encode(adoptSqliteBuffer(globalObject, data, static_cast<size_t>(size))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDeserialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -3301,14 +3302,7 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
         throwSqliteReturnCodeError(globalObject, scope, conn, r);
         return {};
     }
-    auto* array = JSC::JSUint8Array::createUninitialized(globalObject, globalObject->m_typedArrayUint8.get(globalObject), static_cast<size_t>(nChangeset));
-    if (scope.exception()) [[unlikely]] {
-        sqlite3_free(pChangeset);
-        return {};
-    }
-    if (nChangeset > 0) memcpy(array->typedVector(), pChangeset, static_cast<size_t>(nChangeset));
-    sqlite3_free(pChangeset);
-    return JSValue::encode(array);
+    RELEASE_AND_RETURN(scope, JSValue::encode(adoptSqliteBuffer(globalObject, pChangeset, static_cast<size_t>(nChangeset))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsSessionChangeset, (JSGlobalObject * globalObject, CallFrame* callFrame))

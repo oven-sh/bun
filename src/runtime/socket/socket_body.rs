@@ -109,7 +109,7 @@ extern "C" fn select_alpn_callback(
     {
         let handlers = this.get_handlers();
         let callback = handlers.on_alpn_callback();
-        if !callback.is_empty() && !handlers.vm.is_shutting_down() && !in_.is_null() && inlen > 0 {
+        if !callback.is_empty() && !handlers.cannot_enter_js() && !in_.is_null() && inlen > 0 {
             let scope = handlers.enter();
             let global = handlers.global_object;
             let this_value = this.get_this_value(&global);
@@ -859,8 +859,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     pub fn handle_error(&self, err_value: JSValue) {
         log!("handleError");
         let handlers = self.get_handlers();
-        let vm = handlers.vm;
-        if vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             return;
         }
         // the handlers must be kept alive for the duration of the function call
@@ -900,8 +899,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
 
-        let vm = handlers.vm;
-        if vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             return;
         }
         // Hold the socket alive for the rest of the dispatch: `internal_flush`
@@ -963,7 +961,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }
-        if handlers.vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             return;
         }
 
@@ -1058,7 +1056,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         let needs_deref = !this.socket.get().is_detached();
         this.socket.set(SocketHandler::<SSL>::DETACHED);
 
-        let vm = handlers.vm;
         this.poll_ref
             .with_mut(|p| p.unref_on_next_tick(js_loop_ctx()));
 
@@ -1076,7 +1073,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             needs_deref,
         };
 
-        if vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             drop(cleanup);
             return Ok(());
         }
@@ -1587,8 +1584,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let _keepalive = this.ref_guard();
 
         let callback = handlers.on_end();
-        let vm = handlers.vm;
-        if callback.is_empty() || vm.is_shutting_down() {
+        if callback.is_empty() || handlers.cannot_enter_js() {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
             // If you don't handle TCP fin, we assume you're done.
@@ -1718,7 +1714,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut callback = handlers.on_handshake();
         let mut is_open = false;
 
-        if handlers.vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             // `on_close` skips its JS dispatch during shutdown, so the native
             // close is still safe here.
             if reject_unauthorized {
@@ -1853,7 +1849,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
-        if handlers.vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             return Ok(());
         }
         let callback = handlers.on_session();
@@ -1900,7 +1896,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let handlers = this.get_handlers();
-        if handlers.vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             return Ok(());
         }
         let callback = handlers.on_keylog();
@@ -1987,7 +1983,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        let vm = handlers.vm;
         this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
         let callback = handlers.on_close();
@@ -1997,7 +1992,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
 
-        if vm.is_shutting_down() {
+        // The native teardown above has already run; only the JS dispatch is skipped.
+        if handlers.cannot_enter_js() {
             drop(cleanup);
             return Ok(());
         }
@@ -2065,7 +2061,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callback.is_empty() || this.flags.get().contains(Flags::FINALIZING) {
             return;
         }
-        if handlers.vm.is_shutting_down() {
+        if handlers.cannot_enter_js() {
             return;
         }
 

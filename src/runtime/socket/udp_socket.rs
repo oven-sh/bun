@@ -93,8 +93,12 @@ extern "C" fn on_recv_error(socket: *mut uws::udp::Socket, errno: c_int) {
     // SystemError from the ICMP errno (ECONNREFUSED, EHOSTUNREACH,
     // ENETUNREACH, EMSGSIZE, ...) and dispatches through the 'error' handler.
     let this: &UDPSocket = UDPSocket::from_uws(socket);
-    let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let global_this = this.global_this.get();
+    // Building the SystemError below with an exception pending asserts.
+    if global_this.has_exception() {
+        return;
+    }
+    let sys_err = bun_sys::Error::from_code_int(errno, bun_sys::Tag::recv);
     let err_value = sys_err.to_js(global_this);
     this.call_error_handler(JSValue::ZERO, err_value);
 }
@@ -110,10 +114,13 @@ extern "C" fn on_drain(socket: *mut uws::udp::Socket) {
     if callback.is_empty_or_undefined_or_null() {
         return;
     }
+    let global_this = this.global_this.get();
+    if global_this.has_exception() {
+        return;
+    }
 
     let event_loop = VirtualMachine::get().event_loop_mut();
     event_loop.enter();
-    let global_this = this.global_this.get();
     let result = callback.call(global_this, this_value, &[this_value]);
     if let Err(err) = result {
         this.call_error_handler(JSValue::ZERO, global_this.take_exception(err));
@@ -146,7 +153,8 @@ extern "C" fn on_data(
         // A prior iteration's callback (or its error handler) may have closed
         // this socket; stop dispatching the rest of the recvmmsg batch so no
         // 'data' fires after 'close'. Matches libuv's per-datagram recheck.
-        if udp_socket.closed.get() {
+        // It may also have left an exception pending; the next Buffer would assert.
+        if udp_socket.closed.get() || global_this.has_exception() {
             break;
         }
 
@@ -670,7 +678,9 @@ impl UDPSocket {
         let global_this = self.global_this.get();
         let vm = global_this.bun_vm().as_mut();
 
-        if err.is_termination_exception() {
+        // Check the VM, not `err`: a prior callback's exception is pending too,
+        // and both branches below re-enter JS.
+        if global_this.has_exception() {
             return;
         }
         if callback.is_empty_or_undefined_or_null() {

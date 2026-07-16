@@ -1814,7 +1814,7 @@ pub(crate) extern "C" fn us_dispatch_server_name(
     // duration of this synchronous handshake dispatch.
     let listener = unsafe { bun_ptr::ThisPtr::new(listener_ptr) };
     let handlers = &listener.handlers;
-    if handlers.vm.is_shutting_down() {
+    if handlers.cannot_enter_js() {
         return core::ptr::null_mut();
     }
     let callback = handlers.on_server_name();

@@ -1,8 +1,10 @@
 #include "config.h"
 #include "JSWasmStreamingCompiler.h"
 
+#include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "JSCTaskScheduler.h"
 #include "JSDOMBinding.h"
 #include "JSDOMOperation.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -156,6 +158,12 @@ JSC_DEFINE_HOST_FUNCTION(jsWasmStreamingCompilerPrototypeFunction_addBytes, (JSG
 
 static inline EncodedJSValue jsWasmStreamingCompilerPrototypeFunction_finalizeBody(JSGlobalObject* lexicalGlobalObject, CallFrame*, typename IDLOperation<JSWasmStreamingCompiler>::ClassParameter castedThis)
 {
+    // The last byte was delivered, so compilation is guaranteed to schedule the
+    // promise's pending work ticket. That ticket was registered as
+    // WorkType::AtSomePoint (no event loop ref); from now on it must keep the
+    // process alive until the compile threads settle the promise.
+    if (auto* promise = castedThis->promise())
+        Bun::JSCTaskScheduler::refEventLoopForPendingWork(WebCore::clientData(JSC::getVM(lexicalGlobalObject)), promise);
     castedThis->wrapped().finalize(lexicalGlobalObject);
     return encodedJSUndefined();
 }
@@ -198,6 +206,17 @@ GCClient::IsoSubspace* JSWasmStreamingCompiler::subspaceForImpl(VM& vm)
         [](auto& spaces) { return spaces.m_subspaceForWasmStreamingCompiler.get(); },
         [](auto& spaces, auto&& space) { spaces.m_subspaceForWasmStreamingCompiler = std::forward<decltype(space)>(space); });
 }
+
+template<typename Visitor>
+void JSWasmStreamingCompiler::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSWasmStreamingCompiler>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_promise);
+}
+
+DEFINE_VISIT_CHILDREN(JSWasmStreamingCompiler);
 
 void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {

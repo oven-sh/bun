@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 import { ok } from "node:assert/strict";
+import { join } from "node:path";
 
 const wasmDataUriPrefix = "data:application/wasm;base64,";
 
@@ -288,4 +289,44 @@ describe("WebAssembly.instantiateStreaming", () => {
       "can't make WebAssembly.Instance because there is no imports Object and the WebAssembly.Module requires imports",
     );
   });
+});
+
+// The streaming compiler registers its pending work as work that may never get
+// scheduled (the response body could stall forever), which by itself does not
+// keep the event loop alive. Once the last byte is in, compilation is running
+// on the wasm worklist threads and the process must wait for it to settle the
+// promise instead of exiting with it forever pending.
+// https://github.com/oven-sh/bun/issues/25145
+describe("pending streaming compilation keeps the process alive", () => {
+  const fixture = join(import.meta.dir, "wasm-streaming-keeps-alive-fixture.ts");
+
+  test.concurrent.each([
+    ["compileStreaming", "buffered"],
+    ["compileStreaming", "stream"],
+    ["instantiateStreaming", "buffered"],
+    ["instantiateStreaming", "stream"],
+  ] as const)(
+    "%s settles with a %s response body",
+    async (api, body) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), fixture, api, body],
+        // A single compiler thread keeps the whole compilation pending when the
+        // main script finishes, on any machine.
+        env: { ...bunEnv, BUN_JSC_numberOfWasmCompilerThreads: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      // stderr is drained concurrently (debug builds write benign warnings
+      // there) and only included in the assertion when the child did not exit
+      // cleanly, so failures show what went wrong.
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, exitCode, stderr: exitCode === 0 ? "" : stderr }).toEqual({
+        stdout: "settled\n",
+        exitCode: 0,
+        stderr: "",
+      });
+    },
+    60_000,
+  );
 });

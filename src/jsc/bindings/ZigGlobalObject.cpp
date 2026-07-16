@@ -3826,6 +3826,10 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
 
     // We were able to get the slice synchronously.
     if (readableStreamMaybe.isNull()) {
+        // The compiler got every byte, so its pending work ticket (added as
+        // WorkType::AtSomePoint, which holds no event loop ref) is now
+        // guaranteed to be scheduled: keep the event loop alive until then.
+        Bun::JSCTaskScheduler::refEventLoopForPendingWork(WebCore::clientData(vm), promise);
         compiler->finalize(globalObject);
         if (scope.exception()) [[unlikely]]
             promise->rejectWithCaughtException(vm, scope);
@@ -3833,6 +3837,7 @@ static void handleResponseOnStreamingAction(JSGlobalObject* lexicalGlobalObject,
     }
 
     auto wrapper = WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(compiler));
+    uncheckedDowncast<WebCore::JSWasmStreamingCompiler>(wrapper)->setPromise(vm, promise);
     auto builtin = globalObject->wasmStreamingConsumeStreamFunction();
     auto callData = JSC::getCallData(builtin);
     MarkedArgumentBuffer arguments;

@@ -399,6 +399,104 @@ describe("stringWidth extended", () => {
     });
   });
 
+  // Bun.stringWidth must agree with Bun.stripANSI / Bun.sliceAnsi on what an
+  // escape sequence is. These cover the 8-bit C1 introducers (ECMA-48 §5.3)
+  // and the ST-terminated control strings (DCS/SOS/PM/APC) that stripANSI and
+  // sliceAnsi already recognize.
+  describe("C1 escapes and ST-terminated control strings", () => {
+    test("C1 CSI (0x9B) is equivalent to ESC [", () => {
+      expect(Bun.stringWidth("\x9B31mhi\x9B39m")).toBe(2);
+      expect(Bun.stringWidth("a\x9B5Ab")).toBe(2);
+      expect(Bun.stringWidth("\x9B38;2;255;0;0mX\x9B39m")).toBe(1);
+      // UTF-16 path
+      expect(Bun.stringWidth("\x9B31m日本\x9B39m")).toBe(4);
+      expect(Bun.stringWidth("😀\x9B1mok\x9B22m😀")).toBe(6);
+    });
+
+    test("C1 OSC (0x9D) is equivalent to ESC ]", () => {
+      expect(Bun.stringWidth("\x9D8;;https://bun.com\x07link\x9D8;;\x07")).toBe(4);
+      expect(Bun.stringWidth("\x9D8;;url\x9Ctext\x9D8;;\x9C")).toBe(4);
+      expect(Bun.stringWidth("\x9D0;title\x1b\\text")).toBe(4);
+      // UTF-16 path
+      expect(Bun.stringWidth("\x9D8;;https://bun.com\x07文档\x9D8;;\x07")).toBe(4);
+    });
+
+    test("DCS/SOS/PM/APC payloads are zero-width", () => {
+      // 7-bit (ESC P/X/^/_) with ESC\ terminator
+      expect(Bun.stringWidth("a\x1bP+q544e\x1b\\b")).toBe(2);
+      expect(Bun.stringWidth("a\x1bXpayload\x1b\\b")).toBe(2);
+      expect(Bun.stringWidth("a\x1b^pm\x1b\\b")).toBe(2);
+      expect(Bun.stringWidth("a\x1b_apc data\x1b\\b")).toBe(2);
+      // 8-bit (0x90/0x98/0x9E/0x9F) with C1 ST terminator
+      expect(Bun.stringWidth("a\x90+q544e\x9Cb")).toBe(2);
+      expect(Bun.stringWidth("a\x98payload\x9Cb")).toBe(2);
+      expect(Bun.stringWidth("a\x9Epm\x9Cb")).toBe(2);
+      expect(Bun.stringWidth("a\x9Fapc\x9Cb")).toBe(2);
+      // UTF-16 path
+      expect(Bun.stringWidth("中\x1bP+q\x1b\\文")).toBe(4);
+      expect(Bun.stringWidth("中\x90+q\x9C文")).toBe(4);
+    });
+
+    test("BEL does not terminate DCS/SOS/PM/APC", () => {
+      // BEL terminates OSC only; inside a DCS payload it is just a byte.
+      expect(Bun.stringWidth("a\x1bPdata\x07still dcs\x1b\\b")).toBe(2);
+      expect(Bun.stringWidth("a\x90data\x07still\x9Cb")).toBe(2);
+    });
+
+    test("unterminated C1/ST sequences consume to end of string", () => {
+      // Same consume-to-EOF semantics as unterminated ESC[ / ESC].
+      expect(Bun.stringWidth("abc\x9B31;38;2;1;2;3")).toBe(3);
+      expect(Bun.stringWidth("abc\x9D0;title")).toBe(3);
+      expect(Bun.stringWidth("abc\x90payload")).toBe(3);
+      expect(Bun.stringWidth("abc\x1bPpayload")).toBe(3);
+      expect(Bun.stringWidth("中文\x9B31")).toBe(4);
+    });
+
+    test("non-introducer C1 bytes stay zero-width controls", () => {
+      // 0x91-0x97, 0x99, 0x9A, 0x9C alone do not open a sequence.
+      for (const cp of [0x91, 0x92, 0x97, 0x99, 0x9a, 0x9c]) {
+        expect(Bun.stringWidth("a" + String.fromCharCode(cp) + "b")).toBe(2);
+      }
+    });
+
+    test("C1 CSI still stripped with countAnsiEscapeCodes: false, counted with true", () => {
+      const s = "\x9B31mhi\x9B39m";
+      expect(Bun.stringWidth(s, { countAnsiEscapeCodes: false })).toBe(2);
+      // With counting enabled: 0x9B is a zero-width C1 control, '3','1','m'
+      // etc. count individually: 3+2+3 = 8.
+      expect(Bun.stringWidth(s, { countAnsiEscapeCodes: true })).toBe(8);
+    });
+
+    test("stringWidth agrees with stripANSI on C1/DCS input", () => {
+      const cases = [
+        "\x9B31mhi\x9B39m",
+        "\x9D8;;url\x9Clink\x9D8;;\x9C",
+        "\x1bP+q544e\x1b\\text",
+        "\x90dcs\x9Ctext",
+        "\x98sos\x9Ctext",
+        "\x9Epm\x9Ctext",
+        "\x9Fapc\x9Ctext",
+        "pre\x9B1mmid\x9B22m\x1bPdcs\x1b\\post",
+        // UTF-16
+        "日\x9B31m本\x9B39m語",
+        "中\x90+q\x9C文",
+      ];
+      for (const s of cases) {
+        expect({ input: s, width: Bun.stringWidth(s) }).toEqual({
+          input: s,
+          width: Bun.stringWidth(Bun.stripANSI(s)),
+        });
+      }
+    });
+
+    test("sliceAnsi negative index agrees with stringWidth offset on C1 input", () => {
+      const m = "\x9B32mabcdef";
+      expect(Bun.sliceAnsi(m, -3)).toBe(Bun.sliceAnsi(m, Bun.stringWidth(m) - 3));
+      const n = "\x9B31mhi\x9B39m world";
+      expect(Bun.sliceAnsi(n, -4)).toBe(Bun.sliceAnsi(n, Bun.stringWidth(n) - 4));
+    });
+  });
+
   describe("emoji handling", () => {
     test("basic emoji", () => {
       expect(Bun.stringWidth("😀")).toBe(2);
@@ -606,7 +704,9 @@ describe("stringWidth extended", () => {
     });
 
     test("bare ESC followed by non-sequence", () => {
-      expect(Bun.stringWidth("a\x1bXb")).toBe(3); // ESC + X is not a valid sequence
+      // ESC + Z is not a recognized sequence introducer: only ESC is dropped.
+      expect(Bun.stringWidth("a\x1bZb")).toBe(3);
+      expect(Bun.stringWidth("a\x1b!b")).toBe(3);
     });
   });
 
@@ -814,13 +914,19 @@ describe("stringWidth extended", () => {
     });
 
     test("C1 control characters", () => {
-      // C1 controls: 0x80-0x9F
+      // C1 controls 0x80-0x9F, excluding the ANSI escape introducers
+      // (0x90 DCS, 0x98 SOS, 0x9B CSI, 0x9D OSC, 0x9E PM, 0x9F APC) which
+      // would swallow the following bytes as payload.
+      const introducers = new Set([0x90, 0x98, 0x9b, 0x9d, 0x9e, 0x9f]);
       let input = "";
+      let visible = 0;
       for (let i = 0x80; i <= 0x9f; i++) {
+        if (introducers.has(i)) continue;
         input += "a" + String.fromCharCode(i);
+        visible++;
       }
       input = input.repeat(300);
-      expect(Bun.stringWidth(input)).toBe(9600); // 32 'a' chars per pattern * 300
+      expect(Bun.stringWidth(input)).toBe(visible * 300);
     });
 
     test("worst case: every character needs special handling", () => {
@@ -1034,13 +1140,15 @@ test("options lookup ignores Object.prototype pollution", () => {
 
 // The Latin-1 ANSI-excluding width is computed by a single-pass SIMD kernel
 // (highway_visible_latin1_width_exclude_ansi) that classifies 16-64 byte
-// chunks into bitmasks and carries in-CSI / in-OSC state across chunk
-// boundaries. These tests pin its behavior at and around those boundaries and
-// against a scalar reference implementation of the same escape semantics:
-//   CSI  ESC [ <params> <final byte in [0x40, 0x7E]>   -> zero width
-//   OSC  ESC ] <payload> (BEL | 0x9C | ESC \)           -> zero width
-//   bare ESC followed by anything else                  -> only the ESC is dropped
-//   C0 controls, DEL, C1 controls, soft hyphen (0xAD)   -> zero width
+// chunks into bitmasks and carries in-CSI / in-OSC / in-ST-string state across
+// chunk boundaries. These tests pin its behavior at and around those
+// boundaries and against a scalar reference implementation of the same escape
+// semantics:
+//   CSI  ESC [ or 0x9B  <params> <final byte in [0x40, 0x7E]>             -> zero width
+//   OSC  ESC ] or 0x9D  <payload> (BEL | 0x9C | ESC \)                    -> zero width
+//   DCS/SOS/PM/APC  ESC P/X/^/_  or 0x90/0x98/0x9E/0x9F  (0x9C | ESC \)   -> zero width
+//   bare ESC followed by anything else                                    -> only the ESC is dropped
+//   C0 controls, DEL, C1 controls, soft hyphen (0xAD)                     -> zero width
 describe("ANSI escapes across SIMD chunk boundaries", () => {
   const ESC = "\x1b";
   const rep = (fill: string, count: number) => Buffer.alloc(fill.length * count, fill, "latin1").toString("latin1");
@@ -1049,6 +1157,24 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
     let width = 0;
     let i = 0;
     const len = str.length;
+    const scanCsi = () => {
+      while (i < len && !(str.charCodeAt(i) >= 0x40 && str.charCodeAt(i) <= 0x7e)) i++;
+      i++;
+    };
+    const scanString = (bel: boolean) => {
+      while (i < len) {
+        const t = str.charCodeAt(i);
+        if (t === 0x9c || (bel && t === 0x07)) {
+          i++;
+          break;
+        }
+        if (t === 0x1b && i + 1 < len && str.charCodeAt(i + 1) === 0x5c /* \ */) {
+          i += 2;
+          break;
+        }
+        i++;
+      }
+    };
     while (i < len) {
       const c = str.charCodeAt(i);
       if (c === 0x1b) {
@@ -1059,27 +1185,35 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
         const next = str.charCodeAt(i + 1);
         if (next === 0x5b /* [ */) {
           i += 2;
-          while (i < len && !(str.charCodeAt(i) >= 0x40 && str.charCodeAt(i) <= 0x7e)) i++;
-          i++;
+          scanCsi();
           continue;
         }
         if (next === 0x5d /* ] */) {
           i += 2;
-          while (i < len) {
-            const t = str.charCodeAt(i);
-            if (t === 0x07 || t === 0x9c) {
-              i++;
-              break;
-            }
-            if (t === 0x1b && i + 1 < len && str.charCodeAt(i + 1) === 0x5c /* \ */) {
-              i += 2;
-              break;
-            }
-            i++;
-          }
+          scanString(true);
+          continue;
+        }
+        if (next === 0x50 /* P */ || next === 0x58 /* X */ || next === 0x5e /* ^ */ || next === 0x5f /* _ */) {
+          i += 2;
+          scanString(false);
           continue;
         }
         i++;
+        continue;
+      }
+      if (c === 0x9b) {
+        i++;
+        scanCsi();
+        continue;
+      }
+      if (c === 0x9d) {
+        i++;
+        scanString(true);
+        continue;
+      }
+      if (c === 0x90 || c === 0x98 || c === 0x9e || c === 0x9f) {
+        i++;
+        scanString(false);
         continue;
       }
       width += c >= 0x20 && !(c >= 0x7f && c <= 0x9f) && c !== 0xad ? 1 : 0;
@@ -1104,6 +1238,28 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
     for (let pad = 0; pad <= 192; pad++) {
       const str = rep("a", pad) + `${ESC}[31m` + "bcd" + `${ESC}[0m` + rep("e", 8);
       expect(Bun.stringWidth(str)).toBe(pad + 3 + 8);
+    }
+  });
+
+  test("C1 CSI and ST-terminated sequences at every offset across a chunk boundary", () => {
+    for (let pad = 0; pad <= 192; pad++) {
+      expect(Bun.stringWidth(rep("a", pad) + "\x9B31m" + "bcd" + "\x9B0m" + rep("e", 8))).toBe(pad + 3 + 8);
+      expect(Bun.stringWidth(rep("a", pad) + "\x9D0;t\x07" + rep("e", 8))).toBe(pad + 8);
+      expect(Bun.stringWidth(rep("a", pad) + `${ESC}P+q${ESC}\\` + rep("e", 8))).toBe(pad + 8);
+      expect(Bun.stringWidth(rep("a", pad) + "\x90+q\x9C" + rep("e", 8))).toBe(pad + 8);
+      expectMatchesReference(rep("a", pad) + "\x9B31mbcd\x9B0m" + rep("e", 8));
+    }
+  });
+
+  test("long ST-terminated payload spanning many chunks", () => {
+    const payload = rep("x", 300);
+    for (const [open, close] of [
+      [`${ESC}P`, `${ESC}\\`],
+      ["\x90", "\x9C"],
+      ["\x9F", `${ESC}\\`],
+    ] as const) {
+      const seq = open + payload + close;
+      expect(Bun.stringWidth(rep("a", 70) + seq + rep("b", 70))).toBe(140);
     }
   });
 
@@ -1188,7 +1344,7 @@ describe("ANSI escapes across SIMD chunk boundaries", () => {
       seed = (seed * 1103515245 + 12345) & 0x7fffffff;
       return seed;
     };
-    const alphabet = "\x1b[]m;19aZ \x07\x9c\\\xad\x01\x7f\x80\x9f\xa0\xe9\xff@~?K";
+    const alphabet = "\x1b[]m;19aZ \x07\x9c\\\xad\x01\x7f\x80\x9f\xa0\xe9\xff@~?K\x9b\x9d\x90\x98P^_";
     const mismatches: string[] = [];
     for (let iter = 0; iter < 500; iter++) {
       const len = next() % 300;

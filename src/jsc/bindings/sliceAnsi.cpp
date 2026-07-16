@@ -627,10 +627,10 @@ static const Char* parseControlString(const Char* start, const Char* end)
         }
         // Unterminated control string — DO NOT consume to EOF. A single C1
         // byte (0x90, 0x98, 0x9E, 0x9F) or malformed ESC-sequence should not
-        // swallow the rest of the string (DoS vector; also inconsistent with
-        // Bun.stringWidth which treats these as standalone width-0 controls).
-        // Instead, return nullptr so the caller treats the introducer as a
-        // single visible char (which will be width 0 via codepointWidth).
+        // swallow the rest of the string when slicing. Instead, return nullptr
+        // so the caller treats the introducer as a single visible char (which
+        // will be width 0 via codepointWidth). Note: Bun.stringWidth and
+        // Bun.stripANSI do consume unterminated control strings to EOF.
         return nullptr;
     }
 

@@ -863,8 +863,9 @@ size_t VisibleLatin1WidthImpl(const uint8_t* HWY_RESTRICT input, size_t len)
 //
 // Used by Bun.stringWidth's default mode (stringWidth.cpp). Escape sequences
 // contribute nothing to the width:
-//   CSI  ESC [ <params> <final in [0x40,0x7E]>
-//   OSC  ESC ] <payload> (BEL | 0x9C | ESC \)
+//   CSI  ESC [  or 0x9B            <params> <final in [0x40,0x7E]>
+//   OSC  ESC ]  or 0x9D            <payload> (BEL | 0x9C | ESC \)
+//   DCS/SOS/PM/APC  ESC P/X/^/_  or 0x90/0x98/0x9E/0x9F  <payload> (0x9C | ESC \)
 //   bare ESC followed by anything else: only the ESC itself is dropped.
 //
 // The whole input is processed in a single pass: every vector chunk is
@@ -873,13 +874,19 @@ size_t VisibleLatin1WidthImpl(const uint8_t* HWY_RESTRICT input, size_t len)
 // few scalar bit operations per escape. This keeps dense SGR input (an escape
 // every few bytes) from paying a separate scan per sequence, while chunks with
 // no escapes reduce to one popcount. Sequences may straddle chunk boundaries;
-// the state enum below carries "inside CSI/OSC" across chunks.
+// the state enum below carries "inside CSI/OSC/ST-string" across chunks.
 
 enum class AnsiExcludeState : uint8_t {
     None,
-    InCSI, // saw ESC [ — looking for the final byte in [0x40, 0x7E]
-    InOSC, // saw ESC ] — looking for BEL, 0x9C or ESC-backslash (ST)
+    InCSI, // saw ESC [ or 0x9B — looking for the final byte in [0x40, 0x7E]
+    InOSC, // saw ESC ] or 0x9D — looking for BEL, 0x9C or ESC-backslash (ST)
+    InST, // saw ESC P/X/^/_ or 0x90/0x98/0x9E/0x9F — looking for 0x9C or ESC-backslash (ST)
 };
+
+static HWY_INLINE bool IsC1StIntroducer(uint8_t c)
+{
+    return c == 0x90 || c == 0x98 || c == 0x9E || c == 0x9F;
+}
 
 // Zero-width Latin-1 bytes: C0 controls, DEL + C1 controls, soft hyphen.
 static HWY_INLINE bool IsVisibleLatin1Byte(uint8_t c)
@@ -902,7 +909,8 @@ static size_t VisibleLatin1WidthExcludeANSIScalar(const uint8_t* HWY_RESTRICT in
             i += 1;
             break;
         case AnsiExcludeState::InOSC:
-            if (c == 0x07 || c == 0x9C) {
+        case AnsiExcludeState::InST:
+            if (c == 0x9C || (c == 0x07 && state == AnsiExcludeState::InOSC)) {
                 state = AnsiExcludeState::None;
                 i += 1;
                 break;
@@ -932,7 +940,27 @@ static size_t VisibleLatin1WidthExcludeANSIScalar(const uint8_t* HWY_RESTRICT in
                     i += 2;
                     break;
                 }
+                if (next == 'P' || next == 'X' || next == '^' || next == '_') {
+                    state = AnsiExcludeState::InST;
+                    i += 2;
+                    break;
+                }
                 // ESC followed by anything else: only the ESC is dropped.
+                i += 1;
+                break;
+            }
+            if (c == 0x9B) {
+                state = AnsiExcludeState::InCSI;
+                i += 1;
+                break;
+            }
+            if (c == 0x9D) {
+                state = AnsiExcludeState::InOSC;
+                i += 1;
+                break;
+            }
+            if (IsC1StIntroducer(c)) {
+                state = AnsiExcludeState::InST;
                 i += 1;
                 break;
             }
@@ -982,6 +1010,10 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
         const auto vec_0x3E = hn::Set(d, uint8_t { 0x3E }); // 0x7E - 0x40
         const auto vec_bel = hn::Set(d, uint8_t { 0x07 });
         const auto vec_c1_st = hn::Set(d, uint8_t { 0x9C });
+        const auto vec_0x90 = hn::Set(d, uint8_t { 0x90 });
+        const auto vec_0x0F = hn::Set(d, uint8_t { 0x0F });
+        const auto vec_c1_csi = hn::Set(d, uint8_t { 0x9B });
+        const auto vec_c1_osc = hn::Set(d, uint8_t { 0x9D });
 
         const uint64_t laneMask = MaskBitsBelow(N);
 
@@ -995,30 +1027,79 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
             return bits;
         };
 
+        // Shared terminator scan for OSC/ST-string payloads. `termMask` is the
+        // one-byte terminator bitmask (BEL|0x9C for OSC, 0x9C for ST-strings).
+        // Returns true if a terminator was found in this chunk and updates
+        // `zero`/`consumed`/`pos`/`introRemaining`; false means the payload
+        // continues past the chunk.
+        const auto scanStringTerminator = [&](uint64_t termMask, uint64_t escMask, size_t p, size_t searchFrom,
+                                              uint64_t& zero, size_t& consumed, size_t& pos, uint64_t& introRemaining) -> bool {
+            uint64_t cand = (termMask | escMask) & ~MaskBitsBelow(searchFrom);
+            while (cand != 0) {
+                const size_t t = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(cand));
+                if ((termMask >> t) & 1) {
+                    zero |= MaskBitsBelow(t + 1) & ~MaskBitsBelow(p);
+                    introRemaining &= ~MaskBitsBelow(t + 1);
+                    pos = t + 1;
+                    return true;
+                }
+                // ESC inside the payload: terminates only as ESC \.
+                if (i + t + 1 < len && input[i + t + 1] == '\\') {
+                    if (t + 2 <= N) {
+                        zero |= MaskBitsBelow(t + 2) & ~MaskBitsBelow(p);
+                        introRemaining &= ~MaskBitsBelow(t + 2);
+                        pos = t + 2;
+                    } else {
+                        zero |= laneMask & ~MaskBitsBelow(p);
+                        consumed = t + 2;
+                        introRemaining = 0;
+                        pos = N;
+                    }
+                    return true;
+                }
+                cand &= cand - 1;
+            }
+            return false;
+        };
+
         while (i + N <= len) {
             const auto chunk = hn::LoadU(d, input + i);
 
             const auto esc_m = hn::Eq(chunk, vec_esc);
+            // Bytes 0x90-0x9F: any C1 escape introducer (0x9B CSI, 0x9D OSC,
+            // 0x90/0x98/0x9E/0x9F ST-string) lives here, as does 0x9C ST. Used
+            // only to gate the fast path; the slow path re-checks the exact byte.
+            const auto c1_range_m = hn::Le(hn::Sub(chunk, vec_0x90), vec_0x0F);
             const auto printable_m = classifyPrintable(chunk);
 
             // Fast path: nothing escape-related in this chunk.
-            if (state == AnsiExcludeState::None && hn::AllFalse(d, esc_m)) {
+            if (state == AnsiExcludeState::None && hn::AllFalse(d, hn::Or(esc_m, c1_range_m))) {
                 count += hn::CountTrue(d, printable_m);
                 i += N;
                 continue;
             }
 
             const auto final_m = hn::Le(hn::Sub(chunk, vec_0x40), vec_0x3E); // 0x40..0x7E
-            const auto term_m = hn::Or(hn::Eq(chunk, vec_bel), hn::Eq(chunk, vec_c1_st));
+            const auto c1_st_m = hn::Eq(chunk, vec_c1_st);
+            const auto term_m = hn::Or(hn::Eq(chunk, vec_bel), c1_st_m);
+            // C1 introducers: 0x9B/0x9D plus 0x90/0x98/0x9E/0x9F. 0x9C is the
+            // ST terminator; 0x91-0x97/0x99/0x9A are plain zero-width controls.
+            const auto c1_stintro_m = hn::Or(
+                hn::Or(hn::Eq(chunk, vec_0x90), hn::Eq(chunk, hn::Set(d, uint8_t { 0x98 }))),
+                hn::Or(hn::Eq(chunk, hn::Set(d, uint8_t { 0x9E })), hn::Eq(chunk, hn::Set(d, uint8_t { 0x9F }))));
+            const auto c1_intro_m = hn::Or(hn::Or(hn::Eq(chunk, vec_c1_csi), hn::Eq(chunk, vec_c1_osc)), c1_stintro_m);
 
             const uint64_t esc = maskToBits(esc_m);
             const uint64_t prn = maskToBits(printable_m);
             const uint64_t fin = maskToBits(final_m);
             const uint64_t term = maskToBits(term_m);
+            const uint64_t stTerm = maskToBits(c1_st_m);
+            const uint64_t c1Intro = maskToBits(c1_intro_m);
 
             uint64_t zero = 0; // bits covered by escape sequences
             size_t consumed = N; // may exceed N when a sequence straddles the chunk end
             size_t pos = 0; // offset where escape processing resumes after carried state
+            uint64_t introRemaining = 0; // set after carried-state handling
 
             // Finish a sequence carried over from the previous chunk.
             if (state == AnsiExcludeState::InCSI) {
@@ -1030,59 +1111,64 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
                 zero |= MaskBitsBelow(e + 1);
                 pos = e + 1;
                 state = AnsiExcludeState::None;
-            } else if (state == AnsiExcludeState::InOSC) {
-                uint64_t cand = term | esc;
-                bool ended = false;
-                while (cand != 0) {
-                    const size_t t = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(cand));
-                    if ((term >> t) & 1) {
-                        zero |= MaskBitsBelow(t + 1);
-                        pos = t + 1;
-                        ended = true;
-                        break;
-                    }
-                    // ESC inside the OSC payload: terminates only as ESC \.
-                    if (i + t + 1 < len && input[i + t + 1] == '\\') {
-                        if (t + 2 <= N) {
-                            zero |= MaskBitsBelow(t + 2);
-                            pos = t + 2;
-                        } else {
-                            zero |= laneMask;
-                            consumed = t + 2;
-                            pos = N;
-                        }
-                        ended = true;
-                        break;
-                    }
-                    cand &= cand - 1;
-                }
-                if (!ended) {
-                    i += N; // whole chunk is OSC payload
+            } else if (state == AnsiExcludeState::InOSC || state == AnsiExcludeState::InST) {
+                const uint64_t tmask = (state == AnsiExcludeState::InOSC) ? term : stTerm;
+                uint64_t dummy = 0;
+                if (!scanStringTerminator(tmask, esc, 0, 0, zero, consumed, pos, dummy)) {
+                    i += N; // whole chunk is payload
                     continue;
                 }
                 state = AnsiExcludeState::None;
             }
 
             // Process escape sequences that start in this chunk.
-            uint64_t escRemaining = esc & ~MaskBitsBelow(pos);
-            while (escRemaining != 0) {
-                const size_t p = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(escRemaining));
-                if (i + p + 1 >= len) {
-                    // Trailing ESC at the very end of the input: dropped.
-                    zero |= uint64_t { 1 } << p;
-                    escRemaining &= escRemaining - 1;
-                    continue;
-                }
-                const uint8_t next = input[i + p + 1];
-                if (next == '[') {
-                    const size_t searchFrom = p + 2;
-                    if (searchFrom >= N) {
-                        // Parameters start in the next chunk; consume the '[' too.
-                        zero |= laneMask & ~MaskBitsBelow(p);
-                        consumed = searchFrom;
-                        state = AnsiExcludeState::InCSI;
-                        break;
+            introRemaining = (esc | c1Intro) & ~MaskBitsBelow(pos);
+            while (introRemaining != 0) {
+                const size_t p = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(introRemaining));
+                const uint8_t intro = input[i + p];
+
+                AnsiExcludeState seqKind;
+                size_t searchFrom;
+                if (intro == 0x1B) {
+                    if (i + p + 1 >= len) {
+                        // Trailing ESC at the very end of the input: dropped.
+                        zero |= uint64_t { 1 } << p;
+                        introRemaining &= introRemaining - 1;
+                        continue;
                     }
+                    const uint8_t next = input[i + p + 1];
+                    if (next == '[')
+                        seqKind = AnsiExcludeState::InCSI;
+                    else if (next == ']')
+                        seqKind = AnsiExcludeState::InOSC;
+                    else if (next == 'P' || next == 'X' || next == '^' || next == '_')
+                        seqKind = AnsiExcludeState::InST;
+                    else {
+                        // Bare ESC: only the ESC itself is zero-width.
+                        zero |= uint64_t { 1 } << p;
+                        introRemaining &= introRemaining - 1;
+                        continue;
+                    }
+                    searchFrom = p + 2;
+                } else if (intro == 0x9B) {
+                    seqKind = AnsiExcludeState::InCSI;
+                    searchFrom = p + 1;
+                } else if (intro == 0x9D) {
+                    seqKind = AnsiExcludeState::InOSC;
+                    searchFrom = p + 1;
+                } else {
+                    seqKind = AnsiExcludeState::InST;
+                    searchFrom = p + 1;
+                }
+
+                if (searchFrom >= N) {
+                    zero |= laneMask & ~MaskBitsBelow(p);
+                    consumed = searchFrom;
+                    state = seqKind;
+                    break;
+                }
+
+                if (seqKind == AnsiExcludeState::InCSI) {
                     const uint64_t f = fin & ~MaskBitsBelow(searchFrom);
                     if (f == 0) {
                         zero |= laneMask & ~MaskBitsBelow(p);
@@ -1091,52 +1177,16 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
                     }
                     const size_t e = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(f));
                     zero |= MaskBitsBelow(e + 1) & ~MaskBitsBelow(p);
-                    escRemaining &= ~MaskBitsBelow(e + 1);
+                    introRemaining &= ~MaskBitsBelow(e + 1);
                     continue;
                 }
-                if (next == ']') {
-                    const size_t searchFrom = p + 2;
-                    if (searchFrom >= N) {
-                        // Payload starts in the next chunk; consume the ']' too.
-                        zero |= laneMask & ~MaskBitsBelow(p);
-                        consumed = searchFrom;
-                        state = AnsiExcludeState::InOSC;
-                        break;
-                    }
-                    uint64_t cand = (term | esc) & ~MaskBitsBelow(searchFrom);
-                    bool ended = false;
-                    while (cand != 0) {
-                        const size_t t = static_cast<size_t>(hwy::Num0BitsBelowLS1Bit_Nonzero64(cand));
-                        if ((term >> t) & 1) {
-                            zero |= MaskBitsBelow(t + 1) & ~MaskBitsBelow(p);
-                            escRemaining &= ~MaskBitsBelow(t + 1);
-                            ended = true;
-                            break;
-                        }
-                        if (i + t + 1 < len && input[i + t + 1] == '\\') {
-                            if (t + 2 <= N) {
-                                zero |= MaskBitsBelow(t + 2) & ~MaskBitsBelow(p);
-                                escRemaining &= ~MaskBitsBelow(t + 2);
-                            } else {
-                                zero |= laneMask & ~MaskBitsBelow(p);
-                                consumed = t + 2;
-                                escRemaining = 0;
-                            }
-                            ended = true;
-                            break;
-                        }
-                        cand &= cand - 1;
-                    }
-                    if (!ended) {
-                        zero |= laneMask & ~MaskBitsBelow(p);
-                        state = AnsiExcludeState::InOSC;
-                        break;
-                    }
-                    continue;
+
+                const uint64_t tmask = (seqKind == AnsiExcludeState::InOSC) ? term : stTerm;
+                if (!scanStringTerminator(tmask, esc, p, searchFrom, zero, consumed, pos, introRemaining)) {
+                    zero |= laneMask & ~MaskBitsBelow(p);
+                    state = seqKind;
+                    break;
                 }
-                // Bare ESC: only the ESC itself is zero-width.
-                zero |= uint64_t { 1 } << p;
-                escRemaining &= escRemaining - 1;
             }
 
             count += static_cast<size_t>(hwy::PopCount(prn & ~zero & laneMask));
@@ -1145,12 +1195,13 @@ size_t VisibleLatin1WidthExcludeANSIImpl(const uint8_t* HWY_RESTRICT input, size
     }
 
     // Short inputs and the final partial chunk: one masked load. With no ESC
-    // byte (and no carried escape state) the printable count is the answer —
-    // lanes past the end load as zero, which is not printable. Otherwise fall
-    // back to the scalar state machine for the remaining < N bytes.
+    // or 0x90-0x9F byte (and no carried escape state) the printable count is
+    // the answer — lanes past the end load as zero, which is not printable.
+    // Otherwise fall back to the scalar state machine for the remaining bytes.
     if (i < len) {
         const auto chunk = hn::LoadN(d, input + i, len - i);
-        if (state == AnsiExcludeState::None && hn::AllFalse(d, hn::Eq(chunk, vec_esc))) {
+        const auto c1_range_m = hn::Le(hn::Sub(chunk, hn::Set(d, uint8_t { 0x90 })), hn::Set(d, uint8_t { 0x0F }));
+        if (state == AnsiExcludeState::None && hn::AllFalse(d, hn::Or(hn::Eq(chunk, vec_esc), c1_range_m))) {
             count += hn::CountTrue(d, classifyPrintable(chunk));
             return count;
         }

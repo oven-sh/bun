@@ -685,10 +685,11 @@ size_t utf8IndexAtWidthExcludeANSI(std::span<const uint8_t> input, size_t maxWid
             return *stop;
         remaining = remaining.subspan(esc);
 
-        // Same CSI/OSC skip as visibleLatin1WidthExcludeANSI.
+        // Same CSI/OSC/ST-string skip as visibleLatin1WidthExcludeANSI.
         if (remaining.size() < 2)
             return input.size();
-        if (remaining[1] == '[') {
+        const uint8_t next = remaining[1];
+        if (next == '[') {
             if (remaining.size() < 3)
                 return input.size();
             remaining = remaining.subspan(2);
@@ -696,16 +697,19 @@ size_t utf8IndexAtWidthExcludeANSI(std::span<const uint8_t> input, size_t maxWid
             if (!term)
                 return input.size();
             remaining = remaining.subspan(static_cast<size_t>(term - remaining.data()) + 1);
-        } else if (remaining[1] == ']') {
+        } else if (next == ']' || next == 'P' || next == 'X' || next == '^' || next == '_') {
+            const bool osc = (next == ']');
             remaining = remaining.subspan(2);
             while (true) {
-                const uint8_t* term = ANSI::scanForAnyByte<0x07, 0x9c, 0x1b>(remaining.data(), remaining.data() + remaining.size());
+                const uint8_t* term = osc
+                    ? ANSI::scanForAnyByte<0x07, 0x9c, 0x1b>(remaining.data(), remaining.data() + remaining.size())
+                    : ANSI::scanForAnyByte<0x9c, 0x1b>(remaining.data(), remaining.data() + remaining.size());
                 if (!term) {
                     remaining = remaining.subspan(remaining.size());
                     break;
                 }
                 const size_t t = static_cast<size_t>(term - remaining.data());
-                if (*term == 0x07 || *term == 0x9c) {
+                if (*term == 0x9c || (osc && *term == 0x07)) {
                     remaining = remaining.subspan(t + 1);
                     break;
                 }
@@ -768,8 +772,10 @@ static UTF16Decoded decodeUTF16Codepoint(std::span<const char16_t> input)
 }
 
 // Grapheme-cluster-aware width of UTF-16 text. When `excludeAnsiColors` is
-// set, CSI (ESC [ ... final) and OSC (ESC ] ... BEL/ST) sequences contribute
-// nothing; otherwise escape bytes are counted like ordinary codepoints.
+// set, CSI (ESC [ or 0x9B ... final), OSC (ESC ] or 0x9D ... BEL/ST) and
+// ST-terminated control strings (ESC P/X/^/_ or 0x90/0x98/0x9E/0x9F ... ST)
+// contribute nothing; otherwise escape bytes are counted like ordinary
+// codepoints.
 size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors, bool ambiguousAsWide)
 {
     size_t len = 0;
@@ -782,8 +788,9 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
     GraphemeBreakState breakState = GraphemeBreakState::Default;
     GraphemeState graphemeState;
     bool saw1b = false; // saw ESC, deciding what follows
-    bool sawCsi = false; // inside CSI: ESC [
-    bool sawOsc = false; // inside OSC: ESC ]
+    bool sawCsi = false; // inside CSI: ESC [ or 0x9B
+    bool sawOsc = false; // inside OSC: ESC ] or 0x9D
+    bool sawSt = false; // inside DCS/SOS/PM/APC: ESC P/X/^/_ or 0x90/0x98/0x9E/0x9F
 
     while (true) {
         // Bulk fast path: leading code units that are always their own
@@ -797,7 +804,7 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
         // East-Asian-Ambiguous) and while inside an escape sequence; the
         // first-unit check skips the call when the next codepoint (surrogate
         // pair, control, ESC) clearly needs the scalar path anyway.
-        if (!ambiguousAsWide && !saw1b && !sawCsi && !sawOsc && !input.empty()
+        if (!ambiguousAsWide && !saw1b && !sawCsi && !sawOsc && !sawSt && !input.empty()
             && input[0] >= 0x20 && !U16_IS_SURROGATE(input[0])) {
             size_t bulkWidth = 0;
             const size_t consumed = highway_visible_utf16_width(
@@ -830,7 +837,7 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
             // Fast path: bulk ASCII processing when not inside an escape
             // sequence. ASCII chars are always their own graphemes, so they
             // can be counted directly with SIMD.
-            if (idx > 0 && !saw1b && !sawCsi && !sawOsc) {
+            if (idx > 0 && !saw1b && !sawCsi && !sawOsc && !sawSt) {
                 // If stripping ANSI, stop at the first ESC; otherwise process
                 // the entire run.
                 size_t bulkEnd = idx;
@@ -887,9 +894,13 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
                     // non-ASCII codepoint handler below keeps parsing.
                     break;
                 }
-                if (sawOsc) {
-                    // OSC payload terminates at BEL (0x07) or ESC + '\' (ST).
-                    const char16_t* term = ANSI::scanForAnyByte<0x07, 0x1b>(input.data() + j, input.data() + idx);
+                if (sawOsc || sawSt) {
+                    // OSC payload terminates at BEL (0x07) or ESC + '\' (ST);
+                    // DCS/SOS/PM/APC terminate at ESC + '\' only (plus C1 ST
+                    // 0x9C, which is non-ASCII and handled below).
+                    const char16_t* term = sawOsc
+                        ? ANSI::scanForAnyByte<0x07, 0x1b>(input.data() + j, input.data() + idx)
+                        : ANSI::scanForAnyByte<0x1b>(input.data() + j, input.data() + idx);
                     if (term) {
                         const size_t t = static_cast<size_t>(term - input.data());
                         if (*term == 0x07) {
@@ -902,14 +913,15 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
                         if (t + 1 < idx && input[t + 1] == u'\\') {
                             saw1b = false;
                             sawOsc = false;
+                            sawSt = false;
                             j = t + 2;
                             continue;
                         }
-                        // Lone ESC inside OSC — skip it and keep scanning.
+                        // Lone ESC inside payload — skip it and keep scanning.
                         j = t + 1;
                         continue;
                     }
-                    // Terminator not in this ASCII run — stay in OSC state.
+                    // Terminator not in this ASCII run — stay in state.
                     break;
                 }
 
@@ -924,6 +936,10 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
                     }
                     if (cp == ']') {
                         sawOsc = true;
+                        continue;
+                    }
+                    if (cp == 'P' || cp == 'X' || cp == '^' || cp == '_') {
+                        sawSt = true;
                         continue;
                     }
                     if (cp == 0x1b) {
@@ -971,13 +987,15 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
         const char32_t cp = decoded.codePoint;
 
         // Handle non-ASCII characters inside escape sequences.
-        if (sawOsc) {
+        if (sawOsc || sawSt) {
             // In OSC, look for BEL (0x07) or C1 ST (0x9C); the 7-bit ST
-            // (ESC \) only uses ASCII and is handled above. Non-ASCII chars
-            // inside OSC do not contribute to width.
-            if (cp == 0x07 || cp == 0x9c) {
+            // (ESC \) only uses ASCII and is handled above. DCS/SOS/PM/APC
+            // terminate at C1 ST only. Non-ASCII chars inside the payload do
+            // not contribute to width.
+            if (cp == 0x9c || (cp == 0x07 && sawOsc)) {
                 saw1b = false;
                 sawOsc = false;
+                sawSt = false;
             }
             continue;
         }
@@ -992,6 +1010,24 @@ size_t visibleUTF16Width(std::span<const char16_t> input, bool excludeAnsiColors
             // ESC followed by non-ASCII — not a valid sequence start; treat
             // the char normally below.
             saw1b = false;
+        }
+        // C1 escape introducers (0x90-0x9F). These are the 8-bit equivalents
+        // of ESC [ / ESC ] / ESC P/X/^/_ and must not let their payload count
+        // as visible text — Bun.stripANSI and Bun.sliceAnsi already strip them.
+        if (excludeAnsiColors && cp >= 0x90 && cp <= 0x9f) {
+            if (cp == 0x9b) {
+                sawCsi = true;
+                continue;
+            }
+            if (cp == 0x9d) {
+                sawOsc = true;
+                continue;
+            }
+            if (cp == 0x90 || cp == 0x98 || cp == 0x9e || cp == 0x9f) {
+                sawSt = true;
+                continue;
+            }
+            // 0x91-0x97, 0x99, 0x9A, 0x9C: ordinary zero-width C1 controls.
         }
 
         const uint8_t packed = fusedClassify(cp);

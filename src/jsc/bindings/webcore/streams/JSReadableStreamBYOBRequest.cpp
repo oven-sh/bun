@@ -4,6 +4,7 @@
 #include "BunClientData.h"
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMExceptionHandling.h"
@@ -260,7 +261,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respondWit
     if (!request->m_controller)
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     if (view->isDetached())
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond with a view whose ArrayBuffer is detached"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot respond with a view whose ArrayBuffer is detached"_s);
 
     readableByteStreamControllerRespondWithNewView(lexicalGlobalObject, request->m_controller.get(), view);
     RETURN_IF_EXCEPTION(scope, {});

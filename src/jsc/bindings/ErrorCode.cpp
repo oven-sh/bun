@@ -2567,6 +2567,8 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNSHIFT_AFTER_END_EVENT, "stream.unshift() after end event"_s));
     case ErrorCode::ERR_STREAM_PUSH_AFTER_EOF:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_PUSH_AFTER_EOF, "stream.push() after EOF"_s));
+    case ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END:
+        return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_TRAILING_JUNK_AFTER_STREAM_END, "Trailing junk found after the end of the compressed stream"_s));
     case ErrorCode::ERR_STREAM_UNABLE_TO_PIPE:
         return JSC::JSValue::encode(createError(globalObject, ErrorCode::ERR_STREAM_UNABLE_TO_PIPE, "Cannot pipe to a closed or destroyed stream"_s));
     case ErrorCode::ERR_ILLEGAL_CONSTRUCTOR:

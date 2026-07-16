@@ -283,6 +283,16 @@ void writableStreamDealWithRejection(JSGlobalObject* globalObject, JSWritableStr
     RELEASE_AND_RETURN(scope, writableStreamFinishErroring(globalObject, stream));
 }
 
+// `$webStreamControllerError` — see the ReadableStream overload in ReadableStreamOperations.cpp.
+// Mirrors WritableStreamDefaultController.prototype.error, which is what Node's
+// addAbortSignal() holds a bound reference to.
+void webStreamControllerError(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue error)
+{
+    if (stream->m_state != WritableStreamState::Writable)
+        return;
+    writableStreamDefaultControllerError(globalObject, stream->m_controller.get(), error);
+}
+
 void writableStreamStartErroring(JSGlobalObject* globalObject, JSWritableStream* stream, JSValue reason)
 {
     auto& vm = getVM(globalObject);

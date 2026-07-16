@@ -3,6 +3,7 @@
 
 #include "DOMClientIsoSubspaces.h"
 #include "DOMIsoSubspaces.h"
+#include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
@@ -1253,7 +1254,7 @@ void readableByteStreamControllerRespondWithNewView(JSGlobalObject* globalObject
     }
     RefPtr<JSC::ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
     if (firstDescriptor->m_bufferByteLength != viewedBuffer->byteLength()) {
-        throwRangeError(globalObject, scope, "The view's buffer length does not match the BYOB request's buffer length"_s);
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must have the same buffer length as the BYOB request"_s);
         return;
     }
     if (bytesFilled + viewByteLength > firstDescriptor->m_byteLength) {

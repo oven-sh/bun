@@ -605,8 +605,25 @@ impl TextDecoder {
             // default to utf-8
             decoder.encoding = EncodingLabel::Utf8;
         } else {
-            return Err(global_this
-                .throw_invalid_arguments(format_args!("TextDecoder(encoding) label is invalid",)));
+            // WebIDL DOMString coercion: any other label value is stringified
+            // and then looked up, so `1` or `{}` reports the same
+            // ERR_ENCODING_NOT_SUPPORTED an unknown string label does.
+            let converted = bun_core::String::from_js(encoding_value, global_this)?;
+            let str = converted.to_utf8();
+
+            if let Some(label) = EncodingLabel::which(str.slice()) {
+                decoder.encoding = label;
+            } else {
+                return Err(global_this
+                    .err(
+                        jsc::ErrorCode::ERR_ENCODING_NOT_SUPPORTED,
+                        format_args!(
+                            "Unsupported encoding label \"{}\"",
+                            bstr::BStr::new(str.slice())
+                        ),
+                    )
+                    .throw());
+            }
         }
 
         if !options_value.is_undefined() {

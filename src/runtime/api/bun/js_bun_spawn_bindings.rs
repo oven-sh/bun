@@ -1526,6 +1526,11 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // Ensure we kill the process so we don't leave things in an unexpected state.
         let _ = subprocess.try_kill(subprocess.kill_signal);
 
+        #[cfg(unix)]
+        if ipc_stdio_index != -1 && posix_ipc_fd != Fd::INVALID {
+            posix_ipc_fd.close();
+        }
+
         if global_this.has_exception() {
             return Err(JsError::Thrown);
         }

@@ -616,6 +616,647 @@ describe("apply", () => {
       });
     });
   });
+
+  function setupEscapeDirs() {
+    const root = tempDirWithFiles("patch-symlink", {
+      "pkg/real.txt": "SAFE\n",
+      "outside/target.txt": "SAFE\n",
+      "outside.txt": "SAFE\n",
+    });
+    const pkgDir = join(root, "pkg");
+    return { root, pkgDir };
+  }
+
+  function tryApply(patch: string, dir: string) {
+    try {
+      apply(patch, dir);
+      return undefined;
+    } catch (e) {
+      return e as NodeJS.ErrnoException;
+    }
+  }
+
+  describe.if(process.platform !== "win32")("refuses to follow symlinks", () => {
+    const setup = setupEscapeDirs;
+
+    test("file creation through a symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outside = join(root, "outside.txt");
+      await fs.symlink(outside, join(pkgDir, "link"));
+
+      const patch =
+        "diff --git a/link b/link\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/link\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(outside, "utf8") }).toEqual({
+        code: "ELOOP",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file patch through a symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outside = join(root, "outside.txt");
+      await fs.symlink(outside, join(pkgDir, "link"));
+
+      const patch =
+        "diff --git a/link b/link\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/link\n" +
+        "+++ b/link\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(outside, "utf8") }).toEqual({
+        code: "ELOOP",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file creation through an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/evildir/target.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(join(outsideDir, "target.txt"), "utf8") }).toEqual({
+        code: "ELOOP",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file creation through an intermediate directory symlink does not create the file", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/newfile.txt b/evildir/newfile.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/evildir/newfile.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      const created = await fs.access(join(outsideDir, "newfile.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, created }).toEqual({ code: "ELOOP", created: false });
+    });
+
+    test("file patch through an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/evildir/target.txt\n" +
+        "+++ b/evildir/target.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(join(outsideDir, "target.txt"), "utf8") }).toEqual({
+        code: "ELOOP",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file deletion through an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "deleted file mode 100644\n" +
+        "index e69de29..0000000\n";
+
+      const err = tryApply(patch, pkgDir);
+      const exists = await fs.access(join(outsideDir, "target.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, exists }).toEqual({ code: "ELOOP", exists: true });
+    });
+
+    test("file rename into an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/payload.txt b/payload.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/payload.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n" +
+        "diff --git a/payload.txt b/evildir/pwned.txt\n" +
+        "similarity index 100%\n" +
+        "rename from payload.txt\n" +
+        "rename to evildir/pwned.txt\n";
+
+      const err = tryApply(patch, pkgDir);
+      const created = await fs.access(join(outsideDir, "pwned.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, created }).toEqual({ code: "ELOOP", created: false });
+    });
+
+    test("file rename out of an intermediate directory symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"));
+
+      const patch =
+        "diff --git a/evildir/target.txt b/stolen.txt\n" +
+        "similarity index 100%\n" +
+        "rename from evildir/target.txt\n" +
+        "rename to stolen.txt\n";
+
+      const err = tryApply(patch, pkgDir);
+      const exists = await fs.access(join(outsideDir, "target.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, exists }).toEqual({ code: "ELOOP", exists: true });
+    });
+
+    test("mode change through a symlink is rejected", async () => {
+      const { root, pkgDir } = setup();
+      const outside = join(root, "outside.txt");
+      await fs.chmod(outside, 0o644);
+      await fs.symlink(outside, join(pkgDir, "link"));
+
+      const patch = "diff --git a/link b/link\n" + "old mode 100644\n" + "new mode 100755\n";
+
+      const err = tryApply(patch, pkgDir);
+      const st = await fs.stat(outside);
+      expect({ code: err?.code, mode: st.mode & 0o777 }).toEqual({
+        code: "ELOOP",
+        mode: 0o644,
+      });
+    });
+
+    test("still applies to regular files inside the patch dir", async () => {
+      const { pkgDir } = setup();
+
+      const patch =
+        "diff --git a/real.txt b/real.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/real.txt\n" +
+        "+++ b/real.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+OK\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("OK\n");
+    });
+
+    test("still creates new files in subdirectories inside the patch dir", async () => {
+      const { pkgDir } = setup();
+      await fs.mkdir(join(pkgDir, "sub"));
+
+      const patch =
+        "diff --git a/sub/new.txt b/sub/new.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/sub/new.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+hello\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "sub", "new.txt"), "utf8")).toBe("hello\n");
+    });
+
+    test("still applies paths with a ./ prefix", async () => {
+      const { pkgDir } = setup();
+
+      const patch =
+        "diff --git a/./real.txt b/./real.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/./real.txt\n" +
+        "+++ b/./real.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+OK\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("OK\n");
+    });
+
+    test("still creates new files in a directory the patch itself creates", async () => {
+      const { pkgDir } = setup();
+
+      // `new file mode 100644` is what git emits for every non-executable file;
+      // the directories the patch forces into existence must still be traversable
+      // (0o755) rather than inheriting the file's own mode.
+      const patch =
+        "diff --git a/newdir/sub/new.txt b/newdir/sub/new.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/newdir/sub/new.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+hello\n";
+
+      await apply(patch, pkgDir);
+      const dirMode = (await fs.stat(join(pkgDir, "newdir"))).mode;
+      const fileMode = (await fs.stat(join(pkgDir, "newdir", "sub", "new.txt"))).mode;
+      expect({
+        contents: await fs.readFile(join(pkgDir, "newdir", "sub", "new.txt"), "utf8"),
+        dirOwnerExec: (dirMode & 0o100) !== 0,
+        fileOwnerExec: (fileMode & 0o100) !== 0,
+      }).toEqual({ contents: "hello\n", dirOwnerExec: true, fileOwnerExec: false });
+    });
+  });
+
+  // Hard links are a symlink-free escape: `link` and an outside path name the
+  // same inode, so truncating/writing through the patch-dir name corrupts the
+  // outside file. Works on every platform (NTFS hard links need no privilege).
+  describe("refuses to write through hard links", () => {
+    async function setupHardlink() {
+      const { root, pkgDir } = setupEscapeDirs();
+      const outside = join(root, "outside.txt");
+      await fs.link(outside, join(pkgDir, "link.txt"));
+      return { root, pkgDir, outside };
+    }
+
+    test("file patch of a hard-linked file is rejected", async () => {
+      const { pkgDir, outside } = await setupHardlink();
+
+      const patch =
+        "diff --git a/link.txt b/link.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/link.txt\n" +
+        "+++ b/link.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(outside, "utf8") }).toEqual({
+        code: "EMLINK",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file creation over a hard-linked file is rejected without truncating it", async () => {
+      const { pkgDir, outside } = await setupHardlink();
+
+      const patch =
+        "diff --git a/link.txt b/link.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/link.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(outside, "utf8") }).toEqual({
+        code: "EMLINK",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("mode change of a hard-linked file is rejected", async () => {
+      const { pkgDir, outside } = await setupHardlink();
+
+      const patch = "diff --git a/link.txt b/link.txt\n" + "old mode 100644\n" + "new mode 100755\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(outside, "utf8") }).toEqual({
+        code: "EMLINK",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("still patches a regular file sitting next to a hard link", async () => {
+      const { pkgDir } = await setupHardlink();
+
+      const patch =
+        "diff --git a/real.txt b/real.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/real.txt\n" +
+        "+++ b/real.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+OK\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("OK\n");
+    });
+  });
+
+  // Windows cannot use `O_NOFOLLOW` for the final open (the handle loses
+  // FILE_SYNCHRONOUS_IO_NONALERT), so containment there is a best-effort
+  // attribute check on every component. Junctions need no privilege to create.
+  describe.if(process.platform === "win32")("refuses to traverse junctions on Windows", () => {
+    async function setupJunction() {
+      const { root, pkgDir } = setupEscapeDirs();
+      const outsideDir = join(root, "outside");
+      await fs.symlink(outsideDir, join(pkgDir, "evildir"), "junction");
+      return { root, pkgDir, outsideDir };
+    }
+
+    test("file creation through an intermediate junction is rejected", async () => {
+      const { pkgDir, outsideDir } = await setupJunction();
+
+      const patch =
+        "diff --git a/evildir/newfile.txt b/evildir/newfile.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/evildir/newfile.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      const created = await fs.access(join(outsideDir, "newfile.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, created }).toEqual({ code: "ELOOP", created: false });
+    });
+
+    test("file patch through an intermediate junction is rejected", async () => {
+      const { pkgDir, outsideDir } = await setupJunction();
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/evildir/target.txt\n" +
+        "+++ b/evildir/target.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+PWNED\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect({ code: err?.code, outside: await fs.readFile(join(outsideDir, "target.txt"), "utf8") }).toEqual({
+        code: "ELOOP",
+        outside: "SAFE\n",
+      });
+    });
+
+    test("file deletion through an intermediate junction is rejected", async () => {
+      const { pkgDir, outsideDir } = await setupJunction();
+
+      const patch =
+        "diff --git a/evildir/target.txt b/evildir/target.txt\n" +
+        "deleted file mode 100644\n" +
+        "index e69de29..0000000\n";
+
+      const err = tryApply(patch, pkgDir);
+      const exists = await fs.access(join(outsideDir, "target.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, exists }).toEqual({ code: "ELOOP", exists: true });
+    });
+
+    test("mode change of a junction itself is rejected", async () => {
+      const { pkgDir } = await setupJunction();
+
+      const patch = "diff --git a/evildir b/evildir\n" + "old mode 100644\n" + "new mode 100755\n";
+
+      const err = tryApply(patch, pkgDir);
+      expect(err?.code).toBe("ELOOP");
+    });
+
+    test("still applies to regular files inside the patch dir", async () => {
+      const { pkgDir } = await setupJunction();
+
+      const patch =
+        "diff --git a/real.txt b/real.txt\n" +
+        "index 0000000..1111111 100644\n" +
+        "--- a/real.txt\n" +
+        "+++ b/real.txt\n" +
+        "@@ -1,1 +1,1 @@\n" +
+        "-SAFE\n" +
+        "+OK\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("OK\n");
+    });
+
+    test("still creates new files in a directory the patch itself creates", async () => {
+      const { pkgDir } = setupEscapeDirs();
+
+      const patch =
+        "diff --git a/newdir/new.txt b/newdir/new.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/newdir/new.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+hello\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "newdir", "new.txt"), "utf8")).toBe("hello\n");
+    });
+
+    test("still applies a mode change to a regular file", async () => {
+      const { pkgDir } = await setupJunction();
+
+      const patch = "diff --git a/real.txt b/real.txt\n" + "old mode 100644\n" + "new mode 100755\n";
+
+      await apply(patch, pkgDir);
+      expect(await fs.readFile(join(pkgDir, "real.txt"), "utf8")).toBe("SAFE\n");
+    });
+  });
+
+  // A drive-relative component (`Z:..`) is not byte-equal to `..`, but the
+  // Windows openat normalizer strips the `Z:` prefix from a relative component
+  // and then resolves a real `..`, which would ascend out of the patch dir.
+  describe.if(process.platform === "win32")("rejects drive-relative components on Windows", () => {
+    test("a `X:..` component cannot escape the patch dir", async () => {
+      const root = tempDirWithFiles("patch-drive-rel", {
+        "pkg/.keep": "",
+        "keep.txt": "SAFE\n",
+      });
+      const pkgDir = join(root, "pkg");
+
+      const patch =
+        "diff --git a/Z:../escaped.txt b/Z:../escaped.txt\n" +
+        "new file mode 100644\n" +
+        "index 0000000..e69de29\n" +
+        "--- /dev/null\n" +
+        "+++ b/Z:../escaped.txt\n" +
+        "@@ -0,0 +1,1 @@\n" +
+        "+PWNED\n";
+
+      let err: any;
+      try {
+        apply(patch, pkgDir);
+      } catch (e) {
+        err = e;
+      }
+      const escaped = await fs.access(join(root, "escaped.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ code: err?.code, escaped }).toEqual({ code: "EINVAL", escaped: false });
+    });
+  });
+
+  // A `..` component with a trailing NUL byte is not byte-equal to `..`, but the
+  // kernel reads each component as a NUL-terminated C string and resolves a real
+  // `..`. Run in a child process: the unfixed failure mode is a process abort.
+  describe.concurrent("rejects NUL bytes in patch paths", () => {
+    test("a `..` component hidden behind a NUL cannot escape the patch dir", async () => {
+      const root = tempDirWithFiles("patch-nul", {
+        "outside/.keep": "",
+        "pkg/a/b/.keep": "",
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const NUL = String.fromCharCode(0);
+           const P = ".." + NUL + "1/.." + NUL + "2/.." + NUL + "3/outside/escaped.txt";
+           const patch = [
+             "diff --git a/" + P + " b/" + P,
+             "new file mode 100644",
+             "--- /dev/null",
+             "+++ b/" + P,
+             "@@ -0,0 +1,1 @@",
+             "+PWNED",
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(join(root, "pkg", "a", "b"))});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const escaped = await fs.access(join(root, "outside", "escaped.txt")).then(
+        () => true,
+        () => false,
+      );
+      expect({ stdout: stdout.trim(), stderr, escaped, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        escaped: false,
+        exitCode: 0,
+      });
+    });
+
+    test("a NUL in the final component is rejected", async () => {
+      const root = tempDirWithFiles("patch-nul-base", { "pkg/.keep": "" });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           import { readdirSync } from "node:fs";
+           const NUL = String.fromCharCode(0);
+           const dir = ${JSON.stringify(join(root, "pkg"))};
+           const P = "evil" + NUL + "name";
+           const patch = [
+             "diff --git a/" + P + " b/" + P,
+             "new file mode 100644",
+             "--- /dev/null",
+             "+++ b/" + P,
+             "@@ -0,0 +1,1 @@",
+             "+PWNED",
+             "",
+           ].join("\\n");
+           try {
+             patchInternals.apply(patch, dir);
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }
+           console.log(JSON.stringify(readdirSync(dir).sort()));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ lines: stdout.trim().split("\n"), stderr, exitCode }).toEqual({
+        lines: ["caught: EINVAL", '[".keep"]'],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  // `O_RDONLY` on a FIFO without `O_NONBLOCK` blocks until a writer appears, so
+  // the target open must use `O_NONBLOCK` for the `!ISREG` check to ever run.
+  // Run in a child process: the unfixed failure mode is an indefinite hang.
+  describe.if(process.platform !== "win32")("non-regular patch targets", () => {
+    test("mode change on a FIFO is rejected instead of hanging", async () => {
+      const root = tempDirWithFiles("patch-fifo", { "pkg/.keep": "" });
+      const pkgDir = join(root, "pkg");
+      await $`mkfifo ${join(pkgDir, "pipe")}`;
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { patchInternals } from "bun:internal-for-testing";
+           const patch = "diff --git a/pipe b/pipe\\nold mode 100644\\nnew mode 100755\\n";
+           try {
+             patchInternals.apply(patch, ${JSON.stringify(pkgDir)});
+             console.log("no-error");
+           } catch (e) {
+             console.log("caught: " + e.code);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: "caught: EINVAL",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 describe("parse", () => {

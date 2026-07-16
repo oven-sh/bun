@@ -3862,8 +3862,8 @@ void JSNodeSqliteTagStoreConstructor::finishCreation(VM& vm, JSGlobalObject*, JS
 // normally during the backup process". Bun runs the whole step loop
 // synchronously on the JS thread — the returned Promise is resolved before
 // this function returns and the event loop is blocked for the duration.
-// TODO(node:sqlite): dispatch each step to Bun's WorkPool (webcrypto's
-// PhonyWorkQueue is in-tree precedent) so this contract holds.
+// Matching Node's contract would mean dispatching each step to Bun's
+// WorkPool (webcrypto's PhonyWorkQueue is the in-tree precedent).
 //
 // The `progress` callback still fires between each batch of `rate` pages.
 JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, CallFrame* callFrame))

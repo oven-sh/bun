@@ -2058,9 +2058,10 @@ impl<'a> HTTPClient<'a> {
 
     pub fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
+        // the socket is closed, we need to unregister the abort tracker
+        self.unregister_abort_tracker();
 
         if self.signals.get(signals::Field::Aborted) {
-            self.unregister_abort_tracker();
             self.fail(crate::Error::Aborted);
             return;
         }
@@ -2071,23 +2072,24 @@ impl<'a> HTTPClient<'a> {
         if self.state.flags.is_waiting_for_cert_check {
             self.state.flags.is_waiting_for_cert_check = false;
             if !self.state.response_message_buffer.list.is_empty() {
-                // `signals.cert_errors` wired ⇒ `signals.aborted` wired
-                // (both come from `Store::to`), so the tracker entry exists.
-                debug_assert!(self.signals.aborted.is_some());
-                let async_http_id = self.async_http_id;
+                // A terminal outcome frees the AsyncHTTP that embeds `*self`
+                // (via `on_async_http_callback_raw`, which is the sole
+                // HTTP-thread `ACTIVE_REQUESTS_COUNT` decrement); a redirect
+                // keeps `*self` but starts a new hop that the fallthrough must
+                // not touch. Both counters are HTTP-thread-only.
+                let active_before = async_http::ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
+                let redirects_before = self.remaining_redirect_count;
                 let ctx = self.get_ssl_ctx::<IS_SSL>();
                 self.handle_on_data_headers::<IS_SSL>(&[], ctx, socket);
-                // A terminal outcome unregisters `async_http_id` and may free
-                // the AsyncHTTP that embeds `*self`; a non-terminal one (short
-                // read / body incomplete) leaves it and falls through below.
-                if abort_tracker().get(&async_http_id).is_none() {
+                if async_http::ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed) < active_before {
+                    return;
+                }
+                if self.remaining_redirect_count != redirects_before {
                     return;
                 }
             }
         }
 
-        // the socket is closed, we need to unregister the abort tracker
-        self.unregister_abort_tracker();
         self.close_proxy_tunnel(true);
         let in_progress = self.state.stage != Stage::Done
             && self.state.stage != Stage::Fail

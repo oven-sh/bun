@@ -298,6 +298,81 @@ describe.concurrent("fetch-tls", () => {
     }
   });
 
+  it("fetch with checkServerIdentity follows a redirect that arrives before the request is written", async () => {
+    const target = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.once("data", () => {
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nmoved");
+        socket.end();
+      });
+    });
+    let redirectPort = 0;
+    const redirector = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.write(
+        `HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:${redirectPort}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
+      );
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        target.on("error", reject);
+        target.listen(0, "127.0.0.1", () => resolve());
+      });
+      redirectPort = (target.address() as import("node:net").AddressInfo).port;
+      await new Promise<void>((resolve, reject) => {
+        redirector.on("error", reject);
+        redirector.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (redirector.address() as import("node:net").AddressInfo).port;
+
+      for (let i = 0; i < 5; i++) {
+        const seen: string[] = [];
+        const res = await fetch(`https://127.0.0.1:${port}/`, {
+          keepalive: false,
+          tls: {
+            ca: validTls.cert,
+            checkServerIdentity(hostname: string) {
+              seen.push(hostname);
+              return undefined;
+            },
+          },
+        });
+        expect(await res.text()).toBe("moved");
+        expect(res.status).toBe(200);
+        expect(seen).toEqual(["127.0.0.1", "127.0.0.1"]);
+      }
+    } finally {
+      redirector.close();
+      target.close();
+    }
+  });
+
+  it("fetch with checkServerIdentity reports ECONNRESET for a truncated early response", async () => {
+    const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort");
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      let err: unknown;
+      try {
+        await fetch(`https://127.0.0.1:${port}/`, {
+          keepalive: false,
+          tls: { ca: validTls.cert, checkServerIdentity: () => undefined },
+        }).then(res => res.text());
+      } catch (e) {
+        err = e;
+      }
+      expect((err as NodeJS.ErrnoException)?.code).toBe("ECONNRESET");
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch with self-sign tls should throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];

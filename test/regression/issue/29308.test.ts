@@ -54,9 +54,7 @@ test("bunfig.toml preload with relative path works from project root", async () 
 });
 
 // A --preload flag on the CLI must be merged with, not replaced by, preload
-// entries the ancestor bunfig.toml contributes. Before the append-fix in
-// loadPreload, the secondary loadConfig call from run_command.zig clobbered
-// CLI preloads when a parent bunfig.toml also had preload entries.
+// entries the ancestor bunfig.toml contributes.
 test("CLI --preload is merged with ancestor bunfig.toml preload entries", async () => {
   using dir = tempDir("bun-issue-29308-merge", {
     "bunfig.toml": `preload = ["./setup.ts"]\n`,

@@ -1928,7 +1928,20 @@ impl CoerceTo for i32 {
 }
 impl CoerceTo for i64 {
     fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<i64> {
-        v.coerce_to_int64(global)
+        if v.is_int32() {
+            return Ok(v.as_int32() as i64);
+        }
+        if let Some(num) = v.get_number() {
+            return Ok(if num.is_nan() { 0 } else { num as i64 });
+        }
+        if v.is_big_int() {
+            return v.coerce_to_int64(global);
+        }
+        // `JSC__JSValue__coerceToInt64` falls through to 32-bit `toInt32` for
+        // non-number, non-BigInt cells (strings wrap at 2^31). Go through full
+        // ToNumber here so string inputs above 2^31 round-trip to i64.
+        let num = v.to_number(global)?;
+        Ok(if num.is_nan() { 0 } else { num as i64 })
     }
 }
 

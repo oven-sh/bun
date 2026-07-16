@@ -43,6 +43,24 @@ describe("S3Client upload options coercion", () => {
     expect(Bun.inspect(make({ partSize: 10485760.5 }))).toContain("partSize: 10485760");
   });
 
+  test("partSize string above 2^31 does not wrap to 32 bits", () => {
+    expect(Bun.inspect(make({ partSize: "5000000000" }))).toContain("partSize: 5000000000");
+    expect(Bun.inspect(make({ partSize: "5368709120" }))).toContain("partSize: 5368709120");
+  });
+
+  test("partSize string out of range reports the received value, not a wrapped negative", () => {
+    let err: unknown;
+    try {
+      make({ partSize: "6000000000" });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RangeError);
+    const message = (err as RangeError).message;
+    expect(message).toContain(">= 5242880 and <= 5368709120");
+    expect(message).toContain("Received 6000000000");
+  });
+
   test("pageSize (legacy alias) accepts a numeric string", () => {
     expect(Bun.inspect(make({ pageSize: "10485760" }))).toContain("partSize: 10485760");
   });

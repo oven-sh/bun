@@ -70,6 +70,17 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
+/// Node's `_send` accepts string/object/number/boolean by `typeof`.
+/// `JSValue::is_object()` also matches functions, so exclude callables to
+/// keep `typeof`-equivalence.
+fn is_sendable_message(message: JSValue) -> bool {
+    message.is_string()
+        || message.is_number()
+        || message.is_boolean()
+        || message.is_null()
+        || (message.is_object() && !message.is_callable())
+}
+
 pub(crate) fn do_send(
     ipc: Option<&mut SendQueue>,
     global_object: &JSGlobalObject,
@@ -110,18 +121,15 @@ pub(crate) fn do_send(
     if message.is_undefined() {
         return Err(global_object.throw_missing_arguments_value(&["message"]));
     }
-    if !message.is_string()
-        && !message.is_object()
-        && !message.is_number()
-        && !message.is_boolean()
-        && !message.is_null()
-    {
+    if !is_sendable_message(message) {
         return Err(global_object.throw_invalid_argument_type_value_one_of(
             b"message",
             b"string, object, number, or boolean",
             message,
         ));
     }
+    // The handle branch below replaces `message` with a `NODE_HANDLE` wrapper.
+    let original_message = message;
 
     if !handle.is_undefined_or_null() {
         let serialized_array: JSValue = IPC::ipc_serialize(global_object, message, handle)?;
@@ -158,23 +166,27 @@ pub(crate) fn do_send(
         }
     }
 
-    let status = ipc_data.serialize_and_send(
+    let status = match ipc_data.serialize_and_send(
         global_object,
         message,
         IsInternal::External,
         callback,
         zig_handle,
-    );
-
-    if status == SerializeAndSendResult::Failure {
-        let ex = global_object.create_type_error_instance(format_args!("process.send() failed"));
-        ex.put(
-            global_object,
-            b"syscall",
-            bun_jsc::bun_string_jsc::to_js(&BunString::static_(b"write"), global_object)?,
-        );
-        return do_send_err(global_object, callback, ex, from);
-    }
+    ) {
+        Ok(status) => status,
+        Err(err) => {
+            // Serialization never enqueues, so the channel is untouched: report the failure to
+            // the caller rather than treating it as a transport failure. A value the type guard
+            // accepts but JSON cannot represent (`toJSON()` returning undefined) lands here.
+            return Err(err.as_js_error().unwrap_or_else(|| {
+                global_object.throw_invalid_argument_value_custom(
+                    b"message",
+                    original_message,
+                    b"could not be serialized to JSON",
+                )
+            }));
+        }
+    };
 
     // in the success or backoff case, serializeAndSend will handle calling the callback
     Ok(if status == SerializeAndSendResult::Success {

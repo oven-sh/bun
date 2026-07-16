@@ -1604,13 +1604,19 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         if self.escaped_group_opens.is_empty() {
             return;
         }
-        let by_index = core::mem::take(&mut self.escaped_group_opens);
+        let mut by_index = core::mem::take(&mut self.escaped_group_opens);
+        // Not sorted on entry: nested escaped groups close LIFO (innermost
+        // first), which is the *opposite* of their token-index order (the
+        // innermost `{` was opened later, so it has the larger index) — so
+        // without this, the lookup below would need a linear scan.
+        by_index.sort_unstable();
         let mut ordinal: u32 = 0;
         for (idx, tok) in self.tokens.iter().enumerate() {
             if !matches!(tok, Token::Open(_)) {
                 continue;
             }
-            if by_index.contains(&u32::try_from(idx).expect("int cast")) {
+            let idx = u32::try_from(idx).expect("int cast");
+            if by_index.binary_search(&idx).is_ok() {
                 self.escaped_group_opens.push(ordinal);
             }
             ordinal += 1;
@@ -2061,6 +2067,40 @@ mod tests {
                 Token::Close,
                 Token::Eof,
             ]
+        );
+    }
+
+    #[test]
+    fn remap_handles_out_of_order_nested_escaped_groups() {
+        // Coverage for `remap_escaped_group_opens_to_ordinals` with two
+        // *closed* escaped groups, one nested inside the other. Nested
+        // groups close LIFO (innermost first), which is the *opposite* of
+        // their token-index order (the innermost `{` opens later, so it has
+        // the larger index) — so the raw-index list this function remaps is
+        // `[inner_idx, outer_idx]` with `inner_idx > outer_idx`: descending,
+        // not sorted. (`Vec::contains` used to give the right answer here
+        // regardless of order, just via an O(n) scan per lookup instead of
+        // the O(log n) binary search sorting first enables — this was a
+        // perf finding, not a correctness one, but exercising it with a
+        // real sequence-shaped inner group is still worth locking in.)
+        let src = b"{a\\b{1\\..2}c}";
+        let result = Lexer::tokenize(src).unwrap();
+
+        // The inner group's de-escaped text ("1..2") looks like a valid
+        // sequence — if the escape record were ever missed, it would wrongly
+        // expand into `Text("1"), Comma, Text("2")`.
+        assert!(
+            !result.tokens.iter().any(|t| matches!(t, Token::Comma)),
+            "the escaped inner group should not have been expanded into a sequence: {:?}",
+            result.tokens
+        );
+        assert!(
+            result
+                .tokens
+                .iter()
+                .any(|t| matches!(t, Token::Text(s) if s.slice() == b"1..2")),
+            "expected the inner group's text to survive verbatim: {:?}",
+            result.tokens
         );
     }
 }

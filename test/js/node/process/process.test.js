@@ -1128,19 +1128,21 @@ describe.concurrent(() => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(JSON.parse(stdout)).toEqual({
-        compact: false,
-        directory: "",
-        filename: "",
-        signal: "SIGUSR2",
-        reportOnFatalError: false,
-        reportOnSignal: false,
-        reportOnUncaughtException: false,
-        excludeEnv: false,
-        excludeNetwork: false,
+      expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: {
+          compact: false,
+          directory: "",
+          filename: "",
+          signal: "SIGUSR2",
+          reportOnFatalError: false,
+          reportOnSignal: false,
+          reportOnUncaughtException: false,
+          excludeEnv: false,
+          excludeNetwork: false,
+        },
+        stderr: "",
+        exitCode: 0,
       });
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
     });
 
     describe.each([
@@ -1172,9 +1174,11 @@ describe.concurrent(() => {
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect(stdout).toBe(`bad-err ${code} true\ngood ${JSON.stringify(good)}\n`);
-        expect(stderr).toBe("");
-        expect(exitCode).toBe(0);
+        expect({ stdout, stderr, exitCode }).toEqual({
+          stdout: `bad-err ${code} true\ngood ${JSON.stringify(good)}\n`,
+          stderr: "",
+          exitCode: 0,
+        });
       });
     });
   });

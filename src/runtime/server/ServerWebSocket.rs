@@ -676,6 +676,7 @@ impl ServerWebSocket {
             .try_get()
             .unwrap_or(JSValue::UNDEFINED);
         let this_value_cell: &JsCell<JsRef> = &self.this_value;
+        let global_object_ref = handler.global_object;
         let _cleanup = scopeguard::guard(signal, move |sig| {
             if let Some(sig) = sig {
                 // `sig` was stored with a +1 ref by the upgrade caller; it
@@ -686,6 +687,9 @@ impl ServerWebSocket {
                 sig.unref();
             }
             if was_not_empty {
+                // Drop the server-wrapper traced edge: once closed, this socket
+                // no longer needs to pin the server (and its handler slots).
+                js::server_set_cached(cached_this, global_object_ref.get(), JSValue::ZERO);
                 // R-2: closure-scoped `&mut JsRef` via `JsCell::with_mut` —
                 // no raw `*mut` projection needed.
                 this_value_cell.with_mut(|v| v.downgrade());

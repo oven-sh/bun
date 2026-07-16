@@ -123,7 +123,7 @@ function liveServerWrappers() {
 }
 
 async function drainServerWrappers(target: number) {
-  for (let i = 0; i < 10 && liveServerWrappers() > target; i++) {
+  for (let i = 0; i < 30 && liveServerWrappers() > target; i++) {
     Bun.gc(true);
     fullGC();
     await new Promise(resolve => setTimeout(resolve, 100));

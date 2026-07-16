@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, test, vi } from "vitest";
 import { bunEnv, bunExe } from "harness";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 afterEach(() => vi.useRealTimers());
 
@@ -188,24 +188,26 @@ describe("runAllTimers", () => {
       timeout: 10_000,
       killSignal: "SIGKILL",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode, signalCode: proc.signalCode };
   }
 
   test.concurrent.each([
     ["setInterval", `const id = setInterval(() => fires++, 10); const stop = () => clearInterval(id);`],
-    ["recursive setTimeout", `const tick = () => { fires++; setTimeout(tick, 10); }; setTimeout(tick, 10); const stop = () => {};`],
+    [
+      "recursive setTimeout",
+      `const tick = () => { fires++; setTimeout(tick, 10); }; setTimeout(tick, 10); const stop = () => {};`,
+    ],
     ["Bun.cron", `const job = Bun.cron("* * * * *", () => fires++); const stop = () => job.stop();`],
   ])("aborts with an error when %s re-arms forever", async (_name, setup) => {
     const { stdout, stderr, exitCode, signalCode } = await runAllTimersFixture("{ timerLimit: 50 }", setup);
     expect({ stdout, signalCode, stderr }).toEqual({
       stdout:
-        JSON.stringify({ threw: true, message: "Aborting after running 50 timers, assuming an infinite loop!", fires: 50 }) +
-        "\n",
+        JSON.stringify({
+          threw: true,
+          message: "Aborting after running 50 timers, assuming an infinite loop!",
+          fires: 50,
+        }) + "\n",
       signalCode: null,
       stderr: expect.not.stringContaining("error:"),
     });

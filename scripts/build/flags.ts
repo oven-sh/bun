@@ -646,6 +646,17 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Raise constexpr limits (JSC uses heavy constexpr; the embedded module registry literals are large)",
   },
   {
+    // Only needed with assertions: ASSERT_UNDER_CONSTEXPR_CONTEXT in
+    // ASCIILiteral's ctor loops every byte of the embedded module registry
+    // literals (NodeHttp2Code is ~170 KB) and blows clang's default limit.
+    // Plain release Windows has ASSERT_ENABLED=0, so the loop is a no-op
+    // there. /clang: prefix — clang-cl has no /constexpr: spelling of its own.
+    flag: ["/clang:-fconstexpr-steps=6000000", "/clang:-fconstexpr-depth=54"],
+    when: c => c.windows && c.assertions,
+    lang: "cxx",
+    desc: "Raise constexpr limits (Windows assertions build: ASCIILiteral per-byte ASSERT loop)",
+  },
+  {
     flag: ["-fno-pic", "-fno-pie"],
     when: c => c.unix && c.abi !== "android",
     desc: "No position-independent code (we're a final executable)",

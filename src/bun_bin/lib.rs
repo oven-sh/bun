@@ -45,13 +45,14 @@ use bun_core::Global;
 use bun_core::StackCheck;
 use bun_core::output;
 
-/// mimalloc as the process allocator.
-#[cfg(not(bun_asan))]
+/// mimalloc as the process allocator. Windows ASAN stays on mimalloc too
+/// (see `bun_alloc::USE_MIMALLOC`).
+#[cfg(not(all(bun_asan, unix)))]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
 
-/// Under ASAN, use the system allocator so the interceptor sees every allocation.
-#[cfg(bun_asan)]
+/// Under Unix ASAN, use the system allocator so the interceptor sees every allocation.
+#[cfg(all(bun_asan, unix))]
 #[global_allocator]
 static ALLOC: std::alloc::System = std::alloc::System;
 

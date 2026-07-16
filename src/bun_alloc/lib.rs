@@ -237,8 +237,13 @@ macro_rules! arena_format {
     }};
 }
 
-/// `bun.use_mimalloc` — false under ASAN, where the global allocator is `std::alloc::System`.
-pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
+/// `bun.use_mimalloc` — true when mimalloc is the `#[global_allocator]`.
+/// False only under ASAN on Unix, where `std::alloc::System` is installed so
+/// the ASAN interceptor sees every allocation. Windows ASAN stays on mimalloc
+/// (built with `MI_TRACK_ASAN=1`) because its libc has no `posix_memalign`
+/// and `std::alloc::System` on Windows is `HeapAlloc`, which would diverge
+/// from `default_alloc`'s libc malloc/free.
+pub const USE_MIMALLOC: bool = cfg!(not(all(bun_asan, unix)));
 
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
@@ -259,13 +264,21 @@ pub mod max_heap_allocator;
 pub mod nullable_allocator;
 pub mod stack_fallback;
 
-/// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN).
+/// Raw alloc/free matching the `#[global_allocator]` (`mi_*` normally, libc under ASAN on Unix).
 pub mod default_alloc {
     use core::ffi::c_void;
 
+    // Unix ASAN routes through libc so the interceptor owns every allocation.
+    // Windows ASAN stays on mimalloc (see `USE_MIMALLOC` above): the libc
+    // crate has no `posix_memalign` on MSVC, and `_aligned_malloc` requires a
+    // matching `_aligned_free` that this module's single `free` entry point
+    // can't dispatch to. mimalloc is built with `MI_TRACK_ASAN=1`, so redzone
+    // poisoning still catches heap overflow on that path.
+    const ASAN_LIBC: bool = cfg!(all(bun_asan, unix));
+
     #[inline]
     pub fn malloc(size: usize) -> *mut c_void {
-        if cfg!(bun_asan) {
+        if ASAN_LIBC {
             // SAFETY: `libc::malloc` has no input preconditions; null on failure.
             unsafe { libc::malloc(size) }
         } else {
@@ -275,7 +288,7 @@ pub mod default_alloc {
 
     #[inline]
     pub fn zalloc(size: usize) -> *mut c_void {
-        if cfg!(bun_asan) {
+        if ASAN_LIBC {
             // SAFETY: `libc::calloc` has no input preconditions; null on failure.
             unsafe { libc::calloc(1, size) }
         } else {
@@ -285,7 +298,7 @@ pub mod default_alloc {
 
     #[inline]
     pub fn calloc(count: usize, size: usize) -> *mut c_void {
-        if cfg!(bun_asan) {
+        if ASAN_LIBC {
             // SAFETY: `libc::calloc` has no input preconditions; null on failure.
             unsafe { libc::calloc(count, size) }
         } else {
@@ -297,7 +310,7 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
     pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
-        if cfg!(bun_asan) {
+        if ASAN_LIBC {
             // SAFETY: caller guarantees `ptr` is null or a live libc allocation
             // (the default allocator under ASAN).
             unsafe { libc::realloc(ptr, new_size) }
@@ -311,7 +324,7 @@ pub mod default_alloc {
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
     pub unsafe fn free(ptr: *mut c_void) {
-        if cfg!(bun_asan) {
+        if ASAN_LIBC {
             // SAFETY: caller guarantees `ptr` is null or a live libc allocation
             // (the default allocator under ASAN).
             unsafe { libc::free(ptr) }
@@ -328,11 +341,10 @@ pub mod default_alloc {
         if ptr.is_null() {
             return 0;
         }
-        // Under `bun_asan` the global allocator is `std::alloc::System`, so the
+        // Under Unix ASAN the global allocator is `std::alloc::System`, so the
         // size must come from libc, not mimalloc — and the symbol differs per
-        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). `bun_asan`
-        // is only ever set on Linux or macOS, so the catch-all (non-asan, every
-        // `check-all` target including Windows) stays on mimalloc.
+        // OS (`malloc_usable_size` on Linux, `malloc_size` on macOS). Windows
+        // ASAN and every non-asan build stay on mimalloc (see `ASAN_LIBC`).
         #[cfg(all(bun_asan, target_os = "linux"))]
         return unsafe { libc::malloc_usable_size(ptr.cast_mut()) };
         #[cfg(all(bun_asan, target_os = "macos"))]
@@ -346,13 +358,13 @@ pub mod default_alloc {
     // The aligned variants are `#[cfg]`-split (not `if cfg!()`) because the
     // posix_memalign/malloc_usable_size symbols don't exist on Windows.
 
-    #[cfg(not(bun_asan))]
+    #[cfg(not(all(bun_asan, unix)))]
     #[inline]
     pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         crate::mimalloc::mi_malloc_auto_align(size, align)
     }
 
-    #[cfg(bun_asan)]
+    #[cfg(all(bun_asan, unix))]
     #[inline]
     pub fn malloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
@@ -366,13 +378,13 @@ pub mod default_alloc {
         p
     }
 
-    #[cfg(not(bun_asan))]
+    #[cfg(not(all(bun_asan, unix)))]
     #[inline]
     pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
         crate::mimalloc::mi_zalloc_auto_align(size, align)
     }
 
-    #[cfg(bun_asan)]
+    #[cfg(all(bun_asan, unix))]
     #[inline]
     pub fn zalloc_aligned(size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {
@@ -387,7 +399,7 @@ pub mod default_alloc {
 
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(not(bun_asan))]
+    #[cfg(not(all(bun_asan, unix)))]
     #[inline]
     pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation
@@ -397,7 +409,7 @@ pub mod default_alloc {
 
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator with the given `align`.
-    #[cfg(bun_asan)]
+    #[cfg(all(bun_asan, unix))]
     #[inline]
     pub unsafe fn realloc_aligned(ptr: *mut c_void, new_size: usize, align: usize) -> *mut c_void {
         if align <= crate::MAX_ALIGN_T {

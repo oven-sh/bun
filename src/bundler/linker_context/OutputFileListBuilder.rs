@@ -185,7 +185,7 @@ impl OutputFileList {
         debug_assert!(
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0)
                 <= self.additional_output_files_start,
-            "index_for_sourcemaps_and_bytecode ({}) < additional_output_files_start ({})",
+            "index_for_sourcemaps_and_bytecode ({}) <= additional_output_files_start ({})",
             self.index_for_sourcemaps_and_bytecode.unwrap_or(0),
             self.additional_output_files_start,
         );

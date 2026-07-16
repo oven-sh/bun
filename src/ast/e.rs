@@ -1249,7 +1249,7 @@ impl Default for Object {
     }
 }
 
-/// used in TOML parser to merge properties.
+/// Dotted-key path used by the INI parser (`get_or_put_object`).
 ///
 /// Node types are lifetime-free, so `next` is a raw `*mut Rope`
 /// into the bump arena. Segments are bulk-freed at arena reset.
@@ -1280,7 +1280,7 @@ impl Rope {
 
     /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
     /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `set_rope`/`get_or_put_*`/`get_rope` walkers
+    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
     /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
     #[inline]
     pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
@@ -1315,7 +1315,7 @@ pub struct RopeQuery<'a> {
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
-// `set_rope`/`get_or_put_array`/sort helpers stay in the gated impl below.
+// Sort helpers stay in the gated impl below.
 impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
@@ -1464,15 +1464,10 @@ pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
 
 // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 impl Object {
-    pub fn set(&mut self, key: Expr, _bump: &Bump, value: Expr) -> Result<(), SetError> {
-        let head_key = match key.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if self.has_property(&head_key) {
-            return Err(SetError::Clobber);
-        }
-        // `&mut self` so the borrow checker tracks the write.
+    /// Appends a property without checking for an existing key. Callers that
+    /// need duplicate detection must check `as_property` with UTF-8 bytes
+    /// first — a UTF-16 EString key's raw `data` view is not byte-comparable.
+    pub fn append_property(&mut self, key: Expr, value: Expr) {
         VecExt::append(
             &mut self.properties,
             G::Property {
@@ -1482,140 +1477,6 @@ impl Object {
                 ..G::Property::default()
             },
         );
-        Ok(())
-    }
-
-    // this is terribly, shamefully slow
-    pub fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError> {
-        let head_key = match rope.head.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if let Some(existing) = self.get(&head_key) {
-            match existing.data {
-                crate::expr::Data::EArray(mut array) => {
-                    let Some(next) = rope.next_ref() else {
-                        array.push(bump, value)?;
-                        return Ok(());
-                    };
-
-                    if let Some(last) = array.items.last_mut() {
-                        if !matches!(last.data, crate::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-                        last.data
-                            .e_object_mut()
-                            .unwrap()
-                            .set_rope(next, bump, value)?;
-                        return Ok(());
-                    }
-
-                    array.push(bump, value)?;
-                    return Ok(());
-                }
-                crate::expr::Data::EObject(mut object) => {
-                    if let Some(next) = rope.next_ref() {
-                        object.set_rope(next, bump, value)?;
-                        return Ok(());
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        let mut value_ = value;
-        if let Some(next) = rope.next_ref() {
-            let mut obj = Expr::init(Object::default(), rope.head.loc);
-            obj.data
-                .e_object_mut()
-                .unwrap()
-                .set_rope(next, bump, value)?;
-            value_ = obj;
-        }
-
-        VecExt::append(
-            &mut self.properties,
-            G::Property {
-                key: Some(rope.head),
-                value: Some(value_),
-                flags: own_key_property_flags(&rope.head),
-                ..G::Property::default()
-            },
-        );
-        Ok(())
-    }
-
-    pub fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError> {
-        let head_key = match rope.head.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if let Some(existing) = self.get(&head_key) {
-            match existing.data {
-                crate::expr::Data::EArray(mut array) => {
-                    let Some(next) = rope.next_ref() else {
-                        return Ok(existing);
-                    };
-
-                    if let Some(last) = array.items.last_mut() {
-                        if !matches!(last.data, crate::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-                        return last
-                            .data
-                            .e_object_mut()
-                            .unwrap()
-                            .get_or_put_array(next, bump);
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                crate::expr::Data::EObject(mut object) => {
-                    let Some(next) = rope.next_ref() else {
-                        return Err(SetError::Clobber);
-                    };
-                    return object.get_or_put_array(next, bump);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        if let Some(next) = rope.next_ref() {
-            let mut obj = Expr::init(Object::default(), rope.head.loc);
-            let out = obj
-                .data
-                .e_object_mut()
-                .unwrap()
-                .get_or_put_array(next, bump)?;
-            VecExt::append(
-                &mut self.properties,
-                G::Property {
-                    key: Some(rope.head),
-                    value: Some(obj),
-                    flags: own_key_property_flags(&rope.head),
-                    ..G::Property::default()
-                },
-            );
-            return Ok(out);
-        }
-
-        let out = Expr::init(Array::default(), rope.head.loc);
-        VecExt::append(
-            &mut self.properties,
-            G::Property {
-                key: Some(rope.head),
-                value: Some(out),
-                flags: own_key_property_flags(&rope.head),
-                ..G::Property::default()
-            },
-        );
-        Ok(out)
     }
 
     /// Assumes each key in the property is a string

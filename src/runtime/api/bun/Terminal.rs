@@ -161,6 +161,11 @@ pub struct Terminal {
 
     /// State flags
     flags: Cell<Flags>,
+
+    /// This PTY's own raw-mode state (mode + saved termios), so one terminal
+    /// going raw never makes another terminal's setRawMode a no-op.
+    #[cfg(unix)]
+    tty_state: Cell<bun_core::tty::State>,
 }
 
 bitflags::bitflags! {
@@ -458,6 +463,8 @@ impl Terminal {
             reader: JsCell::new(IOReader::init::<Terminal>()),
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
+            #[cfg(unix)]
+            tty_state: Cell::new(bun_core::tty::State::new()),
         }));
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
@@ -679,15 +686,20 @@ impl Terminal {
         }
     }
 
-    /// Drain buffered pty output, then close our slave_fd so the reader sees
-    /// EOF. BSD kernels flush the output queue on last slave close; holding
-    /// ours until Subprocess::on_process_exit keeps a fast child's writes.
+    /// Drain buffered pty output, close our slave_fd, then drive the reader to
+    /// EOF and unref both polls so the event loop can exit. BSD kernels flush
+    /// the output queue on last slave close; holding ours until
+    /// Subprocess::on_process_exit keeps a fast child's writes.
     #[cfg(unix)]
     pub(crate) fn drain_and_close_slave_fd(&self) {
         let flags = self.flags.get();
         if flags.contains(Flags::CLOSED) {
             return;
         }
+        // Both reader callbacks below re-enter user JS and may deref; hold a
+        // +1 so `self` stays live for the trailing field accesses.
+        self.ref_();
+        let guard = scopeguard::guard((), |()| self.deref_());
         if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
             // SAFETY: single JS thread; re-entrant user JS (data callback may
             // call `terminal.close()`) is handled via the raw-pointer dispatch
@@ -698,6 +710,21 @@ impl Terminal {
             }
         }
         self.close_slave_fd();
+        // Read again so the exit callback fires now (EOF on macOS, EIO on
+        // Linux) instead of on the next tick when nothing may wake the loop.
+        // A grandchild holding the slave keeps this at EAGAIN and re-arms.
+        let flags = self.flags.get();
+        if flags.contains(Flags::READER_STARTED) && !flags.contains(Flags::READER_DONE) {
+            // SAFETY: same as the `read()` call above.
+            unsafe { (*self.reader.as_ptr()).read() };
+        }
+        // An inline terminal whose child has exited no longer keeps the event
+        // loop alive; the polls stay registered so grandchild output still
+        // arrives while anything else keeps the loop running.
+        if !self.flags.get().contains(Flags::CLOSED) {
+            self.update_ref(false);
+        }
+        drop(guard);
     }
 
     /// Windows: close only the ConPTY handle so conhost releases its pipe ends and
@@ -1542,7 +1569,8 @@ impl Terminal {
         #[cfg(unix)]
         {
             // Use the existing TTY mode function
-            let tty_result = bun_core::tty::set_mode(
+            let mut state = self.tty_state.get();
+            let tty_result = state.set_mode(
                 self.master_fd.get().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
@@ -1550,6 +1578,7 @@ impl Terminal {
                     bun_core::tty::Mode::Normal
                 },
             );
+            self.tty_state.set(state);
             if tty_result != 0 {
                 return Err(global_object.throw(format_args!("Failed to set raw mode")));
             }
@@ -1721,42 +1750,34 @@ impl Terminal {
     // IOReader callbacks
     pub(crate) fn on_reader_done(&self) {
         bun_output::scoped_log!(Terminal, "onReaderDone");
-        // R-2: `&self` (no `noalias`) + `Cell<Flags>` makes the prior
-        // `black_box`-launder unnecessary — the post-`call_exit_callback`
-        // `flags` load is a fresh `Cell::get()` that LLVM cannot fold across
-        // the re-entrant JS call (UnsafeCell suppresses the alias assumption).
-        // EOF from master - downgrade to weak ref to allow GC
-        // Skip JS interactions if already finalized (happens when close() is called during finalize)
-        if !self.flags.get().contains(Flags::FINALIZED) {
-            self.update_flags(|f| f.remove(Flags::CONNECTED));
-            self.this_value.with_mut(|v| v.downgrade());
-            // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
-            self.call_exit_callback(0, None);
-        }
-        // Release reader's ref (only once)
-        if !self.flags.get().contains(Flags::READER_DONE) {
-            self.update_flags(|f| f.insert(Flags::READER_DONE));
-            self.deref_();
-        }
+        // exit_code 0 = clean EOF on PTY stream (not subprocess exit code)
+        self.on_reader_finished(0);
     }
 
     pub(crate) fn on_reader_error(&self, err: &sys::Error) {
         bun_output::scoped_log!(Terminal, "onReaderError: {:?}", err);
-        // R-2: see `on_reader_done` — `&self` + `Cell<Flags>` replaces the
-        // prior `black_box` launder.
-        // Error - downgrade to weak ref to allow GC
-        // Skip JS interactions if already finalized
+        // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
+        self.on_reader_finished(1);
+    }
+
+    /// Shared tail of `on_reader_done`/`on_reader_error`: claim `READER_DONE`
+    /// before the exit callback so re-entry (`terminal.close()` from the
+    /// callback) sees the flag and no-ops, then release the reader's +1.
+    fn on_reader_finished(&self, exit_code: i32) {
+        if self.flags.get().contains(Flags::READER_DONE) {
+            return;
+        }
+        self.update_flags(|f| {
+            f.insert(Flags::READER_DONE);
+            f.remove(Flags::CONNECTED);
+        });
+        // EOF from master - downgrade to weak ref to allow GC
+        // Skip JS interactions if already finalized (happens when close() is called during finalize)
         if !self.flags.get().contains(Flags::FINALIZED) {
-            self.update_flags(|f| f.remove(Flags::CONNECTED));
             self.this_value.with_mut(|v| v.downgrade());
-            // exit_code 1 = I/O error on PTY stream (not subprocess exit code)
-            self.call_exit_callback(1, None);
+            self.call_exit_callback(exit_code, None);
         }
-        // Release reader's ref (only once)
-        if !self.flags.get().contains(Flags::READER_DONE) {
-            self.update_flags(|f| f.insert(Flags::READER_DONE));
-            self.deref_();
-        }
+        self.deref_();
     }
 
     /// Invoke the exit callback with PTY lifecycle status.

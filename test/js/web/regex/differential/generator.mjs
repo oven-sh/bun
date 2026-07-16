@@ -301,7 +301,12 @@ export class PatternBuilder {
     }
     const inner = this.disjunction();
     this.depth--;
-    return { source: open + inner.source + ")", sample: inner.sample };
+    // A group whose content already loops unboundedly must not itself get an
+    // unbounded quantifier: that is the nested-quantifier catastrophic
+    // backtracking shape (e.g. /(a+|b)+c/ on a long non-matching input),
+    // where engines legitimately differ only in HOW LONG they take. Mark the
+    // atom so quantify() keeps it bounded.
+    return { source: open + inner.source + ")", sample: inner.sample, loops: /[*+]|\{\d+,\}/.test(inner.source) };
   }
 
   assertion() {
@@ -343,7 +348,14 @@ export class PatternBuilder {
   quantify(atom) {
     const rng = this.rng;
     if (!rng.chance(0.45)) return atom;
-    const quant = rng.pick(["*", "+", "?", "?", "{2}", "{0,2}", "{1,3}", "{2,}", "{0}"]);
+    // See group(): atoms that already loop internally only ever get bounded
+    // quantifiers, keeping cases out of the exponential-backtracking regime.
+    const boundedOnly = atom.loops === true;
+    const quant = rng.pick(
+      boundedOnly
+        ? ["?", "?", "{2}", "{0,2}", "{1,3}", "{0}"]
+        : ["*", "+", "?", "?", "{2}", "{0,2}", "{1,3}", "{2,}", "{0}"],
+    );
     const lazy = rng.chance(0.25) ? "?" : "";
     let sample = atom.sample;
     switch (quant) {

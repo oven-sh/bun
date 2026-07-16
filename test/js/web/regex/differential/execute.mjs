@@ -6,6 +6,15 @@
 
 const MAX_ITER = 20; // bound global iteration for pathological empty-match loops
 
+// Per-case wall-clock budget. A single exec() is atomic and cannot be
+// interrupted, so this only stops FURTHER operations once a case has proven
+// pathologically slow (catastrophic backtracking); the runner also applies a
+// process-level watchdog. Cases that blow the budget are recorded as such --
+// the two engines have different backtracking cliffs, so the generator
+// avoids the shapes that trigger them (nested unbounded quantifiers over
+// alternation), and this budget is only a backstop.
+const CASE_BUDGET_MS = 4000;
+
 function normalizeMatch(m) {
   if (m === null) return null;
   const out = {
@@ -70,8 +79,15 @@ export function executeCase({ source, flags, inputs }) {
 
   const iterating = re.global || re.sticky;
   record.inputs = [];
+  const deadline = Date.now() + CASE_BUDGET_MS;
 
   for (const input of inputs) {
+    if (Date.now() > deadline) {
+      // Pathologically slow case: stop, and mark it so both engines' records
+      // still differ only if their behaviour genuinely differs.
+      record.budgetExceeded = true;
+      break;
+    }
     const entry = { input };
 
     // 2. exec: single, or iterate for global/sticky (with lastIndex trace).

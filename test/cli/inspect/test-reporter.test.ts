@@ -561,7 +561,7 @@ describe("writer layer: ws:// integration", () => {
       });
 
       proc = spawn({
-        cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "test", "--timeout", "30000", "ws-order.test.ts"],
+        cmd: [bunExe(), "--inspect-wait=ws://127.0.0.1:0/", "test", "ws-order.test.ts"],
         env: bunEnv,
         cwd: String(dir),
         stdout: "ignore",
@@ -613,9 +613,14 @@ describe("writer layer: ws:// integration", () => {
         ws!.addEventListener("close", e => reject(new Error("WebSocket closed", { cause: e })), { once: true });
       });
 
+      const BARRIER_ID = 1;
+      let barrierSent = false;
       const foundIds: number[] = [];
       const endedIds: number[] = [];
-      const { promise: donePromise, resolve: doneResolve } = Promise.withResolvers<void>();
+      const { promise: donePromise, resolve: doneResolve, reject: doneReject } = Promise.withResolvers<void>();
+
+      const send = (method: string, params: Record<string, unknown> = {}, id = 0) =>
+        ws!.send(JSON.stringify({ id, method, params }));
 
       ws.addEventListener("message", ev => {
         const msg = JSON.parse(String(ev.data));
@@ -623,12 +628,37 @@ describe("writer layer: ws:// integration", () => {
           foundIds.push(msg.params.id);
         } else if (msg.method === "TestReporter.end") {
           endedIds.push(msg.params.id);
-          if (endedIds.length === TEST_COUNT) doneResolve();
+          // Don't resolve directly on the 200th end event -- send a barrier
+          // command and wait for its response instead, so any duplicate
+          // event still queued behind it is observed before we assert.
+          if (endedIds.length === TEST_COUNT && !barrierSent) {
+            barrierSent = true;
+            send("Runtime.enable", {}, BARRIER_ID);
+          }
+        } else if (msg.id === BARRIER_ID) {
+          doneResolve();
         }
       });
-
-      const send = (method: string, params: Record<string, unknown> = {}) =>
-        ws!.send(JSON.stringify({ id: 0, method, params }));
+      // The child exits as soon as the last test ends, so the socket can
+      // close before the barrier response round-trips. Either signal proves
+      // the full stream was observed: the barrier RESPONSE (nothing else was
+      // queued behind the final end), or socket close/error after the final
+      // end (the stream is definitively over -- every message the child sent,
+      // including any duplicate delivery, is dispatched before the close
+      // event fires). A close/error while events are still missing instead
+      // fails fast with a descriptive error rather than an opaque per-test
+      // timeout. Both are no-ops once donePromise has settled.
+      const onSocketDown = () => {
+        if (endedIds.length >= TEST_COUNT) {
+          doneResolve();
+        } else {
+          doneReject(
+            new Error(`socket closed before barrier response: found=${foundIds.length} ended=${endedIds.length} of ${TEST_COUNT}`),
+          );
+        }
+      };
+      ws.addEventListener("close", onSocketDown);
+      ws.addEventListener("error", onSocketDown);
 
       send("Inspector.enable");
       send("TestReporter.enable");
@@ -657,6 +687,12 @@ describe("writer layer: ws:// integration", () => {
       ws = undefined;
 
       const exitCode = await proc.exited;
+      if (exitCode !== 0) {
+        // Surface the captured child stderr (the URL-scanning loop above
+        // drains the stream into stderrBuf for the child's whole lifetime)
+        // so a nonzero exit fails with the child's own error output.
+        expect(stderrBuf).toBe("");
+      }
       expect(exitCode).toBe(0);
     },
     30000,

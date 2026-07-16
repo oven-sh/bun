@@ -325,11 +325,21 @@ test("Error.captureStackTrace installs .stack as non-enumerable", () => {
   expect(o.stack).toBe("overwritten");
   expectNonEnumerableStack(o);
 
-  // plain object with Error.prepareStackTrace set
-  Error.prepareStackTrace = (err, sites) => "from-prepare";
+  // plain object with Error.prepareStackTrace set. Inside the callback, .stack
+  // holds the temporary default-formatted string; observing it there pins the
+  // attribute on that write, which the final putDirect would otherwise mask.
+  let insidePrepare;
+  Error.prepareStackTrace = (err, sites) => {
+    insidePrepare = {
+      keys: Object.keys(err),
+      enumerable: Object.getOwnPropertyDescriptor(err, "stack").enumerable,
+    };
+    return "from-prepare";
+  };
   try {
     const o2 = {};
     Error.captureStackTrace(o2);
+    expect(insidePrepare).toEqual({ keys: [], enumerable: false });
     expect(Object.keys(o2)).toEqual([]);
     expectNonEnumerableStack(o2);
     expect(o2.stack).toBe("from-prepare");

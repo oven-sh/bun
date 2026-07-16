@@ -428,8 +428,15 @@ export const globalFlags: Flag[] = [
 
   // ─── Windows-specific codegen ───
   {
+    // Not under ASAN: `/GF` emits each string literal as a SELECT_ANY
+    // COMDAT so identical literals merge at link time. That places
+    // ASAN-instrumented literals (from bun's own TUs) at the same address
+    // as uninstrumented ones (from ICU in the WebKit prebuilt), and reads
+    // through the uninstrumented pointer land in the instrumented copy's
+    // redzone. Observed as a global-buffer-overflow from ICU's
+    // `u_getTimeZoneFilesDirectory` on first VM init.
     flag: "/GF",
-    when: c => c.windows,
+    when: c => c.windows && !c.asan,
     desc: "String pooling (merge identical string literals)",
   },
   {

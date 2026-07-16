@@ -1190,6 +1190,9 @@ walkDone:;
     // with close-only filtering; we don't re-finalize.)
     if (!sawCutEnd) {
         if (hasPrev) position += gs.width();
+        // The final cluster may itself overflow specEnd (a wide cluster that
+        // started before specEnd with no following break to detect it in-walk).
+        if (!endUnbounded && position > specEnd) sawCutEnd = true;
         // Trailing ANSI: if position >= end, it's post-cut → filter. Use the
         // ORIGINAL end bound (specEnd includes the spec zone; for filtering,
         // what matters is whether position exceeds the USER'S requested end,

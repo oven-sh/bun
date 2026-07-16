@@ -1104,6 +1104,29 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("\u5B89\u5B81\u54C8\u4E16\u754C", 0, 5, { ellipsis: E })).toBe("\u5B89\u5B81" + E);
     });
 
+    test("wide char overflowing end at EOF is a cut (lazy path)", () => {
+      // 漢 is width 2. When it is the last cluster and its width extends past
+      // the requested end, the lazy-cutEnd path must emit the ellipsis just
+      // like the ASCII fast path and the negative-index path do.
+      expect(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E })).toBe("ab" + E);
+      expect(Bun.sliceAnsi("abc\u6F22", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("\u6F22\u6F22", 0, 3, { ellipsis: E })).toBe("\u6F22" + E);
+      expect(Bun.sliceAnsi("ab\u6F22\u6F22", 0, 5, { ellipsis: E })).toBe("ab\u6F22" + E);
+      // Multi-column ellipsis budget.
+      expect(Bun.sliceAnsi("abcd\u6F22", 0, 5, { ellipsis: ">>" })).toBe("abc>>");
+      // With active SGR: ellipsis inherits it, close is auto-emitted.
+      expect(Bun.sliceAnsi("\u001B[31mab\u6F22", 0, 3, { ellipsis: E })).toBe("\u001B[31mab" + E + "\u001B[39m");
+      // Exact fit (total width == end) is not a cut.
+      expect(Bun.sliceAnsi("ab\u6F22", 0, 4, { ellipsis: E })).toBe("ab\u6F22");
+      expect(Bun.sliceAnsi("a\u6F22", 0, 3, { ellipsis: E })).toBe("a\u6F22");
+      expect(Bun.sliceAnsi("a\u6F22b", 0, 4, { ellipsis: E })).toBe("a\u6F22b");
+      expect(Bun.sliceAnsi("abcd\u6F22", 0, 6, { ellipsis: ">>" })).toBe("abcd\u6F22");
+      // Equivalence with the paths that already got this right.
+      expect(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E })).toBe(Bun.sliceAnsi("ab\u6F22", 0, -1, { ellipsis: E }));
+      expect(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E })).toBe(Bun.sliceAnsi("ab\u6F22x", 0, 3, { ellipsis: E }));
+      expect(Bun.stringWidth(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E }))).toBe(3);
+    });
+
     test("empty ellipsis behaves like plain slice", () => {
       expect(Bun.sliceAnsi("unicorn", 0, 4, { ellipsis: "" })).toBe("unic");
     });

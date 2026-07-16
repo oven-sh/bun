@@ -62,6 +62,7 @@ struct Http3Response {
         Http3ResponseData *d = getHttpResponseData();
         if (!(d->state & Http3ResponseData::HTTP_WRITE_CALLED)) {
             writeStatus("200 OK");
+            writeMark();
             sendBufferedHeaders(d, false);
             d->state |= Http3ResponseData::HTTP_WRITE_CALLED;
         }
@@ -107,6 +108,7 @@ struct Http3Response {
             us_quic_stream_shutdown((us_quic_stream_t *) this);
         } else {
             writeStatus("200 OK");
+            writeMark();
             sendBufferedHeaders(d, true);
         }
         markDone(d);
@@ -228,6 +230,7 @@ private:
 
         if (!(d->state & Http3ResponseData::HTTP_WRITE_CALLED)) {
             writeStatus("200 OK");
+            writeMark();
             if (!(d->state & Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER) && totalSize) {
                 writeHeader("content-length", totalSize);
                 d->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;

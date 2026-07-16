@@ -32,9 +32,7 @@ use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use bun_core::{String as BunString, ZStr};
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, Local, Scope, StringJsc as _,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, Local, Scope, StringJsc as _};
 use bun_threading::{Guarded, Mutex};
 
 /// `(serialize_nonce, address)` of `BlockList` instances currently embedded in
@@ -258,11 +256,7 @@ impl BlockList {
     }
 
     #[bun_jsc::host_fn(method, scoped)]
-    pub fn check<'s>(
-        this: &Self,
-        scope: &mut Scope<'s>,
-        frame: &CallFrame,
-    ) -> JsResult<Local<'s>> {
+    pub fn check<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
         let [address_js, mut family_js] = frame.scoped_arguments::<2>(scope).ptr;
         let global = scope.unscoped_global();
         if family_js.is_undefined() {

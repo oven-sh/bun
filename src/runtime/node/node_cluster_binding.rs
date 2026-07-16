@@ -83,9 +83,10 @@ pub(crate) fn send_helper_child<'s>(
     if callback.raw().is_function() {
         // TODO: remove this strong. This is expensive and would be an easy way to create a memory leak.
         // These sequence numbers shouldn't exist from JavaScript's perspective at all.
-        let _ = singleton
-            .callbacks
-            .put(singleton.seq, StrongOptional::create(callback.raw(), global));
+        let _ = singleton.callbacks.put(
+            singleton.seq,
+            StrongOptional::create(callback.raw(), global),
+        );
     }
 
     // sequence number for InternalMsgHolder
@@ -126,9 +127,8 @@ pub(crate) fn send_helper_child<'s>(
     );
 
     if good == SerializeAndSendResult::Failure {
-        let ex = scope.local(global.create_type_error_instance(format_args!(
-            "sendInternal() failed"
-        )));
+        let ex =
+            scope.local(global.create_type_error_instance(format_args!("sendInternal() failed")));
         let syscall = scope.local(BunString::static_str("write").to_js(global)?);
         ex.put(scope, b"syscall", syscall);
         let fnvalue =

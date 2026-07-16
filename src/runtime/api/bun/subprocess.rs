@@ -613,7 +613,8 @@ impl Subprocess<'_> {
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_terminal<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
         if let Some(terminal) = this.terminal.get() {
-            let v = crate::api::bun_terminal_body::to_js(terminal.as_ptr(), scope.unscoped_global());
+            let v =
+                crate::api::bun_terminal_body::to_js(terminal.as_ptr(), scope.unscoped_global());
             return Ok(scope.local(v));
         }
         Ok(scope.undefined())
@@ -758,7 +759,11 @@ impl Subprocess<'_> {
     }
 
     #[bun_jsc::host_fn(method, scoped)]
-    pub fn do_ref<'s>(this: &Self, scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
+    pub fn do_ref<'s>(
+        this: &Self,
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         this.js_ref();
         Ok(scope.undefined())
     }

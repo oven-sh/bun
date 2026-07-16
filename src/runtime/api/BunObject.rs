@@ -1046,99 +1046,101 @@ pub(crate) fn open_in_editor<'s>(
         path = file_path_.to_slice(global_this)?;
     }
 
-    EDITOR_CONTEXT.with(|cell| -> JsResult<JSValue> {
-        let mut slot = cell.borrow_mut();
-        let slot = &mut *slot;
-        let edit = &mut slot.ctx;
-        let env = vm.transpiler.env_mut();
+    EDITOR_CONTEXT
+        .with(|cell| -> JsResult<JSValue> {
+            let mut slot = cell.borrow_mut();
+            let slot = &mut *slot;
+            let edit = &mut slot.ctx;
+            let env = vm.transpiler.env_mut();
 
-        if let Some(opts) = arguments.next_eat() {
-            if !opts.is_undefined_or_null() {
-                if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
-                    let sliced = editor_val.to_slice(global_this)?;
-                    let prev_name = edit.name;
+            if let Some(opts) = arguments.next_eat() {
+                if !opts.is_undefined_or_null() {
+                    if let Some(editor_val) = opts.get_truthy(global_this, "editor")? {
+                        let sliced = editor_val.to_slice(global_this)?;
+                        let prev_name = edit.name;
 
-                    if !strings::eql_long(prev_name, sliced.slice(), true) {
-                        let prev = core::mem::take(edit);
-                        // Own the bytes in `name_storage` and
-                        // hand back a thread-lifetime borrow.
-                        let prev_storage =
-                            core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
-                        // SAFETY: `name_storage` lives in a thread_local that
-                        // outlives any caller; we never reallocate it while
-                        // `edit.name` is observed (single-threaded JS VM).
-                        edit.name =
-                            unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
-                        edit.detect_editor(env);
-                        editor_choice = edit.editor;
-                        if editor_choice.is_none() {
-                            slot.name_storage = prev_storage;
-                            *edit = prev;
-                            return Err(global_this.throw(format_args!(
-                                "Could not find editor \"{}\"",
-                                bstr::BStr::new(sliced.slice()),
-                            )));
-                        } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                            // `detect_editor` aliased `path` to `name` (absolute
-                            // editor path). `name` is backed by `slot.name_storage`,
-                            // which a later call may drop while the detached editor
-                            // thread is still reading argv[0]. Give `path`
-                            // process-lifetime storage, matching every other
-                            // `detect_editor` branch.
-                            edit.path = bun_resolver::fs::FileSystem::instance()
-                                .dirname_store
-                                .append_slice(edit.path)
-                                .expect("unreachable");
+                        if !strings::eql_long(prev_name, sliced.slice(), true) {
+                            let prev = core::mem::take(edit);
+                            // Own the bytes in `name_storage` and
+                            // hand back a thread-lifetime borrow.
+                            let prev_storage =
+                                core::mem::replace(&mut slot.name_storage, sliced.slice().to_vec());
+                            // SAFETY: `name_storage` lives in a thread_local that
+                            // outlives any caller; we never reallocate it while
+                            // `edit.name` is observed (single-threaded JS VM).
+                            edit.name =
+                                unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                            edit.detect_editor(env);
+                            editor_choice = edit.editor;
+                            if editor_choice.is_none() {
+                                slot.name_storage = prev_storage;
+                                *edit = prev;
+                                return Err(global_this.throw(format_args!(
+                                    "Could not find editor \"{}\"",
+                                    bstr::BStr::new(sliced.slice()),
+                                )));
+                            } else if edit.name.as_ptr() == edit.path.as_ptr() {
+                                // `detect_editor` aliased `path` to `name` (absolute
+                                // editor path). `name` is backed by `slot.name_storage`,
+                                // which a later call may drop while the detached editor
+                                // thread is still reading argv[0]. Give `path`
+                                // process-lifetime storage, matching every other
+                                // `detect_editor` branch.
+                                edit.path = bun_resolver::fs::FileSystem::instance()
+                                    .dirname_store
+                                    .append_slice(edit.path)
+                                    .expect("unreachable");
+                            }
+                        }
+                    }
+
+                    if let Some(line_) = opts.get_truthy(global_this, "line")? {
+                        line = Some(line_.to_slice(global_this)?);
+                    }
+
+                    if let Some(column_) = opts.get_truthy(global_this, "column")? {
+                        column = Some(column_.to_slice(global_this)?);
+                    }
+                }
+            }
+
+            let editor = match editor_choice.or(edit.editor) {
+                Some(e) => e,
+                None => {
+                    edit.auto_detect_editor(env);
+                    match edit.editor {
+                        Some(e) => e,
+                        None => {
+                            return Err(
+                                global_this.throw(format_args!("Failed to auto-detect editor"))
+                            );
                         }
                     }
                 }
+            };
 
-                if let Some(line_) = opts.get_truthy(global_this, "line")? {
-                    line = Some(line_.to_slice(global_this)?);
-                }
-
-                if let Some(column_) = opts.get_truthy(global_this, "column")? {
-                    column = Some(column_.to_slice(global_this)?);
-                }
+            if path.slice().is_empty() {
+                return Err(global_this.throw(format_args!("No file path specified")));
             }
-        }
 
-        let editor = match editor_choice.or(edit.editor) {
-            Some(e) => e,
-            None => {
-                edit.auto_detect_editor(env);
-                match edit.editor {
-                    Some(e) => e,
-                    None => {
-                        return Err(global_this.throw(format_args!("Failed to auto-detect editor")));
-                    }
-                }
+            if let Err(err) = editor.open(
+                edit.path,
+                path.slice(),
+                line.as_ref().map(|s| s.slice()),
+                column.as_ref().map(|s| s.slice()),
+            ) {
+                return Err(
+                    global_this.throw(format_args!("Opening editor failed {}", err.name(),))
+                );
             }
-        };
 
-        if path.slice().is_empty() {
-            return Err(global_this.throw(format_args!("No file path specified")));
-        }
-
-        if let Err(err) = editor.open(
-            edit.path,
-            path.slice(),
-            line.as_ref().map(|s| s.slice()),
-            column.as_ref().map(|s| s.slice()),
-        ) {
-            return Err(global_this.throw(format_args!("Opening editor failed {}", err.name(),)));
-        }
-
-        Ok(JSValue::UNDEFINED)
-    })
-    .map(|v| scope.local(v))
+            Ok(JSValue::UNDEFINED)
+        })
+        .map(|v| scope.local(v))
 }
 
 #[bun_jsc::host_fn(scoped)]
-pub(crate) fn sleep_sync<'s>(
-    scope: &mut Scope<'s>,
-    callframe: &CallFrame,
-) -> JsResult<Local<'s>> {
+pub(crate) fn sleep_sync<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
     let arguments = callframe.scoped_arguments::<1>(scope);
     let global_object = scope.unscoped_global();
 

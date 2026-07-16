@@ -68,7 +68,10 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn(scoped)]
-    pub(crate) fn js_segfault<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
+    pub(crate) fn js_segfault<'s>(
+        scope: &mut Scope<'s>,
+        _frame: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         crash_handler::suppress_core_dumps_if_necessary();
         // Under ASAN the SIGSEGV handler is intentionally not installed
         // (`reset_on_posix()` early-returns so ASAN's own DEADLYSIGNAL diagnostic
@@ -94,10 +97,7 @@ pub mod js_bindings {
     }
 
     #[bun_jsc::host_fn(scoped)]
-    pub(crate) fn js_panic<'s>(
-        _scope: &mut Scope<'s>,
-        _frame: &CallFrame,
-    ) -> JsResult<Local<'s>> {
+    pub(crate) fn js_panic<'s>(_scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
         crash_handler::suppress_core_dumps_if_necessary();
         crash_handler::panic_impl(b"invoked crashByPanic() handler", None, None);
     }

@@ -1178,7 +1178,10 @@ mod _impl {
     }
 
     #[bun_jsc::host_fn(scoped)]
-    pub(super) fn secure_heap_used<'s>(scope: &mut Scope<'s>, _: &CallFrame) -> JsResult<Local<'s>> {
+    pub(super) fn secure_heap_used<'s>(
+        scope: &mut Scope<'s>,
+        _: &CallFrame,
+    ) -> JsResult<Local<'s>> {
         Ok(scope.undefined())
     }
 

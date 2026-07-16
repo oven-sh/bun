@@ -49,7 +49,9 @@ pub(crate) fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue
     fn setter<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
         let arguments = frame.scoped_arguments::<1>(scope);
         let Some(arg) = arguments.get(0) else {
-            return Err(scope.unscoped_global().throw(format_args!("missing argument")));
+            return Err(scope
+                .unscoped_global()
+                .throw(format_args!("missing argument")));
         };
         if !arg.is_boolean() {
             return Err(scope
@@ -70,7 +72,10 @@ pub(crate) fn set_default_auto_select_family(global: &JSGlobalObject) -> JSValue
 }
 
 pub(crate) fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn(scoped, export = "Bun__NodeNet__getDefaultAutoSelectFamilyAttemptTimeout")]
+    #[bun_jsc::host_fn(
+        scoped,
+        export = "Bun__NodeNet__getDefaultAutoSelectFamilyAttemptTimeout"
+    )]
     fn getter<'s>(scope: &mut Scope<'s>, _frame: &CallFrame) -> JsResult<Local<'s>> {
         Ok(scope.number(f64::from(
             AUTO_SELECT_FAMILY_ATTEMPT_TIMEOUT_DEFAULT.with(|v| v.get()),
@@ -86,11 +91,16 @@ pub(crate) fn get_default_auto_select_family_attempt_timeout(global: &JSGlobalOb
 }
 
 pub(crate) fn set_default_auto_select_family_attempt_timeout(global: &JSGlobalObject) -> JSValue {
-    #[bun_jsc::host_fn(scoped, export = "Bun__NodeNet__setDefaultAutoSelectFamilyAttemptTimeout")]
+    #[bun_jsc::host_fn(
+        scoped,
+        export = "Bun__NodeNet__setDefaultAutoSelectFamilyAttemptTimeout"
+    )]
     fn setter<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
         let arguments = frame.scoped_arguments::<1>(scope);
         let Some(arg) = arguments.get(0) else {
-            return Err(scope.unscoped_global().throw(format_args!("missing argument")));
+            return Err(scope
+                .unscoped_global()
+                .throw(format_args!("missing argument")));
         };
         let mut value = validators::validate_int32(
             scope.unscoped_global(),

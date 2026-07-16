@@ -1,6 +1,8 @@
 use crate::webcore::Blob;
 use bun_core::ZigStringSlice;
-use bun_jsc::{self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Local, Scope};
+use bun_jsc::{
+    self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, Local, Scope,
+};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Hash algorithm abstraction

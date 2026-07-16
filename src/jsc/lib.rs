@@ -890,9 +890,7 @@ pub mod __macro_support {
     #[inline]
     pub fn host_fn_scoped(
         global: &JSGlobalObject,
-        f: impl for<'t> FnOnce(
-            &mut crate::scope::Scope<'t>,
-        ) -> JsResult<crate::scope::Local<'t>>,
+        f: impl for<'t> FnOnce(&mut crate::scope::Scope<'t>) -> JsResult<crate::scope::Local<'t>>,
     ) -> JsResult<JSValue> {
         crate::scope::Scope::with(global, |scope| f(scope).map(|v| v.raw()))
     }

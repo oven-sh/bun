@@ -509,9 +509,11 @@ impl Image {
         let raw: i64 = coerce_int!(i64, args.ptr[0].as_number(), -1e15, 1e15);
         let deg: u32 = u32::try_from(raw.rem_euclid(360)).unwrap();
         if deg != 0 && deg != 90 && deg != 180 && deg != 270 {
-            return Err(scope.unscoped_global().throw_invalid_arguments(
-                format_args!("rotate: only multiples of 90 are supported"),
-            ));
+            return Err(scope
+                .unscoped_global()
+                .throw_invalid_arguments(format_args!(
+                    "rotate: only multiples of 90 are supported"
+                )));
         }
         this.update_pipeline(|p| p.rotate = u16::try_from(deg).expect("int cast"));
         Ok(callframe.scoped_this(scope))
@@ -1008,11 +1010,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method, scoped)]
-    pub fn do_bytes<'s>(
-        this: &Self,
-        scope: &mut Scope<'s>,
-        cf: &CallFrame,
-    ) -> JsResult<Local<'s>> {
+    pub fn do_bytes<'s>(this: &Self, scope: &mut Scope<'s>, cf: &CallFrame) -> JsResult<Local<'s>> {
         let v = this.schedule(
             scope.unscoped_global(),
             cf.this(),
@@ -1038,11 +1036,7 @@ impl Image {
     }
 
     #[bun_jsc::host_fn(method, scoped)]
-    pub fn do_blob<'s>(
-        this: &Self,
-        scope: &mut Scope<'s>,
-        cf: &CallFrame,
-    ) -> JsResult<Local<'s>> {
+    pub fn do_blob<'s>(this: &Self, scope: &mut Scope<'s>, cf: &CallFrame) -> JsResult<Local<'s>> {
         let v = this.schedule(
             scope.unscoped_global(),
             cf.this(),
@@ -1102,9 +1096,11 @@ impl Image {
         if args.len > 0 && !args.ptr[0].is_undefined_or_null() {
             let s = bun_core::OwnedString::new(args.ptr[0].to_bun_string(scope)?);
             if !s.eql_utf8(b"dataurl") {
-                return Err(scope.unscoped_global().throw_invalid_arguments(
-                    format_args!("Image.placeholder(): only \"dataurl\" is supported",),
-                ));
+                return Err(scope
+                    .unscoped_global()
+                    .throw_invalid_arguments(format_args!(
+                        "Image.placeholder(): only \"dataurl\" is supported",
+                    )));
             }
         }
         let v = this.schedule(
@@ -1123,16 +1119,14 @@ impl Image {
     /// string, the encode format is inferred from its extension, falling back to
     /// the source format — so `img.resize(100).write("thumb.webp")` Just Works.
     #[bun_jsc::host_fn(method, scoped)]
-    pub fn do_write<'s>(
-        this: &Self,
-        scope: &mut Scope<'s>,
-        cf: &CallFrame,
-    ) -> JsResult<Local<'s>> {
+    pub fn do_write<'s>(this: &Self, scope: &mut Scope<'s>, cf: &CallFrame) -> JsResult<Local<'s>> {
         let args = cf.scoped_arguments::<1>(scope);
         if args.len < 1 || args.ptr[0].is_undefined_or_null() {
-            return Err(scope.unscoped_global().throw_invalid_arguments(
-                format_args!("Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",),
-            ));
+            return Err(scope
+                .unscoped_global()
+                .throw_invalid_arguments(format_args!(
+                    "Image.write(dest): expected a path, Bun.file, Bun.s3 or fd",
+                )));
         }
 
         let mut output = this.pipeline.get().output;

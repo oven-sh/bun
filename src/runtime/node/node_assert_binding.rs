@@ -16,9 +16,11 @@ use super::node_assert;
 pub(crate) fn myers_diff<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
     let nargs = frame.arguments_count();
     if nargs < 2 {
-        return Err(scope
-            .unscoped_global()
-            .throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
+        return Err(scope.unscoped_global().throw_not_enough_arguments(
+            "printMyersDiff",
+            2,
+            nargs as usize,
+        ));
     }
 
     let actual_arg = frame.scoped_argument(scope, 0);

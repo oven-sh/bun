@@ -34,7 +34,10 @@ pub(crate) enum FromEnum {
 }
 
 #[bun_jsc::host_fn(scoped)]
-fn emit_process_error_event<'s>(scope: &mut Scope<'s>, callframe: &CallFrame) -> JsResult<Local<'s>> {
+fn emit_process_error_event<'s>(
+    scope: &mut Scope<'s>,
+    callframe: &CallFrame,
+) -> JsResult<Local<'s>> {
     let [ex] = callframe.scoped_arguments::<1>(scope).ptr;
     Process__emitErrorEvent(scope.unscoped_global(), ex.raw());
     Ok(scope.undefined())

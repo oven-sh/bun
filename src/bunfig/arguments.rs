@@ -227,6 +227,11 @@ pub fn load_config(
                 .to_vec()
                 .into_boxed_slice();
             let mut dir: &[u8] = &awd;
+            // `bun_paths::dirname` yields root directories ("/", "C:\\",
+            // "\\\\server\\share\\") with a trailing separator and None above
+            // them, so a parent ending in a separator is the last to check;
+            // the walk never escapes a drive or UNC share root.
+            let mut is_root = matches!(dir.last(), Some(&c) if bun_paths::is_sep_native(c));
             let mut found_len: Option<usize> = None;
             loop {
                 let parts: [&[u8]; 2] = [dir, config_path_];
@@ -263,17 +268,13 @@ pub fn load_config(
                 if at_project_boundary {
                     break;
                 }
-                let parent = resolve_path::dirname::<platform::Auto>(dir);
-                // Stop at the filesystem root. On Windows, dirname of a
-                // first-level directory ("C:\\Users") is the bare drive
-                // designator "C:" (not absolute), so the walk stops before
-                // the drive root and C:\bunfig.toml is never consulted.
-                if parent.is_empty()
-                    || parent == dir
-                    || !<platform::Auto as resolve_path::PlatformT>::P.is_absolute(parent)
-                {
+                if is_root {
                     break;
                 }
+                let Some(parent) = bun_paths::dirname(dir) else {
+                    break;
+                };
+                is_root = matches!(parent.last(), Some(&c) if bun_paths::is_sep_native(c));
                 dir = parent;
             }
             match found_len {

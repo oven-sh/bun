@@ -1023,18 +1023,10 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
     // ServerResponse, which would buffer this write and drop it on destroy.
     const handle = socket as any;
     if (handle && !handle.closed && (!nodeSocket._httpMessage || !nodeSocket._httpMessage.headersSent)) {
-      let response;
-      switch (errorCode) {
-        case HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE:
-          response = "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n";
-          break;
-        case HttpParserError.HTTP_PARSER_ERROR_INVALID_HTTP_VERSION:
-          response = "HTTP/1.1 505 HTTP Version Not Supported\r\nConnection: close\r\n\r\n";
-          break;
-        default:
-          response = "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
-          break;
-      }
+      const response =
+        errorCode === HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE
+          ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+          : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
       handle.write(response);
       handle.end();
     }

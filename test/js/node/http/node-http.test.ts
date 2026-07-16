@@ -2951,7 +2951,7 @@ describe("clientError listener owns the response and socket", () => {
   // Node.js lib/_http_server.js socketOnError: when a 'clientError' listener is
   // attached, the server writes nothing and does not close; the listener owns
   // the response and the socket lifecycle. When no listener is attached the
-  // server writes a default 400/431/505 and destroys the socket.
+  // server writes a default 400 (or 431 for header overflow) and destroys.
   async function raw(port: number, bytes: string) {
     const socket = connect(port, "127.0.0.1");
     const closed = new Promise<void>(r => socket.on("close", () => r()));
@@ -3054,6 +3054,21 @@ describe("clientError listener owns the response and socket", () => {
       await closed;
       // Exactly the listener's bytes; no canned 400 prefixed or appended.
       expect(data()).toBe("HTTP/1.1 418 I'm a teapot\r\nConnection: close\r\n\r\n");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("writes 400 (not 505) for an invalid HTTP version when no listener is attached", async () => {
+    // Node.js's socketOnError has no 505 arm; HPE_INVALID_VERSION falls to 400.
+    const server = createServer(() => {});
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+    try {
+      const { closed, data } = await raw(port, "GET / HTTP/9.9\r\nHost: a\r\n\r\n");
+      await closed;
+      expect(data()).toBe("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n");
     } finally {
       server.close();
     }

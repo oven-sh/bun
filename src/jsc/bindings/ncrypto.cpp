@@ -2156,8 +2156,7 @@ DataPointer pbkdf2(const Digest& md,
 
 EVPKeyPointer::PrivateKeyEncodingConfig::PrivateKeyEncodingConfig(
     const PrivateKeyEncodingConfig& other)
-    : PrivateKeyEncodingConfig(
-          other.output_key_object, other.format, other.type)
+    : AsymmetricKeyEncodingConfig(other)
 {
     cipher = other.cipher;
     if (other.passphrase.has_value()) {

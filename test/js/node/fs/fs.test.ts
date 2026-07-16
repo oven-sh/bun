@@ -1812,6 +1812,56 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+describe("readv/writev with an empty buffers array", () => {
+  // Node surfaces libuv's uv_fs_read nbufs==0 guard as EINVAL for readv,
+  // but short-circuits writev([]) to 0 in JS before libuv sees it.
+  const expected = { code: "EINVAL", syscall: "read" };
+
+  it("readvSync throws EINVAL, writevSync returns 0", () => {
+    using dir = tempDir("fs-vec-empty-sync", { "f": "xyz" });
+    const fd = openSync(join(String(dir), "f"), "r+");
+    try {
+      expect(writevSync(fd, [])).toBe(0);
+      expect(writevSync(fd, [], 0)).toBe(0);
+      expect(() => readvSync(fd, [])).toThrow(expect.objectContaining(expected));
+      expect(() => readvSync(fd, [], 0)).toThrow(expect.objectContaining(expected));
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("fs.readv callback receives EINVAL, fs.writev receives 0", async () => {
+    using dir = tempDir("fs-vec-empty-cb", { "f": "xyz" });
+    const fd = openSync(join(String(dir), "f"), "r+");
+    try {
+      const written = await new Promise((resolve, reject) =>
+        fs.writev(fd, [], (err, n) => (err ? reject(err) : resolve(n))),
+      );
+      expect(written).toBe(0);
+
+      const err = await new Promise<NodeJS.ErrnoException>((resolve, reject) =>
+        fs.readv(fd, [], e => (e ? resolve(e) : reject(new Error("expected EINVAL")))),
+      );
+      expect({ code: err.code, syscall: err.syscall }).toEqual(expected);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("FileHandle#readv rejects EINVAL, FileHandle#writev resolves 0", async () => {
+    using dir = tempDir("fs-vec-empty-fh", { "f": "xyz" });
+    await using fh = await fs.promises.open(join(String(dir), "f"), "r+");
+    expect(await fh.writev([])).toEqual({ bytesWritten: 0, buffers: [] });
+    let err: any;
+    try {
+      await fh.readv([]);
+    } catch (e) {
+      err = e;
+    }
+    expect({ code: err?.code, syscall: err?.syscall }).toEqual(expected);
+  });
+});
+
 describe("writeSync", () => {
   it("works with bigint", () => {
     const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");

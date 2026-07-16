@@ -4310,6 +4310,109 @@ describe("hoisting", async () => {
       lockfile,
     );
   });
+
+  test("transitive wide range dedupes onto root range across majors", async () => {
+    // Root declares `hoist-lockfile-shared: ^1.0.1` (resolves to 1.0.2).
+    // `hoist-lockfile-1` depends on `hoist-lockfile-shared: *` (best-match 2.0.2).
+    // The `*` satisfies 1.0.2, so it must dedupe onto the root's copy instead of
+    // nesting a second install at 2.0.2 (npm also dedupes here).
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "hoist-lockfile-1": "1.0.0",
+          "hoist-lockfile-shared": "^1.0.1",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "+ hoist-lockfile-1@1.0.0",
+      expect.stringContaining("+ hoist-lockfile-shared@1.0.2"),
+      "",
+      "2 packages installed",
+    ]);
+    expect(await file(join(packageDir, "node_modules", "hoist-lockfile-shared", "package.json")).json()).toMatchObject({
+      name: "hoist-lockfile-shared",
+      version: "1.0.2",
+    });
+    expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // Second install from the saved lockfile must not rewrite it.
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    const second = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+    const [out2, err2, exitCode2] = await Promise.all([second.stdout.text(), second.stderr.text(), second.exited]);
+    expect(err2).not.toContain("Saved lockfile");
+    expect(err2).not.toContain("error:");
+    expect(out2).toContain("2 packages installed");
+    expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
+    expect(exitCode2).toBe(0);
+  });
+
+  test("transitive wide range dedupes onto workspace range across majors", async () => {
+    // Same as above but the narrow range lives in a workspace package.json.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        workspaces: ["pkg-a"],
+      }),
+    );
+    await mkdir(join(packageDir, "pkg-a"));
+    await write(
+      join(packageDir, "pkg-a", "package.json"),
+      JSON.stringify({
+        name: "pkg-a",
+        version: "1.0.0",
+        dependencies: {
+          "hoist-lockfile-1": "1.0.0",
+          "hoist-lockfile-shared": "^1.0.1",
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stderr: "pipe",
+      stdout: "pipe",
+      env,
+    });
+
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("packages installed");
+    expect(await file(join(packageDir, "node_modules", "hoist-lockfile-shared", "package.json")).json()).toMatchObject({
+      name: "hoist-lockfile-shared",
+      version: "1.0.2",
+    });
+    expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
+    expect(exitCode).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+  });
 });
 
 describe("transitive file dependencies", () => {

@@ -2684,7 +2684,7 @@ pub fn parse_into_binary_lockfile(
                         );
                         pkg.meta.integrity = Integrity::default();
                     }
-                    lockfile.record_integrity_alternates(&pkg.meta.integrity, integrity_alternates);
+                    lockfile.record_integrity_alternates(&pkg.meta.integrity, &integrity_alternates);
 
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
@@ -2722,7 +2722,7 @@ pub fn parse_into_binary_lockfile(
                             }
                             lockfile.record_integrity_alternates(
                                 &pkg.meta.integrity,
-                                integrity_alternates,
+                                &integrity_alternates,
                             );
                         }
                     }
@@ -2792,7 +2792,7 @@ pub fn parse_into_binary_lockfile(
                             }
                             lockfile.record_integrity_alternates(
                                 &pkg.meta.integrity,
-                                integrity_alternates,
+                                &integrity_alternates,
                             );
                         }
                     }

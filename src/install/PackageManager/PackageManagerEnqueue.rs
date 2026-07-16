@@ -1647,6 +1647,7 @@ fn init_extract_task(
                             .options
                             .do_
                             .contains(crate::package_manager_real::options::Do::VERIFY_INTEGRITY),
+                        integrity_alternates: tarball.integrity_alternates.clone(),
                         ..*tarball
                     },
                 }),

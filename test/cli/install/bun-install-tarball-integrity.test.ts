@@ -750,6 +750,59 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  // https://github.com/oven-sh/bun/issues/33700 — SSRI any-match (W3C SRI
+  // §3.3.4): a tarball matching *any* digest of the strongest algorithm must
+  // verify, regardless of order. 1.4 pinned to the first and hard-failed.
+  it("accepts a registry tarball matching a non-first digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const bogus = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+
+    // Bogus sha512 first, real sha512 second. An order-only flip of these two
+    // entries must not change install success.
+    await using server = serveManifest(`${bogus} ${real.sha512}`, real.tgz);
+    using dir = projectDir("integrity-registry-alt-match", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(await readdirSorted(join(String(dir), "node_modules", "pkg"))).toContain("package.json");
+
+    // Both digests round-trip into the lockfile so a later install from the
+    // lockfile alone (manifest cached) still accepts either.
+    const lockContent = await file(join(String(dir), "bun.lock")).text();
+    expect(lockContent).toContain(bogus);
+    expect(lockContent).toContain(real.sha512);
+  });
+
+  it("rejects a registry tarball matching no digest of the strongest algorithm", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const bogus1 = "sha512-" + Buffer.alloc(86, "A").toString() + "==";
+    const bogus2 = "sha512-" + Buffer.alloc(86, "B").toString() + "==";
+
+    await using server = serveManifest(`${bogus1} ${bogus2}`, real.tgz);
+    using dir = projectDir("integrity-registry-alt-none", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+
   // https://github.com/oven-sh/bun/issues/33700 — SSRI any-match: a tarball
   // matching any digest of the strongest algorithm must verify. Uses a URL
   // tarball (local-tarball paths are re-resolved per platform).

@@ -100,6 +100,13 @@ impl Integrity {
         strongest
     }
 
+    /// True if the SSRI string carries more than one whitespace-separated
+    /// entry, i.e. it may have alternate digests of the strongest algorithm.
+    #[inline]
+    pub fn is_multi_entry(buf: &[u8]) -> bool {
+        buf.iter().any(|c| c.is_ascii_whitespace())
+    }
+
     /// Like [`parse`], but also returns the other digests of the strongest
     /// algorithm present in a multi-entry SSRI string. W3C SRI §3.3.4 and
     /// npm's `ssri` pick the strongest algorithm and accept a match against
@@ -108,11 +115,11 @@ impl Integrity {
     /// `Integrity`; the remaining ones go into `IntegrityAlternates`.
     pub fn parse_with_alternates(buf: &[u8]) -> (Integrity, IntegrityAlternates) {
         let primary = Self::parse(buf);
-        let mut alternates = IntegrityAlternates::default();
         if primary.tag == Tag::UNKNOWN {
-            return (primary, alternates);
+            return (primary, IntegrityAlternates::default());
         }
         let len = primary.tag.digest_len();
+        let mut extras: Vec<[u8; DIGEST_BUF_LEN]> = Vec::new();
         for entry in buf.split(|c: &u8| c.is_ascii_whitespace()) {
             let parsed = Self::parse_entry(entry);
             if parsed.tag != primary.tag {
@@ -122,20 +129,22 @@ impl Integrity {
             if strings::eql_long(&parsed.value[0..len], &primary.value[0..len], true) {
                 continue;
             }
-            let mut dup = false;
-            for i in 0..alternates.count as usize {
-                if strings::eql_long(&alternates.values[i][0..len], &parsed.value[0..len], true) {
-                    dup = true;
-                    break;
-                }
-            }
-            if dup {
+            if extras
+                .iter()
+                .any(|v| strings::eql_long(&v[0..len], &parsed.value[0..len], true))
+            {
                 continue;
             }
-            if !alternates.push(primary.tag, &parsed.value) {
-                break;
-            }
+            extras.push(parsed.value);
         }
+        let alternates = if extras.is_empty() {
+            IntegrityAlternates::default()
+        } else {
+            IntegrityAlternates {
+                tag: primary.tag,
+                values: extras.into_boxed_slice(),
+            }
+        };
         (primary, alternates)
     }
 
@@ -323,32 +332,24 @@ impl fmt::Display for Integrity {
     }
 }
 
-/// Maximum number of *alternate* digests (of the strongest algorithm) carried
-/// alongside the primary `Integrity`. SSRI allows any number of digests per
-/// algorithm; beyond this cap the extra ones are ignored. npm publishes a
-/// single digest per algorithm, so multiple same-algorithm digests only appear
-/// in hand-edited or migrated lockfiles and unusual third-party registries.
-pub const MAX_INTEGRITY_ALTERNATES: usize = 3;
-
 /// Additional digests of the strongest algorithm found in a multi-entry SSRI
 /// string (see [`Integrity::parse_with_alternates`]). The primary digest lives
 /// in a companion [`Integrity`]; these are the others that must also be
-/// accepted at verify time. Runtime-only: never serialized to the lockfile or
-/// the npm manifest cache. The lockfile writer re-emits them next to the
-/// primary so the multi-digest shape round-trips.
-#[derive(Clone, Copy)]
+/// accepted at verify time. The lockfile writer re-emits them next to the
+/// primary so the multi-digest shape round-trips. Empty (no heap allocation)
+/// in the common single-digest case.
+#[derive(Clone)]
 pub struct IntegrityAlternates {
     pub tag: Tag,
-    pub count: u8,
-    pub values: [[u8; DIGEST_BUF_LEN]; MAX_INTEGRITY_ALTERNATES],
+    pub values: Box<[[u8; DIGEST_BUF_LEN]]>,
 }
 
 impl Default for IntegrityAlternates {
+    #[inline]
     fn default() -> Self {
         Self {
             tag: Tag::UNKNOWN,
-            count: 0,
-            values: [EMPTY_DIGEST_BUF; MAX_INTEGRITY_ALTERNATES],
+            values: Box::default(),
         }
     }
 }
@@ -356,44 +357,30 @@ impl Default for IntegrityAlternates {
 impl IntegrityAlternates {
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.count == 0
-    }
-
-    fn push(&mut self, tag: Tag, value: &[u8; DIGEST_BUF_LEN]) -> bool {
-        let i = self.count as usize;
-        if i >= MAX_INTEGRITY_ALTERNATES {
-            return false;
-        }
-        self.tag = tag;
-        self.values[i] = *value;
-        self.count += 1;
-        true
+        self.values.is_empty()
     }
 
     /// Iterate the stored alternate digests as `Integrity` values, for
     /// re-emitting them in the lockfile next to the primary.
     pub fn iter(&self) -> impl Iterator<Item = Integrity> + '_ {
         let tag = self.tag;
-        self.values[0..self.count as usize]
+        self.values
             .iter()
             .map(move |value| Integrity { tag, value: *value })
     }
 
     /// True if `digest` (already computed with `tag`) equals any alternate.
     pub fn matches(&self, tag: Tag, digest: &[u8]) -> bool {
-        if self.tag != tag || self.count == 0 {
+        if self.tag != tag || self.values.is_empty() {
             return false;
         }
         let len = tag.digest_len();
         if len == 0 || digest.len() < len {
             return false;
         }
-        for i in 0..self.count as usize {
-            if strings::eql_long(&self.values[i][0..len], &digest[0..len], true) {
-                return true;
-            }
-        }
-        false
+        self.values
+            .iter()
+            .any(|v| strings::eql_long(&v[0..len], &digest[0..len], true))
     }
 }
 
@@ -485,7 +472,7 @@ impl Streaming {
     ) -> Streaming {
         Streaming {
             expected: *expected,
-            alternates: *alternates,
+            alternates: alternates.clone(),
             hasher: match expected.tag {
                 Tag::SHA1 => Hasher::Sha1(Crypto::SHA1::init()),
                 Tag::SHA256 => Hasher::Sha256(Crypto::SHA256::init()),

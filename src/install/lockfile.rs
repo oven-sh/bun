@@ -219,11 +219,11 @@ pub struct Lockfile {
     /// Alternate digests of the strongest algorithm for packages whose SSRI
     /// integrity string carried more than one (W3C SRI §3.3.4 any-match),
     /// keyed by the primary digest bytes (`Integrity.value`). Populated from
-    /// the parse paths (`bun.lock`, migrations) and consulted both at tarball
-    /// verify time and when re-emitting the lockfile so the shape round-trips.
-    /// Empty in the common single-digest case. Runtime-only — never
-    /// serialised.
-    pub integrity_alternates: std::collections::HashMap<[u8; DIGEST_BUF_LEN], IntegrityAlternates>,
+    /// the parse paths (`bun.lock`, npm manifest, migrations) and consulted
+    /// both at tarball verify time and when re-emitting the lockfile so the
+    /// shape round-trips. Empty in the common single-digest case.
+    /// Runtime-only — never serialised.
+    pub integrity_alternates: BunHashMap<[u8; DIGEST_BUF_LEN], IntegrityAlternates>,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -1234,7 +1234,7 @@ impl Lockfile {
             // is keyed by the primary digest bytes, and `Package::clone` copies
             // `meta.integrity` verbatim, so the keys stay valid.
             if !old.integrity_alternates.is_empty() {
-                new.integrity_alternates = old.integrity_alternates.clone();
+                new.integrity_alternates = core::mem::take(&mut old.integrity_alternates);
             }
         }
 
@@ -2153,7 +2153,7 @@ impl Lockfile {
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
             exact_pinned: DynamicBitSet::default(),
-            integrity_alternates: std::collections::HashMap::new(),
+            integrity_alternates: BunHashMap::default(),
         }
     }
 
@@ -2162,13 +2162,15 @@ impl Lockfile {
     pub fn record_integrity_alternates(
         &mut self,
         integrity: &Integrity,
-        alternates: IntegrityAlternates,
+        alternates: &IntegrityAlternates,
     ) {
         if alternates.is_empty() || !integrity.tag.is_supported() {
             return;
         }
-        self.integrity_alternates
-            .insert(integrity.value, alternates);
+        bun_core::handle_oom(
+            self.integrity_alternates
+                .put(integrity.value, alternates.clone()),
+        );
     }
 
     /// Alternate digests recorded for `integrity`, or an empty set.
@@ -2178,7 +2180,7 @@ impl Lockfile {
         }
         self.integrity_alternates
             .get(&integrity.value)
-            .copied()
+            .cloned()
             .unwrap_or_default()
     }
 

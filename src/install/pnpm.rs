@@ -910,7 +910,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                             Integrity::parse_with_alternates(integrity_str);
                         pkg.meta.integrity = integrity;
                         lockfile
-                            .record_integrity_alternates(&pkg.meta.integrity, integrity_alternates);
+                            .record_integrity_alternates(&pkg.meta.integrity, &integrity_alternates);
                     }
                 }
 

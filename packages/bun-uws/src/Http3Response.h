@@ -70,7 +70,7 @@ struct Http3Response {
     bool write(std::string_view data, size_t *writtenPtr = nullptr) {
         Http3ResponseData *d = getHttpResponseData();
         flushHeaders();
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             d->backpressure.append(data.data(), data.length());
             if (writtenPtr) *writtenPtr = 0;
             us_quic_stream_want_write((us_quic_stream_t *) this, 1);
@@ -108,6 +108,9 @@ struct Http3Response {
         } else {
             writeStatus("200 OK");
             sendBufferedHeaders(d, true);
+            /* Deferred behind a draining interim block: drain() resends the
+             * header block (with FIN) and calls markDone then. */
+            if (d->headersDeferred) return;
         }
         markDone(d);
     }
@@ -115,7 +118,7 @@ struct Http3Response {
     bool sendTerminatingChunk(bool /*closeConnection*/ = false) {
         Http3ResponseData *d = getHttpResponseData();
         flushHeaders();
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             d->endAfterDrain = true;
             us_quic_stream_want_write((us_quic_stream_t *) this, 1);
             return false;
@@ -185,6 +188,19 @@ struct Http3Response {
     /* Called from Http3Context's on_stream_writable. */
     bool drain() {
         Http3ResponseData *d = getHttpResponseData();
+        if (d->headersDeferred) {
+            d->headersDeferred = false;
+            bool endStream = d->deferredEndStream;
+            /* The interim block has drained (this callback only fires once it
+             * has), so the resend now succeeds; sendBufferedHeaders re-arms
+             * headersDeferred only if it is somehow still pending. */
+            sendBufferedHeaders(d, endStream);
+            if (d->headersDeferred) return false;
+            if (endStream) {
+                markDone(d);
+                return true;
+            }
+        }
         while (d->backpressure.length() != 0) {
             int w = us_quic_stream_write((us_quic_stream_t *) this,
                 d->backpressure.data(), (unsigned) d->backpressure.length());
@@ -210,13 +226,26 @@ private:
     }
 
     void sendBufferedHeaders(Http3ResponseData *d, bool endStream) {
+        /* Resolve the stored byte offsets into absolute pointers in a local
+         * copy so hdrs/hdrBuf stay untouched and can be resent as-is if the
+         * send is deferred below. */
         const char *base = d->hdrBuf.span().data();
+        WTF::Vector<us_quic_header_t, 16> resolved;
+        resolved.reserveInitialCapacity(d->hdrs.size());
         for (auto &h : d->hdrs) {
-            h.name = base + (uintptr_t) h.name;
-            h.value = base + (uintptr_t) h.value;
+            resolved.append({base + (uintptr_t) h.name, h.name_len,
+                             base + (uintptr_t) h.value, h.value_len, h.qpack_index});
         }
-        us_quic_stream_send_headers((us_quic_stream_t *) this,
-            d->hdrs.mutableSpan().data(), (unsigned) d->hdrs.size(), endStream);
+        int r = us_quic_stream_send_headers((us_quic_stream_t *) this,
+            resolved.mutableSpan().data(), (unsigned) resolved.size(), endStream);
+        if (r == US_QUIC_SEND_HEADERS_PENDING) {
+            /* An auto-sent 100-continue block is still draining; lsquic refused
+             * this block (#33082). Keep it buffered and resend from drain(). */
+            d->headersDeferred = true;
+            d->deferredEndStream = endStream;
+            us_quic_stream_want_write((us_quic_stream_t *) this, 1);
+            return;
+        }
         d->hdrBuf.shrink(0);
         d->hdrs.shrink(0);
     }
@@ -234,6 +263,9 @@ private:
             }
             if (data.empty() && d->offset == totalSize) {
                 sendBufferedHeaders(d, true);
+                /* Deferred behind a draining interim block: drain() resends
+                 * the header block (with FIN) and calls markDone then. */
+                if (d->headersDeferred) return false;
                 markDone(d);
                 return true;
             }
@@ -241,7 +273,7 @@ private:
             d->state |= Http3ResponseData::HTTP_WRITE_CALLED;
         }
 
-        if (d->backpressure.length() != 0) {
+        if (d->headersDeferred || d->backpressure.length() != 0) {
             if (optional) return false;
             d->backpressure.append(data.data(), data.length());
             d->endAfterDrain = true;

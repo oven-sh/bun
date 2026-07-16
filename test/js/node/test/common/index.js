@@ -1329,6 +1329,38 @@ function installBunExposeInternalsShim() {
         loader: "object",
         exports: { kTimeout: Symbol.for("::buntimeout::") },
       }));
+      // node's internal/http: serve the very same symbols Bun's _http_outgoing
+      // attaches to OutgoingMessage instances, so tests poke at real state.
+      build.module("internal/http", () => {
+        const { kOutHeaders, kHighWaterMark } = require("node:_http_outgoing");
+        return {
+          loader: "object",
+          exports: { kOutHeaders, kHighWaterMark },
+        };
+      });
+      // node's internal/streams/state: getDefaultHighWaterMark is also part of
+      // the public node:stream API, so reuse that (same function in Bun).
+      build.module("internal/streams/state", () => ({
+        loader: "object",
+        exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
+      }));
+      // node's internal/options: map the few CLI options vendored http tests ask
+      // about onto the equivalent runtime values. Unknown options return undefined.
+      build.module("internal/options", () => ({
+        loader: "object",
+        exports: {
+          getOptionValue(name) {
+            switch (name) {
+              case "--max-http-header-size":
+                return require("node:http").maxHeaderSize;
+              case "--insecure-http-parser":
+                return false;
+              default:
+                return undefined;
+            }
+          },
+        },
+      }));
     },
   });
 }

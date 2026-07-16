@@ -1278,12 +1278,13 @@ test("compile --compile-executable-path rejects a template shorter than the exec
     return { stdout, stderr, exitCode };
   };
 
-  for (const [target, template, wantErr] of [
-    ["bun-darwin-x64", "tiny", "InvalidObject"],
-    ["bun-darwin-x64", "badcmds", "InvalidObject"],
-    ["bun-darwin-x64", "shortseg", "InvalidObject"],
-    ["bun-linux-x64", "tiny", "InvalidElfFile"],
-    ["bun-windows-x64", "tiny", "InvalidPEFile"],
+  for (const [target, template, wantErr, outName] of [
+    ["bun-darwin-x64", "tiny", "InvalidObject", "out-tiny"],
+    ["bun-darwin-x64", "badcmds", "InvalidObject", "out-badcmds"],
+    ["bun-darwin-x64", "shortseg", "InvalidObject", "out-shortseg"],
+    ["bun-linux-x64", "tiny", "InvalidElfFile", "out-tiny"],
+    // build_command.rs appends .exe to the outfile for Windows targets.
+    ["bun-windows-x64", "tiny", "InvalidPEFile", "out-tiny.exe"],
   ] as const) {
     const { stderr, exitCode } = await run(target, template);
     expect({ target, template, stderr }).toEqual({
@@ -1291,7 +1292,7 @@ test("compile --compile-executable-path rejects a template shorter than the exec
       template,
       stderr: expect.stringContaining(wantErr),
     });
-    expect(await Bun.file(join(cwd, `out-${template}`)).exists()).toBe(false);
+    expect(await Bun.file(join(cwd, outName)).exists()).toBe(false);
     expect(exitCode).toBe(1);
   }
 }, 60_000);

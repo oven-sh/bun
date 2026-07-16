@@ -46,25 +46,31 @@ macro_rules! shift_fields {
     }};
 }
 
+/// Read and validate the `mach_header_64` at the start of `obj`.
+/// `--compile-executable-path` accepts arbitrary files, so reject inputs too
+/// short for the header or whose load-command table runs past EOF; callers
+/// slice `obj[header_size..][..header.sizeofcmds]` on the returned header.
+fn read_macho_header(obj: &[u8]) -> Result<macho::mach_header_64, MachoError> {
+    let header_size = size_of::<macho::mach_header_64>();
+    if obj.len() < header_size {
+        return Err(MachoError::InvalidObject);
+    }
+    let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
+    let cmds_end = (header.sizeofcmds as usize)
+        .checked_add(header_size)
+        .ok_or(MachoError::InvalidObject)?;
+    if cmds_end > obj.len() {
+        return Err(MachoError::InvalidObject);
+    }
+    Ok(header)
+}
+
 impl MachoFile {
     pub fn init(
         obj_file: &[u8],
         blob_to_embed_length: usize,
     ) -> Result<Box<MachoFile>, MachoError> {
-        // `--compile-executable-path` accepts arbitrary files; reject inputs too short
-        // for the header or whose load-command table runs past EOF so the slice sites
-        // in `iterator()` and below stay in bounds instead of panicking.
-        let header_size = size_of::<macho::mach_header_64>();
-        if obj_file.len() < header_size {
-            return Err(MachoError::InvalidObject);
-        }
-        let header: macho::mach_header_64 = read_struct(&obj_file[..header_size]);
-        let cmds_end = (header.sizeofcmds as usize)
-            .checked_add(header_size)
-            .ok_or(MachoError::InvalidObject)?;
-        if cmds_end > obj_file.len() {
-            return Err(MachoError::InvalidObject);
-        }
+        let header = read_macho_header(obj_file)?;
 
         let mut data: Vec<u8> = Vec::with_capacity(obj_file.len() + blob_to_embed_length);
         data.extend_from_slice(obj_file);
@@ -567,16 +573,7 @@ pub(crate) struct MachoSigner {
 impl MachoSigner {
     pub(crate) fn init(obj: &[u8]) -> Result<Box<MachoSigner>, MachoError> {
         let header_size = size_of::<macho::mach_header_64>();
-        if obj.len() < header_size {
-            return Err(MachoError::InvalidObject);
-        }
-        let header: macho::mach_header_64 = read_struct(&obj[..header_size]);
-        let cmds_end = (header.sizeofcmds as usize)
-            .checked_add(header_size)
-            .ok_or(MachoError::InvalidObject)?;
-        if cmds_end > obj.len() {
-            return Err(MachoError::InvalidObject);
-        }
+        let header = read_macho_header(obj)?;
 
         let mut sig_off: usize = 0;
         let mut sig_sz: usize = 0;

@@ -549,6 +549,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             auto& options = worker.options();
 
             if (options.env.has_value()) {
+                auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
                 HashMap<String, String> map = *std::exchange(options.env, std::nullopt);
                 auto size = map.size();
 
@@ -571,9 +572,13 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 #endif
                 size_t i = 0;
                 for (auto k : map) {
-                    // They can have environment variables with numbers as keys.
-                    // So we must use putDirectMayBeIndex to handle that.
+                    // Numeric env keys go through putDirectIndex, which on a
+                    // non-JSFinalObject routes through defineOwnProperty; the
+                    // override declares a ThrowScope, so check after each one.
+                    // The seeded values are already JSStrings so the only real
+                    // throw is OOM inside Base::put.
                     env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTF::move(k.key)), strings.at(i++));
+                    scope.assertNoException();
                 }
                 globalObject->m_processEnvObject.set(vm, globalObject, env);
             } else if (options.sharedEnvStore) {

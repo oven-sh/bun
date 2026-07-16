@@ -1234,16 +1234,27 @@ test("compile --compile-executable-path rejects a template shorter than the exec
   });
   const cwd = String(dir);
 
+  const machHeader = (ncmds: number, sizeofcmds: number) => {
+    const b = Buffer.alloc(32);
+    b.writeUInt32LE(0xfeedfacf, 0); // MH_MAGIC_64
+    b.writeInt32LE(0x01000007, 4); // CPU_TYPE_X86_64
+    b.writeInt32LE(3, 8); // cpusubtype
+    b.writeUInt32LE(2, 12); // filetype = MH_EXECUTE
+    b.writeUInt32LE(ncmds, 16);
+    b.writeUInt32LE(sizeofcmds, 20);
+    return b;
+  };
+
   // mach_header_64 with ncmds=2 sizeofcmds=10000 but only 8 trailing bytes — exercises the
   // load-command-table bounds check in MachoFile::init (iterator() would otherwise slice OOB).
-  const hdr = Buffer.alloc(40);
-  hdr.writeUInt32LE(0xfeedfacf, 0); // MH_MAGIC_64
-  hdr.writeInt32LE(0x01000007, 4); // CPU_TYPE_X86_64
-  hdr.writeInt32LE(3, 8); // cpusubtype
-  hdr.writeUInt32LE(2, 12); // filetype = MH_EXECUTE
-  hdr.writeUInt32LE(2, 16); // ncmds
-  hdr.writeUInt32LE(10000, 20); // sizeofcmds (past EOF)
-  await Bun.write(join(cwd, "badcmds"), hdr);
+  await Bun.write(join(cwd, "badcmds"), Buffer.concat([machHeader(2, 10000), Buffer.alloc(8)]));
+
+  // mach_header_64 + one LC_SEGMENT_64 whose cmdsize (8) is smaller than sizeof(segment_command_64)
+  // (72) — exercises the cast-site guard in write_section().
+  const lc = Buffer.alloc(8);
+  lc.writeUInt32LE(0x19, 0); // LC_SEGMENT_64
+  lc.writeUInt32LE(8, 4); // cmdsize
+  await Bun.write(join(cwd, "shortseg"), Buffer.concat([machHeader(1, 8), lc]));
 
   const run = async (target: string, template: string) => {
     await using proc = Bun.spawn({
@@ -1270,6 +1281,7 @@ test("compile --compile-executable-path rejects a template shorter than the exec
   for (const [target, template, wantErr] of [
     ["bun-darwin-x64", "tiny", "InvalidObject"],
     ["bun-darwin-x64", "badcmds", "InvalidObject"],
+    ["bun-darwin-x64", "shortseg", "InvalidObject"],
     ["bun-linux-x64", "tiny", "InvalidElfFile"],
     ["bun-windows-x64", "tiny", "InvalidPEFile"],
   ] as const) {

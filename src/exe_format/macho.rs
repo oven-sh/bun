@@ -111,7 +111,7 @@ impl MachoFile {
                 macho::LC::SEGMENT_64 => {
                     let command = entry
                         .cast::<macho::segment_command_64>()
-                        .expect("unreachable");
+                        .ok_or(MachoError::InvalidObject)?;
                     if command.seg_name() == b"__BUN" {
                         if command.nsects > 0 {
                             let section_offset = entry.data.as_ptr() as usize - base_addr;
@@ -492,7 +492,7 @@ impl MachoFile {
             if cmd.cmd == macho::LC::SEGMENT_64 {
                 let seg = entry
                     .cast::<macho::segment_command_64>()
-                    .expect("unreachable");
+                    .ok_or(MachoError::InvalidObject)?;
                 if seg.fileoff < prev_end {
                     return Err(MachoError::OverlappingSegments);
                 }
@@ -599,7 +599,7 @@ impl MachoSigner {
             if cmd.cmd() == macho::LC::SEGMENT_64 {
                 let seg = cmd
                     .cast::<macho::segment_command_64>()
-                    .expect("unreachable");
+                    .ok_or(MachoError::InvalidObject)?;
 
                 // Store segment info
                 if seg.seg_name() == SEG_LINKEDIT {
@@ -628,7 +628,7 @@ impl MachoSigner {
                 macho::LC::CODE_SIGNATURE => {
                     let cs = cmd
                         .cast::<macho::linkedit_data_command>()
-                        .expect("unreachable");
+                        .ok_or(MachoError::InvalidObject)?;
                     sig_off = cs.dataoff as usize;
                     sig_sz = cs.datasize as usize;
                     cs_cmd_off = cmd.data.as_ptr() as usize - obj.as_ptr() as usize;

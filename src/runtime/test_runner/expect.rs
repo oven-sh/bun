@@ -836,7 +836,9 @@ impl Expect {
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
         vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
-        return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
+        let call_result = value.call(global_this, JSValue::UNDEFINED, &[]);
+        let threw_sync = call_result.is_err();
+        return_value_from_function = match call_result {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),
         };
@@ -844,6 +846,7 @@ impl Expect {
 
         vm.global().handle_rejected_promises();
 
+        let captured_rejection = !return_value.is_empty();
         if return_value.is_empty() {
             return_value = return_value_from_function;
         }
@@ -870,6 +873,12 @@ impl Expect {
         }
 
         scope.apply(vm);
+
+        if !threw_sync && !captured_rejection {
+            // The function returned normally with a non-Promise value. A returned
+            // Error instance is not a throw (matches Jest and Vitest).
+            return Ok((None, return_value_from_function));
+        }
 
         Ok((
             return_value.to_error().or_else(|| return_value_from_function.to_error()),

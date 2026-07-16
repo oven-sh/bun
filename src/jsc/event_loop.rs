@@ -602,6 +602,21 @@ impl EventLoop {
         }
     }
 
+    /// A finished HTTP transaction asks the GC heuristic to look at the heap -- but not yet:
+    /// the response's JS handling and microtasks have not run, so the garbage is not there to
+    /// see. Acted on at the next park (`drain_pending_gc_hint`). `&self`: callers run inside
+    /// `tick_queue_with_count`, which already holds the `&mut EventLoop`.
+    pub fn request_gc_hint(&self) {
+        self.vm_ref().as_mut().gc_controller.request_hint();
+    }
+
+    /// Acts on a hint left by `request_gc_hint`. Must run BEFORE the poll deadline is computed
+    /// (`timer::All::get_timeout`): the GC heuristic arms a one-shot timer, and a timer armed
+    /// after the deadline is not in it -- the loop would sleep straight past it.
+    pub fn drain_pending_gc_hint(&mut self) {
+        self.vm_ref().as_mut().gc_controller.drain_pending_hint();
+    }
+
     #[inline]
     pub fn process_gc_timer(&mut self) {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();
@@ -795,6 +810,11 @@ impl EventLoop {
                 unsafe { __bun_cancel_pending_immediate(task, vm) };
             }
         }
+        // Free the deferred-task map's storage. The tasks must not be run (same rule as the
+        // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
+        // released it when the JSC teardown before this finalized it. A worker's VM box is
+        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing else frees it.
+        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
     }
 
     /// Note (§Dispatch): `task` is an erased
@@ -1118,12 +1138,16 @@ impl EventLoop {
             self.hold_forever_poll(loop_);
         }
 
+        self.drain_pending_gc_hint();
         self.process_gc_timer();
         self.process_gc_timer();
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        loop_.tick_with_timeout(Some(&bun_core::Timespec { sec: 1, nsec: 0 }));
+        loop_.tick_with_timeout(
+            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+            uws::NOW_NS_UNKNOWN,
+        );
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();

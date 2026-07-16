@@ -197,10 +197,11 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
-/// thread's). `WTFTimer` and the `timer_insert`/`timer_remove` hooks may be
-/// invoked off the VM's JS thread (the `All.lock` mutex exists for exactly
-/// that), so they must reach the heap through `vm.runtime_state` rather than
-/// the thread-local cache.
+/// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
+/// `All.wtf_timers` heap exists for exactly that), and the
+/// `timer_insert`/`timer_remove` hooks take `vm` from a tier that cannot see
+/// `RuntimeState`; both must reach the heap through `vm.runtime_state`
+/// rather than the thread-local cache.
 ///
 /// # Safety
 /// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
@@ -337,9 +338,24 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(core::mem::ManuallyDrop::new(
-            crate::webcore::body::HiveAllocator::init(),
-        )),
+        body_value_pool: {
+            // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
+            // ~100 KB pool in a stack temporary before moving it into the box (see
+            // `HiveArray::new_boxed`). Allocate it on the heap and initialize it in
+            // place instead — only the occupancy bitset is written.
+            let pool = crate::webcore::body::HiveAllocator::new_boxed();
+            // SAFETY: `new_boxed` leaks a `Box<HiveAllocator>`; reclaim ownership of
+            // that same allocation. `ManuallyDrop` is `repr(transparent)`, so
+            // `Box<ManuallyDrop<T>>` and `Box<T>` have identical layout — the wrapper
+            // only suppresses the inner drop, which is the behavior documented on the
+            // field.
+            unsafe {
+                Box::from_raw(
+                    pool.as_ptr()
+                        .cast::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>(),
+                )
+            }
+        },
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
@@ -975,6 +991,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
+            // Before `get_timeout`, not after: both of these can arm the GC timer, and a
+            // timer armed after the poll deadline is computed is not in that deadline.
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).drain_pending_gc_hint() };
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
             // Note (§Forbidden aliased-&mut): `get_timeout` may fire a
@@ -986,6 +1006,10 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // `timer::All::get_timeout` forms short-lived `&mut` only around
             // heap ops that cannot re-enter JS, releasing the borrow before
             // invoking `fire()`.
+            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
+            // and so is the hook: NOW_NS_UNKNOWN means it took none.
+            let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
             let have_timeout = unsafe {
@@ -995,11 +1019,14 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                     has_pending_immediate,
                     quic_next_tick_us,
                     vm.cast(),
+                    &mut now,
                 )
             };
+            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
+                (*loop_)
+                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
@@ -1098,8 +1125,15 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         let mut timespec = bun_core::Timespec { sec: 0, nsec: 0 };
         // SAFETY: `loop_` is the live per-thread uws loop.
         if unsafe { (*loop_).is_active() } {
+            // Before `get_timeout` — see the matching call in `auto_tick`.
+            // SAFETY: `el` is the live per-thread event loop.
+            unsafe { (*el).drain_pending_gc_hint() };
             // SAFETY: `el` is the live per-thread event loop.
             unsafe { (*el).process_gc_timer() };
+            // `get_timeout` reads CLOCK_MONOTONIC to compare against the timer heap; hand that
+            // same reading to the tick for the park hook's idle-sweep rate limit. It is lazy,
+            // and so is the hook: NOW_NS_UNKNOWN means it took none.
+            let mut now: Option<bun_core::Timespec> = None;
             // SAFETY: `state` is the live per-thread `RuntimeState`; see
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
             let have_timeout = unsafe {
@@ -1109,11 +1143,14 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                     has_pending_immediate,
                     quic_next_tick_us,
                     vm.cast(),
+                    &mut now,
                 )
             };
+            let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
             // SAFETY: `loop_` is the live per-thread uws loop.
             unsafe {
-                (*loop_).tick_with_timeout(if have_timeout { Some(&timespec) } else { None })
+                (*loop_)
+                    .tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns)
             };
         } else {
             // SAFETY: `loop_` is the live per-thread uws loop.
@@ -1190,8 +1227,7 @@ unsafe fn timer_insert(
     let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_insert before init_runtime_state");
     // SAFETY: this leaf hook runs no JS, so a short-lived `&mut RuntimeState`
-    // does not alias anything. `Timer::All::insert` takes its own lock and
-    // re-derefs `t` per-field.
+    // does not alias anything. `Timer::All::insert` re-derefs `t` per-field.
     unsafe { &mut (*state).timer }.insert(t);
 }
 

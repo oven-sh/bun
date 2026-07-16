@@ -150,6 +150,9 @@ void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
 #ifndef LIBUS_USE_LIBUV
+/* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
+ * against, so anything comparing against one must read it and not another. */
+uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
 #endif
@@ -224,6 +227,7 @@ int us_internal_ssl_write(us_socket_r s, const char *data, int length);
 void *us_internal_ssl_get_native_handle(us_socket_r s);
 struct us_bun_verify_error_t us_internal_ssl_verify_error(us_socket_r s);
 void *us_internal_ssl_sni_userdata(us_socket_r s);
+const char *us_internal_ssl_sni_servername(us_socket_r s);
 void us_internal_ssl_handshake_abort(us_socket_r s);
 /* SSL_CTX_free(ls->ssl_ctx) + sni_free(ls->sni). Called from us_listen_socket_close. */
 void us_internal_listen_socket_ssl_free(struct us_listen_socket_t *ls);
@@ -283,6 +287,10 @@ struct us_socket_t {
   /* Same as ssl_shutdown_after_spill but for us_internal_ssl_close: the
    * close re-runs from the writable event once the spill drains. */
   unsigned char ssl_close_after_spill : 1;
+  /* The plaintext EOF (peer close_notify or the raw TCP FIN behind it) was
+   * already dispatched to the user layer; both EOF paths can fire for one
+   * connection, and the end handler must run once. */
+  unsigned char ssl_end_delivered : 1;
   /* Set while SSL_do_handshake/SSL_read is on the stack: JS run from inside
    * those calls (ALPN/SNI/keylog callbacks) may destroy the socket, and the
    * SSL must not be freed under BoringSSL's feet - the detach is deferred to
@@ -293,6 +301,15 @@ struct us_socket_t {
    * inside a handshake callback must still RST, not FIN, when it is finally
    * performed). */
   unsigned char ssl_pending_close_code;
+  /* Consecutive send() failures with an errno that is neither
+   * would-block/transient nor a known peer-gone error (see
+   * us_socket_write_check_error). Reset by any send that makes progress.
+   * Lives in the pad-to-pointer gap before `group`, so it costs nothing. */
+  /* 7 bits fit the 32-cap retry counter; the spare bit marks a paused
+   * socket whose peer FIN was deferred behind buffered data (libuv path -
+   * the sweep escalates via SO_ERROR when the peer later resets). */
+  unsigned char unclassified_send_failures : 7;
+  unsigned char fin_deferred : 1;
 
   struct us_socket_group_t *group;
   /* NULL for plain TCP. Direct BoringSSL `SSL*`; set by us_internal_ssl_attach

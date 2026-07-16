@@ -42,6 +42,7 @@
 #include <JavaScriptCore/JSMap.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 #include "MessageEvent.h"
+#include "BunSamplingProfilerReporter.h"
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
 #include "JSDOMConvertObject.h"
@@ -647,6 +648,13 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     // can never run (e.g. notifyPeerClosed posted during the final collectNow).
     if (auto* ctx = globalObject->scriptExecutionContext())
         ctx->markTerminating();
+    // Write any pending sampling profiler report and release the refs that
+    // would otherwise keep this VM alive past the deref below. Must happen
+    // here, while this thread is still alive: `~VM` is what shuts the
+    // sampling thread down, and sampling a dead thread wedges it. Must also
+    // run after setHasTerminationRequest(): the profiler's DeferTermination
+    // scope asserts the request flag when a termination exception is pending.
+    Bun::reportSamplingProfilerBeforeVMTeardown(vm);
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);

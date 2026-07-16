@@ -405,6 +405,18 @@ impl CreateCommand {
                                     "\n<r><red>error:<r> GitHub returned 403. This usually means GitHub is rate limiting your requests.\nTo fix this, either:<r>  <b>A) pass a <r><cyan>GITHUB_ACCESS_TOKEN<r> environment variable to bun<r>\n  <b>B)Wait a little and try again<r>\n",
                                 );
                                 Global::crash();
+                            } else if matches!(
+                                err,
+                                crate::Error::GitHubIsDown | crate::Error::HTTPTooManyRequests
+                            ) {
+                                node.end();
+                                progress.refresh();
+
+                                pretty_error!(
+                                    "\n<r><red>error:<r> GitHub returned a server error while fetching the tarball for <b>\"{}\"<r>. GitHub may be temporarily unavailable; wait a moment and try again.\n",
+                                    bstr::BStr::new(template),
+                                );
+                                Global::crash();
                             } else if matches!(err, crate::Error::GitHubRepositoryNotFound) {
                                 node.end();
                                 progress.refresh();
@@ -2322,7 +2334,7 @@ impl Example {
             404 => return Err(crate::Error::GitHubRepositoryNotFound),
             403 => return Err(crate::Error::HTTPForbidden),
             429 => return Err(crate::Error::HTTPTooManyRequests),
-            499..=599 => return Err(crate::Error::NPMIsDown),
+            499..=599 => return Err(crate::Error::GitHubIsDown),
             200 => {}
             _ => return Err(crate::Error::HTTPError),
         }

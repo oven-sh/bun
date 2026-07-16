@@ -2,7 +2,7 @@
 // strings (HTML/JSX/XML) were being consumed by the `<tag>` → ANSI markup pass
 // because the pass ran over the rendered message instead of the template.
 
-import { test, expect, describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 const fixture = /* ts */ `
@@ -57,11 +57,7 @@ async function run(env: Record<string, string | undefined>) {
     stdout: "pipe",
     stderr: "pipe",
   });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   return { stdout, stderr, exitCode };
 }
 

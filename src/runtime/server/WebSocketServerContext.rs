@@ -30,6 +30,11 @@ pub struct Handler {
 
     pub app: Option<*mut c_void>,
 
+    /// Set alongside `app` in `set_routes`; lets a closing connection
+    /// re-evaluate the server's deinit gate (graceful stop holds the
+    /// server's ref until pending work drains).
+    pub server: Option<super::AnyServer>,
+
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
@@ -81,6 +86,18 @@ impl Handler {
             .set(self.active_connections.get().saturating_sub(n));
     }
 
+    /// A connection fully closed: decrement and, when it was the last one,
+    /// re-evaluate the server's deinit gate so a graceful stop's deferred
+    /// unref/all-closed promise (deinit_if_we_can) can complete.
+    pub fn on_connection_closed(&self) {
+        self.active_connections_saturating_sub(1);
+        if self.active_connections.get() == 0 {
+            if let Some(mut server) = self.server {
+                server.deinit_if_we_can();
+            }
+        }
+    }
+
     pub fn run_error_callback(
         &self,
         vm: &VirtualMachine,
@@ -121,6 +138,7 @@ impl Handler {
             on_ping: JSValue::ZERO,
             on_pong: JSValue::ZERO,
             app: None,
+            server: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
             active_connections: core::cell::Cell::new(0),

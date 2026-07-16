@@ -101,7 +101,7 @@ function watch(
     if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
       return;
     }
-    queue.push({ eventType, filename });
+    queue.push({ __proto__: null, eventType, filename });
     if (nextEventResolve) {
       const resolve = nextEventResolve;
       nextEventResolve = null;

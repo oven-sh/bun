@@ -246,7 +246,7 @@ mod draft {
     /// consumed by `E::Object::get_or_put_object`, which recurses once per
     /// `rope.next` link, so an unbounded header overflows the stack. Past the
     /// cap the remainder of the header (dots included) becomes the final
-    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
+    /// segment.
     const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
 
     // ──────────────────────────────────────────────────────────────────────────

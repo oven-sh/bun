@@ -205,6 +205,10 @@ describe("brace expansion drops empty argv words", () => {
     ['{a,}""', ["a", ""]],
     ['{"",a}', ["", "a"]],
     ['{a,""}', ["a", ""]],
+    // a quoted cmd-subst producing no output is a quoted empty
+    ['"$(true)"', [""]],
+    ['"$(true)"{a,}', ["a", ""]],
+    ['"$(true)"{,a}', ["", "a"]],
     // non-empty cases stay unchanged
     ["{a,b}", ["a", "b"]],
   ];

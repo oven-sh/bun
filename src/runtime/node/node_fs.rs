@@ -7660,8 +7660,7 @@ impl NodeFS {
                 // uv_fs_realpath relies on; retry via an opened handle. Outside
                 // a container the retry cannot improve on the original error.
                 if !(errno == E::EPERM as _ || errno == E::EACCES as _)
-                    // SAFETY: argument-free query of the process token.
-                    || unsafe { uv::uv_os_is_app_container() } != 1
+                    || !bun_sys::windows::is_app_container()
                 {
                     return Err(sys::Error {
                         errno,

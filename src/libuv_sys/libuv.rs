@@ -3078,9 +3078,6 @@ unsafe extern "C" {
     pub fn uv_os_free_group(grp: *mut uv_group_t);
     pub fn uv_os_getpid() -> uv_pid_t;
     pub fn uv_os_getppid() -> uv_pid_t;
-    /// oven-sh/libuv fork API: 1 inside a Windows AppContainer (lowbox token),
-    /// 0 otherwise (and on non-Windows).
-    pub fn uv_os_is_app_container() -> c_int;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
     pub fn uv_os_setpriority(pid: uv_pid_t, priority: c_int) -> c_int;
     pub fn uv_available_parallelism() -> c_uint;

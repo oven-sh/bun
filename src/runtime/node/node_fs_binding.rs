@@ -416,8 +416,7 @@ impl Binding {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         #[cfg(windows)]
-        // SAFETY: argument-free query of the process token.
-        let inside = unsafe { bun_sys::windows::libuv::uv_os_is_app_container() == 1 };
+        let inside = bun_sys::windows::is_app_container();
         #[cfg(not(windows))]
         let inside = false;
         Ok(JSValue::js_boolean(inside))

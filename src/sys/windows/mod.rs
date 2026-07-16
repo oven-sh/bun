@@ -3279,6 +3279,38 @@ mod _win32error_full_table {
 
 pub use bun_libuv_sys as libuv;
 
+/// True when the process token is a Windows AppContainer (lowbox) token.
+/// Cached for the process lifetime; the token's AppContainer bit is immutable.
+pub fn is_app_container() -> bool {
+    static CACHE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHE.get_or_init(|| {
+        let mut token: win32::HANDLE = core::ptr::null_mut();
+        // SAFETY: GetCurrentProcess() is the pseudo-handle; TOKEN_QUERY
+        // suffices for GetTokenInformation(TokenIsAppContainer).
+        if unsafe {
+            win32::OpenProcessToken(win32::GetCurrentProcess(), win32::TOKEN_QUERY, &mut token)
+        } == 0
+        {
+            return false;
+        }
+        let mut is_ac: win32::DWORD = 0;
+        let mut ret_len: win32::DWORD = 0;
+        // SAFETY: `token` is live from OpenProcessToken above.
+        let ok = unsafe {
+            win32::GetTokenInformation(
+                token,
+                win32::TOKEN_IS_APP_CONTAINER,
+                (&raw mut is_ac).cast(),
+                size_of::<win32::DWORD>() as win32::DWORD,
+                &mut ret_len,
+            )
+        };
+        // SAFETY: `token` is a real handle (not the pseudo-handle); close it.
+        unsafe { win32::CloseHandle(token) };
+        ok != 0 && is_ac != 0
+    })
+}
+
 pub use bun_errno::translate_uv_error_to_e;
 
 pub use bun_windows_sys::externs::GetProcAddress;
@@ -3849,8 +3881,7 @@ fn lowbox_dos_name_fallback(
 ) -> Result<&mut [u16], GetFinalPathNameByHandleError> {
     // The DOS-name denial is only worked around inside an AppContainer; any
     // other token keeps the raw API's exact failure observables.
-    // SAFETY: argument-free query of the process token.
-    if unsafe { libuv::uv_os_is_app_container() } != 1 {
+    if !is_app_container() {
         return Err(GetFinalPathNameByHandleError::FileNotFound);
     }
     // Query the NT name before taking the lock so the per-handle syscall never

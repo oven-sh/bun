@@ -1431,9 +1431,27 @@ unsafe extern "system" {
     pub fn GetSystemInfo(lpSystemInfo: *mut SYSTEM_INFO);
 }
 
+pub const TOKEN_QUERY: DWORD = 0x0008;
+/// `TOKEN_INFORMATION_CLASS::TokenIsAppContainer`
+pub const TOKEN_IS_APP_CONTAINER: c_int = 29;
+
 #[link(name = "advapi32")]
 unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
+
+    pub fn OpenProcessToken(
+        ProcessHandle: HANDLE,
+        DesiredAccess: DWORD,
+        TokenHandle: *mut HANDLE,
+    ) -> BOOL;
+
+    pub fn GetTokenInformation(
+        TokenHandle: HANDLE,
+        TokenInformationClass: c_int,
+        TokenInformation: LPVOID,
+        TokenInformationLength: DWORD,
+        ReturnLength: *mut DWORD,
+    ) -> BOOL;
 }
 
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the

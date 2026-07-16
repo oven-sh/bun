@@ -2353,11 +2353,10 @@ mod spawn_process_body {
         {
             return true;
         }
-        // SAFETY: argument-free query of the process token.
-        if unsafe { uv::uv_os_is_app_container() } != 1 {
+        use bun_sys::windows as w;
+        if !w::is_app_container() {
             return false;
         }
-        use bun_sys::windows as w;
         // L"NUL"
         const NUL: [u16; 4] = [b'N' as u16, b'U' as u16, b'L' as u16, 0];
         // Requests the GENERIC_READ|GENERIC_WRITE union — a strict superset of

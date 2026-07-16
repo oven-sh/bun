@@ -599,9 +599,9 @@ function socketOnEnd() {
   const req = this._httpMessage;
   const parser = this.parser;
 
-  // An 'end' after req.destroy() is our own teardown, not a server FIN;
-  // finishing the parser here would mark an EOF-delimited body complete and
-  // let socketCloseListener deliver a clean 'end' for a locally aborted body.
+  // An 'end' after req.destroy() is our own teardown, not a server FIN.
+  // Finishing the parser here would mark an EOF-delimited body complete, so
+  // socketCloseListener would skip its abort check and emit a clean 'end'.
   if (req.destroyed) {
     socket.destroy();
     return;

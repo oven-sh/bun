@@ -603,14 +603,8 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     const maybePromise = fileSink.write(data);
     if ($isPromise(maybePromise)) {
       maybePromise.then(
-        () => {
-          if (cb) cb(null);
-          this.emit("drain");
-        },
-        err => {
-          if (cb) cb(err);
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
+        () => process.nextTick(underscoreWriteFastDrained, this, cb),
+        err => process.nextTick(writeFastOnError, this, cb, err),
       );
       return false;
     } else {
@@ -622,6 +616,21 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
     require("internal/streams/destroy").errorOrDestroy(this, e, true);
     return false;
   }
+}
+
+function underscoreWriteFastDrained(stream, cb) {
+  if (cb) cb(null);
+  stream.emit("drain");
+}
+
+// Node's stdio write completion runs from a libuv callback, so a throw from the
+// user callback or emit('error') with no listener is an uncaughtException. The
+// nextTick hop keeps it that way instead of unhandledRejection from the sink's promise.
+function writeFastOnError(stream, cb, err) {
+  if (cb) cb(err);
+  // Node.js onwriteError: callback AND errorOrDestroy are both invoked; the
+  // callback is additive, not a replacement for the 'error' event.
+  require("internal/streams/destroy").errorOrDestroy(stream, err);
 }
 
 // This function implementation is not correct.
@@ -652,16 +661,8 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
       // Two-arg then(): a throw from the fulfillment handler must not be
       // mistaken for a write failure.
       maybePromise.then(
-        () => {
-          this.emit("drain"); // Emit drain event
-          cb(null);
-        },
-        err => {
-          cb(err);
-          // Node.js onwriteError: callback AND destroy are both invoked; the
-          // callback is additive, not a replacement for the 'error' event.
-          require("internal/streams/destroy").errorOrDestroy(this, err);
-        },
+        () => process.nextTick(writeFastDrained, this, cb),
+        err => process.nextTick(writeFastOnError, this, cb, err),
       );
       return false; // Indicate backpressure
     } else {
@@ -677,6 +678,11 @@ function writeFast(this: FSStream, data: any, encoding: any, cb: any) {
     }
     return result;
   }
+}
+
+function writeFastDrained(stream, cb) {
+  stream.emit("drain");
+  cb(null);
 }
 
 writeStreamPrototype._writev = function (data, cb) {

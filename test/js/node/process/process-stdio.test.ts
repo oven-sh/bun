@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "path";
 import { isatty } from "tty";
 describe.concurrent("process-stdio", () => {
@@ -158,4 +158,67 @@ describe.concurrent("process-stdio", () => {
       `hello worldhello again|😋 Get Emoji — All Emojis to ✂️ Copy and 📋 Paste 👌`.repeat(9999),
     );
   });
+
+  // Node's uv write callback runs the user callback from a libuv frame, so a
+  // throw from it is an uncaughtException. Bun's FileSink reports completion via
+  // a promise, so a throw from the callback inside the promise reaction surfaced
+  // as unhandledRejection. Same class as the tty write-error case in tty.test.ts
+  // but on the success arm.
+  test.skipIf(isWindows)(
+    "process.stdout write callback that throws on a drained write surfaces as uncaughtException",
+    async () => {
+      await using proc = spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const events = [];
+            const done = code => {
+              process.stderr.write(JSON.stringify(events) + "\\n");
+              process.exit(code);
+            };
+            process.on("uncaughtException", err => {
+              events.push("uncaught:" + err.message);
+              done(7);
+            });
+            process.on("unhandledRejection", err => {
+              events.push("unhandledRejection:" + (err && err.message));
+              done(8);
+            });
+            // Fill the pipe until the sink buffers and returns a promise (write()
+            // reports that as false), then issue one more write whose callback
+            // throws. That callback runs from the sink's promise resolution once
+            // the parent has drained the pipe.
+            const chunk = Buffer.alloc(64 * 1024, 65);
+            let writes = 0;
+            while (process.stdout.write(chunk)) {
+              if (++writes > 256) {
+                events.push("no-backpressure");
+                done(9);
+              }
+            }
+            const buffered = process.stdout.write(chunk, err => {
+              events.push("cb:" + (err ? err.code : "null"));
+              throw new Error("boom");
+            });
+            if (buffered !== false) {
+              events.push("expected-backpressure");
+              done(9);
+            }
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The bulk writes all land on stdout; the result line is on stderr.
+      expect(stdout.length).toBeGreaterThan(0);
+      const line = stderr.trim().split("\n").pop()!;
+      expect(JSON.parse(line)).toEqual(["cb:null", "uncaught:boom"]);
+      expect(exitCode).toBe(7);
+    },
+  );
 });

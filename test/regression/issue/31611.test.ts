@@ -28,9 +28,9 @@ test("tls.rootCertificates contains every SERVER_AUTH TRUSTED_DELEGATOR from cer
 
   const fingerprints = new Set(tls.rootCertificates.map(pem => new X509Certificate(pem).fingerprint256));
   // Izenpe.com: the root the broken parser dropped.
-  expect(fingerprints.has("25:30:CC:8E:98:32:15:02:BA:D9:6F:9B:1F:BA:1B:09:9E:2D:29:9E:0F:45:48:BB:91:4F:36:3B:C0:D4:53:1F")).toBe(
-    true,
-  );
+  expect(
+    fingerprints.has("25:30:CC:8E:98:32:15:02:BA:D9:6F:9B:1F:BA:1B:09:9E:2D:29:9E:0F:45:48:BB:91:4F:36:3B:C0:D4:53:1F"),
+  ).toBe(true);
 });
 
 // Throwaway self-signed DER cert as NSS MULTILINE_OCTAL; the generator only

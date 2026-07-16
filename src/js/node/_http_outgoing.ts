@@ -23,6 +23,62 @@ const ObjectHasOwn = Object.hasOwn;
 const ArrayIsArray = Array.isArray;
 const MathFloor = Math.floor;
 
+// kOutHeaders is keyed by the lowercased header name, so every setHeader /
+// getHeader / hasHeader / removeHeader lowercases its argument. For the
+// conventionally-cased spellings frameworks actually pass ("Content-Type",
+// "ETag", ...) toLowerCase() allocates a new string on every call, which the
+// property access then has to intern. Map those spellings to a literal that is
+// already interned; anything else still takes toLowerCase(). Same result, no
+// allocation on the common path.
+const commonLowercasedHeaders = { __proto__: null };
+for (const name of [
+  "accept",
+  "accept-encoding",
+  "accept-language",
+  "accept-ranges",
+  "access-control-allow-origin",
+  "age",
+  "cache-control",
+  "connection",
+  "content-disposition",
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-range",
+  "content-type",
+  "cookie",
+  "date",
+  "etag",
+  "expires",
+  "host",
+  "last-modified",
+  "location",
+  "pragma",
+  "server",
+  "set-cookie",
+  "transfer-encoding",
+  "user-agent",
+  "vary",
+  "x-content-type-options",
+  "x-forwarded-for",
+  "x-powered-by",
+  "x-requested-with",
+]) {
+  commonLowercasedHeaders[name] = name;
+  // The Http-Header-Case spelling, which is what callers overwhelmingly pass.
+  let titled = "";
+  for (const part of name.split("-")) titled += (titled ? "-" : "") + part.charAt(0).toUpperCase() + part.slice(1);
+  commonLowercasedHeaders[titled] = name;
+}
+// Spellings that title-casing does not produce.
+commonLowercasedHeaders["ETag"] = "etag";
+commonLowercasedHeaders["etag"] = "etag";
+
+function lowercaseHeaderName(name) {
+  const known = commonLowercasedHeaders[name];
+  return known !== undefined ? known : name.toLowerCase();
+}
+
 const kCorked = Symbol("corked");
 const kSocket = Symbol("kSocket");
 const kChunkedBuffer = Symbol("kChunkedBuffer");
@@ -622,7 +678,7 @@ OutgoingMessage.prototype.setHeader = function setHeader(name, value) {
   let headers = this[kOutHeaders];
   if (headers === null) this[kOutHeaders] = headers = { __proto__: null };
 
-  headers[name.toLowerCase()] = [name, value];
+  headers[lowercaseHeaderName(name)] = [name, value];
   return this;
 };
 
@@ -670,7 +726,7 @@ OutgoingMessage.prototype.appendHeader = function appendHeader(name, value) {
   validateHeaderName(name);
   validateHeaderValueLenient(name, value, this._isLenientHeaderValidation());
 
-  const field = name.toLowerCase();
+  const field = lowercaseHeaderName(name);
   const headers = this[kOutHeaders];
   if (headers === null || !headers[field]) {
     return this.setHeader(name, value);
@@ -699,7 +755,7 @@ OutgoingMessage.prototype.getHeader = function getHeader(name) {
   const headers = this[kOutHeaders];
   if (headers === null) return;
 
-  const entry = headers[name.toLowerCase()];
+  const entry = headers[lowercaseHeaderName(name)];
   return entry?.[1];
 };
 
@@ -743,7 +799,7 @@ OutgoingMessage.prototype.getHeaders = function getHeaders() {
 
 OutgoingMessage.prototype.hasHeader = function hasHeader(name) {
   validateString(name, "name");
-  return this[kOutHeaders] !== null && !!this[kOutHeaders][name.toLowerCase()];
+  return this[kOutHeaders] !== null && !!this[kOutHeaders][lowercaseHeaderName(name)];
 };
 
 OutgoingMessage.prototype.removeHeader = function removeHeader(name) {
@@ -753,7 +809,7 @@ OutgoingMessage.prototype.removeHeader = function removeHeader(name) {
     throw $ERR_HTTP_HEADERS_SENT("remove");
   }
 
-  const key = name.toLowerCase();
+  const key = lowercaseHeaderName(name);
 
   switch (key) {
     case "connection":
@@ -1157,7 +1213,7 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
         // Refs: https://github.com/nodejs/node/pull/30958
         for (let i = 0; i < keys.length; ++i) {
           const name = keys[i];
-          headers[name.toLowerCase()] = [name, val[name]];
+          headers[lowercaseHeaderName(name)] = [name, val[name]];
         }
       }
     },

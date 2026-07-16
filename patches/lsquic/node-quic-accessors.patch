@@ -402,7 +402,7 @@
      settings->es_timestamps      = LSQUIC_DF_TIMESTAMPS;
      settings->es_grease_quic_bit = LSQUIC_DF_GREASE_QUIC_BIT;
      settings->es_mtu_probe_timer = LSQUIC_DF_MTU_PROBE_TIMER;
-@@ -726,7 +736,11 @@
+@@ -726,6 +736,10 @@
          * (engine->pub.enp_settings.es_mtu_probe_timer
           ? engine->pub.enp_settings.es_mtu_probe_timer
           : LSQUIC_DF_MTU_PROBE_TIMER);
@@ -414,7 +414,6 @@
 +            || engine->pub.enp_settings.es_send_prst)
      {
          engine->pr_queue = lsquic_prq_create(
-             10000 /* TODO: make configurable */, MAX_OUT_BATCH_SIZE,
 @@ -951,6 +965,29 @@
      struct purga_el *puel;
  

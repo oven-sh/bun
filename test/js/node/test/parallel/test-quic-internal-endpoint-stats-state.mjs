@@ -142,10 +142,6 @@ const {
   });
 }
 
-// TODO(@jasnell): The following tests are largely incomplete.
-// This is largely here to boost the code coverage numbers
-// temporarily while the rest of the functionality is being
-// implemented.
 const streamState = new QuicStreamState(kPrivateConstructor, new ArrayBuffer(1024));
 const sessionState = new QuicSessionState(kPrivateConstructor, new ArrayBuffer(1024));
 

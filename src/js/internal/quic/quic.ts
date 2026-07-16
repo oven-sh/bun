@@ -200,8 +200,6 @@ function isBlob(value) {
   return value instanceof Blob;
 }
 
-// TODO(quic): pass the KeyObject itself once the binding can read its EVP_PKEY
-// directly; PEM export does not work for non-exportable keys.
 function getKeyObjectHandle(key) {
   return key.export({ format: "pem", type: "pkcs8" });
 }
@@ -2224,10 +2222,6 @@ class QuicStream {
       if (signal !== undefined) {
         validateAbortSignal(signal, "options.signal");
         signal.throwIfAborted();
-        // TODO(@jasnell): The stream/iter spec allows individual sync end
-        // calls to be canceled via an AbortSignal. We currently do not support
-        // this, but we can add before the impl is graduated from experimental.
-        // At most we do here is check for signal abort at the start of the call.
       }
 
       const n = endSync();

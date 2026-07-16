@@ -1235,7 +1235,10 @@ impl QuicSession {
                     if !self.has_listener(LISTENER_FLAG_ORIGIN) {
                         continue;
                     }
-                    let mut origins: Vec<JSValue> = Vec::new();
+                    // Collect ranges, not JSValues: a `Vec<JSValue>` lives on the
+                    // Rust heap, which the GC does not scan, so strings created
+                    // early would be collectible while later ones allocate.
+                    let mut ranges: Vec<(usize, usize)> = Vec::new();
                     let mut off = 0usize;
                     while off + ORIGIN_LEN_PREFIX <= payload.len() {
                         let n = u16::from_be_bytes([payload[off], payload[off + 1]]) as usize;
@@ -1243,15 +1246,13 @@ impl QuicSession {
                         if off + n > payload.len() {
                             break;
                         }
-                        if let Ok(s) =
-                            bun_core::String::clone_utf8(&payload[off..off + n]).to_js(global)
-                        {
-                            origins.push(s);
-                        }
+                        ranges.push((off, n));
                         off += n;
                     }
                     let Ok(array) =
-                        JSValue::create_array_from_iter(global, origins.into_iter(), Ok)
+                        JSValue::create_array_from_iter(global, ranges.into_iter(), |(o, n)| {
+                            bun_core::String::clone_utf8(&payload[o..o + n]).to_js(global)
+                        })
                     else {
                         continue;
                     };
@@ -1343,6 +1344,11 @@ impl QuicSession {
                         vm.event_loop_ref()
                             .run_callback(cb, global, handle, &[JSValue::UNDEFINED]);
                     }
+                    // onStreamClose is user JS too: re-acquire before the
+                    // `release_close_root` below, as above.
+                    let Some(stream) = self.live_stream(stream_ptr) else {
+                        continue;
+                    };
                     self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
                     // Registry entry gone and `raw` already null, so nothing
                     // else reaches this stream: drop the self-root and let the
@@ -1652,9 +1658,21 @@ impl QuicSession {
         if self.destroyed.replace(true) {
             return;
         }
-        for qs in self.streams.with_mut(core::mem::take) {
-            // SAFETY: streams are kept alive by their wrapper Strong;
-            // teardown is idempotent.
+        let streams = self.streams.with_mut(core::mem::take);
+        // Each `teardown` fires the parked reader wakeup, whose microtask drain
+        // can run user JS that destroys a *later* entry -- downgrading its
+        // wrapper to Weak so GC frees the Box out from under this loop. The
+        // taken Vec is not a GC root, so root every wrapper up front.
+        let _roots: Vec<Strong> = streams
+            .iter()
+            .map(|&qs| {
+                // SAFETY: entries are live here -- a stream is only downgraded
+                // after `remove_stream` drops it from `self.streams`.
+                Strong::create(unsafe { (*qs).handle() }, _global)
+            })
+            .collect();
+        for qs in streams {
+            // SAFETY: rooted by `_roots` above; teardown is idempotent.
             unsafe { (*qs).teardown(_global) };
         }
         self.pending_local_bidi.with_mut(VecDeque::clear);

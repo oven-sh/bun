@@ -4,8 +4,8 @@
 // termination cannot be cleared: entering JS again trips Interpreter::
 // executeCallImpl's `assertNoException`. Repro for the
 // test/js/node/test/parallel/test-http2-reset-flood.js SIGABRT.
-import { test, expect } from "bun:test";
-import { bunExe, bunEnv, isWindows } from "harness";
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 const workerSource = `
 const { parentPort } = require("worker_threads");
@@ -82,11 +82,7 @@ test.skipIf(isWindows)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      proc.exited,
-    ]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     // The unpatched build aborts inside an iteration (exit 134, "ASSERTION
     // FAILED: !exception()" on stderr, no stdout). Assert on stdout/exitCode
     // so benign debug-build stderr noise cannot cause a false positive; the

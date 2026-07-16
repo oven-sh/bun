@@ -530,6 +530,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 bad_let_range = Some(p.lexer.range());
             }
 
+            // "for (async of" is disallowed by the [lookahead != async of] restriction
+            // on for-of; "for await (async of" is allowed. Cleared below when the init
+            // parses to anything other than a bare identifier (e.g. "async of => {}").
+            let mut bad_async_range: Option<bun_ast::Range> = None;
+            if !is_for_await
+                && p.lexer.is_contextual_keyword(b"async")
+                && p.next_token_matches(|p| p.lexer.is_contextual_keyword(b"of"))
+            {
+                bad_async_range = Some(p.lexer.range());
+            }
+
             // Track the decl slice separately so we can reference it after `decls` is moved into
             // an arena-backed S::Local. The Vec's heap buffer stays put across the move; the
             // arena outlives this fn, so the lifetime-erased view remains valid.
@@ -583,12 +594,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     match res.stmt_or_expr {
                         js_ast::StmtOrExpr::Stmt(stmt) => {
                             bad_let_range = None;
+                            bad_async_range = None;
                             // Keep the "let"/"using" declarations visible to the for-in/for-of
                             // checks below ("forbid_initializers"), like the "var"/"const" arms.
                             decls_ptr = bun_ast::StoreSlice::new(res.decls.slice());
                             init_ = Some(stmt);
                         }
                         js_ast::StmtOrExpr::Expr(expr) => {
+                            if !matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
+                                bad_async_range = None;
+                            }
                             init_ = Some(p.s(
                                 S::SExpr {
                                     value: expr,
@@ -611,6 +626,19 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         Some(p.source),
                         r,
                         b"\"let\" must be wrapped in parentheses to be used as an expression here",
+                    );
+                    return Err(crate::Error::SyntaxError);
+                }
+
+                if let Some(r) = bad_async_range {
+                    let full = bun_ast::Range {
+                        loc: r.loc,
+                        len: p.lexer.range().end().start - r.loc.start,
+                    };
+                    p.log().add_range_error(
+                        Some(p.source),
+                        full,
+                        b"For loop initializers cannot start with \"async of\"",
                     );
                     return Err(crate::Error::SyntaxError);
                 }

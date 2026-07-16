@@ -19,7 +19,7 @@ public:
         Verify
     };
 
-    SignJobCtx(Mode mode, RefPtr<KeyObjectData> keyData, Vector<uint8_t>&& data, ncrypto::Digest digest, std::optional<int32_t> padding, std::optional<int32_t> saltLength, DSASigEnc dsaSigEnc, Vector<uint8_t>&& signature = {})
+    SignJobCtx(Mode mode, RefPtr<KeyObjectData> keyData, Vector<uint8_t>&& data, ncrypto::Digest digest, std::optional<int32_t> padding, std::optional<int32_t> saltLength, DSASigEnc dsaSigEnc, bool unsupportedContext, Vector<uint8_t>&& signature = {})
         : m_mode(mode)
         , m_keyData(keyData)
         , m_data(WTF::move(data))
@@ -28,7 +28,7 @@ public:
         , m_padding(padding)
         , m_saltLength(saltLength)
         , m_dsaSigEnc(dsaSigEnc)
-
+        , m_unsupportedContext(unsupportedContext)
     {
     }
 

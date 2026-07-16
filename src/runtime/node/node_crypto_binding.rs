@@ -312,7 +312,7 @@ pub mod random {
         use super::*;
         use crate::node::util::validators;
         use bun_core::String as BunString;
-        use bun_jsc::{JSType, StringJsc as _, UUID};
+        use bun_jsc::{JSType, StringJsc as _, UUID, UUID7};
 
         #[bun_jsc::host_fn]
         pub(crate) fn random_int(
@@ -480,6 +480,52 @@ pub mod random {
                 global.bun_vm().as_mut().rare_data().next_uuid()
             };
 
+            uuid.print(
+                (&mut bytes[..36])
+                    .try_into()
+                    .expect("infallible: size matches"),
+            );
+            str.transfer_to_js(global)
+        }
+
+        #[bun_jsc::host_fn]
+        pub(crate) fn random_uuid_v7(
+            global: &JSGlobalObject,
+            call_frame: &CallFrame,
+        ) -> JsResult<JSValue> {
+            let args = call_frame.arguments();
+
+            if !args.is_empty() {
+                let options = args[0];
+                if !options.is_undefined() {
+                    validators::validate_object(
+                        global,
+                        options,
+                        format_args!("options"),
+                        Default::default(),
+                    )?;
+                    if let Some(disable_entropy_cache_value) =
+                        options.get(global, "disableEntropyCache")?
+                    {
+                        validators::validate_boolean(
+                            global,
+                            disable_entropy_cache_value,
+                            format_args!("options.disableEntropyCache"),
+                        )?;
+                    }
+                }
+            }
+
+            // jsDateNow() is exactly what JS Date.now() returns, so the embedded
+            // timestamp is never behind a Date.now() sample taken by the caller.
+            let now_ms = global.js_date_now().max(0.0) as u64;
+            let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
+            let uuid = UUID7::init(
+                now_ms,
+                <[u8; 10]>::try_from(&entropy[0..10]).expect("infallible: size matches"),
+            );
+
+            let (mut str, bytes) = BunString::create_uninitialized_latin1(36);
             uuid.print(
                 (&mut bytes[..36])
                     .try_into()
@@ -1334,6 +1380,17 @@ mod _impl {
                 global,
                 "randomUUID",
                 random::__jsc_host_random_uuid,
+                1,
+                Default::default(),
+            ),
+        );
+        crypto.put(
+            global,
+            b"randomUUIDv7",
+            JSFunction::create(
+                global,
+                "randomUUIDv7",
+                random::__jsc_host_random_uuid_v7,
                 1,
                 Default::default(),
             ),

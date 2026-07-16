@@ -450,7 +450,7 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             signature = WTF::move(signatureData);
         }
 
-        SignJobCtx ctx(
+        return SignJobCtx(
             mode,
             keyObject.data(),
             WTF::move(data),
@@ -458,21 +458,19 @@ std::optional<SignJobCtx> SignJobCtx::fromJS(JSGlobalObject* globalObject, Throw
             padding,
             pssSaltLength,
             dsaSigEnc,
+            unsupportedContext,
             WTF::move(signature));
-        ctx.m_unsupportedContext = unsupportedContext;
-        return ctx;
     }
 
-    SignJobCtx ctx(
+    return SignJobCtx(
         mode,
         keyObject.data(),
         WTF::move(data),
         digest,
         padding,
         pssSaltLength,
-        dsaSigEnc);
-    ctx.m_unsupportedContext = unsupportedContext;
-    return ctx;
+        dsaSigEnc,
+        unsupportedContext);
 }
 
 } // namespace Bun

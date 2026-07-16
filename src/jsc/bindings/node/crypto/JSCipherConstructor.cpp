@@ -50,6 +50,8 @@ void initAuthenticated(JSGlobalObject* globalObject, ThrowScope& scope, CipherCt
             return;
         }
 
+        // NIST SP 800-38C A.1: max plaintext length is 2^(8*(15-ivLen)) - 1 bytes.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_cipher.cc#L440-L442
         if (ivLen == 12)
             maxMessageSize = 16777215;
         else if (ivLen == 13)

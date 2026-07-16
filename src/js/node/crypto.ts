@@ -55,6 +55,7 @@ const {
   timingSafeEqual,
   randomInt,
   randomUUID,
+  randomUUIDv7,
   randomBytes,
   randomFillSync,
   randomFill,
@@ -69,7 +70,7 @@ const {
 
 const normalizeEncoding = $newRustFunction("node_util_binding.rs", "normalizeEncoding", 1);
 
-const { validateString, validateObject, validateBoolean } = require("internal/validators");
+const { validateString } = require("internal/validators");
 const { deprecate } = require("internal/util/deprecate");
 
 const kHandle = Symbol("kHandle");
@@ -331,34 +332,7 @@ crypto_exports.randomFill = randomFill;
 crypto_exports.randomFillSync = randomFillSync;
 crypto_exports.randomBytes = randomBytes;
 crypto_exports.randomUUID = randomUUID;
-
-const kUuidV7Buffer = Buffer.alloc(16);
-crypto_exports.randomUUIDv7 = function randomUUIDv7(options) {
-  if (options !== undefined) validateObject(options, "options");
-  const { disableEntropyCache = false } = options ?? {};
-  // Validated but unused: the option only chooses between Node's pooled entropy and a fresh
-  // read. This always reads fresh entropy, which is what `true` asks for and is
-  // indistinguishable from the pooled path for `false`, so both values are already honored.
-  validateBoolean(disableEntropyCache, "options.disableEntropyCache");
-
-  // Like Node, the 48-bit timestamp comes from Date.now() so it is never behind the caller's
-  // clock (the native UUIDv7 generator uses its own clock, which can lag by a millisecond).
-  const buf = kUuidV7Buffer;
-  randomFillSync(buf, 6);
-  const now = Date.now();
-  const msb = now / 2 ** 32;
-  buf[0] = msb >>> 8;
-  buf[1] = msb;
-  buf[2] = now >>> 24;
-  buf[3] = now >>> 16;
-  buf[4] = now >>> 8;
-  buf[5] = now;
-  buf[6] = (buf[6] & 0x0f) | 0x70;
-  buf[8] = (buf[8] & 0x3f) | 0x80;
-
-  const hex = buf.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-};
+crypto_exports.randomUUIDv7 = randomUUIDv7;
 
 // Node only provides Argon2 when built against OpenSSL >= 3.2; BoringSSL has no
 // Argon2, so these throw the same error an unsupported Node build throws.

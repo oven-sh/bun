@@ -2058,13 +2058,36 @@ impl<'a> HTTPClient<'a> {
 
     pub fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
-        // the socket is closed, we need to unregister the abort tracker
-        self.unregister_abort_tracker();
 
         if self.signals.get(signals::Field::Aborted) {
+            self.unregister_abort_tracker();
             self.fail(crate::Error::Aborted);
             return;
         }
+
+        // Peer closed while parked for the JS `checkServerIdentity` verdict
+        // with early application data buffered (see `on_data`): dispatch the
+        // buffer so a complete early reply resolves instead of ECONNRESET.
+        if self.state.flags.is_waiting_for_cert_check {
+            self.state.flags.is_waiting_for_cert_check = false;
+            if !self.state.response_message_buffer.list.is_empty() {
+                // `signals.cert_errors` wired ⇒ `signals.aborted` wired
+                // (both come from `Store::to`), so the tracker entry exists.
+                debug_assert!(self.signals.aborted.is_some());
+                let async_http_id = self.async_http_id;
+                let ctx = self.get_ssl_ctx::<IS_SSL>();
+                self.handle_on_data_headers::<IS_SSL>(&[], ctx, socket);
+                // A terminal outcome unregisters `async_http_id` and may free
+                // the AsyncHTTP that embeds `*self`; a non-terminal one (short
+                // read / body incomplete) leaves it and falls through below.
+                if abort_tracker().get(&async_http_id).is_none() {
+                    return;
+                }
+            }
+        }
+
+        // the socket is closed, we need to unregister the abort tracker
+        self.unregister_abort_tracker();
         self.close_proxy_tunnel(true);
         let in_progress = self.state.stage != Stage::Done
             && self.state.stage != Stage::Fail
@@ -3583,6 +3606,18 @@ impl<'a> HTTPClient<'a> {
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
         self.state.flags.is_waiting_for_cert_check = false;
         self.on_writable::<true, IS_SSL>(socket);
+        // `on_writable` → `close_and_fail` may free the AsyncHTTP that embeds
+        // `*self`; the socket handle outlives the client.
+        if socket.is_closed() {
+            return;
+        }
+        // Replay application data the peer sent while parked (buffered by
+        // `on_data` / `ProxyTunnel::on_data`) via `handle_on_data_headers`,
+        // which consumes `response_message_buffer` when `incoming_data` is empty.
+        if !self.state.response_message_buffer.list.is_empty() {
+            let ctx = self.get_ssl_ctx::<IS_SSL>();
+            self.handle_on_data_headers::<IS_SSL>(&[], ctx, socket);
+        }
     }
 
     pub fn close_and_fail<const IS_SSL: bool>(
@@ -3910,13 +3945,14 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        // While parked waiting for the JS `checkServerIdentity` verdict, no
-        // request has been written, so any data is unexpected. Must stay below
-        // the proxy_tunnel dispatch above: a tunneled target's raw inner-TLS
-        // records must keep reaching the SSLWrapper while parked.
+        // Parked for the JS `checkServerIdentity` verdict: a TLS peer may
+        // transmit as soon as the handshake completes, so buffer early bytes
+        // for `resume_after_cert_check` / `on_close` to replay. Must stay
+        // below the proxy_tunnel dispatch above so a tunneled target's raw
+        // inner-TLS records still reach the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
-            self.state.pending_response = None;
-            self.close_and_fail::<IS_SSL>(crate::Error::UnexpectedData, socket);
+            let _ = self.state.response_message_buffer.append(incoming_data);
+            self.set_timeout(&socket);
             return;
         }
 

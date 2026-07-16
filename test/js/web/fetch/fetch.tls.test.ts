@@ -257,6 +257,47 @@ describe.concurrent("fetch-tls", () => {
     });
   }
 
+  // A TLS peer is free to transmit application data as soon as the handshake
+  // completes. fetch() holds back the request until the JS checkServerIdentity
+  // callback approves the certificate, so the server's response can arrive
+  // before the request is written. Those early bytes must be buffered and
+  // replayed once the callback approves, not rejected as UnexpectedData.
+  it("fetch with checkServerIdentity accepts a response that arrives before the request is written", async () => {
+    const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
+      // Write the response immediately, without waiting for a request.
+      socket.write("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+      socket.end();
+    });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.on("error", reject);
+        server.listen(0, "127.0.0.1", () => resolve());
+      });
+      const port = (server.address() as import("node:net").AddressInfo).port;
+
+      // Repeat to cover the race between the JS-thread verdict and the peer's
+      // write; a single attempt can land in either order.
+      for (let i = 0; i < 10; i++) {
+        let called = false;
+        const res = await fetch(`https://127.0.0.1:${port}/`, {
+          keepalive: false,
+          tls: {
+            ca: validTls.cert,
+            checkServerIdentity() {
+              called = true;
+              return undefined;
+            },
+          },
+        });
+        expect(await res.text()).toBe("OK");
+        expect(res.status).toBe(200);
+        expect(called).toBe(true);
+      }
+    } finally {
+      server.close();
+    }
+  });
+
   it("fetch with self-sign tls should throw", async () => {
     await createServer(CERT_LOCALHOST_IP, async port => {
       const urls = [`https://localhost:${port}`, `https://127.0.0.1:${port}`];

@@ -78,8 +78,9 @@ pub struct InternalStateFlags {
     /// Set when the TLS handshake completed but the user-supplied JS
     /// `checkServerIdentity` callback has not yet approved the peer
     /// certificate. While set, `on_writable` must not write any HTTP
-    /// application data to the socket and `on_data` must treat incoming
-    /// application data as unexpected. Cleared by
+    /// application data to the socket; `on_data` buffers incoming application
+    /// data into `response_message_buffer` for replay on resume (a TLS peer is
+    /// free to transmit as soon as the handshake completes). Cleared by
     /// `HTTPClient::resume_after_cert_check` once the JS thread reports the
     /// check passed (and implicitly by `InternalState::reset()` on every
     /// redirect hop / failure, so each hop re-parks independently).

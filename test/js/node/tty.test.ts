@@ -201,7 +201,7 @@ describe("ReadStream.prototype.setRawMode", () => {
 // throw as unhandledRejection instead.
 describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
   const fixture = `
-    const { writeFileSync } = require("node:fs");
+    const { writeFileSync, writeSync } = require("node:fs");
     const events = [];
     process.on("exit", code => {
       events.push("exit:" + code);
@@ -228,13 +228,19 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
       });
     }
 
-    // stdin EOF (or EIO, which a hung-up pty slave can report for read()
-    // depending on platform/timing) means the master is closed, so the next
-    // stdout write is guaranteed to fail with EIO. No polling, no timers.
-    let fired = false;
-    const afterHangup = () => {
-      if (fired) return;
-      fired = true;
+    process.stdout.write("READY\\n");
+
+    // Probe fd 1 with a raw writeSync (bypassing the stream, so errorOrDestroy
+    // is not primed) until the master close is visible as EIO, then issue the
+    // stream write under test as the first failing stream write. Also keeps the
+    // loop alive without relying on stdin, which raced on CI.
+    let ticks = 0;
+    const probe = () => {
+      try {
+        writeSync(1, ".");
+        if (++ticks > 100000) { events.push("no-hangup"); process.exit(99); }
+        return setImmediate(probe);
+      } catch {}
       if (process.env.USE_END) {
         // Writable.prototype.end(chunk) routes through _write (underscoreWriteFast)
         // with state.onwrite as the callback, rather than the writeFast override.
@@ -245,11 +251,7 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
         });
       }
     };
-    process.stdin.on("end", afterHangup);
-    process.stdin.on("error", afterHangup);
-    process.stdin.resume();
-
-    process.stdout.write("READY\\n");
+    setImmediate(probe);
   `;
 
   async function runUntilHangup(env: Record<string, string>) {

@@ -23,6 +23,20 @@ export const xxHash3ForTesting: (view: ArrayBufferView, seed?: number | bigint) 
   2,
 );
 
+// uWS's WebSocketContextData<SSL, USERDATA>::calculateIdleTimeoutComponents
+// (packages/bun-uws/src/WebSocketContextData.h), driven directly so a test
+// can assert the idleTimeout: 0 special-case deterministically -- the
+// pre-fix regression's real-world symptom is a ~252s timeout, far too long
+// for any test to wait out.
+export const websocketIdleTimeoutComponentsForTesting: (
+  idleTimeout: number,
+  sendPingsAutomatically: boolean,
+) => [number, number] = $newCppFunction(
+  "websocket_idle_timeout_testing.cpp",
+  "Bun__websocketIdleTimeoutComponentsForTesting",
+  2,
+);
+
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {

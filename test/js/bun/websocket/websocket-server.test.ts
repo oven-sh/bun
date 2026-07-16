@@ -1,5 +1,6 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
+import { websocketIdleTimeoutComponentsForTesting } from "bun:internal-for-testing";
 import { afterEach, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, forceGuardMalloc, isWindows } from "harness";
 import net, { isIP } from "node:net";
@@ -1546,9 +1547,22 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
 // be between (0, 8)" comment in WebSocketServerContext.rs exempts 0 from its
 // "round up to 8" clamp for the same reason.
 //
-// Honesty about limits: this test cannot afford to wait out the historical
-// ~252s window (nor should any test). What it can do, and does, is prove two
-// things against a deliberately unresponsive raw-socket client:
+// The regression guard for the actual underflow is the "unit:
+// calculateIdleTimeoutComponents" test just below: it drives
+// WebSocketContextData::calculateIdleTimeoutComponents directly (via
+// `websocketIdleTimeoutComponentsForTesting`, backed by
+// websocket_idle_timeout_testing.cpp, exposed through
+// bun:internal-for-testing) and asserts idleTimeout: 0 produces
+// idle-detection component 0, not 65532 (the unsigned-short underflow of
+// 0 - 4) -- deterministically, with no socket, timer, or wall-clock wait.
+// That test fails on an unfixed build and passes on this one: the true
+// red-before/green-after contrast this bug needed, which a bounded-wait
+// socket test cannot provide (see below).
+//
+// The two `it.concurrent` tests below the unit test are NOT redundant with
+// it and are deliberately kept: they are end-to-end wiring coverage, proving
+// the fixed arithmetic actually reaches a real socket through Bun.serve ->
+// uWS -> uSockets, against a deliberately unresponsive raw-socket client:
 //   1) a small nonzero idleTimeout (8s -- uWS's minimum granularity, same as
 //      the "should allow use of custom timeout" test in
 //      test/js/bun/http/serve.test.ts:2598) still pings and
@@ -1556,17 +1570,27 @@ describe.concurrent("publish() return value reflects subscriber backpressure", (
 //      the ping/close mechanism itself functions;
 //   2) idleTimeout: 0, under the exact same conditions, produces neither a
 //      ping nor a close within that same bounded window.
-// By construction this cannot distinguish "genuinely disabled" from "still
-// broken but with some timeout longer than our wait window" -- only the full
-// ~252s wait (or a C++-level unit test of calculateIdleTimeoutComponents
-// directly, for which Bun has no test harness today, since the vendored
-// uWS/uSockets sources have no unit-test target of their own) could do
-// that. The fix itself is a small, self-evidently-correct arithmetic special
-// case (see WebSocketContextData.h); this test's job is to catch a *class*
-// of future regression -- e.g. idleTimeout: 0 again being routed through the
-// general subtraction -- not to re-derive the original forensic timing
-// measurement.
+// By construction this pair cannot distinguish "genuinely disabled" from
+// "still broken but with some timeout longer than our wait window" -- the
+// historical bug's real symptom is ~252s, far past any window a test suite
+// should wait -- which is exactly why the unit test above exists to give the
+// definitive answer. This pair's job is instead to catch a *class* of future
+// regression in the wiring itself -- e.g. the ping/close mechanism breaking,
+// or idleTimeout: 0 no longer reaching calculateIdleTimeoutComponents at all
+// -- not to re-derive the original forensic timing measurement.
 describe.concurrent("websocket idleTimeout: 0", () => {
+  it("unit: calculateIdleTimeoutComponents(0, ...) yields idle-detection component 0, not 65532", () => {
+    // Drives WebSocketContextData::calculateIdleTimeoutComponents directly,
+    // with no socket, timer, or wall-clock wait -- see
+    // src/jsc/bindings/websocket_idle_timeout_testing.cpp. On an unfixed
+    // build, idleTimeout: 0 underflows the unsigned short (0 - margin) to
+    // 65532 here; on the fixed build it's 0. The second (ping/end()-grace)
+    // component is unaffected by the fix and stays at the margin (4, uWS's
+    // minimum) either way.
+    expect(websocketIdleTimeoutComponentsForTesting(0, true)).toEqual([0, 4]);
+    expect(websocketIdleTimeoutComponentsForTesting(0, false)).toEqual([0, 4]);
+  });
+
   async function connectRaw(port: number): Promise<net.Socket> {
     return await new Promise((resolve, reject) => {
       const socket = net.connect({ port, host: "127.0.0.1" }, () => resolve(socket));

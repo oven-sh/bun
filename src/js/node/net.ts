@@ -1644,7 +1644,11 @@ function Socket(options?) {
             return;
           }
           if (dest.length === 0) {
-            self.destroy(new ErrnoException(UV_ENOBUFS, "read"));
+            const err = new Error("read ENOBUFS") as Error & { code?: string; errno?: number; syscall?: string };
+            err.code = "ENOBUFS";
+            err.errno = UV_ENOBUFS;
+            err.syscall = "read";
+            self.destroy(err);
             return;
           }
           const n = Math.min(dest.length, total - offset);

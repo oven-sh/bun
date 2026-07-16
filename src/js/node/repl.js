@@ -88,10 +88,6 @@ const {
 } = primordials;
 
 const { makeRequireFunction, addBuiltinLibsToObject } = require("internal/repl/node-shims");
-// Lazy: acorn's ~122 KB source parses on first property access, not on
-// require('node:repl'); don't destructure at module scope.
-const acorn = require("internal/repl/acorn");
-const acornWalk = require("internal/repl/acorn-walk");
 const {
   decorateErrorStack,
   isError,
@@ -227,29 +223,46 @@ fixReplRequire(__node_module__);
 const writer = obj => inspect(obj, writer.options);
 writer.options = { ...inspect.defaultOptions, showProxy: true };
 
-// Converts static import statement to dynamic import statement
+// Matches one static import declaration: a namespace, default, default + (
+// namespace | named), or named clause before `from`, or a bare side-effect
+// import. Global so every declaration on the line is converted, as the acorn
+// walk this replaced did.
+const importDeclRE =
+  /\bimport\s+(?:\*\s+as\s+([\p{ID_Start}$_][\p{ID_Continue}$_]*)|([\p{ID_Start}$_][\p{ID_Continue}$_]*)(?:\s*,\s*(?:\*\s+as\s+([\p{ID_Start}$_][\p{ID_Continue}$_]*)|(\{[^}]*\})))?|(\{[^}]*\}))\s*from\s*(['"][^'"]*['"])|\bimport\s*(['"][^'"]*['"])/gu;
+const importAsRE = /([\p{ID_Start}$_][\p{ID_Continue}$_]*)\s+as\s+([\p{ID_Start}$_][\p{ID_Continue}$_]*)/gu;
+
+// Converts the static import statements on a line into dynamic-import hint
+// text for the "Cannot use import statement inside the REPL" error message.
+// Returns null when nothing matched so the caller leaves the message alone —
+// the acorn walk this replaced threw there, which had the same effect.
 const toDynamicImport = codeLine => {
-  let dynamicImportStatement = "";
-  const ast = acorn.parse(codeLine, { __proto__: null, sourceType: "module", ecmaVersion: "latest" });
-  acornWalk.ancestor(ast, {
-    ImportDeclaration(node) {
-      const awaitDynamicImport = `await import(${JSONStringify(node.source.value)});`;
-      if (node.specifiers.length === 0) {
-        dynamicImportStatement += awaitDynamicImport;
-      } else if (node.specifiers.length === 1 && node.specifiers[0].type === "ImportNamespaceSpecifier") {
-        dynamicImportStatement += `const ${node.specifiers[0].local.name} = ${awaitDynamicImport}`;
-      } else {
-        const importNames = ArrayPrototypeJoin(
-          ArrayPrototypeMap(node.specifiers, ({ local, imported }) =>
-            local.name === imported?.name ? local.name : `${imported?.name ?? "default"}: ${local.name}`,
-          ),
-          ", ",
-        );
-        dynamicImportStatement += `const { ${importNames} } = ${awaitDynamicImport}`;
+  importDeclRE.lastIndex = 0;
+  let out = "";
+  let m;
+  while ((m = RegExpPrototypeExec(importDeclRE, codeLine)) !== null) {
+    const [, ns, def, defNs, defNamed, named, source, bareSource] = m;
+    // `import()` takes the specifier's value; normalize the quoting the way the
+    // acorn walk did with `JSONStringify(node.source.value)`.
+    const dyn = `await import(${JSONStringify(StringPrototypeSlice(source ?? bareSource, 1, -1))});`;
+    if (ns) {
+      out += `const ${ns} = ${dyn}`;
+      continue;
+    }
+    const parts = [];
+    if (def) ArrayPrototypePush(parts, `default: ${def}`);
+    // Upstream runs a namespace specifier through the same `imported ?? default`
+    // mapping, so `import d, * as ns from "x"` does bind `ns` to the default.
+    if (defNs) ArrayPrototypePush(parts, `default: ${defNs}`);
+    const brace = defNamed ?? named;
+    if (brace) {
+      const inner = StringPrototypeTrim(StringPrototypeSlice(brace, 1, -1));
+      if (inner !== "") {
+        ArrayPrototypePush(parts, SideEffectFreeRegExpPrototypeSymbolReplace(importAsRE, inner, "$1: $2"));
       }
-    },
-  });
-  return dynamicImportStatement;
+    }
+    out += parts.length === 0 ? dyn : `const { ${ArrayPrototypeJoin(parts, ", ")} } = ${dyn}`;
+  }
+  return out === "" ? null : out;
 };
 
 class Recoverable extends SyntaxError {
@@ -1007,11 +1020,12 @@ class REPLServer extends Interface {
                 "",
               );
               const importErrorStr = "Cannot use import statement outside a " + "module";
-              if (StringPrototypeIncludes(e.message, importErrorStr)) {
+              const dynamicImport = StringPrototypeIncludes(e.message, importErrorStr)
+                ? toDynamicImport(ArrayPrototypeAt(this.lines, -1))
+                : null;
+              if (dynamicImport !== null) {
                 e.message =
-                  "Cannot use import statement inside the Node.js " +
-                  "REPL, alternatively use dynamic import: " +
-                  toDynamicImport(ArrayPrototypeAt(this.lines, -1));
+                  "Cannot use import statement inside the Node.js " + "REPL, alternatively use dynamic import: " + dynamicImport;
                 e.stack = SideEffectFreeRegExpPrototypeSymbolReplace(
                   /SyntaxError:.*\n/,
                   e.stack,

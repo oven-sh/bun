@@ -75,6 +75,7 @@ const rustIdentifierPaths: Record<string, string> = {
   "node_http_binding.rs": "runtime/node/node_http_binding.rs",
   "node_net_binding.rs": "runtime/node/node_net_binding.rs",
   "node_os.rs": "runtime/node/node_os.rs",
+  "node_repl_binding.rs": "runtime/node/node_repl_binding.rs",
   "node_util_binding.rs": "runtime/node/node_util_binding.rs",
   "node_zlib_binding.rs": "runtime/node/node_zlib_binding.rs",
   "npm.rs": "install/npm.rs",

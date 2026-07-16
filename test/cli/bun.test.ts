@@ -147,11 +147,14 @@ describe("bun", () => {
       ["build", "--allow-unresolved", "Use '<empty>' for opaque specifiers"],
     ];
     describe.each([{ NO_COLOR: "1" }, { FORCE_COLOR: "1" }])("%j", env => {
-      test.concurrent.each(descFlags)("bun %s --help keeps placeholder in %s description", async (cmd, flag, expected) => {
-        const { out, exitCode } = await help(cmd, env);
-        expect(line(out, flag)).toContain(expected);
-        expect(exitCode).toBe(0);
-      });
+      test.concurrent.each(descFlags)(
+        "bun %s --help keeps placeholder in %s description",
+        async (cmd, flag, expected) => {
+          const { out, exitCode } = await help(cmd, env);
+          expect(line(out, flag)).toContain(expected);
+          expect(exitCode).toBe(0);
+        },
+      );
     });
 
     const pmUsage: [string, string][] = [

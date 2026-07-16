@@ -344,6 +344,8 @@ impl NetworkTask {
 
 #[derive(Clone, Copy)]
 pub enum Authorization {
+    /// Do not attach the package scope's registry credential. `.npmrc`
+    /// `//host/:*=` entries that match the tarball URL are still honored.
     NoAuthorization,
     AllowAuthorization,
 }
@@ -384,12 +386,22 @@ fn tarball_url_auth_for<'a>(
     entries: &'a [npm::registry::Scope],
     tarball: &URL<'_>,
 ) -> Option<&'a npm::registry::Scope> {
-    let tarball_host = strings::without_trailing_slash(tarball.host);
     let tarball_path = tarball.pathname;
+    // `.npmrc` keys have no scheme, so a portless key can only mean "default
+    // port for the tarball's scheme" (npm builds the key from
+    // `new URL(uri).host`, which strips default ports). Normalize on the
+    // tarball side so `//cdn/:_authToken=` matches `https://cdn:443/...`.
+    let tarball_port_is_default = tarball.get_port() == Some(tarball.get_default_port());
     let mut best: Option<(&'a npm::registry::Scope, usize)> = None;
     for entry in entries {
         let entry_url = entry.url.url();
-        if strings::without_trailing_slash(entry_url.host) != tarball_host {
+        let host_matches = if entry_url.port.is_empty() && tarball_port_is_default {
+            entry_url.hostname == tarball.hostname
+        } else {
+            strings::without_trailing_slash(entry_url.host)
+                == strings::without_trailing_slash(tarball.host)
+        };
+        if !host_matches {
             continue;
         }
         let entry_path = strings::without_trailing_slash(entry_url.pathname);

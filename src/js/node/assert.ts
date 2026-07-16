@@ -462,19 +462,20 @@ function compareBranch(actual, expected, comparedObjects?) {
   return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
 }
 
-// Path-scoped cycle detection tracking both sides: a cycle is accepted only when
-// actual and expected cycle back together (Node's handleCycles in comparisons.js).
+// Path-scoped cycle detection tracking each side separately: a cycle is accepted
+// only when actual and expected each cycle back on their own side together.
 function withCycleGuard(actual, expected, comparedObjects, body) {
-  comparedObjects ??= new SafeWeakSet();
-  const hadActual = comparedObjects.has(actual);
-  const hadExpected = comparedObjects.has(expected);
+  comparedObjects ??= { a: new SafeWeakSet(), b: new SafeWeakSet() };
+  const { a: seenActual, b: seenExpected } = comparedObjects;
+  const hadActual = seenActual.has(actual);
+  const hadExpected = seenExpected.has(expected);
   if (hadActual && hadExpected) return true;
   if (hadActual || hadExpected) return false;
-  comparedObjects.add(actual);
-  comparedObjects.add(expected);
+  seenActual.add(actual);
+  seenExpected.add(expected);
   const result = body(actual, expected, comparedObjects);
-  comparedObjects.delete(actual);
-  comparedObjects.delete(expected);
+  seenActual.delete(actual);
+  seenExpected.delete(expected);
   return result;
 }
 

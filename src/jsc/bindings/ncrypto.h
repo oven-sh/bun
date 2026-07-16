@@ -892,6 +892,7 @@ public:
         bool output_key_object = false;
         PKFormatType format = PKFormatType::DER;
         PKEncodingType type = PKEncodingType::PKCS8;
+        int ec_point_form = POINT_CONVERSION_UNCOMPRESSED;
         AsymmetricKeyEncodingConfig() = default;
         AsymmetricKeyEncodingConfig(bool output_key_object,
             PKFormatType format,

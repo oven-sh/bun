@@ -73,4 +73,12 @@ describe("assert.partialDeepStrictEqual", () => {
     );
     assert.partialDeepStrictEqual({ arr: [shared, shared] }, { arr: [{ x: 1 }] });
   });
+
+  test("a descendant actual identical to an ancestor expected is not mistaken for a cycle", () => {
+    const e = { k: {} };
+    assert.partialDeepStrictEqual({ k: e }, e);
+
+    const arr = [[]];
+    assert.partialDeepStrictEqual([arr], arr);
+  });
 });

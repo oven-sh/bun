@@ -1042,6 +1042,20 @@ describe("KeyObject raw-public / raw-private / raw-seed formats", () => {
           namedCurve,
         });
         expect(reimported.export({ format: "raw-public" })).toEqual(publicKey.export({ format: "raw-public" }));
+
+        // generateKeyPair's publicKeyEncoding path honors the same option.
+        const { publicKey: keygenCompressed } = crypto.generateKeyPairSync("ec", {
+          namedCurve,
+          publicKeyEncoding: { format: "raw-public", type: "compressed" },
+        });
+        expect(Buffer.isBuffer(keygenCompressed)).toBe(true);
+        expect(keygenCompressed.length).toBe((pubLen - 1) / 2 + 1);
+        expect(() =>
+          crypto.generateKeyPairSync("ec", {
+            namedCurve,
+            publicKeyEncoding: { format: "raw-public", type: "garbage" },
+          }),
+        ).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
       });
     }
   });

@@ -835,7 +835,20 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
             ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "format"_s), formatValue);
             return;
         }
-        // type may be undefined, 'compressed', or 'uncompressed'; handled at export time.
+        if (!typeValue.isUndefined()) {
+            if (!typeValue.isString()) {
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+                return;
+            }
+            auto typeStr = typeValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            if (typeStr == "compressed"_s) {
+                config.ec_point_form = POINT_CONVERSION_COMPRESSED;
+            } else if (typeStr != "uncompressed"_s) {
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+                return;
+            }
+        }
         return;
     }
 
@@ -947,6 +960,7 @@ void parsePublicKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSO
     config.format = dummyConfig.format;
     config.type = dummyConfig.type;
     config.output_key_object = dummyConfig.output_key_object;
+    config.ec_point_form = dummyConfig.ec_point_form;
 }
 
 void parsePrivateKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)

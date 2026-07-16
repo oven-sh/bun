@@ -446,7 +446,7 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPrivate || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
-        return exportRaw(lexicalGlobalObject, scope, config.format, POINT_CONVERSION_UNCOMPRESSED);
+        return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
     }
 
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
@@ -478,7 +478,7 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
     }
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPrivate || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
-        return exportRaw(lexicalGlobalObject, scope, config.format, POINT_CONVERSION_UNCOMPRESSED);
+        return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
     }
 
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;

@@ -2108,14 +2108,18 @@ JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, 
     WTF::String stackString;
     bool haveErrorObject = errorValue.isObject();
     if (haveErrorObject) {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         auto* errorObject = errorValue.getObject();
         JSValue stackValue = errorObject->get(globalObject, vm.propertyNames->stack);
-        RETURN_IF_EXCEPTION(scope, {});
-        if (stackValue.isString()) {
-            stackString = stackValue.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+        if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+            return {};
+        if (stackValue && stackValue.isString()) {
+            stackString = asString(stackValue)->value(globalObject);
+            if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+                return {};
         }
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     if (haveErrorObject && stackString.isNull()) {
         javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("No stack."_s)), 0);
@@ -2163,19 +2167,30 @@ JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, 
     }
 
     if (haveErrorObject) {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         auto* errorObject = errorValue.getObject();
         JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         errorObject->methodTable()->getOwnPropertyNames(errorObject, globalObject, names, DontEnumPropertiesMode::Exclude);
-        RETURN_IF_EXCEPTION(scope, {});
+        if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+            return {};
         for (const auto& name : names) {
             if (name == vm.propertyNames->stack || name == vm.propertyNames->message) continue;
             JSValue v = errorObject->get(globalObject, name);
-            RETURN_IF_EXCEPTION(scope, {});
+            if (catchScope.exception()) {
+                if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+                    return {};
+                continue;
+            }
             JSString* str = v.toString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
+            if (catchScope.exception()) {
+                if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+                    return {};
+                continue;
+            }
             errorProperties->putDirect(vm, name, str, 0);
         }
     }
+    RETURN_IF_EXCEPTION(scope, {});
 
     javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
     return javascriptStack;
@@ -2642,6 +2657,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 11);
+    RETURN_IF_EXCEPTION(scope, {});
 
     unsigned accessorAttrs = PropertyAttribute::CustomAccessor | 0;
     report->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::CustomGetterSetter::create(vm, processReport_getCompact, processReport_setCompact), accessorAttrs);

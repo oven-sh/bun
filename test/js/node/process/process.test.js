@@ -1041,6 +1041,51 @@ describe.concurrent(() => {
       });
     });
 
+    it("getReport(err) swallows a throwing .stack getter", () => {
+      const o = {
+        get stack() {
+          throw new Error("boom");
+        },
+      };
+      expect(process.report.getReport(o).javascriptStack).toEqual({
+        message: "No stack.",
+        stack: ["Unavailable."],
+        errorProperties: {},
+      });
+    });
+
+    it("getReport(err) skips throwing property getters in errorProperties", () => {
+      const o = {
+        stack: "head\n  at frame\n",
+        a: 1,
+        get b() {
+          throw new Error("boom");
+        },
+        c: 3,
+      };
+      expect(process.report.getReport(o).javascriptStack).toEqual({
+        message: "head",
+        stack: ["at frame"],
+        errorProperties: { a: "1", c: "3" },
+      });
+    });
+
+    it("getReport(err) swallows a Proxy ownKeys trap that throws", () => {
+      const p = new Proxy(
+        { stack: "head\n  at frame\n" },
+        {
+          ownKeys() {
+            throw new Error("boom");
+          },
+        },
+      );
+      expect(process.report.getReport(p).javascriptStack).toEqual({
+        message: "head",
+        stack: ["at frame"],
+        errorProperties: {},
+      });
+    });
+
     it("getReport(err) validates the argument type", () => {
       for (const v of [42, "x", true, null]) {
         expect(() => process.report.getReport(v)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));

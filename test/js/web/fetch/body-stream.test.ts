@@ -44,6 +44,75 @@ describe.each([
     expect(called).toBe(true);
   });
 
+  // https://fetch.spec.whatwg.org/#concept-body-stream
+  // "set up stream with byte reading support": network bodies must accept a
+  // BYOB reader and fill the caller's view directly.
+  test("fetch response body supports getReader({ mode: 'byob' })", async () => {
+    const payload = new Uint8Array(300_000);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    await runInServer(
+      {
+        async fetch() {
+          return new Response(payload);
+        },
+      },
+      async url => {
+        const res = await fetch(url);
+        const reader = res.body!.getReader({ mode: "byob" });
+        const out = new Uint8Array(payload.length);
+        let offset = 0;
+        let buf = new Uint8Array(4096);
+        while (offset < out.length) {
+          const { value, done } = await reader.read(buf);
+          if (done) break;
+          out.set(value, offset);
+          offset += value.byteLength;
+          buf = new Uint8Array(value.buffer, 0, value.buffer.byteLength);
+        }
+        expect(offset).toBe(payload.length);
+        expect(Bun.SHA1.hash(out, "base64")).toBe(Bun.SHA1.hash(payload, "base64"));
+        const tail = await reader.read(new Uint8Array(16));
+        expect(tail.done).toBe(true);
+      },
+    );
+  });
+
+  test("Bun.serve request body supports getReader({ mode: 'byob' })", async () => {
+    const payload = new Uint8Array(300_000);
+    for (let i = 0; i < payload.length; i++) payload[i] = i & 0xff;
+    await runInServer(
+      {
+        async fetch(req) {
+          const reader = req.body!.getReader({ mode: "byob" });
+          const out = new Uint8Array(payload.length);
+          let offset = 0;
+          let buf = new Uint8Array(4096);
+          while (offset < out.length) {
+            const { value, done } = await reader.read(buf);
+            if (done) break;
+            out.set(value, offset);
+            offset += value.byteLength;
+            buf = new Uint8Array(value.buffer, 0, value.buffer.byteLength);
+          }
+          const tail = await reader.read(new Uint8Array(16));
+          return Response.json({
+            offset,
+            tailDone: tail.done,
+            hash: Bun.SHA1.hash(out, "base64"),
+          });
+        },
+      },
+      async url => {
+        const res = await fetch(url, { method: "POST", body: payload });
+        expect(await res.json()).toEqual({
+          offset: payload.length,
+          tailDone: true,
+          hash: Bun.SHA1.hash(payload, "base64"),
+        });
+      },
+    );
+  });
+
   for (let doClone of [true, false]) {
     const BodyMixin = [
       Request.prototype.arrayBuffer,

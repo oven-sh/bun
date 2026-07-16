@@ -117,6 +117,337 @@ test.skipIf(!isASAN)(
   30_000,
 );
 
+// Once controller.end() fully ends the response, uWS markDone() drops its
+// onAborted handler, so a peer that closes the plain-TCP socket afterwards
+// never reaches RequestContext::on_abort. uSockets frees the socket at the
+// end of that loop tick (us_internal_free_closed_sockets), but resp was never
+// detached; the stream-resolution microtask for the still parked pull() then
+// dereferenced the freed us_socket_t:
+//   AddressSanitizer: heap-use-after-free (READ of size 1)
+//     uws_res_state <- AnyResponse::should_close_connection
+//     <- RequestContext::should_close_connection
+//     <- RequestContext::handle_resolve_stream
+test.skipIf(!isASAN)(
+  "client disconnect after controller.end() with a parked pull() does not use the socket after free",
+  async () => {
+    const fixture = `
+    const { connect } = require("node:net");
+    const CRLF = "\\r\\n";
+
+    let release1, release2;
+    const gate1 = new Promise(r => (release1 = r));
+    const gate2 = new Promise(r => (release2 = r));
+
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/probe") return new Response("probe");
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("hello");
+              // Suspend so assignToStream sees a pending promise and the
+              // resolution goes through the on_resolve_stream microtask.
+              await gate1;
+              // Fully ends the uWS response: markDone() drops onAborted.
+              controller.end();
+              // Parks the resolution microtask past the socket close.
+              await gate2;
+            },
+          }),
+        );
+      },
+    });
+
+    // Raw TCP so this side controls exactly when the connection closes.
+    await new Promise((resolve, reject) => {
+      let buf = "";
+      let sawBody = false;
+      const sock = connect(server.port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1" + CRLF + "Host: a" + CRLF + CRLF);
+      });
+      sock.on("error", reject);
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        if (!sawBody && buf.includes("hello")) {
+          sawBody = true;
+          release1();
+        }
+        // Terminating chunk: controller.end() has fully responded server-side.
+        if (sawBody && buf.endsWith("0" + CRLF + CRLF)) sock.destroy();
+      });
+      sock.on("close", resolve);
+    });
+
+    // A round-trip through the server proves its event loop finished the
+    // iteration that closed the first socket; the matching
+    // us_internal_free_closed_sockets ran at the end of that iteration.
+    await (await fetch(server.url + "probe")).text();
+
+    release2();
+    await Bun.sleep(0);
+    server.stop(true);
+    console.log("ok");
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  60_000,
+);
+
+// Same setup, but the parked pull() rejects after controller.end(). The
+// rejection goes through handle_reject_stream, which had the same stale
+// `resp` dereference on its tail (`end_stream(should_close_connection())`).
+test.skipIf(!isASAN)(
+  "client disconnect after controller.end() with a parked rejecting pull() does not use the socket after free",
+  async () => {
+    const fixture = `
+    const { connect } = require("node:net");
+    const CRLF = "\\r\\n";
+
+    let release1, release2;
+    const gate1 = new Promise(r => (release1 = r));
+    const gate2 = new Promise(r => (release2 = r));
+
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      // development:false keeps the late rejection out of stderr; the dev
+      // reporter is irrelevant to the lifetime bug under test.
+      development: false,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/probe") return new Response("probe");
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("hello");
+              await gate1;
+              controller.end();
+              await gate2;
+              throw new Error("late stream failure");
+            },
+          }),
+        );
+      },
+    });
+
+    await new Promise((resolve, reject) => {
+      let buf = "";
+      let sawBody = false;
+      const sock = connect(server.port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1" + CRLF + "Host: a" + CRLF + CRLF);
+      });
+      sock.on("error", reject);
+      sock.on("data", d => {
+        buf += d.toString("latin1");
+        if (!sawBody && buf.includes("hello")) {
+          sawBody = true;
+          release1();
+        }
+        if (sawBody && buf.endsWith("0" + CRLF + CRLF)) sock.destroy();
+      });
+      sock.on("close", resolve);
+    });
+
+    await (await fetch(server.url + "probe")).text();
+
+    release2();
+    await Bun.sleep(0);
+    server.stop(true);
+    console.log("ok");
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  60_000,
+);
+
+// The HTTP/3 sibling must NOT take the ended_response short-circuit.
+// Http3Response::markDone() deliberately leaves onAborted armed (unlike
+// HTTP/1's markDone()) so that Http3Context's on_stream_close can notify the
+// holder; end_stream() -> detach_response() -> clear_aborted() is what disarms
+// it. Skipping that leaves the callback pointing at a RequestContext the
+// stream-resolution microtask has already released, and lsquic's later
+// on_stream_close invokes it on the freed slot.
+test.skipIf(!isASAN)(
+  "h3: controller.end() from a parked pull() disarms onAborted before the context is released",
+  async () => {
+    const fixture = `
+    const tls = ${JSON.stringify(tls)};
+    const gate = Promise.withResolvers();
+
+    const server = Bun.serve({
+      port: 0,
+      idleTimeout: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("hello");
+              controller.flush();
+              // Suspend so assignToStream sees a pending promise. The
+              // resolution then runs as an on_resolve_stream microtask AFTER
+              // controller.end() has markDone()d the H3 stream, before
+              // lsquic can fire on_stream_close.
+              await gate.promise;
+              controller.end();
+            },
+          }),
+        );
+      },
+    });
+
+    const res = await fetch("https://" + server.hostname + ":" + server.port + "/", {
+      protocol: "http3",
+      tls: { rejectUnauthorized: false },
+    });
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let body = "";
+    // First chunk received => pull() is parked at the gate.
+    while (!body.includes("hello")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      body += decoder.decode(value, { stream: true });
+    }
+    gate.resolve();
+    // Drain to completion; both sides have FINned, so lsquic's next ticks
+    // run on_stream_close for this stream.
+    while (!(await reader.read()).done);
+    for (let i = 0; i < 20; i++) await Bun.sleep(5);
+    server.stop(true);
+    console.log("ok");
+  `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ok\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+  60_000,
+);
+
+// A direct stream's pull() that throws synchronously reaches handle_reject
+// AFTER do_render_stream already wrote the 200 status+headers. handle_reject
+// gated only on has_responded() (response ended), not has_written_status(),
+// so the server's error() handler was asked to produce a second Response and
+// render_metadata wrote its status/headers into the in-flight body. Debug
+// builds hit the !has_written_status assert in do_write_status and aborted;
+// release builds spliced the error() header block into the chunked body.
+describe("sync pull() throw after status is written does not re-render error()", () => {
+  function fixture(pullBody: string) {
+    return `
+      const net = require("node:net");
+      let errorHandlerCalls = 0;
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        development: false,
+        error() {
+          errorHandlerCalls++;
+          return new Response("FROM-ERROR-HANDLER", { status: 500, headers: { "x-err": "1" } });
+        },
+        fetch() {
+          return new Response(new ReadableStream({
+            type: "direct",
+            pull(c) { ${pullBody} },
+          }));
+        },
+      });
+      const wire = await new Promise(resolve => {
+        let buf = "";
+        const s = net.connect(server.port, "127.0.0.1", () => {
+          s.write("GET / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n");
+        });
+        s.on("data", d => (buf += d.toString("latin1")));
+        s.on("close", () => resolve(buf));
+        s.on("error", () => resolve(buf));
+      });
+      server.stop(true);
+      console.log(JSON.stringify({ wire, errorHandlerCalls }));
+    `;
+  }
+
+  test("body bytes already flushed: connection is force-closed", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`c.write("PARTIAL-BYTES"); c.flush(); throw new Error("boom");`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    const { wire, errorHandlerCalls } = JSON.parse(stdout);
+    // error() cannot replace a response whose status is committed; the
+    // connection is force-closed so the client observes failure instead of
+    // the error() header block spliced where a chunk-size line belongs.
+    expect(wire).not.toContain("x-err");
+    expect(wire).not.toContain("FROM-ERROR-HANDLER");
+    expect(wire).not.toContain("Something went wrong");
+    expect(errorHandlerCalls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+
+  test("no body bytes flushed: stream is ended without splicing error() headers", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture(`throw new Error("boom");`)],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: boom");
+    const { wire, errorHandlerCalls } = JSON.parse(stdout);
+    // Status 200 was already written; the stream is ended empty. The error()
+    // response's status (500), headers, and body must not appear on the wire.
+    expect(wire).not.toContain("x-err");
+    expect(wire).not.toContain("FROM-ERROR-HANDLER");
+    expect(wire.startsWith("HTTP/1.1 200 OK\r\n")).toBe(true);
+    expect(errorHandlerCalls).toBe(0);
+    expect(exitCode).toBe(0);
+  });
+});
+
 // https://github.com/oven-sh/bun/issues/32137
 // react-dom/server.bun's renderToReadableStream returns a direct ReadableStream
 // whose pull() writes the shell, captures the controller, and returns

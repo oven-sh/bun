@@ -258,14 +258,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
-    /// Raw-TCP write that also reports a fatal send error; non-Connected and
-    /// TLS-wrapped sockets fall back to the plain write (no fatal signal).
-    pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
+    /// Raw-TCP write that also reports a fatal send error as the positive
+    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
+    /// sockets fall back to the plain write (no fatal signal).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),
-            duplex d => (d.encode_and_write(data), false),
-            pipe p => (p.encode_and_write(data), false),
-            else => (0, false),
+            duplex d => (d.encode_and_write(data), 0),
+            pipe p => (p.encode_and_write(data), 0),
+            else => (0, 0),
         )
     }
 
@@ -320,6 +321,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
             duplex d => d.ssl_error().error_no,
             pipe p => p.ssl_error().error_no,
         )
+    }
+
+    /// Raw `getaddrinfo(3)` return code for a pending connect whose name
+    /// lookup failed; 0 otherwise (a connect failure past name resolution, or
+    /// any non-connecting handle). A different namespace from
+    /// [`Self::get_error`] (errno).
+    pub fn dns_error(&self) -> i32 {
+        match self.socket {
+            InternalSocket::Connecting(c) => conn(c).get_dns_error(),
+            _ => 0,
+        }
     }
 
     // ── lifecycle ───────────────────────────────────────────────────────────
@@ -894,9 +906,9 @@ mod sock_c {
 pub enum ConnectError {
     FailedToOpenSocket,
 }
-impl From<ConnectError> for bun_core::Error {
+impl From<ConnectError> for crate::Error {
     fn from(_: ConnectError) -> Self {
-        bun_core::err!("FailedToOpenSocket")
+        crate::Error::FailedToOpenSocket
     }
 }
 

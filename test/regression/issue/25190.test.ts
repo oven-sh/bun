@@ -35,6 +35,10 @@ describe("TLSSocket.isSessionReused", () => {
         host: "127.0.0.1",
         rejectUnauthorized: false,
       });
+      // Drain the server's "hello" so the readable side can end and 'close' fires.
+      // Node behaves the same way: with data buffered and the readable side not
+      // flowing, 'close' is not emitted until the data is consumed (or destroy()).
+      socket.resume();
 
       await new Promise<void>(resolve => socket.on("secureConnect", resolve));
 
@@ -70,6 +74,10 @@ describe("TLSSocket.isSessionReused", () => {
         host: "127.0.0.1",
         rejectUnauthorized: false,
       });
+      // Drain the server's "hello" so the readable side can end and 'close' fires.
+      // Node behaves the same way: with data buffered and the readable side not
+      // flowing, 'close' is not emitted until the data is consumed (or destroy()).
+      socket1.resume();
 
       await new Promise<void>(resolve => socket1.on("secureConnect", resolve));
 
@@ -89,6 +97,10 @@ describe("TLSSocket.isSessionReused", () => {
         rejectUnauthorized: false,
         session: session,
       });
+      // Drain the server's "hello" so the readable side can end and 'close' fires.
+      // Node behaves the same way: with data buffered and the readable side not
+      // flowing, 'close' is not emitted until the data is consumed (or destroy()).
+      socket2.resume();
 
       await new Promise<void>(resolve => socket2.on("secureConnect", resolve));
 

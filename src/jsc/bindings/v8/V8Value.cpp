@@ -97,11 +97,11 @@ bool Value::IsMap() const
 
 bool Value::IsArray() const
 {
+    // V8's IsArray is a JS_ARRAY_TYPE instance check that never unwraps proxies
+    // and cannot throw, so use a JSArray type check (ArrayType/DerivedArrayType)
+    // rather than JSC::isArray (spec IsArray: proxy-transparent, may throw).
     JSC::JSValue value = localToJSValue();
-    if (!value.isObject()) {
-        return false;
-    }
-    return JSC::isArray(defaultGlobalObject(), value);
+    return value.isCell() && value.inherits<JSC::JSArray>();
 }
 
 bool Value::IsInt32() const

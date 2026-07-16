@@ -17,13 +17,16 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
+#include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/Lock.h>
 
 #include <optional>
 #include <unordered_set>
 #include <variant>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
+extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
 
@@ -123,7 +126,7 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
 }
 
 struct napi_async_cleanup_hook_handle__ {
@@ -194,27 +197,102 @@ public:
 
     void cleanup()
     {
+        // The VM can already have a pending exception when cleanup starts:
+        // a Worker torn down via terminate() has JSC's TerminationException
+        // set (termination is trap-based, so clearing the exception object
+        // does not cancel the termination request -- re-entering JS
+        // re-throws it). Cleanup hooks and finalizers are native callbacks
+        // with no JS frame above them to catch anything, so, matching
+        // Node.js, each starts from a clean exception state. Without this,
+        // the first napi call in the first callback that checks the VM
+        // (e.g. napi_create_string_utf8 in a node-addon-api ObjectWrap
+        // finalizer) fails with napi_pending_exception and the addon's
+        // error path escalates to napi_fatal_error. See #30286.
+        clearExceptionsBetweenFinalizers();
+
         while (!m_cleanupHooks.empty()) {
             drain();
         }
+
+        // Threadsafe functions hold a raw pointer to this env's event loop,
+        // which a worker's shutdown frees while addon threads keep running.
+        // Neutralize them all before that happens (Node: ThreadSafeFunction::Cleanup).
+        // Their finalizers are native callbacks like the ones below, so they
+        // start from a clean exception state too: a cleanup hook may have left one.
+        clearExceptionsBetweenFinalizers();
+        abortThreadSafeFunctions();
+
+        // A threadsafe function's finalizer can register a cleanup hook of its
+        // own, and the loop above has already run: drain again so it is not
+        // dropped on the floor.
+        while (!m_cleanupHooks.empty()) {
+            drain();
+        }
+        clearExceptionsBetweenFinalizers();
 
         // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
         // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.
         JSC::DeferGCForAWhile deferGC(m_vm);
 
         m_isFinishingFinalizers = true;
+        // A cleanup hook may itself have leaked an exception; the first
+        // finalizer starts clean too.
+        clearExceptionsBetweenFinalizers();
         // Reverse insertion order so children are torn down before parents (Node.js LIFO).
         // ListHashSet iteration is safe against concurrent inserts, and m_isFinishingFinalizers
         // routes all removals to active=false, so the only unsafe op (erase-current) can't occur.
         for (auto it = m_finalizers.rbegin(); it != m_finalizers.rend(); ++it) {
             Bun::NapiHandleScope handle_scope(m_globalObject);
             it->call(this);
+            // Each finalizer starts from a clean exception state: Node.js
+            // never propagates one finalizer's throw into the next (there
+            // is no JS frame to catch in between). Leaving a pending
+            // exception also breaks later finalizers in subtle ways --
+            // napi_is_exception_pending skips the VM check during cleanup
+            // for safety, so user code thinks there is no exception, but
+            // the next napi call with a throw scope sees it. See #30286.
+            clearExceptionsBetweenFinalizers();
         }
         m_finalizers.clear();
         m_isFinishingFinalizers = false;
 
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
+        clearExceptionsBetweenFinalizers();
+    }
+
+    // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
+    // by the Rust side, added and removed on the JS thread only: at creation,
+    // by the destroy path (an event-loop task), and by teardown below. The
+    // lock guards the torn-down flag so the "created after teardown" case is
+    // decided in one critical section.
+    bool registerThreadSafeFunction(void* tsfn)
+    {
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        if (m_threadSafeFunctionsTornDown) {
+            return false;
+        }
+        m_threadSafeFunctions.add(tsfn);
+        return true;
+    }
+
+    void unregisterThreadSafeFunction(void* tsfn)
+    {
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        m_threadSafeFunctions.remove(tsfn);
+    }
+
+    void abortThreadSafeFunctions()
+    {
+        WTF::HashSet<void*> tsfns;
+        {
+            WTF::Locker locker { m_threadSafeFunctionsLock };
+            m_threadSafeFunctionsTornDown = true;
+            tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
+        }
+        for (void* tsfn : tsfns) {
+            napi_internal_threadsafe_function_env_teardown(tsfn);
+        }
     }
 
     void removeFinalizer(napi_finalize callback, void* hint, void* data)
@@ -408,9 +486,15 @@ public:
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const
     {
-        // Even when we'd normally have to defer the finalizer, if this is happening during the VM's last chance to finalize,
-        // we can't defer the finalizer and have to call it now.
-        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !isVMTerminating();
+        // The deferred path (NapiFinalizerTask::schedule) is responsible for the
+        // shutdown case: once is_shutting_down() it either pushes a cleanup hook
+        // (if those haven't run yet) or drops the task (if they have). Running a
+        // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
+        // never safe — by then on_exit() has already run cleanup hooks (including
+        // the napi_set_instance_data finalizer that frees per-addon state the
+        // object finalizer reads), the heap is sweeping (no allocation, no handle
+        // scope), and napi_call_function returns the termination exception.
+        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL;
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
@@ -429,6 +513,12 @@ public:
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
+    // Running total reported via napi_adjust_external_memory. JSC's
+    // deprecatedReportExtraMemory has no decrement path, so we keep a signed
+    // accumulator and only forward positive growth to the JSC heap. Tracked
+    // per env (per loaded module), not per isolate as in V8; the documented
+    // +N/-N addon pattern only observes its own deltas.
+    int64_t m_externalMemory = 0;
 
     struct BoundFinalizer {
         napi_finalize callback = nullptr;
@@ -502,6 +592,17 @@ private:
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
 
+    WTF::Lock m_threadSafeFunctionsLock;
+    WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
+    bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
+
+    // Drop any pending exception -- VM-scope or env-scope -- between
+    // finalizers run from cleanup(). Used by cleanup() only. Defined
+    // out-of-line in napi.cpp so its uses of JSC::TopExceptionScope
+    // (which has JS_EXPORT_PRIVATE ctor/dtor under
+    // ENABLE_EXCEPTION_SCOPE_VERIFICATION) are confined to one TU.
+    void clearExceptionsBetweenFinalizers();
+
     // Returns a vector of hooks in reverse order of insertion.
     std::vector<Napi::EitherCleanupHook> getHooks() const
     {
@@ -533,6 +634,9 @@ private:
                 async.function(async.handle, async.data);
                 delete async.handle;
             }
+            // Same invariant as the finalizer loop in cleanup(): a hook
+            // that leaked an exception must not poison the next hook.
+            clearExceptionsBetweenFinalizers();
         }
     }
 };
@@ -807,7 +911,8 @@ public:
         napi_callback constructor,
         void* data,
         size_t property_count,
-        const napi_property_descriptor* properties);
+        const napi_property_descriptor* properties,
+        napi_status* propertyStatus = nullptr);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -828,7 +933,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, const String& name, napi_callback constructor,
+    napi_status finishCreation(VM&, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);

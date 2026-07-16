@@ -41,6 +41,7 @@ import { generateBuildOptionsRs } from "./buildOptionsRs.ts";
 import type { Config } from "./config.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { generateJsonByteClass } from "./jsonByteClass.ts";
 import type { Ninja } from "./ninja.ts";
 import { quote, quoteArgs } from "./shell.ts";
 
@@ -271,6 +272,13 @@ export function emitCodegen(n: Ninja, cfg: Config, sources: Sources): CodegenOut
   const buildOptionsRs = generateBuildOptionsRs(cfg);
   o.all.push(buildOptionsRs);
   o.rustInputs.push(buildOptionsRs);
+
+  // Same shape: the JSON byte-classification tables, consumed by both the
+  // Highway kernel (.h) and the Rust scalar indexer (.rs).
+  const jsonByteClass = generateJsonByteClass(cfg);
+  o.all.push(jsonByteClass.h, jsonByteClass.rs);
+  o.rustInputs.push(jsonByteClass.rs);
+  o.cppHeaders.push(jsonByteClass.h);
 
   emitBunError(ctx);
   emitStringMaps(ctx);
@@ -562,7 +570,9 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
     resolve(cfg.cwd, "src", "jsc", "bindings", "ErrorCode.h"),
   ];
 
-  const outputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
+  const cppOutputs = [resolve(cfg.codegenDir, "ErrorCode+List.h"), resolve(cfg.codegenDir, "ErrorCode+Data.h")];
+  const rustOutput = resolve(cfg.codegenDir, "ErrorCode.generated.rs");
+  const outputs = [...cppOutputs, rustOutput];
 
   n.build({
     outputs,
@@ -578,7 +588,7 @@ function emitErrorCode({ n, cfg, o, dirStamp }: Ctx): void {
 
   o.all.push(...outputs);
   o.rustInputs.push(...outputs);
-  o.cppHeaders.push(outputs[0]!, outputs[1]!);
+  o.cppHeaders.push(...cppOutputs);
 }
 
 function emitGeneratedClasses({ n, cfg, sources, o, dirStamp }: Ctx): void {

@@ -37,10 +37,10 @@ pub enum ImportWatcher {
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
-    pub fn start(&mut self) -> Result<(), bun_core::Error> {
+    pub fn start(&mut self) -> Result<(), crate::CrateError> {
         match self {
-            ImportWatcher::Hot(w) => w.start(),
-            ImportWatcher::Watch(w) => w.start(),
+            ImportWatcher::Hot(w) => w.start().map_err(Into::into),
+            ImportWatcher::Watch(w) => w.start().map_err(Into::into),
             ImportWatcher::None => Ok(()),
         }
     }
@@ -1195,8 +1195,13 @@ where
                                         {
                                             // reset the file descriptor
                                             let ent = file_ent.entry();
-                                            ent.set_cache_fd(Fd::INVALID);
-                                            ent.need_stat.set(true);
+                                            {
+                                                // Every cached-`Entry` rewrite takes
+                                                // the per-entry mutex.
+                                                let _entry_guard = ent.mutex.lock_guard();
+                                                ent.set_cache_fd(Fd::INVALID);
+                                                ent.need_stat.set(true);
+                                            }
                                             path_string = ent.abs_path;
                                             file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {

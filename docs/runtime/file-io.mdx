@@ -5,7 +5,7 @@ description: Bun provides a set of optimized APIs for reading and writing files.
 
 <Note>
 
-The `Bun.file` and `Bun.write` APIs documented on this page are heavily optimized and represent the recommended way to perform file-system tasks using Bun. For operations that are not yet available with `Bun.file`, such as `mkdir` or `readdir`, you can use Bun's [nearly complete](/runtime/nodejs-compat#node-fs) implementation of the [`node:fs`](https://nodejs.org/api/fs.html) module.
+The `Bun.file` and `Bun.write` APIs documented on this page are heavily optimized and are the recommended way to work with files in Bun. For operations they don't cover, such as `mkdir` or `readdir`, use Bun's [nearly complete](/runtime/nodejs-compat#node-fs) implementation of the [`node:fs`](https://nodejs.org/api/fs.html) module.
 
 </Note>
 
@@ -15,7 +15,7 @@ The `Bun.file` and `Bun.write` APIs documented on this page are heavily optimize
 
 `Bun.file(path): BunFile`
 
-Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents a lazily-loaded file; initializing it does not actually read the file from disk.
+Create a `BunFile` instance with the `Bun.file(path)` function. A `BunFile` represents a lazily-loaded file; initializing it does not read the file from disk.
 
 ```ts
 const foo = Bun.file("foo.txt"); // relative to cwd
@@ -30,12 +30,12 @@ const foo = Bun.file("foo.txt");
 
 await foo.text(); // contents as a string
 await foo.json(); // contents as a JSON object
-await foo.stream(); // contents as ReadableStream
+foo.stream(); // contents as ReadableStream
 await foo.arrayBuffer(); // contents as ArrayBuffer
 await foo.bytes(); // contents as Uint8Array
 ```
 
-File references can also be created using numerical [file descriptors](https://en.wikipedia.org/wiki/File_descriptor) or `file://` URLs.
+You can also create file references from numerical [file descriptors](https://en.wikipedia.org/wiki/File_descriptor) or `file://` URLs.
 
 ```ts
 Bun.file(1234);
@@ -51,7 +51,7 @@ notreal.type; // "text/plain;charset=utf-8"
 const exists = await notreal.exists(); // false
 ```
 
-The default MIME type is `text/plain;charset=utf-8`, but it can be overridden by passing a second argument to `Bun.file`.
+The default MIME type is `text/plain;charset=utf-8`. Override it by passing a second argument to `Bun.file`.
 
 ```ts
 const notreal = Bun.file("notreal.json", { type: "application/json" });
@@ -68,7 +68,7 @@ Bun.stderr;
 
 ### Deleting files (`file.delete()`)
 
-You can delete a file by calling the `.delete()` function.
+Call `.delete()` to delete a file.
 
 ```ts
 await Bun.file("logs.json").delete();
@@ -82,13 +82,13 @@ await Bun.file("logs.json").delete();
 
 The `Bun.write` function is a multi-tool for writing payloads of all kinds to disk.
 
-The first argument is the `destination` which can have any of the following types:
+The first argument is the `destination`, which can be any of the following:
 
 - `string`: A path to a location on the file system. Use the `"path"` module to manipulate paths.
 - `URL`: A `file://` descriptor.
 - `BunFile`: A file reference.
 
-The second argument is the data to be written. It can be any of the following:
+The second argument is the data to write. It can be any of the following:
 
 - `string`
 - `Blob` (including `BunFile`)
@@ -96,7 +96,7 @@ The second argument is the data to be written. It can be any of the following:
 - `TypedArray` (`Uint8Array`, et. al.)
 - `Response`
 
-All possible permutations are handled using the fastest available system calls on the current platform.
+Bun handles each combination with the fastest available system call on the current platform.
 
 <Accordion title="See syscalls">
 
@@ -173,13 +173,13 @@ writer.write("it was the best of times\n");
 writer.write("it was the worst of times\n");
 ```
 
-These chunks will be buffered internally. To flush the buffer to disk, use `.flush()`. This returns the number of flushed bytes.
+These chunks are buffered internally. To flush the buffer to disk, use `.flush()`. This returns the number of flushed bytes.
 
 ```ts
 writer.flush(); // write buffer to disk
 ```
 
-The buffer will also auto-flush when the `FileSink`'s _high water mark_ is reached; that is, when its internal buffer is full. This value can be configured.
+The buffer also auto-flushes when the `FileSink`'s _high water mark_ is reached; that is, when its internal buffer is full. You can configure this value.
 
 ```ts
 const file = Bun.file("output.txt");
@@ -192,7 +192,7 @@ To flush the buffer and close the file:
 writer.end();
 ```
 
-Note that, by default, the `bun` process will stay alive until this `FileSink` is explicitly closed with `.end()`. To opt out of this behavior, you can "unref" the instance.
+By default, the `bun` process stays alive until this `FileSink` is explicitly closed with `.end()`. To opt out of this behavior, "unref" the instance.
 
 ```ts
 writer.unref();

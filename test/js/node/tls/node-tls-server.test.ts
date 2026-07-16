@@ -399,18 +399,13 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    // First `Bun.connect({tls:true})` of the process triggers the once-only
-    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
-    // debug+ASAN) so SSL_get_verify_result is real instead of the false
-    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
-    // point; the old 100 ms was a perf claim that is now load-order-dependent.
     timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         client = await Bun.connect({
-          tls: true,
+          tls: { ca: COMMON_CERT.cert, serverName: "localhost" },
           hostname: address.address,
           port: address.port,
           socket: {
@@ -451,18 +446,13 @@ describe("tls.createServer events", () => {
     };
     server.on("error", closeAndFail);
 
-    // First `Bun.connect({tls:true})` of the process triggers the once-only
-    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
-    // debug+ASAN) so SSL_get_verify_result is real instead of the false
-    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
-    // point; the old 100 ms was a perf claim that is now load-order-dependent.
     timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         await Bun.connect({
-          tls: true,
+          tls: { ca: COMMON_CERT.cert, serverName: "localhost" },
           hostname: address.address,
           port: address.port,
           socket: {
@@ -529,7 +519,7 @@ describe("tls.createServer events", () => {
 
         async function spawnClient() {
           await Bun.connect({
-            tls: true,
+            tls: { ca: COMMON_CERT.cert, serverName: "localhost" },
             port: address?.port,
             hostname: address?.address,
             socket: {
@@ -607,18 +597,13 @@ describe("tls.createServer events", () => {
 
     server.on("error", closeAndFail);
 
-    // First `Bun.connect({tls:true})` of the process triggers the once-only
-    // bundled-root-store build (`us_get_shared_default_ca_store`, ~150 ms in
-    // debug+ASAN) so SSL_get_verify_result is real instead of the false
-    // X509_V_OK VERIFY_NONE used to report. The condition assertion is the
-    // point; the old 100 ms was a perf claim that is now load-order-dependent.
     timeout = setTimeout(closeAndFail, isDebug ? 2000 : 500);
 
     server.listen(
       mustCall(async () => {
         const address = server.address() as AddressInfo;
         client = await Bun.connect({
-          tls: true,
+          tls: { ca: COMMON_CERT.cert, serverName: "localhost" },
           hostname: address.address,
           port: address.port,
           socket: {
@@ -1226,5 +1211,95 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   client.end();
   await once(client, "close");
   server.close();
+  await once(server, "close");
+});
+
+describe("tls.Server socket destroySoon", () => {
+  // destroySoon() after end(big) must deliver every byte even when the TLS write
+  // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of
+  // connections at this payload, so loop (mirrors test-tls-client-destroy-soon.js).
+  it("delivers the whole stream when destroySoon follows end", async () => {
+    const big = Buffer.alloc(2 * 1024 * 1024, "Y");
+    for (let i = 0; i < 64; i++) {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      const server = createServer(COMMON_CERT, socket => {
+        socket.on("error", reject);
+        socket.end(big);
+        socket.destroySoon();
+      });
+      server.on("error", reject);
+      let client: TLSSocket | undefined;
+      server.listen(0, () => {
+        const c = connect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false }, () => {
+          let bytesRead = 0;
+          c.on("readable", () => {
+            let d;
+            while ((d = c.read()) !== null) bytesRead += d.length;
+          });
+          c.on("end", () => resolve(bytesRead));
+        });
+        c.on("error", reject);
+        client = c;
+      });
+      try {
+        expect({ iteration: i, bytesRead: await promise }).toEqual({ iteration: i, bytesRead: big.length });
+      } finally {
+        client?.destroy();
+        server.close();
+      }
+    }
+  });
+});
+
+it("tls.createServer honors secureOptions when negotiating the protocol version", async () => {
+  const server: Server = createServer({ ...COMMON_CERT, secureOptions: crypto.constants.SSL_OP_NO_TLSv1_3 });
+  const accepted = Promise.withResolvers<void>();
+  server.on("secureConnection", socket => {
+    accepted.resolve();
+    socket.end();
+  });
+  server.on("tlsClientError", accepted.reject);
+  server.listen(0);
+  await once(server, "listening");
+  let client: TLSSocket | undefined;
+  try {
+    const port = (server.address() as AddressInfo).port;
+    client = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    await once(client, "secureConnect");
+    await accepted.promise;
+    expect(client.getProtocol()).toBe("TLSv1.2");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+  await once(server, "close");
+});
+
+it("tls.connect honors secureOptions when negotiating the protocol version", async () => {
+  const server: Server = createServer(COMMON_CERT);
+  server.on("secureConnection", socket => socket.end());
+  server.listen(0);
+  await once(server, "listening");
+  let baseline: TLSSocket | undefined;
+  let client: TLSSocket | undefined;
+  try {
+    const port = (server.address() as AddressInfo).port;
+    baseline = connect({ port, host: "127.0.0.1", rejectUnauthorized: false });
+    await once(baseline, "secureConnect");
+    expect(baseline.getProtocol()).toBe("TLSv1.3");
+
+    client = connect({
+      port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+      secureOptions: crypto.constants.SSL_OP_NO_TLSv1_3,
+    });
+    await once(client, "secureConnect");
+    expect(client.getProtocol()).toBe("TLSv1.2");
+  } finally {
+    baseline?.destroy();
+    client?.destroy();
+    server.close();
+  }
   await once(server, "close");
 });

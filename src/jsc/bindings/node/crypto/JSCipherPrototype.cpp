@@ -351,6 +351,12 @@ JSC_DEFINE_HOST_FUNCTION(jsCipherSetAAD, (JSC::JSGlobalObject * globalObject, JS
         return ERR::OUT_OF_RANGE(scope, globalObject, "buffer is too big"_s, 0, INT_MAX, jsNumber(aadbuf->byteLength()));
     }
 
+    // Passing a NULL output buffer to EVP_CipherUpdate is only valid for AEAD
+    // modes; for any other mode it writes the ciphertext through the NULL pointer.
+    if (!cipher->m_ctx || !cipher->isAuthenticatedMode()) {
+        return ERR::CRYPTO_INVALID_STATE(scope, globalObject, "setAAD"_s);
+    }
+
     MarkPopErrorOnReturn popError;
 
     int32_t outlen;

@@ -299,6 +299,9 @@ struct us_socket_t *us_socket_adopt(struct us_socket_t *s, struct us_socket_grou
             s->flags.adopted = 1;
             /* Tell the event loop what is the new socket so we can route subsequent events */
             s->prev = new_s;
+            if (s->ssl) {
+                us_internal_ssl_socket_relocated(loop, s, new_s);
+            }
         }
         if (c) {
             c->connecting_head = new_s;
@@ -343,6 +346,7 @@ static void us_internal_init_listen_socket(struct us_listen_socket_t *ls,
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.allow_half_open = (options & LIBUS_SOCKET_ALLOW_HALF_OPEN);
+    s->unclassified_send_failures = 0;
     s->next = 0;
     s->prev = 0;
     s->connect_state = NULL;
@@ -486,6 +490,7 @@ static inline void us_internal_init_connect_socket(struct us_socket_t *s,
     s->flags.is_closed = 0;
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
+    s->unclassified_send_failures = 0;
     s->connect_state = NULL;
     s->connect_next = NULL;
 }
@@ -583,20 +588,21 @@ void *us_socket_group_connect(struct us_socket_group_t *group, unsigned char kin
     struct addrinfo_request *ai_req;
     if (Bun__addrinfo_get(loop, host, (uint16_t)port, &ai_req) == 0) {
         struct addrinfo_result *result = Bun__addrinfo_getRequestResult(ai_req);
-        if (result->error) {
-            errno = result->error;
-            Bun__addrinfo_freeRequest(ai_req, 1);
-            return NULL;
-        }
-
-        struct addrinfo_result_entry *entries = result->entries;
-        if (entries && entries->info.ai_next == NULL) {
-            struct sockaddr_storage a;
-            init_addr_with_port(&entries->info, port, &a);
-            *has_dns_resolved = 1;
-            struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
-            Bun__addrinfo_freeRequest(ai_req, s == NULL);
-            return s;
+        /* A cached resolver failure falls through to the connecting-socket path
+         * below (same as a multi-address result) so it is reported through the
+         * same connect-error callback, tagged `error_is_dns`, as an uncached
+         * one. Bun__addrinfo_set on an already-resolved request defers to the
+         * loop's dns_ready_head, never re-enters. */
+        if (!result->error) {
+            struct addrinfo_result_entry *entries = result->entries;
+            if (entries && entries->info.ai_next == NULL) {
+                struct sockaddr_storage a;
+                init_addr_with_port(&entries->info, port, &a);
+                *has_dns_resolved = 1;
+                struct us_socket_t *s = us_socket_group_connect_resolved_dns(group, kind, ssl_ctx, &a, local_addr, options, socket_ext_size);
+                Bun__addrinfo_freeRequest(ai_req, s == NULL);
+                return s;
+            }
         }
     }
 
@@ -718,6 +724,13 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 #endif
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
     if (result->error) {
+        /* Preserve the getaddrinfo failure so the connect-error callback can
+         * report the resolver error (ENOTFOUND, ...) instead of the fabricated
+         * ECONNABORTED that us_connecting_socket_close fills in when `error`
+         * is still 0. `error_is_dns` tags the namespace: getaddrinfo return
+         * codes and errnos overlap numerically. */
+        c->error = result->error;
+        c->error_is_dns = 1;
         us_connecting_socket_close(c);
         return;
     }
@@ -726,6 +739,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
 
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
+        /* Same as the exhausted path in us_internal_socket_after_open: a
+         * real connect failure must not be reported as a caller abort. */
+        c->error = ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -762,6 +778,11 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             if (c->connecting_head == NULL || c->connecting_head->connect_next == NULL) {
                 int opened = start_connections(c, c->connecting_head == NULL ? CONCURRENT_CONNECTIONS : 1);
                 if (opened == 0 && c->connecting_head == NULL) {
+                    /* Every resolved address failed to connect. Without this,
+                     * us_connecting_socket_close defaults c->error to
+                     * ECONNABORTED (caller abort) and never invalidates the
+                     * DNS cache entry for the dead host. */
+                    c->error = ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }
@@ -805,4 +826,11 @@ struct us_bun_verify_error_t us_socket_verify_error(struct us_socket_t *s) {
         return us_internal_ssl_verify_error(s);
     }
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };
+}
+
+const char *us_socket_sni_servername(struct us_socket_t *s) {
+    if (s->ssl) {
+        return us_internal_ssl_sni_servername(s);
+    }
+    return NULL;
 }

@@ -134,6 +134,22 @@ if (process.argv.length === 2 &&
         globalThis.gc ??= () => Bun.gc(true);
         break;
       }
+      if ((flag === "--expose-externalize-string" || flag === "--expose_externalize_string") && process.versions.bun) {
+        // V8's externalized-string test helpers. JavaScriptCore has no string
+        // externalization to force, so the create/externalize helpers are
+        // identity/no-op; isOneByteString answers the representation-independent
+        // question V8's helper answers (are all code units <= 0xFF).
+        globalThis.createExternalizableString ??= s => `${s}`;
+        globalThis.createExternalizableTwoByteString ??= s => `${s}`;
+        globalThis.externalizeString ??= () => {};
+        globalThis.isOneByteString ??= s => {
+          for (let i = 0; i < s.length; i++) {
+            if (s.charCodeAt(i) > 0xff) return false;
+          }
+          return true;
+        };
+        break;
+      }
       if (flag === "--expose-internals" && process.versions.bun) {
         process.env.SKIP_FLAG_CHECK = "1";
         // Serve require("internal/*") from bun's internal module registry
@@ -1295,6 +1311,38 @@ function installBunExposeInternalsShim() {
       build.module("internal/timers", () => ({
         loader: "object",
         exports: { kTimeout: Symbol.for("::buntimeout::") },
+      }));
+      // node's internal/http: serve the very same symbols Bun's _http_outgoing
+      // attaches to OutgoingMessage instances, so tests poke at real state.
+      build.module("internal/http", () => {
+        const { kOutHeaders, kHighWaterMark } = require("node:_http_outgoing");
+        return {
+          loader: "object",
+          exports: { kOutHeaders, kHighWaterMark },
+        };
+      });
+      // node's internal/streams/state: getDefaultHighWaterMark is also part of
+      // the public node:stream API, so reuse that (same function in Bun).
+      build.module("internal/streams/state", () => ({
+        loader: "object",
+        exports: { getDefaultHighWaterMark: require("node:stream").getDefaultHighWaterMark },
+      }));
+      // node's internal/options: map the few CLI options vendored http tests ask
+      // about onto the equivalent runtime values. Unknown options return undefined.
+      build.module("internal/options", () => ({
+        loader: "object",
+        exports: {
+          getOptionValue(name) {
+            switch (name) {
+              case "--max-http-header-size":
+                return require("node:http").maxHeaderSize;
+              case "--insecure-http-parser":
+                return false;
+              default:
+                return undefined;
+            }
+          },
+        },
       }));
     },
   });

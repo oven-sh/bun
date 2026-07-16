@@ -275,7 +275,7 @@ impl<'a> LinkerGraph<'a> {
 }
 
 impl<'a> LinkerGraph<'a> {
-    pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
+    pub fn init(bump: &Arena, file_count: usize) -> Result<Self, crate::Error> {
         Ok(LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::init_empty(file_count)?,
@@ -650,7 +650,7 @@ impl<'a> LinkerGraph<'a> {
         server_component_boundaries: &server_component_boundary::List,
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         let scb = server_component_boundaries.slice();
         self.files.set_capacity(sources.len())?;
         self.files.zero();
@@ -916,7 +916,7 @@ impl<'a> LinkerGraph<'a> {
         }
     }
 
-    pub fn propagate_async_dependencies(&mut self) -> Result<(), bun_core::Error> {
+    pub fn propagate_async_dependencies(&mut self) -> Result<(), crate::Error> {
         struct State<'a> {
             visited: AutoBitSet,
             import_records: &'a [import_record::List<'a>],

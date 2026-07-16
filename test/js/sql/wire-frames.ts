@@ -118,11 +118,12 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
 }
 
 // PostgreSQL FE/BE protocol §55.7 generic backend message: Byte1(type) Int32(len = 4 + body.length) body
-// Low-level escape hatch for fault-injection tests that need a deliberately malformed body.
-export function pgRaw(type: string, body: Buffer): Buffer {
+// Low-level escape hatch for fault-injection tests that need a deliberately malformed body,
+// or (via `declaredLength`) a length field that lies about the body it precedes.
+export function pgRaw(type: string, body: Buffer, declaredLength: number = body.length + 4): Buffer {
   const buf = Buffer.alloc(5 + body.length);
   buf.write(type, 0);
-  buf.writeInt32BE(body.length + 4, 1);
+  buf.writeInt32BE(declaredLength, 1);
   body.copy(buf, 5);
   return buf;
 }
@@ -160,6 +161,58 @@ export function pgRowDescription(cols: PgRowDescriptionColumn[]): Buffer {
     parts.push(name, meta);
   }
   return pgRaw("T", Buffer.concat(parts));
+}
+
+// PostgreSQL FE/BE protocol §55.7 CopyOutResponse: Byte1('H') Int32(len) Int8(overall format) Int16(ncols) Int16[ncols](per-column format)
+export function pgCopyOutResponse(formats: (0 | 1)[], overallFormat: 0 | 1 = 0): Buffer {
+  const body = Buffer.alloc(3 + 2 * formats.length);
+  body[0] = overallFormat;
+  body.writeInt16BE(formats.length, 1);
+  for (let i = 0; i < formats.length; i++) body.writeInt16BE(formats[i], 3 + 2 * i);
+  return pgRaw("H", body);
+}
+
+// PostgreSQL FE/BE protocol §55.7 CopyData: Byte1('d') Int32(len) Byte[n](data)
+export function pgCopyData(data: Buffer): Buffer {
+  return pgRaw("d", data);
+}
+
+// PostgreSQL FE/BE protocol §55.7 CopyDone: Byte1('c') Int32(4)
+export function pgCopyDone(): Buffer {
+  return pgRaw("c", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParseComplete: Byte1('1') Int32(4)
+export function pgParseComplete(): Buffer {
+  return pgRaw("1", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BindComplete: Byte1('2') Int32(4)
+export function pgBindComplete(): Buffer {
+  return pgRaw("2", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
+export function pgParameterDescription(typeOids: number[]): Buffer {
+  const body = Buffer.alloc(2 + 4 * typeOids.length);
+  body.writeInt16BE(typeOids.length, 0);
+  for (let i = 0; i < typeOids.length; i++) body.writeInt32BE(typeOids[i], 2 + 4 * i);
+  return pgRaw("t", body);
+}
+
+/**
+ * Drain complete PostgreSQL frontend messages from `buffered`, calling
+ * onMessage(type, body) for each; returns the leftover bytes. The very first
+ * frontend message (StartupMessage) has no type byte: feed it separately.
+ */
+export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: number, body: Buffer) => void): Buffer {
+  while (buffered.length >= 5) {
+    const len = buffered.readInt32BE(1);
+    if (buffered.length < 1 + len) break;
+    onMessage(buffered[0], buffered.subarray(5, 1 + len));
+    buffered = buffered.subarray(1 + len);
+  }
+  return buffered;
 }
 
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
@@ -207,14 +260,22 @@ export const MYSQL_DEFAULT_CAPABILITIES =
   MYSQL_CLIENT_DEPRECATE_EOF;
 
 // MySQL packet framing — page_protocol_basic_packets.html: Int<3>(payload_length) Int<1>(sequence_id) payload
-export function mysqlRawPacket(seq: number, payload: Buffer): Buffer {
+// `declaredLength` is the low-level escape hatch for fault-injection tests that need a
+// payload_length field that disagrees with the bytes that follow it (mirrors pgRaw).
+export function mysqlRawPacket(seq: number, payload: Buffer, declaredLength: number = payload.length): Buffer {
   const header = Buffer.alloc(4);
-  header[0] = payload.length & 0xff;
-  header[1] = (payload.length >> 8) & 0xff;
-  header[2] = (payload.length >> 16) & 0xff;
+  header[0] = declaredLength & 0xff;
+  header[1] = (declaredLength >> 8) & 0xff;
+  header[2] = (declaredLength >> 16) & 0xff;
   header[3] = seq & 0xff;
   return Buffer.concat([header, payload]);
 }
+
+// The auth-plugin-data (scramble seed) mysqlHandshakeV10 advertises. The 20-byte
+// nonce every auth plugin scrambles against is PART_1 + the first 12 bytes of
+// PART_2; PART_2's 13th byte is the protocol's trailing NUL filler, not nonce data.
+export const MYSQL_MOCK_AUTH_DATA_PART_1: Buffer = Buffer.alloc(8, 0x61);
+export const MYSQL_MOCK_AUTH_DATA_PART_2: Buffer = Buffer.concat([Buffer.alloc(12, 0x62), Buffer.from([0])]);
 
 // MySQL Protocol::HandshakeV10 — page_protocol_connection_phase_packets_protocol_handshake_v10.html
 // Int<1>(10) NulString(server_version) Int<4>(thread_id) String<8>(auth1) Int<1>(0) Int<2>(cap_lo)
@@ -223,14 +284,11 @@ export function mysqlHandshakeV10(
   opts: { authPlugin?: string; capabilities?: number; serverVersion?: string } = {},
 ): Buffer {
   const caps = opts.capabilities ?? MYSQL_DEFAULT_CAPABILITIES;
-  const authData1 = Buffer.alloc(8, 0x61);
-  const authData2 = Buffer.alloc(13, 0x62);
-  authData2[12] = 0;
   const payload = Buffer.concat([
     Buffer.from([10]),
     Buffer.from(`${opts.serverVersion ?? "mock-5.7.0"}\0`),
     Buffer.from([1, 0, 0, 0]), // thread_id
-    authData1,
+    MYSQL_MOCK_AUTH_DATA_PART_1,
     Buffer.from([0]), // filler
     Buffer.from([caps & 0xff, (caps >> 8) & 0xff]), // capability_flags_1
     Buffer.from([0x2d]), // character_set (utf8mb4_general_ci)
@@ -238,16 +296,27 @@ export function mysqlHandshakeV10(
     Buffer.from([(caps >> 16) & 0xff, (caps >>> 24) & 0xff]), // capability_flags_2
     Buffer.from([21]), // auth_plugin_data_len
     Buffer.alloc(10, 0), // reserved
-    authData2,
+    MYSQL_MOCK_AUTH_DATA_PART_2,
     Buffer.from(`${opts.authPlugin ?? "mysql_native_password"}\0`),
   ]);
   return mysqlRawPacket(0, payload);
 }
 
-// MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(0x00) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
-export function mysqlOkPacket(seq: number): Buffer {
-  return mysqlRawPacket(seq, Buffer.from([0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+// MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(header) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
+// The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
+export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
+  return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
 }
+
+// MySQL Protocol::AuthMoreData — page_protocol_connection_phase_packets_protocol_auth_more_data.html:
+//   Int<1>(0x01) String<EOF>(plugin-specific payload)
+export function mysqlAuthMoreData(seq: number, data: Buffer): Buffer {
+  return mysqlRawPacket(seq, Buffer.concat([Buffer.from([0x01]), data]));
+}
+
+// caching_sha2_password fast_auth_success marker carried in an AuthMoreData payload —
+// page_caching_sha2_authentication_exchanges.html (its sibling, 0x04, is perform_full_authentication).
+export const MYSQL_FAST_AUTH_SUCCESS = 0x03;
 
 // MySQL Protocol::AuthSwitchRequest — page_protocol_connection_phase_packets_protocol_auth_switch_request.html:
 //   Int<1>(0xfe) NulString(plugin_name) String<EOF>(plugin_provided_data)
@@ -272,6 +341,32 @@ export function mysqlLenencInt(n: number | bigint): Buffer {
 export function mysqlLenencStr(s: string | Buffer): Buffer {
   const buf = typeof s === "string" ? Buffer.from(s, "utf-8") : s;
   return Buffer.concat([mysqlLenencInt(buf.length), buf]);
+}
+
+// Decode a length-encoded integer at `offset` (inverse of mysqlLenencInt); returns the value and the encoded width.
+export function mysqlReadLenencInt(buf: Buffer, offset: number): { value: number; width: number } {
+  const first = buf[offset];
+  if (first < 0xfb) return { value: first, width: 1 };
+  if (first === 0xfc) return { value: buf.readUInt16LE(offset + 1), width: 3 };
+  if (first === 0xfd) return { value: buf.readUIntLE(offset + 1, 3), width: 4 };
+  if (first === 0xfe) return { value: Number(buf.readBigUInt64LE(offset + 1)), width: 9 };
+  throw new Error(`0x${first.toString(16)} is not a lenenc-int prefix`);
+}
+
+// MySQL Protocol::HandshakeResponse41 — page_protocol_connection_phase_packets_protocol_handshake_response.html:
+//   Int<4>(client_flag) Int<4>(max_packet) Int<1>(charset) String<23>(filler) NulString(username)
+//   then the auth_response as a string<lenenc> (CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA) or Int<1>-prefixed string.
+export function mysqlParseHandshakeResponse41(payload: Buffer): { username: string; authResponse: Buffer } {
+  let offset = 4 + 4 + 1 + 23;
+  const usernameEnd = payload.indexOf(0, offset);
+  if (usernameEnd < 0) throw new Error("HandshakeResponse41: unterminated username");
+  const username = payload.subarray(offset, usernameEnd).toString("utf-8");
+  offset = usernameEnd + 1;
+  // MYSQL_DEFAULT_CAPABILITIES always includes CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA, and for the
+  // <=250-byte responses every plugin produces, the lenenc and Int<1>-length encodings are identical.
+  const { value: authLen, width } = mysqlReadLenencInt(payload, offset);
+  offset += width;
+  return { username, authResponse: payload.subarray(offset, offset + authLen) };
 }
 
 // MySQL Protocol::ColumnDefinition41 — page_protocol_com_query_response_text_resultset_column_definition.html:
@@ -312,6 +407,28 @@ export function mysqlColumnDefinition(
       fixed,
     ]),
   );
+}
+
+// MySQL text-protocol resultset row — page_protocol_com_query_response_text_resultset_row.html:
+//   one string<lenenc> per column. (SQL NULL is the single byte 0xfb; not needed by any mock yet.)
+export function mysqlTextResultSetRow(seq: number, cols: (string | Buffer)[]): Buffer {
+  return mysqlRawPacket(seq, Buffer.concat(cols.map(c => mysqlLenencStr(c))));
+}
+
+// MySQL Textual Resultset — page_protocol_com_query_response_text_resultset.html, in the
+// CLIENT_DEPRECATE_EOF framing: lenenc(column_count) packet, one ColumnDefinition41 per
+// column, one row packet per row, then an OK packet with the 0xFE header as the terminator.
+export function mysqlTextResultSet(
+  startSeq: number,
+  columns: { name: string; type: number }[],
+  rows: string[][],
+): Buffer {
+  let seq = startSeq;
+  const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  for (const row of rows) parts.push(mysqlTextResultSetRow(seq++, row));
+  parts.push(mysqlOkPacket(seq, 0xfe));
+  return Buffer.concat(parts);
 }
 
 // MySQL COM_STMT_PREPARE_OK — page_protocol_com_stmt_prepare.html#sect_protocol_com_stmt_prepare_response_ok:

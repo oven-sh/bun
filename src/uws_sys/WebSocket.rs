@@ -147,7 +147,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
 
     // getTopicsAsJSArray: use AnyWebSocket::get_topics_as_js_array (src/runtime/socket/uws_jsc.rs)
 
-    pub fn publish(&mut self, topic: &[u8], message: &[u8]) -> bool {
+    pub fn publish(&mut self, topic: &[u8], message: &[u8]) -> SendStatus {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
         unsafe {
             c::uws_ws_publish(
@@ -167,7 +167,7 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         message: &[u8],
         opcode: Opcode,
         compress: bool,
-    ) -> bool {
+    ) -> SendStatus {
         // SAFETY: self.raw() is a live uWS-owned socket; ptr+len from &[u8].
         unsafe {
             c::uws_ws_publish_with_options(
@@ -357,7 +357,13 @@ impl AnyWebSocket {
     //     return uws_ws_iterate_topics(ssl_flag, self.raw(), callback, user_data);
     // }
 
-    pub fn publish(self, topic: &[u8], message: &[u8], opcode: Opcode, compress: bool) -> bool {
+    pub fn publish(
+        self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: Opcode,
+        compress: bool,
+    ) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe {
@@ -381,7 +387,7 @@ impl AnyWebSocket {
         message: &[u8],
         opcode: Opcode,
         compress: bool,
-    ) -> bool {
+    ) -> SendStatus {
         // S012: `NewApp<SSL>` is a ZST opaque — route the `*mut → &mut` deref
         // through `bun_opaque::opaque_deref_mut` (caller still vouches that
         // `app` is the matching `uws_app_t*`; the `ssl` flag selects the
@@ -822,7 +828,7 @@ pub mod c {
             topic_length: usize,
             message: *const u8,
             message_length: usize,
-        ) -> bool;
+        ) -> SendStatus;
         pub(crate) fn uws_ws_publish_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,
@@ -832,7 +838,7 @@ pub mod c {
             message_length: usize,
             opcode: Opcode,
             compress: bool,
-        ) -> bool;
+        ) -> SendStatus;
         pub(crate) safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
         // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
         // shim only stores a pointer into socket-owned storage and returns its

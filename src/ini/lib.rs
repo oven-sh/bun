@@ -246,7 +246,7 @@ mod draft {
     /// consumed by `E::Object::get_or_put_object`, which recurses once per
     /// `rope.next` link, so an unbounded header overflows the stack. Past the
     /// cap the remainder of the header (dots included) becomes the final
-    /// segment. Mirrors `MAX_DOTTED_KEY_SEGMENTS` in the TOML parser.
+    /// segment.
     const MAX_SECTION_ROPE_SEGMENTS: usize = 512;
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -451,7 +451,7 @@ mod draft {
                     )?
                     .into_key();
                 let is_array: bool = {
-                    key_raw.len() > 2 && bun_core::ends_with(key_raw, b"[]")
+                    key_raw.len() > 2 && bun_core::strings::ends_with(key_raw, b"[]")
                     // Commenting out because options are not supported but we might
                     // support them.
                     // if (this.opts.bracked_array) {
@@ -466,7 +466,7 @@ mod draft {
                     // }
                 };
 
-                let key = if is_array && bun_core::ends_with(key_raw, b"[]") {
+                let key = if is_array && bun_core::strings::ends_with(key_raw, b"[]") {
                     &key_raw[..key_raw.len() - 2]
                 } else {
                     key_raw
@@ -1229,7 +1229,9 @@ mod draft {
 
             if let Some(keyexpr) = prop.key {
                 if let Some(key) = keyexpr.as_utf8_string_literal() {
-                    if bun_core::has_prefix(key, b"@") && bun_core::ends_with(key, b":registry") {
+                    if bun_core::has_prefix(key, b"@")
+                        && bun_core::strings::ends_with(key, b":registry")
+                    {
                         if !self.count {
                             let registry = 'brk: {
                                 if let Some(value) = prop.value {
@@ -1655,15 +1657,20 @@ mod draft {
                     let conf_item: &ConfigItem = &conf_item_;
                     match conf_item.optname {
                         ConfigOpt::Certfile | ConfigOpt::Keyfile => {
-                            iter.log.add_warning_fmt(
-                            Some(source),
-                            iter.config.properties.at(iter.prop_idx - 1).key.as_ref().unwrap().loc,
-                            format_args!(
+                            bun_ast::add_warning_pretty!(
+                                iter.log,
+                                Some(source),
+                                iter.config
+                                    .properties
+                                    .at(iter.prop_idx - 1)
+                                    .key
+                                    .as_ref()
+                                    .unwrap()
+                                    .loc,
                                 "The following .npmrc registry option was not applied:\n\n  <b>{}<r>\n\nBecause we currently don't support the <b>{}<r> option.",
                                 conf_item,
                                 <&'static str>::from(conf_item.optname),
-                            ),
-                        );
+                            );
                             continue;
                         }
                         _ => {}

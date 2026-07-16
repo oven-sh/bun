@@ -31,7 +31,7 @@ use super::uuid::UUID;
 //
 //   - `mysql_context` / `postgresql_context` / `ssl_ctx_cache` / `editor_context`
 //     → moved to `bun_runtime::jsc_hooks::RuntimeState` (already there).
-//   - `cron_jobs` / `node_fs_stat_watcher_scheduler` / `websocket_deflate`
+//   - `cron_jobs` / `node_fs_stat_watcher_scheduler`
 //     → erased `*mut c_void` slots; high tier lazy-inits.
 //   - the `bun test --isolate` watcher/server registries → moved to
 //     `bun_runtime::jsc_hooks::IsolationHandles` so the entries keep their
@@ -133,7 +133,7 @@ impl EntropyCache {
         self.fill();
     }
     pub fn fill(&mut self) {
-        bun_core::csprng(&mut self.cache);
+        bun_boringssl::rand_bytes(&mut self.cache);
         self.index = 0;
     }
     pub fn get(&mut self) -> [u8; 16] {
@@ -192,26 +192,11 @@ impl CleanupHook {
     }
 }
 
-/// Erased high-tier slot with paired destructor (e.g. `WebSocketDeflate::RareData`).
-pub struct ErasedBox {
-    pub ptr: NonNull<c_void>,
-    pub dtor: unsafe fn(*mut c_void),
-}
-impl Drop for ErasedBox {
-    fn drop(&mut self) {
-        // SAFETY: `dtor` was supplied by the same high-tier code that allocated `ptr`.
-        unsafe { (self.dtor)(self.ptr.as_ptr()) };
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // RareData
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct RareData {
-    /// `bun_http_jsc::WebSocketDeflate::RareData` — erased; lazy-init in
-    /// `bun_http_jsc::WebSocketDeflate::rare_data()`.
-    pub websocket_deflate: Option<ErasedBox>,
     pub boring_ssl_engine: Option<*mut boring::ENGINE>,
 
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
@@ -310,7 +295,6 @@ pub(crate) type FilePollStore = Async::file_poll::Store;
 impl Default for RareData {
     fn default() -> Self {
         Self {
-            websocket_deflate: None,
             boring_ssl_engine: None,
             stderr_store: None,
             stderr_mode: 0,
@@ -651,12 +635,6 @@ impl RareData {
         &mut self.memory_pressure_watcher
     }
 
-    /// Raw slot — lazy-init body lives in `bun_http_jsc::WebSocketDeflate`.
-    #[inline]
-    pub fn websocket_deflate_slot(&mut self) -> &mut Option<ErasedBox> {
-        &mut self.websocket_deflate
-    }
-
     // ── lazy-init: hot_map ─────────────────────────────────────────────────
     pub fn hot_map(&mut self) -> &mut HotMap {
         self.hot_map.get_or_insert_with(HotMap::init)
@@ -704,7 +682,7 @@ impl RareData {
     pub fn default_csrf_secret(&mut self) -> &[u8] {
         if self.default_csrf_secret.is_empty() {
             let mut secret = vec![0u8; 16].into_boxed_slice();
-            bun_core::csprng(&mut secret);
+            bun_boringssl::rand_bytes(&mut secret);
             self.default_csrf_secret = secret;
         }
         &self.default_csrf_secret
@@ -1069,9 +1047,9 @@ fn get_tls_default_ciphers_from_js(
 
 impl Drop for RareData {
     fn drop(&mut self) {
-        // temp_pipe_read_buffer / spawn_sync_event_loop_ / aws_signature_cache /
-        // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / websocket_deflate / tls_default_ciphers:
+        // temp_pipe_read_buffer / spawn_sync_event_loop_ / s3_default_client /
+        // default_csrf_secret / cleanup_hooks / cron_jobs / path_buf /
+        // tls_default_ciphers:
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

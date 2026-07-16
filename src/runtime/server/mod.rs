@@ -1392,93 +1392,44 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    /// `js.routeListGetCached` — read back the codegen'd `WriteBarrier` slot.
-    fn js_route_list_get_cached(server_js: JSValue) -> Option<JSValue> {
-        match (SSL, DEBUG) {
-            (false, false) => route_list_cached::http::route_list_get_cached(server_js),
-            (true, false) => route_list_cached::https::route_list_get_cached(server_js),
-            (false, true) => route_list_cached::debug_http::route_list_get_cached(server_js),
-            (true, true) => route_list_cached::debug_https::route_list_get_cached(server_js),
-        }
+    pub(crate) fn js_route_list_get_cached(server_js: JSValue) -> Option<JSValue> {
+        server_js_cached!(SSL, DEBUG, route_list_get_cached(server_js))
     }
 
-    /// `js.gc.routeList.set` — write the codegen'd `WriteBarrier<Unknown>`
-    /// slot on the per-type C++ wrapper so route JS objects stay GC-rooted.
     pub fn js_gc_route_list_set(server_js: JSValue, global: &JSGlobalObject, route_list: JSValue) {
-        match (SSL, DEBUG) {
-            (false, false) => {
-                route_list_cached::http::route_list_set_cached(server_js, global, route_list)
-            }
-            (true, false) => {
-                route_list_cached::https::route_list_set_cached(server_js, global, route_list)
-            }
-            (false, true) => {
-                route_list_cached::debug_http::route_list_set_cached(server_js, global, route_list)
-            }
-            (true, true) => {
-                route_list_cached::debug_https::route_list_set_cached(server_js, global, route_list)
-            }
-        }
+        server_js_cached!(
+            SSL,
+            DEBUG,
+            route_list_set_cached(server_js, global, route_list)
+        )
     }
 
     pub(crate) fn js_on_client_error_get_cached(server_js: JSValue) -> Option<JSValue> {
-        match (SSL, DEBUG) {
-            (false, false) => route_list_cached::http::on_client_error_get_cached(server_js),
-            (true, false) => route_list_cached::https::on_client_error_get_cached(server_js),
-            (false, true) => route_list_cached::debug_http::on_client_error_get_cached(server_js),
-            (true, true) => route_list_cached::debug_https::on_client_error_get_cached(server_js),
-        }
+        server_js_cached!(SSL, DEBUG, on_client_error_get_cached(server_js))
     }
 
     pub(crate) fn js_gc_on_client_error_set(
         server_js: JSValue,
         global: &JSGlobalObject,
-        callback: JSValue,
+        cb: JSValue,
     ) {
-        match (SSL, DEBUG) {
-            (false, false) => {
-                route_list_cached::http::on_client_error_set_cached(server_js, global, callback)
-            }
-            (true, false) => {
-                route_list_cached::https::on_client_error_set_cached(server_js, global, callback)
-            }
-            (false, true) => route_list_cached::debug_http::on_client_error_set_cached(
-                server_js, global, callback,
-            ),
-            (true, true) => route_list_cached::debug_https::on_client_error_set_cached(
-                server_js, global, callback,
-            ),
-        }
+        server_js_cached!(
+            SSL,
+            DEBUG,
+            on_client_error_set_cached(server_js, global, cb)
+        )
     }
 
     pub(crate) fn js_on_connection_get_cached(server_js: JSValue) -> Option<JSValue> {
-        match (SSL, DEBUG) {
-            (false, false) => route_list_cached::http::on_connection_get_cached(server_js),
-            (true, false) => route_list_cached::https::on_connection_get_cached(server_js),
-            (false, true) => route_list_cached::debug_http::on_connection_get_cached(server_js),
-            (true, true) => route_list_cached::debug_https::on_connection_get_cached(server_js),
-        }
+        server_js_cached!(SSL, DEBUG, on_connection_get_cached(server_js))
     }
 
     pub(crate) fn js_gc_on_connection_set(
         server_js: JSValue,
         global: &JSGlobalObject,
-        callback: JSValue,
+        cb: JSValue,
     ) {
-        match (SSL, DEBUG) {
-            (false, false) => {
-                route_list_cached::http::on_connection_set_cached(server_js, global, callback)
-            }
-            (true, false) => {
-                route_list_cached::https::on_connection_set_cached(server_js, global, callback)
-            }
-            (false, true) => {
-                route_list_cached::debug_http::on_connection_set_cached(server_js, global, callback)
-            }
-            (true, true) => route_list_cached::debug_https::on_connection_set_cached(
-                server_js, global, callback,
-            ),
-        }
+        server_js_cached!(SSL, DEBUG, on_connection_set_cached(server_js, global, cb))
     }
 
     /// Wrap an already-heap-allocated server pointer in its JS object.
@@ -2957,7 +2908,7 @@ use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create}
 /// (`routeList`, `onClientError`, `onConnection`). `codegen_cached_accessors!`
 /// emits `${snake}_{get,set}_cached` wrapping
 /// `${T}Prototype__${prop}{Get,Set}CachedValue` (generate-classes.ts).
-mod route_list_cached {
+mod cached_values {
     pub(super) mod http {
         bun_jsc::codegen_cached_accessors!("HTTPServer"; routeList, onClientError, onConnection);
     }
@@ -2971,6 +2922,20 @@ mod route_list_cached {
         bun_jsc::codegen_cached_accessors!("DebugHTTPSServer"; routeList, onClientError, onConnection);
     }
 }
+
+/// `(SSL, DEBUG)` → per-type `cached_values` submodule dispatch for the
+/// codegen'd `${snake}_{get,set}_cached` accessors.
+macro_rules! server_js_cached {
+    ($ssl:expr, $debug:expr, $fn:ident($($arg:expr),* $(,)?)) => {
+        match ($ssl, $debug) {
+            (false, false) => $crate::server::cached_values::http::$fn($($arg),*),
+            (true, false) => $crate::server::cached_values::https::$fn($($arg),*),
+            (false, true) => $crate::server::cached_values::debug_http::$fn($($arg),*),
+            (true, true) => $crate::server::cached_values::debug_https::$fn($($arg),*),
+        }
+    };
+}
+pub(crate) use server_js_cached;
 
 // ─── extern "C" trampolines ──────────────────────────────────────────────────
 // Monomorphized on the const-generic server params;

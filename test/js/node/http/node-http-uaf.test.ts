@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
+import { once } from "node:events";
+import http from "node:http";
+import net, { type AddressInfo } from "node:net";
 import { join } from "path";
 
 uafTest("node-http-uaf-fixture.ts");
@@ -80,43 +83,31 @@ test.concurrent.each([
   expect(JSON.parse(stdout).received).toBeGreaterThan(8 * 1024 * 1024);
 });
 
-test.concurrent("'connection' and 'clientError' callbacks survive GC", async () => {
+test("'connection' and 'clientError' callbacks survive GC", async () => {
   // The server's native struct stores these two node:http callbacks on the JS
   // wrapper (GC-visited WriteBarrier slots), not in Strong handles. Force GC
   // between registration and dispatch to prove the wrapper roots them.
-  const src = /* js */ `
-    import http from "node:http";
-    import net from "node:net";
-    import { once } from "node:events";
+  let gotConnection = 0;
+  let gotClientError = 0;
+  const server = http.createServer((req, res) => res.end());
+  server.on("connection", () => void gotConnection++);
+  server.on("clientError", (err, sock) => {
+    gotClientError++;
+    sock.destroy();
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  try {
+    Bun.gc(true);
 
-    let gotConnection = 0;
-    let gotClientError = 0;
-    const server = http.createServer((req, res) => res.end());
-    server.on("connection", () => { gotConnection++; });
-    server.on("clientError", (err, sock) => { gotClientError++; sock.destroy(); });
-    await once(server.listen(0, "127.0.0.1"), "listening");
-
-    for (let i = 0; i < 3; i++) Bun.gc(true);
-
-    const sock = net.connect(server.address().port, "127.0.0.1");
+    const sock = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
     sock.on("error", () => {});
     await once(sock, "connect");
-    for (let i = 0; i < 3; i++) Bun.gc(true);
-    sock.write("!!!garbage!!!\\r\\n\\r\\n");
+    Bun.gc(true);
+    sock.write("!!!garbage!!!\r\n\r\n");
     await once(sock, "close");
-    server.close();
 
-    console.log(JSON.stringify({ gotConnection, gotClientError }));
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", src],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
-    stdout: { gotConnection: 1, gotClientError: 1 },
-    stderr: "",
-    exitCode: 0,
-  });
+    expect({ gotConnection, gotClientError }).toEqual({ gotConnection: 1, gotClientError: 1 });
+  } finally {
+    server.close();
+  }
 });

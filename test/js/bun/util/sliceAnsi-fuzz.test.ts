@@ -2,6 +2,7 @@
 // These complement sliceAnsi.test.ts with property-based and adversarial cases.
 
 import { describe, expect, test } from "bun:test";
+import { isDebug } from "harness";
 
 // Seeded PRNG for reproducibility. Change seed to explore different cases.
 function makeRng(seed: number) {
@@ -222,11 +223,14 @@ describe("sliceAnsi adversarial", () => {
     for (let i = 9; i >= 1; i--) s += `\x1b[39m`;
     const out = Bun.sliceAnsi(s, 0, 1);
     expect(Bun.stripANSI(out)).toBe("X");
-    // Time bound: should be O(n), not O(n²). Generous threshold for debug builds.
+    // Time bound: should be O(n), not O(n²). Debug+ASAN is ~300x slower than
+    // release so scale the workload down there; an O(n²) regression would
+    // still blow past the bound at either iteration count.
+    const iters = isDebug ? 50 : 1000;
     const start = Bun.nanoseconds();
-    for (let i = 0; i < 1000; i++) Bun.sliceAnsi(s, 0, 1);
+    for (let i = 0; i < iters; i++) Bun.sliceAnsi(s, 0, 1);
     const elapsed = (Bun.nanoseconds() - start) / 1e6;
-    expect(elapsed).toBeLessThan(5000); // < 5s for 1000 iters
+    expect(elapsed).toBeLessThan(5000);
   });
 
   // Huge SGR parameter values.

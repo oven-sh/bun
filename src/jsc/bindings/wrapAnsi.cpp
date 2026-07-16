@@ -307,71 +307,38 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
 template<typename Char>
 static void trimRowTrailingSpaces(Row<Char>& row, bool ambiguousIsNarrow)
 {
-    // Find last visible word
     auto span = row.m_data.span();
     const Char* data = span.data();
     size_t size = span.size();
 
-    // Split by spaces and find last word with visible content
+    // Find the end of the last space-delimited word with nonzero visible width.
     size_t lastVisibleEnd = 0;
     size_t wordStart = 0;
-    bool hasVisibleContent = false;
 
     for (size_t i = 0; i <= size; ++i) {
         if (i == size || data[i] == ' ') {
-            if (wordStart < i) {
-                size_t wordWidth = stringWidth(data + wordStart, data + i, ambiguousIsNarrow);
-                if (wordWidth > 0) {
-                    hasVisibleContent = true;
-                    lastVisibleEnd = i;
-                }
-            }
+            if (wordStart < i && stringWidth(data + wordStart, data + i, ambiguousIsNarrow) > 0)
+                lastVisibleEnd = i;
             wordStart = i + 1;
         }
     }
 
-    if (!hasVisibleContent) {
-        // Keep only ANSI codes
-        Vector<Char> ansiOnly;
-        bool inEscape = false;
-        bool inOscEscape = false;
-        for (size_t i = 0; i < size; ++i) {
-            if (data[i] == 0x1b || inEscape) {
-                ansiOnly.append(data[i]);
-                if (data[i] == 0x1b) {
-                    inEscape = true;
-                    inOscEscape = (i + 1 < size && data[i + 1] == ']');
-                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
-                    inEscape = false;
-                    inOscEscape = false;
-                }
-            }
-        }
-        row.m_data = std::move(ansiOnly);
+    if (lastVisibleEnd == size)
         return;
+
+    // Mirror npm wrap-ansi's stringVisibleTrimSpacesRight: zero-width tail words
+    // (ANSI escapes, ZWSP/ZWJ, combining marks) are kept; only the separator
+    // spaces between them are removed. Dropping non-space content here would
+    // delete ZWJ sequences and change rendered grapheme clusters.
+    Vector<Char> tail;
+    tail.reserveCapacity(size - lastVisibleEnd);
+    for (size_t i = lastVisibleEnd; i < size; ++i) {
+        if (data[i] != ' ')
+            tail.append(data[i]);
     }
 
-    if (lastVisibleEnd < size) {
-        // Collect trailing ANSI codes
-        Vector<Char> trailingAnsi;
-        bool inEscape = false;
-        bool inOscEscape = false;
-        for (size_t i = lastVisibleEnd; i < size; ++i) {
-            if (data[i] == 0x1b || inEscape) {
-                trailingAnsi.append(data[i]);
-                if (data[i] == 0x1b) {
-                    inEscape = true;
-                    inOscEscape = (i + 1 < size && data[i + 1] == ']');
-                } else if (isAnsiEscapeTerminator(data[i], inOscEscape)) {
-                    inEscape = false;
-                    inOscEscape = false;
-                }
-            }
-        }
-
-        row.m_data.shrink(lastVisibleEnd);
-        row.m_data.appendVector(trailingAnsi);
-    }
+    row.m_data.shrink(lastVisibleEnd);
+    row.m_data.appendVector(tail);
 }
 
 // ============================================================================

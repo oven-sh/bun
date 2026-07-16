@@ -91,6 +91,66 @@ describe("Bun.wrapAnsi", () => {
         });
       });
     });
+
+    describe("trim preserves zero-width non-whitespace characters", () => {
+      // trim may only remove U+0020 (and insert newlines); zero-width characters
+      // like ZWSP/ZWJ/combining marks are content and must survive the default
+      // trim. Expected values match npm wrap-ansi's stringVisibleTrimSpacesRight.
+      const content = (s: string) => Bun.stripANSI(s).replace(/[ \t\n\r]/g, "");
+
+      test("ZWSP as its own word is kept when wrapped", () => {
+        expect(Bun.wrapAnsi("ab \u200B cd", 2)).toBe("ab\u200B\ncd");
+      });
+
+      test("ZWSP as trailing word is kept on a fitting line", () => {
+        expect(Bun.wrapAnsi("ab \u200B", 5)).toBe("ab\u200B");
+        expect(Bun.wrapAnsi("ab \u200B", 2)).toBe("ab\u200B");
+      });
+
+      test("ZWSP-only input is kept", () => {
+        expect(Bun.wrapAnsi("\u200B", 5)).toBe("\u200B");
+        expect(Bun.wrapAnsi(" \u200B ", 5)).toBe("\u200B");
+      });
+
+      test("ZWSP wrapped in ANSI is kept with its escapes", () => {
+        expect(Bun.wrapAnsi("ab \x1b[31m\u200B\x1b[39m cd", 2)).toBe("ab\x1b[31m\u200B\x1b[39m\ncd");
+        expect(Bun.wrapAnsi("\x1b[31m\u200B\x1b[39m", 5)).toBe("\x1b[31m\u200B\x1b[39m");
+      });
+
+      test("ZWJ as its own word is kept", () => {
+        expect(Bun.wrapAnsi("a \u200D b", 1)).toBe("a\u200D\nb");
+      });
+
+      test("combining mark as its own word is kept", () => {
+        expect(Bun.wrapAnsi("ab \u0301 cd", 2)).toBe("ab\u0301\ncd");
+      });
+
+      test("trailing space after a zero-width word is still trimmed", () => {
+        expect(Bun.wrapAnsi("ab \u200B ", 10)).toBe("ab\u200B");
+      });
+
+      test("zero-width tail with following ANSI keeps both in order", () => {
+        expect(Bun.wrapAnsi("ab \u200B \x1b[31m", 2)).toBe("ab\u200B\x1b[31m");
+      });
+
+      test("family emoji hard-wrapped at columns=1 preserves every ZWJ", () => {
+        const fam = "\u{1F469}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}";
+        const out = Bun.wrapAnsi(fam, 1, { hard: true });
+        expect({
+          content: content(out),
+          codepoints: [...out.replaceAll("\n", "")].length,
+          raw: out,
+        }).toEqual({
+          content: content(fam),
+          codepoints: [...fam].length,
+          raw: "\n\u{1F469}\n\u200D\n\u{1F469}\n\u200D\n\u{1F467}\n\u200D\n\u{1F466}",
+        });
+      });
+
+      test("trim:false control still preserves zero-width content", () => {
+        expect(content(Bun.wrapAnsi("ab \u200B cd", 2, { trim: false }))).toBe(content("ab \u200B cd"));
+      });
+    });
   });
 
   describe("ANSI escape codes", () => {

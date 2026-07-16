@@ -1,4 +1,6 @@
-#include "config.h"
+#pragma once
+
+#include "root.h"
 #include "ZigGlobalObject.h"
 #include <wtf/PlatformCallingConventions.h>
 

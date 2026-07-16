@@ -451,7 +451,21 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
                 .iter()
                 .position(|&x| x == event.watch_descriptor)
             {
-                Some(idx) => WatchItemIndex::try_from(idx).unwrap(),
+                // WatchItemIndex is u16; nothing caps watchlist length, so drop
+                // an unrepresentable position instead of aborting the process
+                // from the watcher thread (panic = "abort").
+                Some(idx) => match WatchItemIndex::try_from(idx) {
+                    Ok(idx) => idx,
+                    Err(_) => {
+                        bun_core::scoped_log!(
+                            watcher,
+                            "watchlist index {} exceeds WatchItemIndex (u16), dropping event",
+                            idx
+                        );
+                        events_processed += 1;
+                        continue;
+                    }
+                },
                 None => {
                     events_processed += 1;
                     continue;

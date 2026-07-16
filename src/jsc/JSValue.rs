@@ -1529,6 +1529,25 @@ impl JSValue {
         crate::call_check_slow(global, || JSC__JSValue__push(self, global, out))
     }
 
+    /// `JSValue.getOptional` — loose, coercing property fetch.
+    /// Absent / `undefined` / `null` → `None`; anything else is run through
+    /// [`coerce`](Self::coerce) (ToNumber for integer `T`). Distinct from
+    /// [`get_optional_int`], which validates the property is already an
+    /// in-range integer and throws otherwise.
+    pub fn get_optional<T: CoerceTo>(
+        self,
+        global: &JSGlobalObject,
+        property_name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<T>> {
+        let Some(prop) = self.get(global, property_name)? else {
+            return Ok(None);
+        };
+        if prop.is_undefined_or_null() {
+            return Ok(None);
+        }
+        Ok(Some(prop.coerce::<T>(global)?))
+    }
+
     /// `JSValue.getOptionalInt` — typed integer property
     /// fetch with `validateIntegerRange` clamping. Returns `None` if the
     /// property is absent.
@@ -1905,6 +1924,11 @@ impl CoerceTo for i32 {
             return Ok(if num.is_nan() { 0 } else { num as i32 });
         }
         v.coerce_to_i32(global)
+    }
+}
+impl CoerceTo for i64 {
+    fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<i64> {
+        v.coerce_to_int64(global)
     }
 }
 

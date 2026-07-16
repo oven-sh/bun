@@ -1119,14 +1119,28 @@ pub fn compute_initial_reserved_names(
 
     const CJS_NAMES: [&[u8]; 2] = [b"exports", b"module"];
 
+    // "arguments" and "eval" are not reserved words, but strict mode forbids
+    // them as binding targets. ESM output is always strict, and dev server
+    // chunks are loaded as ES modules.
+    const STRICT_MODE_RESTRICTED_NAMES: [&[u8]; 2] = [b"arguments", b"eval"];
+
+    let is_strict = output_format == Format::Esm || output_format == Format::InternalBakeDev;
+
     let cjs_names_len: u32 = if output_format == Format::Cjs {
         CJS_NAMES.len() as u32
     } else {
         0
     };
 
+    let strict_names_len: usize = if is_strict {
+        STRICT_MODE_RESTRICTED_NAMES.len()
+    } else {
+        0
+    };
+
     names.ensure_total_capacity(
         cjs_names_len as usize
+            + strict_names_len
             + (Keywords.len() + StrictModeReservedWords.len() + 1 + EXTRAS.len()),
     )?;
 
@@ -1147,6 +1161,12 @@ pub fn compute_initial_reserved_names(
     // something in a nested scope as an top-level export.
     if output_format == Format::Cjs {
         for name in CJS_NAMES {
+            names.put_assume_capacity(name, 1);
+        }
+    }
+
+    if is_strict {
+        for name in STRICT_MODE_RESTRICTED_NAMES {
             names.put_assume_capacity(name, 1);
         }
     }

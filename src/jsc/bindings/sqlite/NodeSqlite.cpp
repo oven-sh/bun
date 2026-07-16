@@ -978,8 +978,10 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
 void JSDatabaseSync::deleteTrackedSessions()
 {
     for (auto& record : m_sessions) {
-        // Every caller is gated on m_busyDepth == 0 and inUse is only set
-        // inside a BusyScope, so this can never see a live changeset().
+        // Every caller enters with m_busyDepth == 0 (deserialize() checks
+        // isBusy() before taking its own BusyScope), and inUse is only set
+        // inside a nested BusyScope that completes synchronously, so this
+        // can never see a live changeset().
         ASSERT(!record->inUse);
         if (record->handle) {
             sqlite3session_delete(record->handle);

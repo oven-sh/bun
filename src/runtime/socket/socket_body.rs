@@ -1835,13 +1835,18 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Surface the verify error through the `error` handler before closing so
         // a user who omitted the optional `handshake` callback still learns why
         // the connection was dropped (Node emits `'error'` with the same code).
+        // Only when an `error` handler is defined: `handle_error` would route an
+        // undefined one to `uncaught_exception`, but the error is already
+        // available via `handshake`'s third argument and `close`'s second.
         if let Some(handlers) = self.handlers_opt() {
-            let global = handlers.global_object;
-            if let Some(err_value) = self.stored_verify_error_to_js(&global) {
-                self.handle_error(err_value);
-                let socket = self.socket.get();
-                if socket.is_detached() || socket.is_closed() {
-                    return;
+            if !handlers.on_error().is_empty() {
+                let global = handlers.global_object;
+                if let Some(err_value) = self.stored_verify_error_to_js(&global) {
+                    self.handle_error(err_value);
+                    let socket = self.socket.get();
+                    if socket.is_detached() || socket.is_closed() {
+                        return;
+                    }
                 }
             }
         }

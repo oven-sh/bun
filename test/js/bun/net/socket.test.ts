@@ -2525,6 +2525,54 @@ Reo=
       ]);
     });
 
+    it("delivers the verify error to close (not uncaughtException) when no error handler is defined", async () => {
+      using dir = tempDir("tls-reject-no-error-handler", {
+        "main.ts": `
+          const events: string[] = [];
+          process.on("uncaughtException", e => events.push("uncaught:" + (e as any)?.code));
+          using server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            tls: { key: process.env.ROGUE_KEY!, cert: process.env.ROGUE_CRT! },
+            socket: { open() {}, data() {}, close() {}, error() {} },
+          });
+          const closed = Promise.withResolvers<void>();
+          await Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            tls: true,
+            socket: {
+              handshake(_s, authorized, err) {
+                events.push("handshake:" + authorized + ":" + (err as any)?.code);
+              },
+              data() {},
+              close(_s, err) {
+                events.push("close:" + (err as any)?.code);
+                closed.resolve();
+              },
+            },
+          });
+          await closed.promise;
+          await new Promise<void>(r => setImmediate(r));
+          console.log(JSON.stringify(events));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "main.ts"],
+        env: { ...bunEnv, ROGUE_KEY, ROGUE_CRT },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout.trim())).toEqual([
+        "handshake:true:UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        "close:UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+      ]);
+      expect(exitCode).toBe(0);
+    });
+
     it("delivers the hostname-mismatch error through error/close when rejectUnauthorized closes the connection", async () => {
       const events: string[] = [];
       const closed = Promise.withResolvers<void>();

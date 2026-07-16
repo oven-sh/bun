@@ -1,3 +1,4 @@
+import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import net from "node:net";
 
@@ -173,5 +174,114 @@ describe("RequestInit signal presence", () => {
       await expect(fetch(pre, { signal: {} as any })).rejects.toThrow(TypeError);
       await expect(fetch(url, { signal: "" as any })).rejects.toThrow(TypeError);
     });
+  });
+});
+
+describe("Request.signal is a new dependent signal", () => {
+  // https://fetch.spec.whatwg.org/#dom-request step 30/31: each Request gets
+  // a new AbortSignal following the input; sharing the caller's object would
+  // let request-scoped mutation reach into the user's AbortController.
+  test("new Request(url, { signal }) returns a distinct signal", () => {
+    const c = new AbortController();
+    const req = new Request("https://example.com/", { signal: c.signal });
+    expect(req.signal).not.toBe(c.signal);
+    expect(req.signal).toBe(req.signal);
+  });
+
+  test("mutating request.signal does not affect the controller's signal", () => {
+    const c = new AbortController();
+    let controllerHandlerCalls = 0;
+    c.signal.onabort = () => {
+      controllerHandlerCalls++;
+    };
+    const req = new Request("https://example.com/", { signal: c.signal });
+    req.signal.onabort = null;
+    expect(c.signal.onabort).toBeInstanceOf(Function);
+    c.abort();
+    expect(controllerHandlerCalls).toBe(1);
+    expect(req.signal.aborted).toBe(true);
+  });
+
+  test("request.clone().signal is a distinct signal following the original", () => {
+    const c = new AbortController();
+    const req = new Request("https://example.com/", { signal: c.signal });
+    const cloned = req.clone();
+    expect(cloned.signal).not.toBe(req.signal);
+    expect(cloned.signal).not.toBe(c.signal);
+
+    let clonedAborted = false;
+    cloned.signal.addEventListener("abort", () => {
+      clonedAborted = true;
+    });
+    c.abort(new Error("stop"));
+    expect(clonedAborted).toBe(true);
+    expect(cloned.signal.aborted).toBe(true);
+    expect((cloned.signal.reason as Error).message).toBe("stop");
+  });
+
+  test("new Request(request) gets a distinct signal following the input request's signal", () => {
+    const c = new AbortController();
+    const r1 = new Request("https://example.com/", { signal: c.signal });
+    const r2 = new Request(r1);
+    expect(r2.signal).not.toBe(r1.signal);
+    expect(r2.signal).not.toBe(c.signal);
+    c.abort();
+    expect(r2.signal.aborted).toBe(true);
+  });
+
+  test("new Request(request, init) with init.signal uses a dependent of init.signal", () => {
+    const c1 = new AbortController();
+    const c2 = new AbortController();
+    const r1 = new Request("https://example.com/", { signal: c1.signal });
+    const r2 = new Request(r1, { signal: c2.signal });
+    expect(r2.signal).not.toBe(c2.signal);
+    expect(r2.signal).not.toBe(r1.signal);
+    c1.abort();
+    expect(r2.signal.aborted).toBe(false);
+    c2.abort();
+    expect(r2.signal.aborted).toBe(true);
+  });
+
+  test("dependent signal inherits already-aborted state", () => {
+    const c = new AbortController();
+    c.abort(new Error("early"));
+    const req = new Request("https://example.com/", { signal: c.signal });
+    expect(req.signal).not.toBe(c.signal);
+    expect(req.signal.aborted).toBe(true);
+    expect((req.signal.reason as Error).message).toBe("early");
+  });
+
+  test("dependent signals do not accumulate on a long-lived controller", () => {
+    const c = new AbortController();
+    const iterations = 2000;
+
+    const measure = () => {
+      for (let i = 0; i < iterations; i++) {
+        const req = new Request("https://example.com/", { signal: c.signal });
+        // Materialize the JS wrapper so the reachability path is exercised.
+        req.signal;
+      }
+      Bun.gc(true);
+    };
+
+    measure();
+    Bun.gc(true);
+    const baseline = heapStats().objectTypeCounts.AbortSignal || 0;
+    measure();
+    measure();
+    Bun.gc(true);
+    const after = heapStats().objectTypeCounts.AbortSignal || 0;
+    // If each Request's dependent signal were pinned by the parent, `after`
+    // would exceed baseline by ~iterations. Allow generous headroom for the
+    // controller's own signal and GC timing.
+    expect(after - baseline).toBeLessThan(iterations / 4);
+    // The controller still works after all that churn.
+    const req = new Request("https://example.com/", { signal: c.signal });
+    let fired = false;
+    req.signal.addEventListener("abort", () => {
+      fired = true;
+    });
+    c.abort();
+    expect(fired).toBe(true);
   });
 });

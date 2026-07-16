@@ -69,6 +69,10 @@ unsafe extern "C" {
     safe fn WebCore__AbortSignal__new(arg0: &JSGlobalObject) -> *mut AbortSignal;
     safe fn WebCore__AbortSignal__jsReason(arg0: &AbortSignal, arg1: &JSGlobalObject) -> JSValue;
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
+    safe fn WebCore__AbortSignal__createFollowingSignal(
+        arg0: &JSGlobalObject,
+        parent: &AbortSignal,
+    ) -> *mut AbortSignal;
 }
 
 /// Abort-callback monomorphization for `listen`. Implement on your context type.
@@ -192,6 +196,16 @@ impl AbortSignal {
     pub fn new(global: &JSGlobalObject) -> *mut AbortSignal {
         crate::mark_binding!();
         WebCore__AbortSignal__new(global)
+    }
+
+    /// Creates a fresh dependent signal that aborts with `parent`'s reason.
+    /// The link is weak on both sides, so collecting the dependent leaves
+    /// nothing on the parent. Returns an owned ref.
+    pub fn create_following(global: &JSGlobalObject, parent: &AbortSignal) -> AbortSignalRef {
+        crate::mark_binding!();
+        let ptr = WebCore__AbortSignal__createFollowingSignal(global, parent);
+        // SAFETY: C++ leakRef() returns a +1 owned pointer.
+        unsafe { AbortSignalRef::adopt(ptr) }
     }
 
     /// Returns a borrowed handle to the internal Timeout, or null.

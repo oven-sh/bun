@@ -1401,10 +1401,13 @@ impl Request {
                         fields.insert(Fields::Signal);
                         if signal_.is_null() {
                             // explicit detach; leave `req.signal` as None
-                        } else if let Some(signal) = AbortSignal::ref_from_js(signal_) {
-                            // Keep it alive
+                        } else if let Some(input_signal) = AbortSignal::from_js(signal_) {
                             signal_.ensure_still_alive();
-                            // `ref_from_js` already ref'd.
+                            // Fetch: store a fresh dependent signal, not the caller's object.
+                            // SAFETY: `from_js` returned a live borrow owned by the JS wrapper.
+                            let signal = AbortSignal::create_following(global_this, unsafe {
+                                &*input_signal
+                            });
                             req.signal.set(Some(signal));
                         } else {
                             if !global_this.has_exception() {
@@ -1665,8 +1668,10 @@ impl Request {
         }
 
         if let Some(signal) = self.signal.get() {
-            // `AbortSignalRef::clone` → C++ `ref()`.
-            req.signal.set(Some(signal.clone()));
+            // Per Fetch spec, the clone's signal is a new AbortSignal
+            // that follows this request's signal.
+            req.signal
+                .set(Some(AbortSignal::create_following(global_this, signal)));
         }
         Ok(())
     }

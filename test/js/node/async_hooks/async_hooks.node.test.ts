@@ -87,3 +87,105 @@ test("AsyncResource.bind", () => {
   });
   expect(fn()).toBe(true);
 });
+
+test("AsyncLocalStorage.run after disable() does not leak the store", async () => {
+  const als = new AsyncLocalStorage<string>();
+  als.run("init", () => {});
+  als.disable();
+  als.run("leaked", () => {
+    expect(als.getStore()).toBe("leaked");
+  });
+  expect(als.getStore()).toBe(undefined);
+
+  const { promise, resolve } = Promise.withResolvers<string | undefined>();
+  setImmediate(() => resolve(als.getStore()));
+  expect(await promise).toBe(undefined);
+});
+
+test("AsyncLocalStorage.disable inside a nested run does not throw", () => {
+  const als = new AsyncLocalStorage<string>();
+  let innerResult: number | undefined;
+  als.run("outer", () => {
+    innerResult = als.run("inner", () => {
+      als.disable();
+      expect(als.getStore()).toBe(undefined);
+      return 42;
+    });
+    expect(als.getStore()).toBe("outer");
+  });
+  expect(innerResult).toBe(42);
+  expect(als.getStore()).toBe(undefined);
+});
+
+test("AsyncLocalStorage.disable inside run with another store active", () => {
+  const a = new AsyncLocalStorage<string>();
+  const b = new AsyncLocalStorage<string>();
+  try {
+    b.enterWith("B");
+    a.run("A", () => {
+      expect(a.getStore()).toBe("A");
+      expect(b.getStore()).toBe("B");
+      a.disable();
+      expect(a.getStore()).toBe(undefined);
+      expect(b.getStore()).toBe("B");
+    });
+    expect(a.getStore()).toBe(undefined);
+    expect(b.getStore()).toBe("B");
+  } finally {
+    a.disable();
+    b.disable();
+  }
+});
+
+test("AsyncLocalStorage.run restores correctly when this store is another store's value", () => {
+  const a = new AsyncLocalStorage();
+  const b = new AsyncLocalStorage();
+  try {
+    b.enterWith("x");
+    a.run("v", () => {
+      // Make `a` appear at an odd (value) slot in the context array.
+      b.enterWith(a);
+    });
+    expect(b.getStore()).toBe(a);
+    expect(a.getStore()).toBe(undefined);
+  } finally {
+    a.disable();
+    b.disable();
+  }
+});
+
+test("AsyncResource.prototype.bind forwards call-site `this` when no thisArg is given", () => {
+  const ar = new AsyncResource("test");
+  function target(this: unknown) {
+    "use strict";
+    return this;
+  }
+  const bound = ar.bind(target);
+  const receiver = { bound };
+  expect(receiver.bound()).toBe(receiver);
+  expect(bound.call(123)).toBe(123);
+  expect(bound()).toBe(undefined);
+});
+
+test("AsyncResource.prototype.bind sets .length to the target's length", () => {
+  const ar = new AsyncResource("test");
+  const bound = ar.bind(function (_a: number, _b: number, _c: number) {});
+  expect(bound.length).toBe(3);
+  const boundWithThis = ar.bind(function (_a: number, _b: number) {}, {});
+  expect(boundWithThis.length).toBe(2);
+});
+
+test("AsyncResource.prototype.bind with explicit thisArg keeps that receiver", () => {
+  const ar = new AsyncResource("test");
+  const fixed = { tag: "fixed" };
+  function target(this: unknown) {
+    return this;
+  }
+  const bound = ar.bind(target, fixed);
+  expect(bound.call({ tag: "ignored" })).toBe(fixed);
+});
+
+test("AsyncResource.prototype.emitDestroy returns this", () => {
+  const ar = new AsyncResource("test");
+  expect(ar.emitDestroy()).toBe(ar);
+});

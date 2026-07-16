@@ -139,6 +139,16 @@ describe("Bun.Transpiler", () => {
     it("works nested", () => {
       ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
+    it("bails out on optional-chain index into enum", () => {
+      const pre = "enum Foo { A }\nenum Bar { 'a-b' = 1 }\n";
+      const lastLine = out => out.trimEnd().split("\n").at(-1);
+      expect(lastLine(ts.parsed(pre + 'export let y = Foo["A"];', false))).toBe("export let y = 0 /* A */;");
+      expect(lastLine(ts.parsed(pre + 'export let y = Foo?.["A"];', false))).toBe('export let y = Foo?.["A"];');
+      expect(lastLine(ts.parsed(pre + 'export let y = Foo?.["A"]();', false))).toBe('export let y = Foo?.["A"]();');
+      expect(lastLine(ts.parsed(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
+      expect(lastLine(ts.parsedMin(pre + 'export let y = Foo?.["A"];', false))).toBe("export let y = Foo?.A;");
+      expect(lastLine(ts.parsedMin(pre + 'export let y = Bar?.["a-b"];', false))).toBe('export let y = Bar?.["a-b"];');
+    });
   });
 
   describe("TypeScript", () => {
@@ -174,6 +184,96 @@ describe("Bun.Transpiler", () => {
       exp("declare let x: number", "");
       exp("declare function f(): void", "");
       exp("declare class Foo {}", "");
+    });
+
+    it("contextual keywords followed by a newline apply ASI instead of acting as modifiers", () => {
+      const exp = ts.expectPrinted_;
+      const err = ts.expectParseError;
+
+      // Statement-level "declare": a newline splits into "declare;" + the following declaration.
+      exp("declare\nfunction foo() { return 1 }\nfoo()", "declare;\nfunction foo() {\n  return 1;\n}\nfoo();\n");
+      exp("declare\nlet x = 1\nuse(x)", "declare;\nlet x = 1;\nuse(x);\n");
+      exp("declare\nclass Foo {}\nnew Foo", "declare;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("declare function foo(): void", "");
+      exp("declare let x: number", "");
+
+      // Statement-level "abstract": a newline splits into "abstract;" + "class Foo {}".
+      exp("abstract\nclass Foo {}\nnew Foo", "abstract;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("abstract class Foo { abstract bar(): void }\nnew Foo", "class Foo {\n}\nnew Foo;\n");
+
+      // Statement-level "interface": a newline splits into three statements.
+      exp("interface\nFoo\n{ sideEffect() }", "interface;\nFoo;\n{\n  sideEffect();\n}");
+      exp("interface Foo { x: number }", "");
+
+      // "export interface \n Foo {}" is a syntax error, matching esbuild.
+      err("export interface\nFoo {}", 'Unexpected "interface"');
+      // "export default interface \n Foo {}" is allowed (the interface name can be on the next line).
+      exp("export default interface\nFoo {}", "");
+      exp("export default interface Foo {}", "");
+
+      // "export default abstract \n class A {}" exports the identifier `abstract` and declares A separately.
+      exp(
+        "export default abstract\nclass A { foo() { return 1 } }\nnew A",
+        "export default abstract;\n\nclass A {\n  foo() {\n    return 1;\n  }\n}\nnew A;\n",
+      );
+      exp("export default abstract class A {}", "export default class A {\n}");
+
+      // Class body "declare": a newline makes it a field named "declare" followed by a method.
+      exp(
+        "class Foo { declare\n foo() { return 1 } }\nnew Foo().foo()",
+        "class Foo {\n  declare;\n  foo() {\n    return 1;\n  }\n}\nnew Foo().foo();\n",
+      );
+      exp("class Foo { declare foo: number }", "class Foo {\n}");
+
+      // Class body "abstract": a newline makes it a field named "abstract" followed by a method.
+      exp("abstract class A { abstract\n foo() {} }\nnew A", "class A {\n  abstract;\n  foo() {}\n}\nnew A;\n");
+      exp("abstract class A { abstract foo(): void }\nnew A", "class A {\n}\nnew A;\n");
+
+      // Class body "accessor": a newline makes it a field named "accessor" followed by a field.
+      exp("class A { accessor\n x = 1 }\nnew A", "class A {\n  accessor;\n  x = 1;\n}\nnew A;\n");
+
+      // Class body "get"/"set" followed by "*": the asterisk starts a generator; the prior word is a field.
+      exp("class A { get\n *x() {} }\nnew A", "class A {\n  get;\n  *x() {}\n}\nnew A;\n");
+      exp("class A { set\n *x() {} }\nnew A", "class A {\n  set;\n  *x() {}\n}\nnew A;\n");
+      // "get"/"set" without the generator star still bind to the next key across a newline.
+      exp("class A { get\n x() { return 1 } }", "class A {\n  get x() {\n    return 1;\n  }\n}");
+
+      // "declare X" where X is not a valid ambient declaration is rejected, so a
+      // newline-split keyword cannot leave the remainder as live runtime code.
+      err("declare interface\nFoo\n{ sideEffect() }", 'Unexpected "interface"');
+      err("declare abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("declare type\nFoo = number", 'Unexpected "type"');
+      err("declare namespace\nFoo { sideEffect() }", 'Unexpected "namespace"');
+      err("declare module\nFoo { sideEffect() }", 'Unexpected "module"');
+      err("declare declare\nlet x = 1", 'Unexpected "declare"');
+      err("declare foo", 'Unexpected "foo"');
+      err("declare foo: bar", 'Unexpected "foo"');
+      err("declare module : es2015", 'Unexpected "module"');
+      err("export declare interface\nFoo {}", 'Unexpected "interface"');
+      err("export declare abstract\nclass Foo {}", 'Unexpected "abstract"');
+      // All valid "declare X" forms still emit nothing.
+      exp("declare function f(): void", "");
+      exp("declare class C {}", "");
+      exp("declare enum E { A }", "");
+      exp("declare namespace N { let x: number }", "");
+      exp("declare abstract class C {}", "");
+      exp("export declare function f(): void", "");
+      exp("export declare const x: number", "");
+      // "export abstract \n class" and "export declare \n class" fall through silently like esbuild.
+      exp("export abstract\nclass Foo {}\nnew Foo", "abstract;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("export declare\nclass Foo {}\nnew Foo", "declare;\n\nclass Foo {\n}\nnew Foo;\n");
+      exp("export declare\nlet x = 1\nuse(x)", "declare;\nlet x = 1;\nuse(x);\n");
+      // Inside an ambient body the flag is propagated for body semantics, but the whole
+      // block is erased regardless, so newline-split keywords in the body are harmless.
+      exp("declare namespace N { abstract\nclass Foo {} }", "");
+      exp("declare namespace N { declare\nlet x: number }", "");
+      exp('declare module "m" { abstract\n class Foo {} }', "");
+      exp("declare global { abstract\nclass Foo {} }\nexport {}", "export {};\n");
+
+      // Decorators before "declare"/"abstract" with a newline must still demand a class.
+      err("function dec(c){return c}\n@dec declare\nclass Foo {}", 'Unexpected "declare"');
+      err("function dec(c){return c}\n@dec abstract\nclass Foo {}", 'Unexpected "abstract"');
+      err("function dec(c){return c}\n@dec export default abstract\nclass Foo {}", 'Unexpected "abstract"');
     });
 
     it("does not crash when export default abstract is an expression followed by a class", () => {
@@ -1406,6 +1506,42 @@ export default class {
       );
     });
 
+    it("identifier named async followed by as/satisfies is not an arrow function", () => {
+      // https://github.com/evanw/esbuild/issues/4027
+      // https://github.com/microsoft/TypeScript/pull/8444
+      ts.expectPrinted_("function f(async?) { g(async as boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async satisfies boolean) }", "function f(async) {\n  g(async);\n}");
+      ts.expectPrinted_("function f(async?) { g(async in x) }", "function f(async) {\n  g(async in x);\n}");
+      ts.expectPrinted_("function f() { g(async as => boolean) }", "function f() {\n  g(async (as) => boolean);\n}");
+      ts.expectPrinted_(
+        "function f() { g(async satisfies => boolean) }",
+        "function f() {\n  g(async (satisfies) => boolean);\n}",
+      );
+      ts.expectPrinted_("let async = true; let x = async as boolean;", "let async = true;\nlet x = async;\n");
+      ts.expectPrinted_(
+        "let async = true; console.log(async satisfies boolean);",
+        "let async = true;\nconsole.log(async);\n",
+      );
+      ts.expectPrinted_("const async = 1; export default async as any;", "const async = 1;\nexport default async;\n");
+      ts.expectPrinted_("let f = async x => {}", "let f = async (x) => {}");
+      ts.expectParseError("function f(async) { g(async as) }", "Unexpected )");
+
+      // "for (async of" must stay rejected in TypeScript mode once the
+      // lookahead above stops the arrow commit; see the [lookahead != async of]
+      // restriction on the for-of grammar.
+      ts.expectParseError("for (async of [7]);", 'For loop initializers cannot start with "async of"');
+      ts.expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
+      ts.expectPrinted_("for (async.x of [7]);", "for (async.x of [7])\n  ;\n");
+      ts.expectPrinted_("for (async as any of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async satisfies T of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async! of [7]);", "for ((async) of [7])\n  ;\n");
+      ts.expectPrinted_("for (async of => {};;);", "for (async (of) => {};; )\n  ;\n");
+      ts.expectPrinted_(
+        "async function f() { for await (async of [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
+    });
+
     it("satisfies", () => {
       ts.expectPrinted_("const t1 = { a: 1 } satisfies I1;", "const t1 = { a: 1 };\n");
       ts.expectPrinted_("const t2 = { a: 1, b: 1 } satisfies I1;", "const t2 = { a: 1, b: 1 };\n");
@@ -2469,6 +2605,11 @@ console.log(<div {...obj} key="after" />);`),
 
       // The keyword spelling is a syntax error, which is why the parentheses matter
       expect(() => parsed("for (async of [7]);", false, false)).toThrow();
+      expectParseError("for (async\nof [7]);", 'For loop initializers cannot start with "async of"');
+      expectPrinted_(
+        "async function f() { for await (async\nof [7]); }",
+        "async function f() {\n  for await ((async) of [7])\n    ;\n}",
+      );
     });
 
     it("await", () => {
@@ -3777,16 +3918,38 @@ console.log(foo, array);
       expectPrinted("typeof 'abc'", '"string"');
       expectPrinted("typeof function() {}", '"function"');
       expectPrinted("typeof (() => {})", '"function"');
-      expectPrinted("typeof {}", '"object"');
-      expectPrinted("typeof {foo: 123}", '"object"');
-      expectPrinted("typeof []", '"object"');
-      expectPrinted("typeof [0]", '"object"');
-      expectPrinted("typeof [null]", '"object"');
-      expectPrinted("typeof ['boolean']", '"object"');
+      // Array/object/class literals may contain side effects in their
+      // elements/properties, so `typeof` is not folded for them.
+      expectPrinted("typeof {}", "typeof {}");
+      expectPrinted("typeof {foo: 123}", "typeof { foo: 123 }");
+      expectPrinted("typeof []", "typeof []");
+      expectPrinted("typeof [0]", "typeof [0]");
+      expectPrinted("typeof [null]", "typeof [null]");
+      expectPrinted("typeof ['boolean']", 'typeof ["boolean"]');
+      expectPrinted("typeof [sideEffect()]", "typeof [sideEffect()]");
+      expectPrinted("typeof {x: sideEffect()}", "typeof { x: sideEffect() }");
+      expectPrinted("typeof class { static x = sideEffect(); }", "typeof class {\n  static x = sideEffect();\n}");
 
-      expectPrinted('typeof [] === "object"', "!0");
-      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "!0");
-      expectPrinted("typeof {foo: 123} !== typeof 123", "!0");
+      expectPrinted('typeof [] === "object"', 'typeof [] === "object"');
+      expectPrinted("typeof {foo: 123} === typeof {bar: 123}", "typeof { foo: 123 } === typeof { bar: 123 }");
+      expectPrinted("typeof {foo: 123} !== typeof 123", 'typeof { foo: 123 } !== "number"');
+
+      // `!` folds to a boolean only when the operand has no side effects or
+      // can be proven removable. Side-effecting operands are left intact.
+      expectPrinted("![]", "!1");
+      expectPrinted("!{}", "!1");
+      expectPrinted("![1, 2, 3]", "!1");
+      expectPrinted("!{ a: 1 }", "!1");
+      expectPrinted("![sideEffect()]", "![sideEffect()]");
+      expectPrinted("!{ x: sideEffect() }", "!{ x: sideEffect() }");
+      expectPrinted("!(class { static x = sideEffect(); })", "!class {\n  static x = sideEffect();\n}");
+      expectPrinted("!void sideEffect()", "!void sideEffect()");
+      expectPrinted("!!void sideEffect()", "!!void sideEffect()");
+      expectPrinted("!![sideEffect()]", "!![sideEffect()]");
+      expectPrinted("!(sideEffect(), true)", "(sideEffect(), !1)");
+      expectPrinted("!(sideEffect() || 1)", "!(sideEffect() || 1)");
+      expectPrinted("!(sideEffect() && 0)", "!(sideEffect() && 0)");
+      expectPrinted("!typeof sideEffect()", "!typeof sideEffect()");
 
       expectPrinted("undefined === undefined", "!0");
       expectPrinted("undefined !== undefined", "!1");

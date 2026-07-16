@@ -132,10 +132,9 @@ test.concurrent("RedisClient survives GC across many short-lived instances", asy
 });
 
 // A RESP scalar line (simple string, error, integer, ...) must end with CRLF.
-// The reader imposes no length cap on the line (the RESP spec has none and
-// Lua `redis.status_reply`/`redis.error_reply` emit arbitrary payloads), so a
-// server that closes mid-line rejects the pending command with a
-// connection-closed error rather than a protocol error.
+// The reader caps line-terminated replies at MAX_BULK_LEN (512 MB), so a 600 KB
+// unterminated line is treated as a partial reply; when the server closes
+// mid-line the pending command is rejected as connection-closed.
 test.concurrent("rejects a RESP simple-string reply whose line terminator never arrives", async () => {
   // Minimal mock Redis server: replies +OK to the HELLO handshake, then
   // answers the next command with `payload`.

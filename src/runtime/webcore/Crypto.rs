@@ -259,7 +259,11 @@ pub(crate) fn bun_random_uuid_v7(
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
     let entropy = global.bun_vm().as_mut().rare_data().entropy_slice(10);
 
-    let uuid = UUID7::init(timestamp, <[u8; 10]>::try_from(&entropy[0..10]).unwrap(), source);
+    let uuid = UUID7::init(
+        timestamp,
+        <[u8; 10]>::try_from(&entropy[0..10]).unwrap(),
+        source,
+    );
 
     if encoding == Encoding::Hex {
         let (mut str, bytes) = BunString::create_uninitialized_latin1(36);

@@ -933,7 +933,8 @@ static WTF::String emitSliceStreaming(
     }
 
     const Char* p = data + position;
-    bool sawCutEnd = false; // set true if we break due to position >= specEnd
+    bool sawCutEnd = false; // visible content exists at/past specEnd
+    bool pastSpecEnd = false; // scanning zero-width tail at position == specEnd
 
     // Visible-codepoint processing, extracted so it can be called from both
     // the SIMD-skipped tight loop and the false-positive fallback. Returns
@@ -954,9 +955,20 @@ static WTF::String emitSliceStreaming(
             if (hasPrev) position += gs.width();
 
             if (!endUnbounded && position >= specEnd) {
-                sawCutEnd = true;
-                flushPending(/*filterCloseOnly=*/true);
-                return false; // signal break
+                // A visible cut needs width past specEnd: the prior cluster
+                // overflowed, or this cp is visible. A zero-width cp at exactly
+                // specEnd (LF/CR/ZWSP) is not a cut; keep scanning, don't emit.
+                if (position > specEnd || Bun__codepointWidth(cp, ambiguousIsWide) > 0) {
+                    sawCutEnd = true;
+                    flushPending(/*filterCloseOnly=*/true);
+                    return false; // signal break
+                }
+                pastSpecEnd = true;
+                gs.reset(cp, ambiguousIsWide);
+                prevVisCp = cp;
+                hasPrev = true;
+                p += charLen;
+                return true;
             }
 
             if (!include && position >= start) {
@@ -980,13 +992,13 @@ static WTF::String emitSliceStreaming(
             gs.reset(cp, ambiguousIsWide);
         } else {
             // JOIN: continuation, position unchanged. Pending is inside cluster.
-            if (include) {
+            if (include && !pastSpecEnd) {
                 flushPending(/*filterCloseOnly=*/false);
                 if (inSpecZone)
                     specZone.append(std::span { p, charLen });
                 else
                     result.append(std::span { p, charLen });
-            } else {
+            } else if (!include) {
                 pending.clear();
                 pendingHl.clear();
             }
@@ -1200,6 +1212,13 @@ walkDone:;
     }
 
     if (!include) return emptyString();
+
+    // End-cut degenerate on the lazy path: the ellipsis was too wide to
+    // budget (neither needStart nor needEnd set) but the walk found visible
+    // content past end. Match the cutEndKnown/ASCII fast-path fallback.
+    if (ellipsisWidth > 0 && !cutEndKnown && sawCutEnd
+        && !needStartEllipsis && !needEndEllipsis)
+        return ellipsis.toString();
 
     // Resolve lazy cutEnd: if we budgeted a spec zone and sawCutEnd → cut.
     // Otherwise (EOF reached without exceeding specEnd) → no cut, flush zone.

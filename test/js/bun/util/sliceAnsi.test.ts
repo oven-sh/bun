@@ -1114,6 +1114,52 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("hi", -100, undefined, { ellipsis: E })).toBe("hi");
     });
 
+    test("trailing zero-width clusters do not trigger the end ellipsis", () => {
+      // A zero-width cluster (LF/CR/ZWSP/tab) landing exactly at the end
+      // boundary must not count as a cut: nothing visible was discarded.
+      // Each non-ASCII case is paired with its ASCII fast-path equivalent
+      // (same column shape) which was already correct.
+      expect(Bun.sliceAnsi("abcX", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\r\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\u200b", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\t", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\n\n\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("ЖЗИК\n", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
+      expect(Bun.sliceAnsi("ЖЗИ\n", 0, 3, { ellipsis: ">>" })).toBe("ЖЗИ");
+      expect(Bun.sliceAnsi("ab\u6F22\n", 0, 4, { ellipsis: E })).toBe("ab\u6F22");
+      // Leading ANSI forces the streaming walk even for ASCII visible chars.
+      expect(Bun.sliceAnsi("\x1b[0mabcX\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      // Visible content after the zero-width tail IS a cut.
+      expect(Bun.sliceAnsi("abcX\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("abcX\n\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\nЛ", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("\x1b[0mabcX\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      // Wide char straddling specEnd is a cut (its tail column is past end).
+      expect(Bun.sliceAnsi("ab\u6F22\n", 0, 3, { ellipsis: E })).toBe("ab" + E);
+    });
+
+    test("end-cut degenerate on the lazy path matches the ASCII fast path", () => {
+      // Ellipsis wider than the requested range, start=0, end is cut: the
+      // streaming walk must fall back to the bare ellipsis, same as the
+      // ASCII fast path does via its !doStart && !doEnd branch.
+      const e = { ellipsis: ">>" };
+      expect(Bun.sliceAnsi("abc", 0, 1, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 0, 1, e)).toBe(">>");
+      expect(Bun.sliceAnsi("abc", 0, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 0, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("\x1b[0mabc", 0, 1, e)).toBe(">>");
+      // No cut at end (string fits exactly, or only zero-width past it):
+      // content is returned, not the ellipsis.
+      expect(Bun.sliceAnsi("Ж", 0, 1, e)).toBe("Ж");
+      expect(Bun.sliceAnsi("Ж\n", 0, 1, e)).toBe("Ж");
+      expect(Bun.sliceAnsi("Ж\r\n", 0, 1, e)).toBe("Ж");
+      expect(Bun.sliceAnsi("a", 0, 1, e)).toBe("a");
+      expect(Bun.sliceAnsi("a\n", 0, 1, e)).toBe("a");
+      expect(Bun.sliceAnsi("ЖЗ", 0, 2, e)).toBe("ЖЗ");
+      expect(Bun.sliceAnsi("ЖЗ\n", 0, 2, e)).toBe("ЖЗ");
+    });
+
     test("string shorthand for ellipsis", () => {
       // 4th arg as bare string is equivalent to { ellipsis: string }
       expect(Bun.sliceAnsi("unicorn", 0, 4, E)).toBe("uni" + E);

@@ -240,7 +240,9 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
         writeSync(1, ".");
         if (++ticks > 100000) { events.push("no-hangup"); process.exit(99); }
         return setImmediate(probe);
-      } catch {}
+      } catch (e) {
+        if (!e || e.code !== "EIO") { events.push("probe:" + (e && e.code)); process.exit(99); }
+      }
       if (process.env.USE_END) {
         // Writable.prototype.end(chunk) routes through _write (underscoreWriteFast)
         // with state.onwrite as the callback, rather than the writeFast override.

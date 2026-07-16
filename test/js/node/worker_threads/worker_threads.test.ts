@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +22,12 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Worker spawn/teardown is 10-100x slower in debug/ASAN builds; the
+// multi-worker tests here overrun the 5s default.
+if (isDebug) {
+  setDefaultTimeout(90_000);
+}
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -577,14 +584,13 @@ describe("getHeapSnapshot", () => {
   // uncaught_exception return handled=true so spin() continues to
   // fireEarlyMessages (the call resolves with real data). Under `bun -e`
   // it rejects — see the test-worker-heapdump-failure.js vendored test for
-  // subprocess coverage. The two cases below take the shutdown() path
-  // directly so they exercise the m_pendingTasks abandon drain regardless.
-  test.each([
-    ["entry not found", undefined],
-    ["unsettled top-level await", "await new Promise(() => {})"],
-  ])("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (%s)", async (_, src) => {
-    const worker =
-      src === undefined ? new Worker("/nonexistent/__bun_worker_path__.js") : new Worker(src, { eval: true });
+  // subprocess coverage. "Unsettled top-level await" is also omitted: the
+  // worker goes online before TLA settles (queued calls are delivered by
+  // fireEarlyMessages and resolve) — covered by the next test. The
+  // entry-not-found case takes the shutdown() path directly so it
+  // exercises the m_pendingTasks abandon drain.
+  test("rejects ERR_WORKER_NOT_RUNNING when called before a worker that fails to start (entry not found)", async () => {
+    const worker = new Worker("/nonexistent/__bun_worker_path__.js");
     worker.on("error", () => {});
     // Called immediately (m_state still Pending) so the task queues into
     // m_pendingTasks; dispatchExit drains it on the parent thread when the
@@ -613,6 +619,22 @@ describe("getHeapSnapshot", () => {
     for (const p of captured) {
       expect(await p).toMatchObject({ code: "ERR_WORKER_NOT_RUNNING" });
     }
+  });
+
+  test("resolves when called before a worker whose top-level await never settles", async () => {
+    // The worker goes online once its entry body has had a chance to run,
+    // even while TLA is still pending, so calls queued while m_state was
+    // Pending are delivered by fireEarlyMessages and resolve; with no
+    // listener or live handles the worker then exits with code 13.
+    const worker = new Worker("await new Promise(() => {})", { eval: true });
+    worker.on("error", () => {});
+    const snapshot = worker.getHeapSnapshot().then(
+      v => ({ resolved: !!v }),
+      e => e,
+    );
+    const exitCode = new Promise(resolve => worker.on("exit", resolve));
+    expect(await snapshot).toEqual({ resolved: true });
+    expect(await exitCode).toBe(13);
   });
 
   test("queues while the worker is starting and rejects once it has exited", async () => {

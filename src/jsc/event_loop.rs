@@ -1154,37 +1154,6 @@ impl EventLoop {
         self.tick();
     }
 
-    pub fn wait_for_promise_with_termination(&mut self, promise: jsc::AnyPromise) {
-        // BACKREF — `WebWorker` is owned by C++ and outlives this VM (see
-        // [`VirtualMachine::worker_ref`]); route through the safe accessor
-        // instead of open-coding the raw `*const c_void` cast + deref.
-        let worker = self
-            .vm_ref()
-            .worker_ref()
-            .expect("worker is not initialized");
-        match promise.status() {
-            PromiseStatus::Pending => {
-                while !worker.has_requested_terminate()
-                    && promise.status() == PromiseStatus::Pending
-                {
-                    self.tick();
-                    if !worker.has_requested_terminate()
-                        && promise.status() == PromiseStatus::Pending
-                    {
-                        // Unsettled top-level await: the loop has drained but the
-                        // entry module's evaluation promise is still pending. Stop
-                        // waiting so the worker can exit (node uses exit code 13).
-                        if !self.vm_ref().is_event_loop_alive() {
-                            break;
-                        }
-                        self.auto_tick();
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
     pub fn enqueue_task_concurrent_batch(
         &self,
         batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,

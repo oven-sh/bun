@@ -1836,7 +1836,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `'error'` here). Skip when no `error` handler is defined: without one
         // `handle_error` routes to uncaught, and `handshake`/`close` already carry it.
         if let Some(handlers) = self.handlers_opt() {
-            if !handlers.on_error().is_empty() {
+            if !handlers.on_error().is_empty() && !handlers.vm.is_shutting_down() {
                 let global = handlers.global_object;
                 if let Some(err_value) = self.stored_verify_error_to_js(&global) {
                     self.handle_error(err_value);

@@ -952,7 +952,8 @@ describe("expect()", () => {
   test("toThrow does not treat a returned Error as thrown", () => {
     // An Error that is *returned* (not thrown) must not satisfy toThrow().
     const returnsError = () => new TypeError("boom");
-    const assertFails = (/** @type {() => void} */ fn) => expect(fn).toThrow(/did not throw|didn't throw|to throw an error/);
+    const assertFails = (/** @type {() => void} */ fn) =>
+      expect(fn).toThrow(/did not throw|didn't throw|to throw an error/);
 
     assertFails(() => expect(returnsError).toThrow());
     assertFails(() => expect(returnsError).toThrow("boom"));

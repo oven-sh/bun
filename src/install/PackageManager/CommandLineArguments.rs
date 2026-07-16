@@ -23,10 +23,9 @@ use std::sync::OnceLock;
 
 use super::package_manager_options as Options;
 
-/// `Output.pretty(text, .{})` — runtime `<tag>` → ANSI rewrite of a help-text
-/// literal then write to stdout. Must be a single rewrite pass: feeding the
-/// result through `format_args!` into `Output::pretty` would run the rewriter
-/// again on the already-unescaped `\<name\>` placeholders and delete them.
+/// `Output.pretty(text, .{})` — single-pass `<tag>` → ANSI rewrite of a help
+/// template to stdout. Don't wrap in `format_args!`: a second rewrite pass
+/// would delete the already-unescaped `\<name\>` placeholders as unknown tags.
 #[inline]
 #[allow(clippy::disallowed_methods)] // template is a runtime &str parameter
 fn pretty_help(text: &str) {

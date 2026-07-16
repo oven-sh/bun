@@ -182,6 +182,9 @@ impl Response {
     pub fn write_continue(&mut self) {
         c::uws_h3_res_write_continue(self)
     }
+    pub fn write_informational(&mut self, _data: &[u8]) {
+        // node:http (the only caller) never reaches HTTP/3; kept for AnyResponse dispatch parity.
+    }
     pub fn flush_headers(&mut self, immediate: bool) {
         c::uws_h3_res_flush_headers(self, immediate)
     }

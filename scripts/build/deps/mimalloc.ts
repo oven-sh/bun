@@ -24,6 +24,11 @@ export const mimalloc: Dependency = {
     commit: MIMALLOC_COMMIT,
   }),
 
+  // _mi_strnlen reads one byte past `max_len` on unterminated buffers
+  // (microsoft/mimalloc src/libc.c, still present on dev3) — ASan traps it
+  // intermittently in unix_detect_thp at startup. Drop when upstream fixes it.
+  patches: ["patches/mimalloc/strnlen-oob-read.patch"],
+
   build: cfg => {
     // ─── Override behavior (global malloc replacement) ───
     //   ASAN:    OFF — ASAN interceptors must see the real malloc.

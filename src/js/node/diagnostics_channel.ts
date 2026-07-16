@@ -565,7 +565,6 @@ class TracingChannel {
       // Use continuation window for asyncStart/asyncEnd
       const scope = continuationWindow.withScope(context);
       try {
-        // TODO: Is there a way to have asyncEnd _after_ the continuation?
         return PromiseReject(err);
       } finally {
         scope[SymbolDispose]();
@@ -577,7 +576,6 @@ class TracingChannel {
       // Use continuation window for asyncStart/asyncEnd
       const scope = continuationWindow.withScope(context);
       try {
-        // TODO: Is there a way to have asyncEnd _after_ the continuation?
         return result;
       } finally {
         scope[SymbolDispose]();

@@ -3666,14 +3666,16 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
                     return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
                 }
                 if (traceImport && traceImport.isCallable()) {
-                    // The doImport callback runs synchronously inside tracePromise, so the
-                    // captured arguments never outlive this stack frame.
+                    // traceImport normally runs doImport synchronously, but a
+                    // tampered TracingChannel.prototype.tracePromise could stash
+                    // doImport past this frame; root the module-name string.
                     SourceOrigin sourceOriginCopy = sourceOrigin;
+                    JSC::Strong<JSString> strongModuleName(vm, moduleNameValue);
                     auto* doImport = JSC::JSNativeStdFunction::create(vm, globalObject, 0, String(),
-                        [moduleNameValue, parameters, sourceOriginCopy](JSGlobalObject* lexicalGlobalObject, CallFrame*) -> JSC::EncodedJSValue {
+                        [strongModuleName = WTF::move(strongModuleName), parameters, sourceOriginCopy](JSGlobalObject* lexicalGlobalObject, CallFrame*) -> JSC::EncodedJSValue {
                             auto* global = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
                             RefPtr<JSC::ScriptFetchParameters> parametersCopy = parameters;
-                            return JSValue::encode(moduleLoaderImportModuleImpl(global, moduleNameValue, WTF::move(parametersCopy), sourceOriginCopy));
+                            return JSValue::encode(moduleLoaderImportModuleImpl(global, strongModuleName.get(), WTF::move(parametersCopy), sourceOriginCopy));
                         });
 
                     auto sourceURL = sourceOrigin.url();

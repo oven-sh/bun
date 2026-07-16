@@ -865,7 +865,10 @@ impl Stringifier {
                                 Self::write_integrity_field(
                                     writer,
                                     &pkg_meta.integrity,
-                                    pkg_alternates.get(&pkg_meta.integrity.value),
+                                    pkg_alternates.get(&(
+                                        pkg_name_hashes[pkg_id as usize],
+                                        pkg_meta.integrity.value,
+                                    )),
                                 )?;
                                 write!(writer, "\"]")?;
                             } else {
@@ -901,7 +904,10 @@ impl Stringifier {
                                 Self::write_integrity_field(
                                     writer,
                                     &pkg_meta.integrity,
-                                    pkg_alternates.get(&pkg_meta.integrity.value),
+                                    pkg_alternates.get(&(
+                                        pkg_name_hashes[pkg_id as usize],
+                                        pkg_meta.integrity.value,
+                                    )),
                                 )?;
                                 write!(writer, "\"]")?;
                             } else {
@@ -982,7 +988,10 @@ impl Stringifier {
                             Self::write_integrity_field(
                                 writer,
                                 &pkg_meta.integrity,
-                                pkg_alternates.get(&pkg_meta.integrity.value),
+                                pkg_alternates.get(&(
+                                    pkg_name_hashes[pkg_id as usize],
+                                    pkg_meta.integrity.value,
+                                )),
                             )?;
                             write!(writer, "\"]")?;
                         }
@@ -1041,7 +1050,10 @@ impl Stringifier {
                                 Self::write_integrity_field(
                                     writer,
                                     &pkg_meta.integrity,
-                                    pkg_alternates.get(&pkg_meta.integrity.value),
+                                    pkg_alternates.get(&(
+                                        pkg_name_hashes[pkg_id as usize],
+                                        pkg_meta.integrity.value,
+                                    )),
                                 )?;
                                 write!(writer, "\"]")?;
                             } else {
@@ -2684,8 +2696,11 @@ pub fn parse_into_binary_lockfile(
                         );
                         pkg.meta.integrity = Integrity::default();
                     }
-                    lockfile
-                        .record_integrity_alternates(&pkg.meta.integrity, &integrity_alternates);
+                    lockfile.record_integrity_alternates(
+                        name_hash,
+                        &pkg.meta.integrity,
+                        &integrity_alternates,
+                    );
 
                     // Fail closed: otherwise a tampered lockfile could redirect
                     // the tarball URL off-registry and install arbitrary content
@@ -2722,6 +2737,7 @@ pub fn parse_into_binary_lockfile(
                                 pkg.meta.integrity = Integrity::default();
                             }
                             lockfile.record_integrity_alternates(
+                                name_hash,
                                 &pkg.meta.integrity,
                                 &integrity_alternates,
                             );
@@ -2792,6 +2808,7 @@ pub fn parse_into_binary_lockfile(
                                 pkg.meta.integrity = Integrity::default();
                             }
                             lockfile.record_integrity_alternates(
+                                name_hash,
                                 &pkg.meta.integrity,
                                 &integrity_alternates,
                             );

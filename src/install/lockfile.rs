@@ -218,12 +218,16 @@ pub struct Lockfile {
 
     /// Alternate digests of the strongest algorithm for packages whose SSRI
     /// integrity string carried more than one (W3C SRI §3.3.4 any-match),
-    /// keyed by the primary digest bytes (`Integrity.value`). Populated from
-    /// the parse paths (`bun.lock`, npm manifest, migrations) and consulted
-    /// both at tarball verify time and when re-emitting the lockfile so the
-    /// shape round-trips. Empty in the common single-digest case.
-    /// Runtime-only — never serialised.
-    pub integrity_alternates: BunHashMap<[u8; DIGEST_BUF_LEN], IntegrityAlternates>,
+    /// keyed by (package name hash, primary digest bytes) so alternates never
+    /// apply to a different package that happens to share a primary digest.
+    /// Both key parts are copied verbatim by `Package::clone`, so entries stay
+    /// valid across the `clean` rebuild. Populated from the parse paths
+    /// (`bun.lock`, npm manifest, migrations) and consulted both at tarball
+    /// verify time and when re-emitting the lockfile so the shape round-trips.
+    /// Empty in the common single-digest case. Runtime-only — never
+    /// serialised.
+    pub integrity_alternates:
+        BunHashMap<(PackageNameHash, [u8; DIGEST_BUF_LEN]), IntegrityAlternates>,
 }
 
 pub(crate) type PackageList = self::package::List<u64>;
@@ -2161,6 +2165,7 @@ impl Lockfile {
     /// No-op when there are no alternates or the integrity is unsupported.
     pub fn record_integrity_alternates(
         &mut self,
+        name_hash: PackageNameHash,
         integrity: &Integrity,
         alternates: &IntegrityAlternates,
     ) {
@@ -2169,17 +2174,21 @@ impl Lockfile {
         }
         bun_core::handle_oom(
             self.integrity_alternates
-                .put(integrity.value, alternates.clone()),
+                .put((name_hash, integrity.value), alternates.clone()),
         );
     }
 
-    /// Alternate digests recorded for `integrity`, or an empty set.
-    pub fn integrity_alternates_for(&self, integrity: &Integrity) -> IntegrityAlternates {
+    /// Alternate digests recorded for a package's `integrity`, or an empty set.
+    pub fn integrity_alternates_for(
+        &self,
+        name_hash: PackageNameHash,
+        integrity: &Integrity,
+    ) -> IntegrityAlternates {
         if !integrity.tag.is_supported() {
             return IntegrityAlternates::default();
         }
         self.integrity_alternates
-            .get(&integrity.value)
+            .get(&(name_hash, integrity.value))
             .cloned()
             .unwrap_or_default()
     }

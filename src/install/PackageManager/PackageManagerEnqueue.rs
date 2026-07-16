@@ -256,12 +256,14 @@ pub fn enqueue_tarball_for_reading(
     }
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
+    let name_hash = this.lockfile.packages.items_name_hash()[package_id as usize];
 
     let task = enqueue_local_tarball(
         this,
         task_id,
         dependency_id,
         alias,
+        name_hash,
         path,
         resolution,
         &integrity,
@@ -1577,6 +1579,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         task_id,
                         id,
                         dep_name,
+                        dependency.name_hash,
                         url,
                         &res,
                         &Integrity::default(),
@@ -1859,6 +1862,7 @@ fn enqueue_local_tarball(
     task_id: Task::Id,
     dependency_id: DependencyID,
     name: &[u8],
+    name_hash: PackageNameHash,
     path: &[u8],
     resolution: &Resolution,
     integrity: &Integrity,
@@ -1925,7 +1929,9 @@ fn enqueue_local_tarball(
                     temp_dir: get_temporary_directory(this).handle.fd(),
                     dependency_id,
                     integrity: *integrity,
-                    integrity_alternates: this.lockfile.integrity_alternates_for(integrity),
+                    integrity_alternates: this
+                        .lockfile
+                        .integrity_alternates_for(name_hash, integrity),
                     url: StringOrTinyString::init_append_if_needed(
                         path,
                         &mut crate::network_task::filename_store_appender(),

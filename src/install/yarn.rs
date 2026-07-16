@@ -1185,7 +1185,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         let integrity = if let Some(integrity) = entry.integrity {
             let (primary, alternates) = Integrity::parse_with_alternates(integrity);
-            this.record_integrity_alternates(&primary, &alternates);
+            this.record_integrity_alternates(name_hash, &primary, &alternates);
             primary
         } else {
             Integrity::default()

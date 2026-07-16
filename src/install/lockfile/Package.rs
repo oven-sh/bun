@@ -760,7 +760,11 @@ impl Package<u64> {
             let (_, alternates) = crate::integrity::Integrity::parse_with_alternates(
                 package_version.integrity_str.slice(&manifest.string_buf),
             );
-            lockfile.record_integrity_alternates(&package_version.integrity, &alternates);
+            lockfile.record_integrity_alternates(
+                manifest.pkg.name.hash,
+                &package_version.integrity,
+                &alternates,
+            );
         }
 
         let dependency_groups: &[DependencyGroup] = &{

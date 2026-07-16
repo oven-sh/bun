@@ -767,7 +767,7 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 let (primary, alternates) = Integrity::parse_with_alternates(
                     integrity.as_str().ok_or(crate::Error::InvalidNPMLockfile)?,
                 );
-                this.record_integrity_alternates(&primary, &alternates);
+                this.record_integrity_alternates(name_hash, &primary, &alternates);
                 primary
             } else {
                 Integrity::default()

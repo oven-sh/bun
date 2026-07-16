@@ -46,9 +46,10 @@ pub struct RuntimeDevelopmentPair {
 bun_core::comptime_string_map! {
     pub static RUNTIME_MAP: RuntimeDevelopmentPair = {
         b"classic" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        b"automatic" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: None },
         b"react" => RuntimeDevelopmentPair { runtime: Runtime::Classic, development: None },
-        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
+        // TypeScript: "react-jsx" selects jsx/jsxs (production), "react-jsxdev" selects jsxDEV.
+        b"react-jsx" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(false) },
         b"react-jsxdev" => RuntimeDevelopmentPair { runtime: Runtime::Automatic, development: Some(true) },
     };
 }

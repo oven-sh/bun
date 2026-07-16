@@ -1135,16 +1135,32 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("abcX\n\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
       expect(Bun.sliceAnsi("ЖЗИК\nЛ", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
       expect(Bun.sliceAnsi("\x1b[0mabcX\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
-      // A GCB=Prepend codepoint (U+0600) has width 0 but leads a visible
-      // cluster via GB9b: the cluster past end is a cut.
+      // A zero-width codepoint at end that leads a visible cluster (GB9b
+      // Prepend, keycap via Extend, SpacingMark) is a cut once the cluster
+      // width resolves at EOF.
       expect(Bun.sliceAnsi("abcX\u0600Y", 0, 4, { ellipsis: E })).toBe("abc" + E);
       expect(Bun.sliceAnsi("abcX\u0600YZ", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u0600\u0661", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\n\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u0903", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
       expect(Bun.sliceAnsi("abcX\u0600", 0, 4, { ellipsis: E })).toBe("abcX");
       // Wide char straddling specEnd is a cut (its tail column is past end),
       // with or without a trailing break to re-enter the boundary check.
       expect(Bun.sliceAnsi("ab\u6F22\n", 0, 3, { ellipsis: E })).toBe("ab" + E);
       expect(Bun.sliceAnsi("ab\u6F22", 0, 3, { ellipsis: E })).toBe("ab" + E);
       expect(Bun.sliceAnsi("abcd", 0, 3, { ellipsis: E })).toBe("ab" + E);
+      // start > 0 (start ellipsis budgeted) with a zero-width tail: spec
+      // zone flushes, no end ellipsis.
+      expect(Bun.sliceAnsi("ЖЗИКЛ\n", 1, 5, { ellipsis: E })).toBe(E + "ИКЛ");
+      expect(Bun.sliceAnsi("abcde\n", 1, 5, { ellipsis: E })).toBe(E + "cde");
+      expect(Bun.sliceAnsi("\x1b[0mabcde\n", 1, 5, { ellipsis: E })).toBe(E + "cde");
+      expect(Bun.sliceAnsi("ЖЗИКЛ\nМ", 1, 5, { ellipsis: E })).toBe(E + "ИК" + E);
+      // Trailing close SGR after spec-zone content keeps input order when
+      // the zone is flushed.
+      expect(Bun.sliceAnsi("\x1b[31mЖЗИК\x1b[0m", 0, 4, { ellipsis: E })).toBe("\x1b[31mЖЗИК\x1b[0m");
+      expect(Bun.sliceAnsi("\x1b[31mЖЗИК\n\x1b[0m", 0, 4, { ellipsis: E })).toBe("\x1b[31mЖЗИК\x1b[0m");
+      expect(Bun.sliceAnsi("\x1b[31mЖЗИК\x1b[39m\n", 0, 4, { ellipsis: E })).toBe("\x1b[31mЖЗИК\x1b[39m");
     });
 
     test("lazy-path degenerate (ellipsis wider than range) matches ASCII fast path", () => {

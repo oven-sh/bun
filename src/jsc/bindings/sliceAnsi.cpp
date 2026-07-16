@@ -1198,23 +1198,14 @@ static WTF::String emitSliceStreaming(
 walkDone:;
 
     // Natural EOF (loop completed without breaking early at past-end).
-    // Finalize the last cluster's width contribution, then flush trailing
-    // pending ANSI. Match old Step 5 semantics: isPastEnd for trailing ANSI
-    // is `position >= end` where position reflects the LAST visible char.
-    // (If we broke early via sawCutEnd, pending was already flushed there
-    // with close-only filtering; we don't re-finalize.)
-    if (!sawCutEnd) {
+    // Finalize the last cluster's width contribution. If we broke early via
+    // sawCutEnd, pending was already flushed close-only at the break.
+    const bool reachedEOF = !sawCutEnd;
+    if (reachedEOF) {
         if (hasPrev) position += gs.width();
         // The last cluster may have overflowed specEnd (wide char straddling
         // the boundary, or a Prepend-led cluster that started zero-width).
         if (!endUnbounded && position > specEnd) sawCutEnd = true;
-        // Trailing ANSI: if position >= end, it's post-cut → filter. Use the
-        // ORIGINAL end bound (specEnd includes the spec zone; for filtering,
-        // what matters is whether position exceeds the USER'S requested end,
-        // which is `specEnd` when no ellipsis budget, or `end + budget` when
-        // there is one — same thing).
-        bool trailingPastEnd = !endUnbounded && position >= specEnd;
-        if (include) flushPending(/*filterCloseOnly=*/trailingPastEnd);
     }
 
     if (!include) return emptyString();
@@ -1228,6 +1219,8 @@ walkDone:;
 
     // Resolve lazy cutEnd: if we budgeted a spec zone and sawCutEnd → cut.
     // Otherwise (EOF reached without exceeding specEnd) → no cut, flush zone.
+    // Resolve BEFORE trailing pending ANSI so close codes land after the
+    // last specZone column, not before it.
     if (ellipsisEndBudget > 0) {
         if (sawCutEnd) {
             // Cut confirmed: discard spec zone, keep ellipsis budget (emit ellipsis).
@@ -1236,6 +1229,13 @@ walkDone:;
             result.append(specZone);
             needEndEllipsis = false;
         }
+    }
+
+    if (reachedEOF) {
+        // Trailing ANSI: close-only when the last column reached the user's
+        // end bound (specEnd), unfiltered when the whole string fit inside.
+        bool trailingPastEnd = !endUnbounded && position >= specEnd;
+        flushPending(/*filterCloseOnly=*/trailingPastEnd);
     }
 
     if (activeHyperlink) {

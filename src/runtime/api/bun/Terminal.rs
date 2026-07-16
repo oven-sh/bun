@@ -167,6 +167,11 @@ pub struct Terminal {
     /// `on_write` observes `Drained` so POSIX can fire the `drain` callback
     /// (Windows fires it from `on_writable`).
     writer_has_buffered: Cell<bool>,
+
+    /// This PTY's own raw-mode state (mode + saved termios), so one terminal
+    /// going raw never makes another terminal's setRawMode a no-op.
+    #[cfg(unix)]
+    tty_state: Cell<bun_core::tty::State>,
 }
 
 bitflags::bitflags! {
@@ -465,6 +470,8 @@ impl Terminal {
             this_value: JsCell::new(JsRef::empty()),
             flags: Cell::new(Flags::empty()),
             writer_has_buffered: Cell::new(false),
+            #[cfg(unix)]
+            tty_state: Cell::new(bun_core::tty::State::new()),
         }));
         // SAFETY: just allocated, non-null, exclusively owned here. R-2: `&`
         // (not `&mut`) — every method below takes `&self`; field writes go
@@ -1574,7 +1581,8 @@ impl Terminal {
         #[cfg(unix)]
         {
             // Use the existing TTY mode function
-            let tty_result = bun_core::tty::set_mode(
+            let mut state = self.tty_state.get();
+            let tty_result = state.set_mode(
                 self.master_fd.get().native(),
                 if enabled {
                     bun_core::tty::Mode::Raw
@@ -1582,6 +1590,7 @@ impl Terminal {
                     bun_core::tty::Mode::Normal
                 },
             );
+            self.tty_state.set(state);
             if tty_result != 0 {
                 return Err(global_object.throw(format_args!("Failed to set raw mode")));
             }

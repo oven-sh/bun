@@ -65,7 +65,10 @@ describe("Bun.Terminal subprocess integration", () => {
           drained.resolve();
         },
         exit() {
-          done.reject(new Error("terminal exit before CHILD_READ; output=" + JSON.stringify(output)));
+          const err = new Error("terminal exit; output=" + JSON.stringify(output));
+          ready.reject(err);
+          done.reject(err);
+          drained.reject(err);
         },
       },
     });

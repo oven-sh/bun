@@ -1086,6 +1086,31 @@ describe.concurrent(() => {
       });
     });
 
+    it("accessors and getReport work when invoked from a node:vm context", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+           const r = process.report;
+           const ctx = vm.createContext({ r, Error });
+           vm.runInContext("r.compact = true", ctx);
+           const sig = vm.runInContext("r.signal", ctx);
+           const msg = vm.runInContext("r.getReport(new Error('vm-marker')).javascriptStack.message", ctx);
+           console.log(JSON.stringify({ compact: r.compact, sig, msg }));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: { compact: true, sig: "SIGUSR2", msg: "Error: vm-marker" },
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     it("getReport(err) validates the argument type", () => {
       for (const v of [42, "x", true, null]) {
         expect(() => process.report.getReport(v)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));

@@ -2547,7 +2547,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObje
         return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "err"_s, "Object"_s, err);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject), String(), err)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, defaultGlobalObject(globalObject), String(), err)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2576,7 +2576,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
 #define DEFINE_REPORT_BOOLEAN_ACCESSOR(fnName, field, argName)                                                                                                                    \
     JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                                   \
     {                                                                                                                                                                             \
-        auto* process = uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject();                                                                                      \
+        auto* process = defaultGlobalObject(globalObject)->processObject();                                                                                                       \
         return JSValue::encode(jsBoolean(process->field));                                                                                                                        \
     }                                                                                                                                                                             \
     JSC_DEFINE_CUSTOM_SETTER(processReport_set##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName)) \
@@ -2586,7 +2586,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
         JSValue value = JSValue::decode(encodedValue);                                                                                                                            \
         Bun::V::validateBoolean(scope, globalObject, value, argName);                                                                                                             \
         RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
-        uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->field = value.asBoolean();                                                                           \
+        defaultGlobalObject(globalObject)->processObject()->field = value.asBoolean();                                                                                            \
         return true;                                                                                                                                                              \
     }
 
@@ -2594,7 +2594,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                                   \
     {                                                                                                                                                                             \
         auto& vm = JSC::getVM(globalObject);                                                                                                                                      \
-        auto* process = uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject();                                                                                      \
+        auto* process = defaultGlobalObject(globalObject)->processObject();                                                                                                       \
         return JSValue::encode(jsString(vm, process->field));                                                                                                                     \
     }                                                                                                                                                                             \
     JSC_DEFINE_CUSTOM_SETTER(processReport_set##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName)) \
@@ -2606,7 +2606,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
         WTF::String str = value.toWTFString(globalObject);                                                                                                                        \
         RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
-        uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->field = str;                                                                                         \
+        defaultGlobalObject(globalObject)->processObject()->field = str;                                                                                                          \
         return true;                                                                                                                                                              \
     }
 
@@ -2625,7 +2625,7 @@ DEFINE_REPORT_STRING_ACCESSOR(Filename, m_reportFilename, "filename"_s)
 JSC_DEFINE_CUSTOM_GETTER(processReport_getSignal, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto* process = uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject();
+    auto* process = defaultGlobalObject(globalObject)->processObject();
     return JSValue::encode(jsString(vm, process->m_reportSignal));
 }
 
@@ -2647,7 +2647,7 @@ JSC_DEFINE_CUSTOM_SETTER(processReport_setSignal, (JSC::JSGlobalObject * globalO
         }
         return false;
     }
-    uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->m_reportSignal = str;
+    defaultGlobalObject(globalObject)->processObject()->m_reportSignal = str;
     return true;
 }
 

@@ -350,11 +350,12 @@ export class PatternBuilder {
     if (!rng.chance(0.45)) return atom;
     // See group(): atoms that already loop internally only ever get bounded
     // quantifiers, keeping cases out of the exponential-backtracking regime.
+    // An atom that already loops unboundedly must not itself be repeated:
+    // even a bounded repeat of an unbounded loop backtracks exponentially when
+    // it fails, and that is a performance surface, not a correctness one.
     const boundedOnly = atom.loops === true;
     const quant = rng.pick(
-      boundedOnly
-        ? ["?", "?", "{2}", "{0,2}", "{1,3}", "{0}"]
-        : ["*", "+", "?", "?", "{2}", "{0,2}", "{1,3}", "{2,}", "{0}"],
+      boundedOnly ? ["?", "?", "{0}", "{1}", "{0,1}"] : ["*", "+", "?", "?", "{2}", "{0,2}", "{1,3}", "{2,}", "{0}"],
     );
     const lazy = rng.chance(0.25) ? "?" : "";
     let sample = atom.sample;

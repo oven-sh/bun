@@ -195,3 +195,11 @@ combining character in the source):
     bun  test/js/web/regex/differential/run.mjs --seed 460 --index 1117 --capabilities '<hdr>'
     // pattern /(?:(?:(?<π>.?|́{1,3}|[^é](?:\k<π>){1,3}\W){2}||.7|){2}?)+?\S(?:a[9a-f]{0,2}?|\s+?\k<π>)|.?|/m
     // input "prefix  suffix": V8 exec -> ["prefix ", ""] with groups {π:""}; JSC (all tiers, incl. main) -> null
+
+## Status update
+
+The optional/quantified-`^`-group family (#4, #9) and the encoding-dependent
+lookbehind behaviour are fixed on the oven-sh/WebKit branch of PR #299
+(root cause: BOL bubbling in atomParenthesesEnd + quantifyAtom), pending the
+next WebKit bump in bun; the pinned corpus will flip those entries to passes
+automatically when it lands.

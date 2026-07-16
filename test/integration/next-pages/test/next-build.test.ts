@@ -30,7 +30,7 @@ async function tempDirToBuildIn() {
   cpSync(join(root, "src/Counter1.txt"), join(dir, "src/Counter.tsx"));
   cpSync(join(root, "tsconfig_for_build.json"), join(dir, "tsconfig.json"));
 
-  // This file never launches a browser (only dev-server*.test.ts do), so skip
+  // This file never launches a browser (only dev-server.test.ts does), so skip
   // puppeteer's chromium download entirely. This also keeps the two concurrent
   // installs independent: they'd otherwise race extracting into a shared cache.
   const install = Bun.spawn([bunExe(), "i"], {

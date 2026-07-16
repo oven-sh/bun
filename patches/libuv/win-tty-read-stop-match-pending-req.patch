@@ -1,0 +1,25 @@
+--- a/src/win/tty.c
++++ b/src/win/tty.c
+@@ -1078,7 +1078,21 @@
+   if (!(handle->flags & UV_HANDLE_READ_PENDING))
+     return 0;
+ 
+-  if (uv__is_raw_tty_mode(handle->tty.rd.mode.mode)) {
++  /* Pick the cancellation method from the type of the still-pending request,
++   * not from mode.mode. uv_tty_set_mode() flips mode.mode between its calls
++   * to uv__tty_read_stop() and uv__tty_read_start(), so when it is called
++   * twice back-to-back (e.g. setRawMode(false) immediately followed by
++   * setRawMode(true) in the same tick) the second read_stop sees the new
++   * mode while the original request is still pending. Dispatching on
++   * mode.mode then sends the line-read cancel path against a raw request:
++   * it calls uv__cancel_read_console() (a no-op, no line read exists) and
++   * sets UV_HANDLE_CANCELLATION_PENDING, which is only ever cleared in
++   * uv_process_tty_read_line_req(), so it never clears. The next time a
++   * real line read needs cancelling, the flag is already set and the cancel
++   * is skipped, leaving ReadConsoleW blocked until the user presses Enter.
++   * read_line_buffer.len > 0 iff the pending request is a line read; this
++   * is the same invariant uv__process_tty_read_req() dispatches on. */
++  if (handle->tty.rd.read_line_buffer.len == 0) {
+     /* Cancel raw read. Write some bullshit event to force the console wait to
+      * return. */
+     memset(&record, 0, sizeof record);

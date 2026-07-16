@@ -3727,10 +3727,8 @@ it("http.Agent with proxyEnv does not write to a literal 'undefined' property", 
 });
 
 it("server.close() completes after res.socket.end() half-closes an in-flight upload", async () => {
-  // On Windows the per-request NodeHTTPResponse ref kept only vm.active_tasks,
-  // so once server.close() dropped the server KeepAlive, uv_loop_alive() was
-  // false and uv_run(UV_RUN_NOWAIT) never drained the accepted socket's poll
-  // completion: the process spun at 100% CPU and server.close() never resolved.
+  // Windows: jsc::Ref bumped only vm.active_tasks, so once server.close() dropped the
+  // server KeepAlive uv_run(UV_RUN_NOWAIT) never polled IOCP and close() spun forever.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

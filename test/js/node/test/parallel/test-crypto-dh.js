@@ -12,9 +12,7 @@ const {
 } = require('../common/crypto');
 
 {
-  // Bun enforces OpenSSL's 512-bit DH_MIN_MODULUS_BITS; upstream's smaller size
-  // only works on a libcrypto without that floor.
-  const size = crypto.getFips() || hasOpenSSL3 ? 1024 : 512;
+  const size = crypto.getFips() || hasOpenSSL3 ? 1024 : 256;
   const dh1 = crypto.createDiffieHellman(size);
   const p1 = dh1.getPrime('buffer');
   const dh2 = crypto.createDiffieHellman(p1, 'buffer');

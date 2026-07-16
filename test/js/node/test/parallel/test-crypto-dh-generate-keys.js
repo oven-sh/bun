@@ -9,9 +9,7 @@ const crypto = require('crypto');
 const { hasOpenSSL3 } = require('../common/crypto');
 
 {
-  // Bun enforces OpenSSL's 512-bit DH_MIN_MODULUS_BITS; upstream's smaller size
-  // only works on a libcrypto without that floor.
-  const size = crypto.getFips() || hasOpenSSL3 ? 1024 : 512;
+  const size = crypto.getFips() || hasOpenSSL3 ? 1024 : 256;
 
   function unlessInvalidState(f) {
     try {

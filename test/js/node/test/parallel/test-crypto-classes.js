@@ -22,9 +22,7 @@ const TEST_CASES = {
 };
 
 if (!crypto.getFips()) {
-  // Bun enforces OpenSSL's 512-bit DH_MIN_MODULUS_BITS; upstream's smaller size
-  // only works on a libcrypto without that floor.
-  TEST_CASES.DiffieHellman = [hasOpenSSL3 ? 1024 : 512];
+  TEST_CASES.DiffieHellman = [hasOpenSSL3 ? 1024 : 256];
 }
 
 for (const [clazz, args] of Object.entries(TEST_CASES)) {

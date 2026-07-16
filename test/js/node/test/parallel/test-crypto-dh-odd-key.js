@@ -32,9 +32,7 @@ const { hasOpenSSL3 } = require('../common/crypto');
 function test() {
   const odd = Buffer.alloc(39, 'A');
 
-  // Bun enforces OpenSSL's 512-bit DH_MIN_MODULUS_BITS; upstream's smaller size
-  // only works on a libcrypto without that floor.
-  const c = crypto.createDiffieHellman(hasOpenSSL3 ? 1024 : 512);
+  const c = crypto.createDiffieHellman(hasOpenSSL3 ? 1024 : 32);
   c.setPrivateKey(odd);
   c.generateKeys();
 }

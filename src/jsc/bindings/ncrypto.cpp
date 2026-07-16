@@ -1638,7 +1638,7 @@ bool EqualNoCase(const WTF::StringView a, const WTF::StringView b)
 }
 
 // OpenSSL's DH_MIN_MODULUS_BITS (crypto/dh/dh_local.h). BoringSSL has no
-// equivalent, so the checks ported below enforce it here instead.
+// equivalent; the check() port below uses it to mirror DH_check_params().
 constexpr int kDhMinModulusBits = 512;
 } // namespace
 
@@ -1738,11 +1738,6 @@ DHPointer DHPointer::New(BignumPointer&& p, BignumPointer&& g)
 
 DHPointer DHPointer::New(size_t bits, unsigned int generator)
 {
-    // BoringSSL's DH_generate_parameters_ex() accepts any prime length in
-    // (0, OPENSSL_DH_MAX_MODULUS_BITS], while OpenSSL refuses anything below
-    // DH_MIN_MODULUS_BITS (crypto/dh/dh_gen.c, dh_builtin_genparams).
-    if (bits < kDhMinModulusBits) return {};
-
     DHPointer dh(DH_new());
     if (!dh) return {};
 

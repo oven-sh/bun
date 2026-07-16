@@ -2558,41 +2558,41 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     return JSValue::encode(file);
 }
 
-#define DEFINE_REPORT_BOOLEAN_ACCESSOR(fnName, field, argName)                                                                                                           \
-    JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                          \
-    {                                                                                                                                                                    \
-        auto* process = uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject();                                                                             \
-        return JSValue::encode(jsBoolean(process->field));                                                                                                               \
-    }                                                                                                                                                                    \
+#define DEFINE_REPORT_BOOLEAN_ACCESSOR(fnName, field, argName)                                                                                                                    \
+    JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                                   \
+    {                                                                                                                                                                             \
+        auto* process = uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject();                                                                                      \
+        return JSValue::encode(jsBoolean(process->field));                                                                                                                        \
+    }                                                                                                                                                                             \
     JSC_DEFINE_CUSTOM_SETTER(processReport_set##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName)) \
-    {                                                                                                                                                                    \
-        auto& vm = JSC::getVM(globalObject);                                                                                                                             \
-        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                                                            \
-        JSValue value = JSValue::decode(encodedValue);                                                                                                                   \
-        Bun::V::validateBoolean(scope, globalObject, value, argName);                                                                                                    \
-        RETURN_IF_EXCEPTION(scope, false);                                                                                                                               \
-        uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->field = value.asBoolean();                                                                  \
-        return true;                                                                                                                                                     \
+    {                                                                                                                                                                             \
+        auto& vm = JSC::getVM(globalObject);                                                                                                                                      \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                                                                     \
+        JSValue value = JSValue::decode(encodedValue);                                                                                                                            \
+        Bun::V::validateBoolean(scope, globalObject, value, argName);                                                                                                             \
+        RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
+        uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->field = value.asBoolean();                                                                           \
+        return true;                                                                                                                                                              \
     }
 
-#define DEFINE_REPORT_STRING_ACCESSOR(fnName, field, argName)                                                                                                            \
-    JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                          \
-    {                                                                                                                                                                    \
-        auto& vm = JSC::getVM(globalObject);                                                                                                                             \
-        auto* process = uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject();                                                                             \
-        return JSValue::encode(jsString(vm, process->field));                                                                                                            \
-    }                                                                                                                                                                    \
+#define DEFINE_REPORT_STRING_ACCESSOR(fnName, field, argName)                                                                                                                     \
+    JSC_DEFINE_CUSTOM_GETTER(processReport_get##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))                                   \
+    {                                                                                                                                                                             \
+        auto& vm = JSC::getVM(globalObject);                                                                                                                                      \
+        auto* process = uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject();                                                                                      \
+        return JSValue::encode(jsString(vm, process->field));                                                                                                                     \
+    }                                                                                                                                                                             \
     JSC_DEFINE_CUSTOM_SETTER(processReport_set##fnName, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, JSC::PropertyName)) \
-    {                                                                                                                                                                    \
-        auto& vm = JSC::getVM(globalObject);                                                                                                                             \
-        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                                                            \
-        JSValue value = JSValue::decode(encodedValue);                                                                                                                   \
-        Bun::V::validateString(scope, globalObject, value, argName);                                                                                                     \
-        RETURN_IF_EXCEPTION(scope, false);                                                                                                                               \
-        WTF::String str = value.toWTFString(globalObject);                                                                                                               \
-        RETURN_IF_EXCEPTION(scope, false);                                                                                                                               \
-        uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->field = str;                                                                                \
-        return true;                                                                                                                                                     \
+    {                                                                                                                                                                             \
+        auto& vm = JSC::getVM(globalObject);                                                                                                                                      \
+        auto scope = DECLARE_THROW_SCOPE(vm);                                                                                                                                     \
+        JSValue value = JSValue::decode(encodedValue);                                                                                                                            \
+        Bun::V::validateString(scope, globalObject, value, argName);                                                                                                              \
+        RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
+        WTF::String str = value.toWTFString(globalObject);                                                                                                                        \
+        RETURN_IF_EXCEPTION(scope, false);                                                                                                                                        \
+        uncheckedDowncast<Zig::GlobalObject>(globalObject)->processObject()->field = str;                                                                                         \
+        return true;                                                                                                                                                              \
     }
 
 DEFINE_REPORT_BOOLEAN_ACCESSOR(Compact, m_reportCompact, "compact"_s)

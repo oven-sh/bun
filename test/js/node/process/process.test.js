@@ -1043,18 +1043,14 @@ describe.concurrent(() => {
 
     it("getReport(err) validates the argument type", () => {
       for (const v of [42, "x", true, null]) {
-        expect(() => process.report.getReport(v)).toThrow(
-          expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-        );
+        expect(() => process.report.getReport(v)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
       }
       expect(() => process.report.getReport(undefined)).not.toThrow();
       expect(() => process.report.getReport({})).not.toThrow();
     });
 
     it("writeReport validates its arguments", () => {
-      expect(() => process.report.writeReport(42)).toThrow(
-        expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-      );
+      expect(() => process.report.writeReport(42)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
       expect(() => process.report.writeReport("file", 42)).toThrow(
         expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
       );

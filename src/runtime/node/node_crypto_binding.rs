@@ -524,9 +524,8 @@ pub mod random {
             if disable_entropy_cache {
                 boringssl::rand_bytes(&mut entropy);
             } else {
-                entropy.copy_from_slice(
-                    &global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10],
-                );
+                entropy
+                    .copy_from_slice(&global.bun_vm().as_mut().rare_data().entropy_slice(10)[..10]);
             }
             let uuid = UUID7::init(now_ms, entropy);
 

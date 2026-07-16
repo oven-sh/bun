@@ -266,46 +266,58 @@ impl Listener {
                         // SAFETY: reclaim the Box we leaked via into_raw; drops connection,
                         // protos, and the handlers `Rc`.
                         drop(unsafe { bun_core::heap::take(this) });
-                        // Surface coded syscall failures the way node:net
-                        // does (EADDRINUSE vs EACCES need different caller
-                        // handling) rather than an invalid-arguments TypeError.
-                        if let ListenPipeError::Sys(sys_err) = &e {
-                            // get_error_code_tag_name does not reject EUNKNOWN /
-                            // UV_EAI_* (>=3000); neither is a node-style code, so
-                            // route those through the generic error below.
-                            if let Some((name, se)) = sys_err.get_error_code_tag_name() {
-                                if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
-                                    let err = jsc::SystemError {
-                                        // Negated errno per fill_system_error_common.
-                                        errno: -(se as c_int),
-                                        code: bun_core::String::static_(name),
-                                        message: bun_core::String::clone_utf8(
-                                            format!(
-                                                "listen {}: {}",
-                                                name,
-                                                bstr::BStr::new(&pipe_buf[..pipe_len])
-                                            )
-                                            .as_bytes(),
-                                        ),
-                                        syscall: bun_core::String::static_("listen"),
-                                        fd: -1,
-                                        path: bun_core::String::clone_utf8(&pipe_buf[..pipe_len]),
-                                        hostname: bun_core::String::empty(),
-                                        dest: bun_core::String::empty(),
-                                    };
-                                    return Err(global.throw_value(err.to_error_instance(global)));
+                        // Inside an AppContainer, surface coded syscall
+                        // failures the way node:net does (EADDRINUSE vs
+                        // EACCES need different caller handling). Outside,
+                        // keep the pre-existing TypeError shape.
+                        if bun_sys::windows::is_app_container() {
+                            if let ListenPipeError::Sys(sys_err) = &e {
+                                // get_error_code_tag_name does not reject EUNKNOWN /
+                                // UV_EAI_* (>=3000); neither is a node-style code, so
+                                // route those through the generic error below.
+                                if let Some((name, se)) = sys_err.get_error_code_tag_name() {
+                                    if se != bun_sys::SystemErrno::EUNKNOWN && (se as u16) < 3000 {
+                                        let err = jsc::SystemError {
+                                            // Negated errno per fill_system_error_common.
+                                            errno: -(se as c_int),
+                                            code: bun_core::String::static_(name),
+                                            message: bun_core::String::clone_utf8(
+                                                format!(
+                                                    "listen {}: {}",
+                                                    name,
+                                                    bstr::BStr::new(&pipe_buf[..pipe_len])
+                                                )
+                                                .as_bytes(),
+                                            ),
+                                            syscall: bun_core::String::static_("listen"),
+                                            fd: -1,
+                                            path: bun_core::String::clone_utf8(
+                                                &pipe_buf[..pipe_len],
+                                            ),
+                                            hostname: bun_core::String::empty(),
+                                            dest: bun_core::String::empty(),
+                                        };
+                                        return Err(
+                                            global.throw_value(err.to_error_instance(global))
+                                        );
+                                    }
                                 }
                             }
+                            let detail = match &e {
+                                ListenPipeError::Other(err) => err.name(),
+                                // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
+                                ListenPipeError::Sys(_) => "UNKNOWN",
+                            };
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "Failed to listen at {}: {}",
+                                bstr::BStr::new(&pipe_buf[..pipe_len]),
+                                detail
+                            )));
                         }
-                        let detail = match &e {
-                            ListenPipeError::Other(err) => err.name(),
-                            // Sys whose errno has no node-style code (EUNKNOWN / UV_EAI_*).
-                            ListenPipeError::Sys(_) => "UNKNOWN",
-                        };
+                        let _ = e;
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "Failed to listen at {}: {}",
-                            bstr::BStr::new(&pipe_buf[..pipe_len]),
-                            detail
+                            "Failed to listen at {}",
+                            bstr::BStr::new(&pipe_buf[..pipe_len])
                         )));
                     }
                 }

@@ -6978,6 +6978,7 @@ pub fn open_dir_at_windows_nt_path(
             && !options.can_rename_or_delete
             && options.op == WindowsOpenDirOp::OnlyOpen
             && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES)
+            && crate::windows::is_app_container()
         {
             return open_dir_at_windows_nt_path_impl(
                 dir_fd,
@@ -7351,7 +7352,10 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     // Retry a pure read-only open without it.
     if let Err(ref e) = first {
         let read_only = (flags & (O::RDWR | O::WRONLY | O::APPEND | O::CREAT)) == 0;
-        if read_only && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES) {
+        if read_only
+            && (e.get_errno() == E::PERM || e.get_errno() == E::ACCES)
+            && crate::windows::is_app_container()
+        {
             return open_file_at_windows_nt_path(
                 dir,
                 norm,

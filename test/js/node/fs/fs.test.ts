@@ -1812,6 +1812,122 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+// Node: `typeof position !== 'number'` is coerced to null, and native
+// GetOffset() returns -1 unless IsSafeJsInt(value). Both select the current
+// file offset.
+describe.each([-1, -5, "3", {}, true, 3n, NaN, Infinity, -Infinity, 3.7, Number.MAX_SAFE_INTEGER + 1] as any[])(
+  "readv/writev with position=%p uses the current file offset",
+  position => {
+    it("writevSync", () => {
+      const p = join(tmpdir(), `writev-pos-sync-${process.pid}.txt`);
+      writeFileSync(p, "0123456789");
+      const fd = openSync(p, "r+");
+      try {
+        // Advance the current position to 4.
+        readSync(fd, Buffer.alloc(4), 0, 4, null);
+        const n = writevSync(fd, [Buffer.from("AB"), Buffer.from("CD")], position);
+        expect(n).toBe(4);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe("0123ABCD89");
+    });
+
+    it("readvSync", () => {
+      const p = join(tmpdir(), `readv-pos-sync-${process.pid}.txt`);
+      writeFileSync(p, "0123456789");
+      const fd = openSync(p, "r");
+      try {
+        readSync(fd, Buffer.alloc(4), 0, 4, null);
+        const b1 = Buffer.alloc(2);
+        const b2 = Buffer.alloc(2);
+        const n = readvSync(fd, [b1, b2], position);
+        expect({ n, b1: b1.toString(), b2: b2.toString() }).toEqual({ n: 4, b1: "45", b2: "67" });
+        // A second readv should continue from where the first left off.
+        const b3 = Buffer.alloc(2);
+        expect(readvSync(fd, [b3], position)).toBe(2);
+        expect(b3.toString()).toBe("89");
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it("fs.writev (callback)", async () => {
+      const p = join(tmpdir(), `writev-pos-cb-${process.pid}.txt`);
+      writeFileSync(p, "0123456789");
+      const fd = openSync(p, "r+");
+      try {
+        readSync(fd, Buffer.alloc(4), 0, 4, null);
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        fs.writev(fd, [Buffer.from("AB"), Buffer.from("CD")], position, (err, n) => (err ? reject(err) : resolve(n)));
+        expect(await promise).toBe(4);
+      } finally {
+        closeSync(fd);
+      }
+      expect(readFileSync(p, "utf8")).toBe("0123ABCD89");
+    });
+
+    it("fs.readv (callback)", async () => {
+      const p = join(tmpdir(), `readv-pos-cb-${process.pid}.txt`);
+      writeFileSync(p, "0123456789");
+      const fd = openSync(p, "r");
+      try {
+        readSync(fd, Buffer.alloc(4), 0, 4, null);
+        const b1 = Buffer.alloc(2);
+        const b2 = Buffer.alloc(2);
+        const { promise, resolve, reject } = Promise.withResolvers<number>();
+        fs.readv(fd, [b1, b2], position, (err, n) => (err ? reject(err) : resolve(n)));
+        const n = await promise;
+        expect({ n, b1: b1.toString(), b2: b2.toString() }).toEqual({ n: 4, b1: "45", b2: "67" });
+      } finally {
+        closeSync(fd);
+      }
+    });
+
+    it("FileHandle.writev", async () => {
+      const p = join(tmpdir(), `writev-pos-fh-${process.pid}.txt`);
+      writeFileSync(p, "0123456789");
+      const fh = await promises.open(p, "r+");
+      try {
+        await fh.read(Buffer.alloc(4), 0, 4, null);
+        const { bytesWritten } = await fh.writev([Buffer.from("AB"), Buffer.from("CD")], position);
+        expect(bytesWritten).toBe(4);
+      } finally {
+        await fh.close();
+      }
+      expect(readFileSync(p, "utf8")).toBe("0123ABCD89");
+    });
+
+    it("FileHandle.readv", async () => {
+      const p = join(tmpdir(), `readv-pos-fh-${process.pid}.txt`);
+      writeFileSync(p, "0123456789");
+      const fh = await promises.open(p, "r");
+      try {
+        await fh.read(Buffer.alloc(4), 0, 4, null);
+        const b1 = Buffer.alloc(2);
+        const b2 = Buffer.alloc(2);
+        const { bytesRead } = await fh.readv([b1, b2], position);
+        expect({ bytesRead, b1: b1.toString(), b2: b2.toString() }).toEqual({ bytesRead: 4, b1: "45", b2: "67" });
+      } finally {
+        await fh.close();
+      }
+    });
+  },
+);
+
+it("writevSync with a non-negative number position is still positional", () => {
+  const p = join(tmpdir(), `writev-pos-number-${process.pid}.txt`);
+  writeFileSync(p, "0123456789");
+  const fd = openSync(p, "r+");
+  try {
+    readSync(fd, Buffer.alloc(4), 0, 4, null);
+    expect(writevSync(fd, [Buffer.from("XY")], 8)).toBe(2);
+  } finally {
+    closeSync(fd);
+  }
+  expect(readFileSync(p, "utf8")).toBe("01234567XY");
+});
+
 describe("writeSync", () => {
   it("works with bigint", () => {
     const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
@@ -5228,16 +5344,22 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
     // Released once the write completes.
     buf.buffer.transfer();
     expect(buf.buffer.detached).toBe(true);
+    expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
 
-    // A rejected call must not leave the buffers held either.
-    const other = new Uint8Array(new ArrayBuffer(8));
-    expect(() => fs.writev(fd, [other], "not a position" as any, () => {})).toThrow();
+    // A non-number position is treated as null (Node.js behaviour); the call
+    // succeeds and the pin is released after completion.
+    const other = new Uint8Array(new ArrayBuffer(8)).fill(0x44);
+    const second = Promise.withResolvers<number>();
+    fs.writev(fd, [other], "not a position" as any, (err, n) => (err ? second.reject(err) : second.resolve(n)));
+    other.buffer.transfer();
+    expect(other.buffer.detached).toBe(false);
+    expect(await second.promise).toBe(8);
     other.buffer.transfer();
     expect(other.buffer.detached).toBe(true);
   } finally {
     closeSync(fd);
   }
-  expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
+  expect(readFileSync(file, "latin1")).toBe("DDDDDDDD");
 });
 
 it("fs.write keeps the source buffer attached while the write is in flight", async () => {

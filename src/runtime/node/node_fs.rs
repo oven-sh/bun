@@ -2832,7 +2832,7 @@ pub mod args {
         }
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Self> {
             let fd = FD::from_js_required(ctx, arguments)?;
-            let mut buffers = VectorArrayBuffer::from_js(
+            let buffers = VectorArrayBuffer::from_js(
                 ctx,
                 arguments.protect_eat_next().ok_or_else(|| {
                     ctx.throw_invalid_arguments(format_args!("Expected an ArrayBufferView[]"))
@@ -2841,18 +2841,14 @@ pub mod args {
                 // each element and pin its backing store until completion.
                 arguments.will_be_async,
             )?;
+            // Node: `typeof position !== 'number'` is coerced to null, and
+            // native GetOffset() returns -1 (non-positional) unless
+            // IsSafeJsInt(value) — finite, integral, |v| <= MAX_SAFE_INTEGER.
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
-                if !pos_value.is_undefined_or_null() {
-                    if pos_value.is_number() {
-                        position = Some(pos_value.to_int64() as u64);
-                    } else {
-                        // `buffers` never reaches the Unprotect hook on this
-                        // path; drop its element roots and pins here.
-                        buffers.release();
-                        return Err(
-                            ctx.throw_invalid_arguments(format_args!("position must be a number"))
-                        );
+                if let Some(num) = pos_value.get_number() {
+                    if num >= 0.0 && num <= bun_jsc::MAX_SAFE_INTEGER as f64 && num.trunc() == num {
+                        position = Some(num as u64);
                     }
                 }
             }

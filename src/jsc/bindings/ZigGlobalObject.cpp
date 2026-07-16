@@ -1204,7 +1204,23 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(Performance);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceEntry);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMark);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceMeasure);
-WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserver);
+// globalThis.PerformanceObserver === require("node:perf_hooks").PerformanceObserver.
+// Not a static-table PropertyCallback: abstractResolve() reifies those under a
+// VMInquiry slot that forbids VM re-entry, and loading perf_hooks runs JS.
+JSC_DEFINE_CUSTOM_GETTER(getPerformanceObserverGlobal, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName property))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSValue perfHooks = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::NodePerfHooks);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_ASSERT(perfHooks.isObject());
+    JSValue result = perfHooks.getObject()->get(globalObject, Identifier::fromString(vm, "PerformanceObserver"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (auto* thisObject = JSValue::decode(thisValue).getObject())
+        thisObject->putDirect(vm, property, result, 0);
+    return JSValue::encode(result);
+}
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceObserverEntryList)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceResourceTiming)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(PerformanceServerTiming)
@@ -3040,6 +3056,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
             JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
             JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
         PropertyAttribute::Accessor | 0);
+
+    putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "PerformanceObserver"_s), JSC::CustomGetterSetter::create(vm, getPerformanceObserverGlobal, nullptr), PropertyAttribute::CustomValue | 0);
 
     // TODO: this should be usable on the lookup table. it crashed las time i tried it
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);

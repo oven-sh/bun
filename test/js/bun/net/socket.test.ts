@@ -2148,6 +2148,7 @@ Reo=
   describe.concurrent("Bun.connect (server certificate)", () => {
     async function connectTo(serverTls: { key: string; cert: string }, clientTls: Record<string, unknown> | boolean) {
       const received: string[] = [];
+      const errors: Error[] = [];
       const handshake = Promise.withResolvers<{
         authorizedArg: boolean;
         authorizedGetter: boolean;
@@ -2198,8 +2199,8 @@ Reo=
               closed.resolve();
             },
             error(_socket, err) {
+              errors.push(err);
               handshake.reject(err);
-              echoed.reject(err);
             },
             connectError(_socket, err) {
               handshake.reject(err);
@@ -2217,6 +2218,7 @@ Reo=
         server,
         client,
         received,
+        errors,
         handshake,
         closed,
         echoed,
@@ -2264,6 +2266,7 @@ Reo=
       t.client.write("ping");
       await t.echoed.promise;
       expect(t.received.join("")).toBe("hello-from-server\nping");
+      expect(t.errors).toEqual([]);
     });
 
     it("closes an untrusted connection upgraded with only a secureContext", async () => {
@@ -2406,6 +2409,7 @@ Reo=
           error() {},
         },
       });
+      const errors: Error[] = [];
       using client = await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
@@ -2424,8 +2428,8 @@ Reo=
             closed.resolve();
           },
           error(_socket, err) {
+            errors.push(err);
             opened.reject(err);
-            closed.reject(err);
           },
           connectError(_socket, err) {
             opened.reject(err);
@@ -2436,6 +2440,126 @@ Reo=
       expect(await opened.promise).toEqual({ authorized: false, error: UNTRUSTED_MESSAGE });
       await closed.promise;
       expect(received).toEqual([]);
+      expect(errors.map(e => e.message)).toEqual([UNTRUSTED_MESSAGE]);
+    });
+
+    it("delivers the verify error through error/close when rejectUnauthorized closes the connection (no handshake callback)", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: { open() {}, data() {}, close() {}, error() {} },
+      });
+      using _client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: true,
+        socket: {
+          open() {
+            events.push("open");
+          },
+          data() {
+            events.push("data");
+          },
+          error(_socket, err) {
+            events.push(`error:${(err as any)?.code}:${err?.message}`);
+          },
+          connectError(_socket, err) {
+            events.push(`connectError:${(err as any)?.code}`);
+            closed.resolve();
+          },
+          close(_socket, err) {
+            events.push(`close:${(err as any)?.code}:${(err as any)?.message}`);
+            closed.resolve();
+          },
+        },
+      });
+      await closed.promise;
+      expect(events).toEqual([
+        "open",
+        `error:UNABLE_TO_VERIFY_LEAF_SIGNATURE:${UNTRUSTED_MESSAGE}`,
+        `close:UNABLE_TO_VERIFY_LEAF_SIGNATURE:${UNTRUSTED_MESSAGE}`,
+      ]);
+    });
+
+    it("delivers the verify error through error/close when rejectUnauthorized closes the connection (with handshake callback)", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ROGUE_KEY, cert: ROGUE_CRT },
+        socket: { open() {}, data() {}, close() {}, error() {} },
+      });
+      using _client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CA_CRT },
+        socket: {
+          handshake(_socket, authorized, err) {
+            events.push(`handshake:${authorized}:${(err as any)?.code}`);
+          },
+          data() {
+            events.push("data");
+          },
+          error(_socket, err) {
+            events.push(`error:${(err as any)?.code}:${err?.message}`);
+          },
+          connectError(_socket, err) {
+            events.push(`connectError:${(err as any)?.code}`);
+            closed.resolve();
+          },
+          close(_socket, err) {
+            events.push(`close:${(err as any)?.code}:${(err as any)?.message}`);
+            closed.resolve();
+          },
+        },
+      });
+      await closed.promise;
+      expect(events).toEqual([
+        "handshake:true:UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+        `error:UNABLE_TO_VERIFY_LEAF_SIGNATURE:${UNTRUSTED_MESSAGE}`,
+        `close:UNABLE_TO_VERIFY_LEAF_SIGNATURE:${UNTRUSTED_MESSAGE}`,
+      ]);
+    });
+
+    it("delivers the hostname-mismatch error through error/close when rejectUnauthorized closes the connection", async () => {
+      const events: string[] = [];
+      const closed = Promise.withResolvers<void>();
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: SERVER_KEY, cert: SERVER_CRT },
+        socket: { open() {}, data() {}, close() {}, error() {} },
+      });
+      using _client = await Bun.connect({
+        hostname: "127.0.0.1",
+        port: server.port,
+        tls: { ca: CA_CRT, serverName: "wrong.example.com" },
+        socket: {
+          open() {
+            events.push("open");
+          },
+          data() {
+            events.push("data");
+          },
+          error(_socket, err) {
+            events.push(`error:${(err as any)?.code}`);
+          },
+          connectError(_socket, err) {
+            events.push(`connectError:${(err as any)?.code}`);
+            closed.resolve();
+          },
+          close(_socket, err) {
+            events.push(`close:${(err as any)?.code}`);
+            closed.resolve();
+          },
+        },
+      });
+      await closed.promise;
+      expect(events).toEqual(["open", "error:ERR_TLS_CERT_ALTNAME_INVALID", "close:ERR_TLS_CERT_ALTNAME_INVALID"]);
     });
 
     it("refuses writes issued from the handshake callback of a rejected connection", async () => {
@@ -2458,6 +2582,7 @@ Reo=
           error() {},
         },
       });
+      const errors: Error[] = [];
       using client = await Bun.connect({
         hostname: "127.0.0.1",
         port: server.port,
@@ -2472,8 +2597,8 @@ Reo=
             closed.resolve();
           },
           error(_socket, err) {
+            errors.push(err);
             handshake.reject(err);
-            closed.reject(err);
           },
           connectError(_socket, err) {
             handshake.reject(err);
@@ -2486,6 +2611,7 @@ Reo=
       await closed.promise;
       await serverClosed.promise;
       expect(serverReceived).toEqual([]);
+      expect(errors.map(e => e.message)).toEqual([UNTRUSTED_MESSAGE]);
     });
 
     it("closes a connection whose certificate does not match the hostname", async () => {

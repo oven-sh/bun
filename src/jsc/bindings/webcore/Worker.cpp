@@ -392,9 +392,12 @@ void Worker::eventLoopUtilization(double& idleMs, double& activeMs)
 {
     idleMs = 0;
     activeMs = 0;
-    // Node reports zeros until 'online' fires (kIsOnline) and again once the
-    // worker terminates; !isOnline() covers both Pending and Closing/Closed.
-    if (!impl_ || m_terminateRequested.load() || !isOnline())
+    // Node reports zeros until 'online' fires (kIsOnline) and again once exit
+    // handling nulls kHandle; !isOnline() covers Pending and Closing/Closed.
+    // Between terminate() and the close task Node still reports real values,
+    // so a terminate request alone must not zero this; the Rust side reads
+    // under vm_lock and reports zeros once the VM is gone.
+    if (!impl_ || !isOnline())
         return;
     WebWorker__getEventLoopUtilization(impl_, &idleMs, &activeMs);
 }

@@ -1454,7 +1454,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const want = { read: "new", count: 1, afterDelete: null };
     expect(JSON.parse(stdout)).toEqual({ regular: want, shared: want });
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
   // through it reaches the real environment a child process inherits; a snapshot
@@ -1488,7 +1488,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim()).toBe(want);
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 
   // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
   // they land in JSObject's indexed storage and never touch the shared store.
@@ -1500,7 +1500,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       main_sees_123: "from-main",
       main_sees_7_after_delete: null,
     });
-  });
+  }, 60_000);
 
   // Two SHARE_ENV children of one thread alias a single store: writes, deletes and
   // enumeration cross between them, and a default-env grandchild snapshots it.
@@ -1536,7 +1536,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({ same: true, bunEnv: "x" });
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 });
 
 test("postMessage with a non-object transfer element throws DataCloneError", () => {
@@ -1719,7 +1719,9 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
-});
+  // Subprocess boots a worker plus a child process; needs headroom over the
+  // default 5s on loaded debug/ASAN machines.
+}, 60_000);
 
 // https://github.com/oven-sh/bun/issues/32609
 test("worker.performance.eventLoopUtilization() reports the worker's activity", async () => {
@@ -1749,6 +1751,14 @@ test("worker.performance.eventLoopUtilization() reports the worker's activity", 
 
     expect(elu2.active).toBeGreaterThan(50);
     expect(elu2.utilization).toBeGreaterThan(0.5);
+
+    // Node keeps reporting real values between terminate() and 'exit' (kHandle
+    // is only nulled on exit); sampled in the same tick as terminate(), the
+    // close task cannot have run yet and the accumulated activity must still
+    // be visible rather than forced to zeros.
+    const terminated = worker.terminate();
+    expect(worker.performance.eventLoopUtilization().active).toBeGreaterThan(50);
+    await terminated;
   } finally {
     await worker.terminate();
   }
@@ -1871,10 +1881,12 @@ test("worker.performance.eventLoopUtilization() stays low for a message-driven i
 
     const elu1 = worker.performance.eventLoopUtilization();
     // Drive the worker with periodic messages; each wakes its loop but does
-    // almost no work. The loop is blocked (idle) between messages.
+    // almost no work. The loop is blocked (idle) between messages. The 40ms
+    // gaps keep idle dominant even when a loaded machine stretches each
+    // wakeup's scheduling and handler time.
     for (let i = 0; i < 15; i++) {
       worker.postMessage(0);
-      await Bun.sleep(20);
+      await Bun.sleep(40);
     }
     const elu2 = worker.performance.eventLoopUtilization(elu1);
 

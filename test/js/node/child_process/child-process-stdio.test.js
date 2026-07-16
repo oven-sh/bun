@@ -256,4 +256,28 @@ describe("ChildProcess stdio streams", () => {
     expect(code).toBe(0);
     expect(signal).toBeNull();
   });
+
+  it("child.stdin.write preserves non-UTF-8 encodings", async () => {
+    const child = spawn(
+      bunExe(),
+      ["-e", `process.stdin.on("data", chunk => process.stdout.write(chunk.toString("hex")))`],
+      { env: bunEnv, stdio: ["pipe", "pipe", "ignore"] },
+    );
+
+    child.stdout.setEncoding("utf8");
+    let data = "";
+    child.stdout.on("data", chunk => {
+      data += chunk;
+    });
+
+    child.stdin.write("\u00e9", "latin1");
+    child.stdin.write("\u00e9", "utf8");
+    child.stdin.write(Buffer.from([0xff]));
+    child.stdin.end();
+
+    const [code] = await once(child, "close");
+    // latin1 "é" -> e9, utf8 "é" -> c3 a9, raw buffer -> ff
+    expect(data).toBe("e9c3a9ff");
+    expect(code).toBe(0);
+  });
 });

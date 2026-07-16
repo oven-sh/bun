@@ -201,8 +201,8 @@ static int ttySetMode(int fd, int mode, BunTTYState& state)
 extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState)
 {
 #if !OS(WINDOWS)
-    // Copied in and out so callers can hand us an unaligned byte buffer (the
-    // JS streams keep theirs in a Uint8Array, Rust in a boxed slice).
+    // Copied in and out so callers can hand us an unaligned byte buffer: the
+    // JS streams keep theirs in a Uint8Array.
     BunTTYState state;
     memcpy(&state, rawState, sizeof(state));
     int rc = ttySetMode(fd, mode, state);

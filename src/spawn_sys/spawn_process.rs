@@ -787,10 +787,6 @@ pub unsafe fn spawn_process_posix(
                         Err(e) => return Ok(Err(e)),
                     };
                 cleanup.to_close_at_end.push(fds[1]);
-                actions.dup2(fds[1], fileno)?;
-                if fds[1] != fileno {
-                    actions.close(fds[1])?;
-                }
                 if spawned.ipc.is_none() {
                     cleanup.to_close_on_error.push(fds[0]);
                     spawned.ipc = Some(fds[0]);
@@ -801,6 +797,10 @@ pub unsafe fn spawn_process_posix(
                     // unconditionally so it isn't leaked (to_close_on_error is
                     // disarmed on success).
                     cleanup.to_close_at_end.push(fds[0]);
+                }
+                actions.dup2(fds[1], fileno)?;
+                if fds[1] != fileno {
+                    actions.close(fds[1])?;
                 }
             }
             PosixStdio::Path(path) => {

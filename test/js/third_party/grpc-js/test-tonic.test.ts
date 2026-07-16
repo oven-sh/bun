@@ -72,11 +72,12 @@ async function startServer(): Promise<Server> {
     env: {
       PROTOC: protocExec,
       PATH: process.env.PATH,
-      CARGO_HOME: process.env.CARGO_HOME,
       RUSTUP_HOME: process.env.RUSTUP_HOME,
       RUSTUP_TOOLCHAIN: process.env.RUSTUP_TOOLCHAIN,
-      // Keep cargo's target dir outside the throwaway tmpDir so registry deps
-      // (tonic, tokio, prost, ...) compile once per machine instead of once per run.
+      // Cargo's registry/target live in the per-machine cache instead of the
+      // ambient CARGO_HOME so a new transitive dep can be downloaded even when
+      // the system CARGO_HOME isn't writable by the agent user.
+      CARGO_HOME: join(cacheDir, "cargo-home"),
       CARGO_TARGET_DIR: join(cacheDir, "target"),
     },
     stdout: "pipe",

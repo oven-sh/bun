@@ -1858,9 +1858,7 @@ describe.each([-1, -5, "3", {}, true, 3n] as any[])(
       try {
         readSync(fd, Buffer.alloc(4), 0, 4, null);
         const { promise, resolve, reject } = Promise.withResolvers<number>();
-        fs.writev(fd, [Buffer.from("AB"), Buffer.from("CD")], position, (err, n) =>
-          err ? reject(err) : resolve(n),
-        );
+        fs.writev(fd, [Buffer.from("AB"), Buffer.from("CD")], position, (err, n) => (err ? reject(err) : resolve(n)));
         expect(await promise).toBe(4);
       } finally {
         closeSync(fd);

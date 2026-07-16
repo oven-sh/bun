@@ -661,6 +661,79 @@ describe("DiffieHellman", () => {
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x01]))).toThrow(/bad.generator/i);
     expect(() => crypto.createDiffieHellman(p, Buffer.from([0x02]))).not.toThrow();
   });
+
+  describe("modulus size bounds", () => {
+    // Odd modulus of exactly `bits` bits. Composite is fine: the construction-time
+    // check is a SIZE bound, and Miller-Rabin rejects a composite in one round so
+    // DH_check stays fast at every width exercised here.
+    const oddModulus = bits => {
+      const n = Math.ceil(bits / 8);
+      const b = Buffer.alloc(n, 0xff);
+      b[0] = 0xff >> (n * 8 - bits);
+      b[n - 1] = 0xfb;
+      return b;
+    };
+
+    const checkingFailed = expect.objectContaining({
+      code: "ERR_CRYPTO_OPERATION_FAILED",
+      message: "Checking DH parameters failed",
+    });
+
+    // Node rejects a modulus wider than OPENSSL_DH_CHECK_MAX_MODULUS_BITS (32768)
+    // at construction by evaluating verifyError, which runs OpenSSL's DH_check().
+    // Without the bound an oversized "prime" is accepted and only fails later at
+    // generateKeys() with a different error.
+    it("accepts a prime at the 32768-bit bound", () => {
+      const dh = crypto.createDiffieHellman(oddModulus(32768), 2);
+      expect(dh.getPrime().length).toBe(32768 / 8);
+    });
+
+    it.each([32769, 32776, 65536, 8 << 20])("rejects a %i-bit prime at construction", bits => {
+      let err;
+      try {
+        crypto.createDiffieHellman(oddModulus(bits), 2);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toEqual(checkingFailed);
+    });
+
+    it("rejects a prime above the bound passed as a hex string", () => {
+      expect(() => crypto.createDiffieHellman(oddModulus(32776).toString("hex"), "hex", 2)).toThrow(checkingFailed);
+    });
+
+    // BoringSSL sets OPENSSL_DH_MAX_MODULUS_BITS to 8192; OpenSSL uses 10000.
+    // Node user code with custom primes in the 8193..10000-bit range depends on
+    // the latter, so DH_generate_key / DH_compute_key have to accept it.
+    it.each([8192, 8193, 10000])("generateKeys and computeSecret work for a %i-bit prime", bits => {
+      const p = oddModulus(bits);
+      const a = crypto.createDiffieHellman(p, 2);
+      const b = crypto.createDiffieHellman(p, 2);
+      a.generateKeys();
+      b.generateKeys();
+      const secret = a.computeSecret(b.getPublicKey());
+      expect({ secret, length: secret.length }).toEqual({
+        secret: b.computeSecret(a.getPublicKey()),
+        length: Math.ceil(bits / 8),
+      });
+    });
+
+    it("generateKeys fails above the 10000-bit bound", () => {
+      const dh = crypto.createDiffieHellman(oddModulus(10001), 2);
+      expect(() => dh.generateKeys()).toThrow(
+        expect.objectContaining({ code: "ERR_CRYPTO_OPERATION_FAILED", message: "Key generation failed" }),
+      );
+    });
+
+    // OpenSSL's DH_check_params() reports DH_MODULUS_TOO_LARGE (0x100) as a flag
+    // for widths in (10000, 32768]; BoringSSL's would instead fail outright. The
+    // modulus is unusable for DH either way, so the flag alone is returned here
+    // rather than the full OpenSSL result that also carries the primality bits.
+    it("verifyError reports a too-large modulus for widths in (10000, 32768]", () => {
+      expect(crypto.createDiffieHellman(oddModulus(10001), 2).verifyError).toBe(0x100);
+      expect(crypto.createDiffieHellman(oddModulus(32768), 2).verifyError).toBe(0x100);
+    });
+  });
 });
 
 describe("ECDH", () => {

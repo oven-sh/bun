@@ -635,7 +635,7 @@ describe("writer layer: ws:// integration", () => {
             barrierSent = true;
             send("Runtime.enable", {}, BARRIER_ID);
           }
-        } else if (msg.id === BARRIER_ID) {
+        } else if (msg.method === undefined && msg.id === BARRIER_ID) {
           doneResolve();
         }
       });

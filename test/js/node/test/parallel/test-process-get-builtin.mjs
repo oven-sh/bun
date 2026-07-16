@@ -36,7 +36,7 @@ if (!hasIntl) {
   publicBuiltins.delete('inspector');
   publicBuiltins.delete('trace_events');
 }
-// TODO(@jasnell): Remove this once node:quic graduates from unflagged.
+// Remove this once node:quic graduates from unflagged (@jasnell).
 publicBuiltins.delete('node:quic');
 
 if (!hasInspector) {
@@ -47,7 +47,7 @@ if (!hasSQLite) {
   publicBuiltins.delete('node:sqlite');
 }
 
-// TODO: Remove this once node:ffi graduates from unflagged.
+// Remove this once node:ffi graduates from unflagged.
 publicBuiltins.delete('node:ffi');
 
 // Bun extends module.builtinModules with its own modules ("bun", "bun:*")

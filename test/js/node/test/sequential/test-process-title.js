@@ -3,10 +3,8 @@ const common = require('../common');
 const { spawnSync } = require('child_process');
 const assert = require('assert');
 
-// FIXME add sunos support
 if (common.isSunOS)
   common.skip(`Unsupported platform [${process.platform}]`);
-// FIXME add IBMi support
 if (common.isIBMi)
   common.skip('Unsupported platform IBMi');
 

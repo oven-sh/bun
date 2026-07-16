@@ -132,6 +132,10 @@ impl<const SSL: bool> App<SSL> {
         )
     }
 
+    pub fn set_reject_connect(&mut self, value: bool) {
+        c::uws_app_set_reject_connect(Self::SSL_FLAG, self.as_raw(), value)
+    }
+
     pub fn set_max_http_header_size(&mut self, max_header_size: u64) {
         c::uws_app_set_max_http_header_size(Self::SSL_FLAG, self.as_raw(), max_header_size)
     }
@@ -512,6 +516,7 @@ pub mod c {
             require_host_header: bool,
             use_strict_method_validation: bool,
         );
+        pub(crate) safe fn uws_app_set_reject_connect(ssl: i32, app: &mut uws_app_t, value: bool);
         pub(crate) safe fn uws_app_set_max_http_header_size(
             ssl: i32,
             app: &mut uws_app_t,

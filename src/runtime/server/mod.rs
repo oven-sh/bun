@@ -2443,6 +2443,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             ffi::NodeHTTP_assignOnNodeJSCompat(SSL, std::ptr::from_mut(app).cast::<c_void>());
         }
 
+        // Bun.serve cannot satisfy CONNECT (RFC 9110 9.3.6); close the socket
+        // before routing so the fetch handler never sees an authority-form URL.
+        // node:http handles CONNECT via its own 'connect' event / close path.
+        app.set_reject_connect(!has_node_http);
+
         route_list_value
     }
 

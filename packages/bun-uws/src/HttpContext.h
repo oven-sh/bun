@@ -297,6 +297,14 @@ private:
                 return nullptr;
             }
 
+            /* Bun.serve is not a proxy; an authority-form CONNECT must not reach the
+             * fetch handler (RFC 9110 9.3.6). node:http leaves rejectConnect false and
+             * routes CONNECT through its own 'connect' event / close path instead. */
+            if (httpResponseData->isConnectRequest && httpContextData->flags.rejectConnect) {
+                us_socket_close((us_socket_t *) s, 0, nullptr);
+                return nullptr;
+            }
+
             /* Mark pending request and emit it */
             httpResponseData->state = HttpResponseData<SSL>::HTTP_RESPONSE_PENDING;
 

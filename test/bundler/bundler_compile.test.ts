@@ -1224,12 +1224,13 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
 }, 60_000);
 
 test.each([
-  ["bun-linux-x64", "ELF"],
-  ["bun-darwin-x64", "standalone module graph"],
-  ["bun-windows-x64", "PE"],
+  ["bun-linux-x64", "ELF", "out"],
+  ["bun-darwin-x64", "standalone module graph", "out"],
+  // build_command.rs appends .exe to --outfile for Windows targets.
+  ["bun-windows-x64", "PE", "out.exe"],
 ] as const)(
   "compile --compile-executable-path with an invalid template (%s) fails without spurious fd errors",
-  async (target, errFragment) => {
+  async (target, errFragment, outName) => {
     // When inject() rejects the template (ELF/Mach-O/PE parse failure), the
     // caller must stop instead of continuing with Fd::INVALID, which used to
     // surface as "failed to get path for fd: ... /proc/self/fd/-2147483648".
@@ -1262,7 +1263,7 @@ test.each([
     expect(combined).not.toContain("-2147483648");
     expect(combined).not.toContain("failed to get path for fd");
     expect(combined).not.toContain("Failed to get temp file path");
-    expect(await Bun.file(join(cwd, "out")).exists()).toBe(false);
+    expect(await Bun.file(join(cwd, outName)).exists()).toBe(false);
     expect(exitCode).toBe(1);
   },
 );

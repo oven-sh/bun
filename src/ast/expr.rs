@@ -1465,7 +1465,7 @@ impl Tag {
     pub fn type_name(self) -> &'static str {
         match self {
             Tag::EString => "string",
-            Tag::EArray => "array",
+            Tag::EArray | Tag::EArrayJSON => "array",
             Tag::EUnary => "unary",
             Tag::EBinary => "binary",
             Tag::EBoolean | Tag::EBranchBoolean => "boolean",
@@ -1487,7 +1487,7 @@ impl Tag {
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
             Tag::EBigInt => "BigInt",
-            Tag::EObject => "object",
+            Tag::EObject | Tag::EObjectJSON => "object",
             Tag::ESpread => "...",
             Tag::ETemplate => "template",
             Tag::ERegExp => "regexp",

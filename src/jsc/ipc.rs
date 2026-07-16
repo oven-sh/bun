@@ -666,16 +666,27 @@ pub fn get_nack_packet(mode: Mode) -> &'static [u8] {
 // (uws_sys/socket.rs); `<false>` is the non-SSL handler.
 pub type Socket = bun_uws::SocketHandler<false>;
 
+/// An fd queued for transfer over the IPC socket via `SCM_RIGHTS`.
+///
+/// The fd is OWNED: `do_send` (`bun_runtime::ipc_host`) dups it off the JS
+/// handle so the transfer survives the sender closing its own copy (node
+/// closes a sent `net.Socket`'s local handle). Closed on `Drop` — after the
+/// receiver ACKs/NACKs, or when the send queue is torn down.
 pub struct Handle {
     pub fd: Fd,
-    pub js: Protected,
 }
 
 impl Handle {
-    pub fn init(fd: Fd, js: JSValue) -> Self {
-        Self {
-            fd,
-            js: js.protected(),
+    /// Takes ownership of `fd`; it is closed when this `Handle` drops.
+    pub fn init(fd: Fd) -> Self {
+        Self { fd }
+    }
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        if self.fd.is_valid() {
+            FdExt::close(self.fd);
         }
     }
 }
@@ -2284,9 +2295,10 @@ pub fn ipc_serialize(
     global_object: &JSGlobalObject,
     message: JSValue,
     handle: JSValue,
+    options: JSValue,
 ) -> JsResult<JSValue> {
     // `[[ZIG_EXPORT(zero_is_throw)]]`
-    crate::cpp::IPCSerialize(global_object, message, handle)
+    crate::cpp::IPCSerialize(global_object, message, handle, options)
 }
 
 #[track_caller]

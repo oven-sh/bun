@@ -210,6 +210,37 @@ impl SocketGroup {
         }
     }
 
+    /// Adopt an already-listening fd (received over IPC via SCM_RIGHTS or
+    /// inherited from a parent process) as a listen socket, rather than
+    /// creating+binding a new one. POSIX only; on success the group owns the fd
+    /// (`us_listen_socket_close` closes it); on failure the caller keeps it and
+    /// null is returned with an errno in `err`: `ENOTSOCK`/`EINVAL` for the
+    /// common validation failures, plus any propagated errno (e.g. `EBADF` from
+    /// the SO_TYPE probe, or a poll-registration error).
+    pub fn listen_fd(
+        &mut self,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
+        socket_ext_size: c_int,
+        err: &mut c_int,
+    ) -> *mut ListenSocket {
+        // SAFETY: forwarding to C; `err` is a valid out-param the callee
+        // writes an errno into on failure.
+        unsafe {
+            us_socket_group_listen_fd(
+                self,
+                kind as u8,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
+                fd,
+                options,
+                socket_ext_size,
+                err,
+            )
+        }
+    }
+
     pub fn connect(
         &mut self,
         kind: SocketKind,
@@ -339,6 +370,15 @@ unsafe extern "C" {
         ssl_ctx: *mut SslCtx,
         path: *const u8,
         pathlen: usize,
+        options: c_int,
+        socket_ext_size: c_int,
+        err: *mut c_int,
+    ) -> *mut ListenSocket;
+    fn us_socket_group_listen_fd(
+        group: *mut SocketGroup,
+        kind: u8,
+        ssl_ctx: *mut SslCtx,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,

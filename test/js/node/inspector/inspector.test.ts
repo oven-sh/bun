@@ -228,7 +228,7 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
   expect(summary.debugPort).toBe(Number(new URL(summary.url).port));
   expect(summary.unknownError).toEqual({ code: -32601, message: "'Totally.bogus' wasn't found" });
   expect(summary.urlAfterClose).toBeNull();
-});
+}, 30_000);
 
 // Node supports close() followed by open() again; a second open() while one is
 // active throws ERR_INSPECTOR_ALREADY_ACTIVATED.

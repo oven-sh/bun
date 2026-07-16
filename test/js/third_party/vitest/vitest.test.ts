@@ -1,13 +1,32 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { mkdirSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 
 // Runs the real vitest CLI (and its @vitest/coverage-v8 provider) under Bun.
 // The coverage provider drives node:inspector's Profiler.startPreciseCoverage /
 // takePreciseCoverage, so this covers the end-to-end integration rather than
 // just the protocol surface.
-const testNodeModules = join(import.meta.dirname, "..", "..", "..", "node_modules");
+const testRoot = join(import.meta.dirname, "..", "..", "..");
+const testNodeModules = join(testRoot, "node_modules");
+const expectedVitestVersion = JSON.parse(readFileSync(join(testRoot, "package.json"), "utf8")).devDependencies.vitest;
+
+// This PR bumps test/package.json's vitest; a container whose test/node_modules
+// was populated from an older lockfile would otherwise link the wrong version.
+function ensureVitestInstalled() {
+  const vitestPackageJson = join(testNodeModules, "vitest", "package.json");
+  const coverageV8 = join(testNodeModules, "@vitest", "coverage-v8", "package.json");
+  const installed = existsSync(vitestPackageJson)
+    ? JSON.parse(readFileSync(vitestPackageJson, "utf8")).version
+    : undefined;
+  if (installed === expectedVitestVersion && existsSync(coverageV8)) return;
+  const result = spawnSync(bunExe(), ["install", "--frozen-lockfile"], { cwd: testRoot, env: bunEnv, stdio: "pipe" });
+  if (result.status !== 0) {
+    throw new Error(`bun install in test/ failed: ${result.stderr?.toString()}`);
+  }
+}
+ensureVitestInstalled();
 
 const mathSource = [
   "export function add(a: number, b: number): number {",

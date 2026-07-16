@@ -18,6 +18,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { classifyDivergence } from "./differential/known-signatures.mjs";
 
 const dir = join(import.meta.dir, "differential");
 const runner = join(dir, "run.mjs");
@@ -68,26 +69,36 @@ test(`regex differential vs node (${count} cases, seed ${seed})`, async () => {
   expect(under.exitCode).toBe(0);
   const underLines = (await Bun.file(underFile).text()).trim().split("\n");
 
-  // Compare case-by-case for a precise, reproducible failure report.
+  // Compare case-by-case. Divergences matching a KNOWN live engine bug
+  // (differential/known-signatures.mjs) are logged, not failed -- only a NEW
+  // class of divergence fails, with a precise reproducer.
   expect(underLines.length).toBe(oracleLines.length);
+  const failures: string[] = [];
+  const knownHits: string[] = [];
   for (let i = 0; i < oracleLines.length; i++) {
-    if (oracleLines[i] !== underLines[i]) {
-      let index: string | number = "?";
-      let source = "?";
-      let flags = "";
-      try {
-        const parsed = JSON.parse(oracleLines[i]);
-        index = parsed.index;
-        source = parsed.record?.source ?? "?";
-        flags = parsed.record?.flags ?? "";
-      } catch {}
-      throw new Error(
-        `regex differential mismatch at case ${index} (seed ${seed}): /${source}/${flags}\n` +
-          `  reproduce: node differential/run.mjs --seed ${seed} --index ${index}\n` +
-          `             bun  differential/run.mjs --seed ${seed} --index ${index} --capabilities '${header}'\n` +
-          `  node: ${oracleLines[i].slice(0, 600)}\n` +
-          `  bun : ${underLines[i].slice(0, 600)}`,
-      );
+    if (oracleLines[i] === underLines[i]) continue;
+    let index: string | number = "?";
+    let source = "?";
+    let flags = "";
+    try {
+      const parsed = JSON.parse(oracleLines[i]);
+      index = parsed.index;
+      source = parsed.record?.source ?? "?";
+      flags = parsed.record?.flags ?? "";
+    } catch {}
+    const known = classifyDivergence({ source, flags, oracle: oracleLines[i], under: underLines[i] });
+    if (known) {
+      knownHits.push(`case ${index}: ${known} /${source}/${flags}`);
+      continue;
     }
+    failures.push(
+      `regex differential mismatch at case ${index} (seed ${seed}): /${source}/${flags}\n` +
+        `  reproduce: node differential/run.mjs --seed ${seed} --index ${index}\n` +
+        `             bun  differential/run.mjs --seed ${seed} --index ${index} --capabilities '${header}'\n` +
+        `  node: ${oracleLines[i].slice(0, 600)}\n` +
+        `  bun : ${underLines[i].slice(0, 600)}`,
+    );
   }
+  if (knownHits.length) console.warn(`known engine divergences hit (not failures):\n  ${knownHits.join("\n  ")}`);
+  expect(failures).toEqual([]);
 }, 300_000);

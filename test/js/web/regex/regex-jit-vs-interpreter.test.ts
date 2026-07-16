@@ -41,6 +41,9 @@ const knownTierDivergence = new Set<string>([
   "jit-u-mode-astral-alternative-with-dot-sibling", // JIT wrong (#10)
   "jit-u-mode-astral-alternative-wrong-alternative", // JIT wrong (#10)
   "match-end-wraparound-lastindex", // JIT wrong; interpreter correct
+  "jit-capturing-group-only-BOL-star", // JIT wrong (#9 family)
+  "jit-capturing-group-only-BOL-star-v", // JIT wrong (#9 family)
+  "jit-u-mode-empty-match-position-in-pair", // JIT differs from interp+V8
 ]);
 // Whole families known to differ between tiers: the interpreter's a|ab|^a
 // leftmost-wins bug (#3) and its neighbors, and every neighbor derived from a

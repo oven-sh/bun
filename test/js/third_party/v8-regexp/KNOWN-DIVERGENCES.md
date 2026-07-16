@@ -136,3 +136,36 @@ redirected stdout lost one line's trailing newline (fusing two records); the
 same content written through node:fs or a single stdout write is intact.
 Deterministic reproducer and analysis are in the PR description; tracked
 separately from the regex work.
+
+## 12. `v`+`i`: negated property escape is complemented before case folding
+
+From the V8 fix-history corpus. In UnicodeSets mode with ignoreCase, a
+negated property class must have its case-fold closure applied before
+complementation ("early case folding"); JSC complements first:
+
+```js
+/^\P{Lowercase}/iv.test("A")   // V8: false (A folds to lowercase a, excluded);  JSC: true
+```
+
+Same family as #1 (folding order under `v`+`i`).
+
+## 13. `v`-mode class string disjunction: empty string preferred over longer alternatives
+
+From the V8 fix-history corpus. `\q{...}` alternatives inside a class match
+longest-first, so the empty string can only match when nothing else does:
+
+```js
+/[\q{W|}a-c]/v.exec("abc")   // V8: ["a"];  JSC: [""] (empty string chosen first)
+```
+
+## 14. Very large quantifier bounds: SyntaxError in JSC, clamped/accepted by V8
+
+```js
+/a{111111111111111111111111111111111111111111111}/.test("b")   // V8: false;  JSC: SyntaxError
+/(A{9999999999}B|C*)*/.exec("C")                                // V8: ["C","C"];  JSC: SyntaxError
+```
+
+The regex grammar puts no upper bound on quantifier digits; V8's own history
+treats acceptance (with clamping) as the fix for an overflow bug. JSC rejects
+on overflow. Implementation-limit territory; recorded rather than asserted as a
+bug in either engine.

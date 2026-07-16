@@ -506,6 +506,82 @@ test("sync pull() that ends later streams the whole body", async () => {
   expect(response.status).toBe(200);
 });
 
+// controller.close() reached the sink via js_close -> HTTPServerWritable::end(None),
+// which set requested_end and returned without flushing the buffer. The response
+// then ended empty via the no-promise fallback in do_render_stream, so a sync
+// pull() that wrote and closed (the shape docs/runtime/streams.mdx teaches)
+// delivered zero bytes. close() now flushes like end().
+describe.each([1, 11, 2048, 200_000])("sync pull() that writes %d bytes and calls close()", size => {
+  const body = Buffer.alloc(size, "y").toString();
+
+  test("delivers the full body", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(c: any) {
+              c.write(body);
+              c.close();
+            },
+          } as any),
+        );
+      },
+    });
+    const response = await fetch(server.url);
+    const text = await response.text();
+    expect({ status: response.status, length: text.length, matches: text === body }).toEqual({
+      status: 200,
+      length: size,
+      matches: true,
+    });
+  });
+
+  test("delivers the full body over TLS", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(c: any) {
+              c.write(body);
+              c.close();
+            },
+          } as any),
+        );
+      },
+    });
+    const response = await fetch(server.url, { tls: { rejectUnauthorized: false } });
+    const text = await response.text();
+    expect({ status: response.status, length: text.length, matches: text === body }).toEqual({
+      status: 200,
+      length: size,
+      matches: true,
+    });
+  });
+});
+
+test("sync pull() that calls close() with nothing written ends the response", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response(
+        new ReadableStream({
+          type: "direct",
+          pull(c: any) {
+            c.close();
+          },
+        } as any),
+      );
+    },
+  });
+  const response = await fetch(server.url);
+  expect({ status: response.status, body: await response.text() }).toEqual({ status: 200, body: "" });
+});
+
 test("sync pull() that writes nothing and ends later still responds", async () => {
   let controller: any;
   const pulled = Promise.withResolvers<void>();

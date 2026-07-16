@@ -1625,12 +1625,7 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                 return {};
             }
 
-            std::span<const uint8_t> keySpan;
-            if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
-                keySpan = view->span();
-            } else if (auto* arrayBuffer = dynamicDowncast<JSArrayBuffer>(dataValue)) {
-                keySpan = arrayBuffer->impl()->span();
-            } else {
+            if (!dynamicDowncast<JSArrayBufferView>(dataValue) && !dynamicDowncast<JSArrayBuffer>(dataValue)) {
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
                 return {};
             }
@@ -1648,6 +1643,16 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
                 RETURN_IF_EXCEPTION(scope, {});
                 V::validateString(scope, globalObject, namedCurveValue, "key.namedCurve"_s);
                 RETURN_IF_EXCEPTION(scope, {});
+            }
+
+            // Capture the key span only after the last property getter has run, so a user
+            // getter that detaches the buffer cannot leave us with a stale pointer.
+            std::span<const uint8_t> keySpan;
+            if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
+                keySpan = view->span();
+            } else {
+                auto* arrayBuffer = uncheckedDowncast<JSArrayBuffer>(dataValue);
+                keySpan = arrayBuffer->impl()->span();
             }
 
             ncrypto::EVPKeyPointer::PKFormatType rawFormat = formatView == "raw-public"_s

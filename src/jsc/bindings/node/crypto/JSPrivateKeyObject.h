@@ -43,7 +43,6 @@ public:
     }
 
     DECLARE_INFO;
-    DECLARE_VISIT_CHILDREN;
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 

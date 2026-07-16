@@ -20,16 +20,6 @@ void JSPublicKeyObject::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalO
     Base::finishCreation(vm, globalObject);
 }
 
-template<typename Visitor>
-void JSPublicKeyObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSPublicKeyObject* thisObject = uncheckedDowncast<JSPublicKeyObject>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSPublicKeyObject);
-
 void setupPublicKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* globalObject = defaultGlobalObject(init.global);

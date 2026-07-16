@@ -42,11 +42,35 @@ describe("assert.partialDeepStrictEqual", () => {
     const b = [];
     b.push(b);
     assert.partialDeepStrictEqual(a, b);
+    assert.partialDeepStrictEqual(a, a);
 
     const oa = {};
     oa.self = oa;
     const ob = {};
     ob.self = ob;
     assert.partialDeepStrictEqual(oa, ob);
+  });
+
+  test("a circular actual still fails against a non-circular expected", () => {
+    const circularArr = [];
+    circularArr.push(circularArr);
+    expect(() => assert.partialDeepStrictEqual(circularArr, [[1]])).toThrow(assert.AssertionError);
+
+    const circularObj = {};
+    circularObj.self = circularObj;
+    expect(() => assert.partialDeepStrictEqual(circularObj, { self: { self: 1 } })).toThrow(assert.AssertionError);
+
+    // And the other way: a non-circular actual against a circular expected.
+    const circularExpected = [];
+    circularExpected.push(circularExpected);
+    expect(() => assert.partialDeepStrictEqual([[1]], circularExpected)).toThrow(assert.AssertionError);
+  });
+
+  test("array scan past a non-matching candidate does not poison later matches", () => {
+    const shared = { x: 1 };
+    expect(() => assert.partialDeepStrictEqual({ arr: [shared, shared] }, { arr: [{ x: 2 }] })).toThrow(
+      assert.AssertionError,
+    );
+    assert.partialDeepStrictEqual({ arr: [shared, shared] }, { arr: [{ x: 1 }] });
   });
 });

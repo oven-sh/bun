@@ -392,37 +392,17 @@ const SafeMapPrototypeGet = SafeMap.prototype.get;
  * compareBranch({a: 1, b: 2, c: 3}, {a: 1, b: 2}); // true
  */
 function compareBranch(actual, expected, comparedObjects?) {
+  if (actual === expected) {
+    return actual !== 0 || ObjectIs(actual, expected);
+  }
+
   // Check for Map object equality (subset check for partialDeepStrictEqual)
   if (isMap(actual) && isMap(expected)) {
     if (expected.size > actual.size) {
       return false; // `expected` can't be a subset if it has more elements
     }
 
-    comparedObjects ??= new SafeWeakSet();
-
-    // Handle circular references
-    if (comparedObjects.has(actual)) {
-      return true;
-    }
-    comparedObjects.add(actual);
-
-    const expectedIterator = SafeMapPrototypeIterator.$call(expected);
-
-    let result = true;
-    for (const { 0: key, 1: expectedValue } of expectedIterator) {
-      if (!SafeMapPrototypeHas.$call(actual, key)) {
-        result = false;
-        break;
-      }
-      const actualValue = SafeMapPrototypeGet.$call(actual, key);
-      if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
-        result = false;
-        break;
-      }
-    }
-
-    comparedObjects.delete(actual);
-    return result;
+    return withCycleGuard(actual, expected, comparedObjects, compareBranchMap);
   }
 
   // Check for ArrayBuffer object equality
@@ -471,30 +451,7 @@ function compareBranch(actual, expected, comparedObjects?) {
       return false;
     }
 
-    comparedObjects ??= new SafeWeakSet();
-
-    // Handle circular references
-    if (comparedObjects.has(actual)) {
-      return true;
-    }
-    comparedObjects.add(actual);
-
-    let result = true;
-    let actualPos = 0;
-    for (let i = 0; i < expected.length; i++) {
-      const lastCandidate = actual.length - expected.length + i;
-      while (actualPos <= lastCandidate && !compareBranch(actual[actualPos], expected[i], comparedObjects)) {
-        actualPos++;
-      }
-      if (actualPos > lastCandidate) {
-        result = false;
-        break;
-      }
-      actualPos++;
-    }
-
-    comparedObjects.delete(actual);
-    return result;
+    return withCycleGuard(actual, expected, comparedObjects, compareBranchArray);
   }
 
   // Comparison done when at least one of the values is not an object
@@ -502,29 +459,64 @@ function compareBranch(actual, expected, comparedObjects?) {
     return isDeepStrictEqual(actual, expected);
   }
 
+  return withCycleGuard(actual, expected, comparedObjects, compareBranchObject);
+}
+
+// Path-scoped cycle detection tracking both sides: a cycle is accepted only when
+// actual and expected cycle back together (Node's handleCycles in comparisons.js).
+function withCycleGuard(actual, expected, comparedObjects, body) {
+  comparedObjects ??= new SafeWeakSet();
+  const hadActual = comparedObjects.has(actual);
+  const hadExpected = comparedObjects.has(expected);
+  if (hadActual && hadExpected) return true;
+  if (hadActual || hadExpected) return false;
+  comparedObjects.add(actual);
+  comparedObjects.add(expected);
+  const result = body(actual, expected, comparedObjects);
+  comparedObjects.delete(actual);
+  comparedObjects.delete(expected);
+  return result;
+}
+
+function compareBranchMap(actual, expected, comparedObjects) {
+  const expectedIterator = SafeMapPrototypeIterator.$call(expected);
+  for (const { 0: key, 1: expectedValue } of expectedIterator) {
+    if (!SafeMapPrototypeHas.$call(actual, key)) {
+      return false;
+    }
+    const actualValue = SafeMapPrototypeGet.$call(actual, key);
+    if (!compareBranch(actualValue, expectedValue, comparedObjects)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function compareBranchArray(actual, expected, comparedObjects) {
+  let actualPos = 0;
+  for (let i = 0; i < expected.length; i++) {
+    const lastCandidate = actual.length - expected.length + i;
+    while (actualPos <= lastCandidate && !compareBranch(actual[actualPos], expected[i], comparedObjects)) {
+      actualPos++;
+    }
+    if (actualPos > lastCandidate) {
+      return false;
+    }
+    actualPos++;
+  }
+  return true;
+}
+
+function compareBranchObject(actual, expected, comparedObjects) {
   // Use Reflect.ownKeys() instead of Object.keys() to include symbol properties
   const keysExpected = ReflectOwnKeys(expected);
-
-  comparedObjects ??= new SafeWeakSet();
-
-  // Handle circular references
-  if (comparedObjects.has(actual)) {
-    return true;
-  }
-  comparedObjects.add(actual);
-
-  // Check if all expected keys and values match
-  let result = true;
   for (let i = 0; i < keysExpected.length; i++) {
     const key = keysExpected[i];
     if (!ReflectHas(actual, key) || !compareBranch(actual[key], expected[key], comparedObjects)) {
-      result = false;
-      break;
+      return false;
     }
   }
-
-  comparedObjects.delete(actual);
-  return result;
+  return true;
 }
 
 /**

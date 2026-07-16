@@ -20,16 +20,6 @@ void JSPrivateKeyObject::finishCreation(JSC::VM& vm, JSC::JSGlobalObject* global
     Base::finishCreation(vm, globalObject);
 }
 
-template<typename Visitor>
-void JSPrivateKeyObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
-{
-    JSPrivateKeyObject* thisObject = uncheckedDowncast<JSPrivateKeyObject>(cell);
-    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
-    Base::visitChildren(thisObject, visitor);
-}
-
-DEFINE_VISIT_CHILDREN(JSPrivateKeyObject);
-
 void setupPrivateKeyObjectClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* globalObject = defaultGlobalObject(init.global);

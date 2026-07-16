@@ -768,11 +768,11 @@ describe("Bun.Transpiler", () => {
       // A nested function establishes its own context, so these remain valid.
       exp(
         "function *f() { enum x { y = (function*() { yield 1 })() } }",
-        'function* f() {\n  var x;\n  ((x) => {\n    x[x["y"] = function* () {\n      yield 1;\n    }()] = "y";\n  })(x ||= {});\n}',
+        'function* f() {\n  let x;\n  ((x) => {\n    x[x["y"] = function* () {\n      yield 1;\n    }()] = "y";\n  })(x ||= {});\n}',
       );
       exp(
         "async function f() { enum x { y = (async () => await 1)() } }",
-        'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
+        'async function f() {\n  let x;\n  ((x) => {\n    x[x["y"] = (async () => await 1)()] = "y";\n  })(x ||= {});\n}',
       );
       exp(
         "enum x { y = (function() { return this })() }",
@@ -782,15 +782,15 @@ describe("Bun.Transpiler", () => {
       // keep their yield/await/super permissions.
       exp(
         "function *f() { enum x { y = 1 } yield 1; }",
-        'function* f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  yield 1;\n}',
+        'function* f() {\n  let x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  yield 1;\n}',
       );
       exp(
         "async function f() { enum x { y = 1 } await 1; }",
-        'async function f() {\n  var x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  await 1;\n}',
+        'async function f() {\n  let x;\n  ((x) => {\n    x[x["y"] = 1] = "y";\n  })(x ||= {});\n  await 1;\n}',
       );
       exp(
         "class C extends B { m() { enum x { y = 1 } super.foo(); } }",
-        'class C extends B {\n  m() {\n    var x;\n    ((x) => {\n      x[x["y"] = 1] = "y";\n    })(x ||= {});\n    super.foo();\n  }\n}',
+        'class C extends B {\n  m() {\n    let x;\n    ((x) => {\n      x[x["y"] = 1] = "y";\n    })(x ||= {});\n    super.foo();\n  }\n}',
       );
     });
 

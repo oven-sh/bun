@@ -528,7 +528,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
@@ -638,7 +637,6 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
-    globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
     Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
@@ -1941,6 +1939,10 @@ JSC_DEFINE_CUSTOM_SETTER(moduleNamespacePrototypeSetESModuleMarker, (JSGlobalObj
 
 void GlobalObject::finishCreation(VM& vm)
 {
+    // Node.js defaults to 10. Must run before Base::finishCreation() materializes
+    // errorConstructor(), which snapshots this value into Error.stackTraceLimit.
+    setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT);
+
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 

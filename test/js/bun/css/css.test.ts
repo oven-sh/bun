@@ -2920,6 +2920,49 @@ describe("css tests", () => {
     );
     minify_test(".foo { background: transparent }", ".foo{background:0 0}");
 
+    // The shorthand prints <box> twice when origin != clip. A single <box>
+    // token sets both origin and clip, so dropping a border-box clip after a
+    // non-default origin would change the declared clip value.
+    minify_test(
+      ".foo { background: red content-box border-box }",
+      ".foo{background:red content-box border-box}",
+    );
+    minify_test(
+      ".foo { background: red border-box content-box }",
+      ".foo{background:red border-box content-box}",
+    );
+    minify_test(
+      ".foo { background: red border-box padding-box }",
+      ".foo{background:red border-box padding-box}",
+    );
+    minify_test(
+      ".foo { background: red padding-box border-box }",
+      ".foo{background:red}",
+    );
+    minify_test(
+      ".foo { background: red border-box border-box }",
+      ".foo{background:red border-box}",
+    );
+    cssTest(
+      `
+      .foo {
+        background-color: red;
+        background-position: 0% 0%;
+        background-size: auto;
+        background-repeat: repeat;
+        background-clip: border-box;
+        background-origin: content-box;
+        background-attachment: scroll;
+        background-image: none
+      }
+    `,
+      indoc`
+      .foo {
+        background: red content-box border-box;
+      }
+    `,
+    );
+
     minify_test(
       ".foo { background: url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\") }",
       ".foo{background:url(\"data:image/svg+xml,%3Csvg width='168' height='24' xmlns='http://www.w3.org/2000/svg'%3E%3C/svg%3E\")}",

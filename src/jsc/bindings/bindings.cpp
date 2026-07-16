@@ -6184,12 +6184,13 @@ extern "C" void Bun__JSValue__protect(JSC::EncodedJSValue encodedValue)
         gcProtect(cell);
     }
 }
-#if ASSERT_ENABLED
+// Not gated on ASSERT_ENABLED: the Rust caller is gated on
+// cfg(debug_assertions), which can be true when ASSERT_ENABLED is 0
+// (Windows ASAN). CallFrame::describeFrame() itself is always exported.
 CPP_DECL const char* Bun__CallFrame__describeFrame(JSC::CallFrame* callFrame)
 {
     return callFrame->describeFrame();
 }
-#endif
 
 extern "C" double Bun__JSC__operationMathPow(double x, double y)
 {

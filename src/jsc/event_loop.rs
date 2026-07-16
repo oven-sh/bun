@@ -1212,6 +1212,24 @@ impl EventLoop {
     }
 }
 
+/// Backs perf_hooks `performance.eventLoopUtilization()`: returns the current
+/// thread's event loop idle/active time in milliseconds. The JS side computes
+/// the utilization ratio and the diff against prior samples.
+#[bun_jsc::host_fn]
+pub fn js_event_loop_utilization(
+    global_object: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let vm_ref = global_object.bun_vm();
+    let loop_ptr = vm_ref.event_loop_shared().usockets_loop();
+    // SAFETY: usockets_loop() returns the current thread's live loop.
+    let elu = unsafe { uws::loop_event_loop_utilization(loop_ptr) };
+    let result = JSValue::create_empty_object(global_object, 2);
+    result.put(global_object, b"idle", JSValue::js_number(elu.idle_ms));
+    result.put(global_object, b"active", JSValue::js_number(elu.active_ms));
+    Ok(result)
+}
+
 /// Testing API to expose event loop state
 #[bun_jsc::host_fn]
 pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {

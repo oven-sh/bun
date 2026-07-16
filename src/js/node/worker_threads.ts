@@ -7,7 +7,7 @@ const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const Writable = require("internal/streams/writable");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented, eventLoopUtilization: computeEventLoopUtilization } = require("internal/shared");
 const {
   validateString,
   validateObject,
@@ -1146,16 +1146,23 @@ class Worker extends EventEmitter {
   }
 
   get performance() {
-    return (this.#performance ??= {
-      eventLoopUtilization() {
-        warnNotImplementedOnce("worker_threads.Worker.performance");
-        return {
-          idle: 0,
-          active: 0,
-          utilization: 0,
-        };
-      },
-    });
+    if (this.#performance === undefined) {
+      const getRaw = () => this.#worker.eventLoopUtilizationInternal();
+      this.#performance = {
+        eventLoopUtilization(utilization1, utilization2) {
+          const raw = getRaw();
+          // The native side returns { idle: 0, active: 0 } while the worker
+          // isn't running (not yet online, terminating, or exited). Match Node:
+          // return zeros and ignore the prior samples rather than producing
+          // negative deltas from `raw - utilization1`.
+          if (raw.idle === 0 && raw.active === 0) {
+            return { idle: 0, active: 0, utilization: 0 };
+          }
+          return computeEventLoopUtilization(() => raw, utilization1, utilization2);
+        },
+      };
+    }
+    return this.#performance;
   }
 
   terminate(callback: unknown) {

@@ -89,6 +89,11 @@ void WebWorker__notifyNeedTermination(void* worker);
 // worker.ref()/.unref() — toggle the keep-alive on the parent event loop. Parent thread only.
 void WebWorker__setRef(void* worker, bool ref);
 
+// Sample the worker's event-loop idle/active time (ms) for
+// worker.performance.eventLoopUtilization(). Parent thread only; synchronised
+// against worker teardown in src/jsc/web_worker.rs.
+void WebWorker__getEventLoopUtilization(void* worker, double* idleMs, double* activeMs);
+
 // Release the keep-alive on the parent event loop. Called from the close task on the parent
 // thread.
 void WebWorker__releaseParentPollRef(void* worker);
@@ -381,6 +386,20 @@ void Worker::setKeepAlive(bool keepAlive)
     if (m_terminateRequested.load() || m_state.load() >= State::Closing)
         return;
     WebWorker__setRef(impl_, keepAlive);
+}
+
+void Worker::eventLoopUtilization(double& idleMs, double& activeMs)
+{
+    idleMs = 0;
+    activeMs = 0;
+    // Node reports zeros until 'online' fires (kIsOnline) and again once exit
+    // handling nulls kHandle; !isOnline() covers Pending and Closing/Closed.
+    // Between terminate() and the close task Node still reports real values,
+    // so a terminate request alone must not zero this; the Rust side reads
+    // under vm_lock and reports zeros once the VM is gone.
+    if (!impl_ || !isOnline())
+        return;
+    WebWorker__getEventLoopUtilization(impl_, &idleMs, &activeMs);
 }
 
 void Worker::dispatchEvent(Event& event)

@@ -1,4 +1,4 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -326,17 +326,20 @@ describe("execArgv option", async () => {
     expect(await proc.stdout.text()).toBe(expected);
   }
 
+  // Each case boots a subprocess plus a worker VM, which can exceed the
+  // default 5s timeout on loaded debug/ASAN machines; the ceilings below are
+  // pure headroom (the cases run in well under a second normally).
   it("inherits the parent's execArgv when falsy or unspecified", async () => {
     await run("null", '["--smol"]\n');
     await run("0", '["--smol"]\n');
-  });
+  }, 60_000);
   it("provides empty execArgv when passed an empty array", async () => {
     // empty array should result in empty execArgv, not inherited from parent thread
     await run("[]", "[]\n");
-  });
+  }, 60_000);
   it("can specify an array of strings", async () => {
     await run('["--no-warnings"]', '["--no-warnings"]\n');
-  });
+  }, 60_000);
   // TODO(@190n) get our handling of non-string array elements in line with Node's
 });
 
@@ -352,7 +355,9 @@ test("eval does not leak source code", async () => {
   const errors = await proc.stderr.text();
   if (errors.length > 0) throw new Error(errors);
   expect(proc.exitCode).toBe(0);
-});
+  // The fixture round-trips 500 MiB of worker source; debug/ASAN builds need
+  // far more than the default 5s.
+}, 240_000);
 
 describe("captured stdio backpressure", () => {
   // node flow control (lib/internal/worker/io.js): a writev batch's callback is
@@ -514,7 +519,9 @@ describe("environmentData", () => {
     expect(proc.exitCode).toBe(0);
     const out = await proc.stdout.text();
     expect(out).toBe("foo\n".repeat(5));
-  });
+    // Boots a subprocess plus a chain of worker VMs; needs headroom over the
+    // default 5s on loaded debug/ASAN machines.
+  }, 60_000);
 
   test("can be used if parent thread had not imported worker_threads", async () => {
     const proc = Bun.spawn({
@@ -631,7 +638,9 @@ describe("getHeapSnapshot", () => {
       code: "ERR_WORKER_NOT_RUNNING",
       message: "Worker instance not running",
     });
-  });
+    // Worker boot plus a heap snapshot; needs headroom over the default 5s on
+    // loaded debug/ASAN machines.
+  }, 60_000);
 
   test("resolves to a Stream.Readable with JSON text in V8 format", async () => {
     const worker = new Worker(
@@ -666,7 +675,9 @@ describe("getHeapSnapshot", () => {
       "trace_tree",
     ]);
     worker.postMessage(0);
-  });
+    // Worker boot plus a heap snapshot; needs headroom over the default 5s on
+    // loaded debug/ASAN machines.
+  }, 60_000);
 });
 
 test("failed Worker construction restores transferred FileHandles", async () => {
@@ -749,7 +760,9 @@ test("worker name survives parent-side GC and terminate cycles", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("done");
   expect(exitCode).toBe(0);
-});
+  // Boots a subprocess plus four worker VMs with full GC cycles; needs
+  // headroom over the default 5s on loaded debug/ASAN machines.
+}, 60_000);
 
 test("partially transferred FileHandles are restored when a later transfer throws", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
@@ -1364,6 +1377,7 @@ test("*Internal introspection methods are DontEnum on Worker.prototype", () => {
   expect(enumerable).not.toContain("startCpuProfileInternal");
   expect(enumerable).not.toContain("stopCpuProfileInternal");
   expect(enumerable).not.toContain("cpuUsageInternal");
+  expect(enumerable).not.toContain("eventLoopUtilizationInternal");
 });
 
 describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide one", () => {
@@ -1383,6 +1397,9 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
 
   // main -> A (snapshot env) -> B (SHARE_ENV) is a tree disjoint from
   // main -> C (SHARE_ENV); values must not cross between them.
+  // The run() cases boot a subprocess plus several worker VMs, which can exceed
+  // the default 5s timeout on loaded debug/ASAN machines; the ceilings are pure
+  // headroom (the cases run in well under a second normally).
   it("keeps disjoint SHARE_ENV chains isolated", async () => {
     expect(await run("tree")).toEqual({
       B_sees_FROM_A: "a",
@@ -1393,7 +1410,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       main_sees_FROM_B: null,
       main_sees_FROM_C: "c",
     });
-  });
+  }, 60_000);
 
   // Founding a store must not adopt another tree's value for a key the founding
   // thread already has.
@@ -1404,7 +1421,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       B_sees_SHARED_KEY: "from-A",
       main_SHARED_KEY: "from-main",
     });
-  });
+  }, 60_000);
 
   // An accessor installed via defineProperty lands on the base object, but reads hit
   // the store first — so the store entry must go, or the getter is shadowed. (Node
@@ -1437,7 +1454,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const want = { read: "new", count: 1, afterDelete: null };
     expect(JSON.parse(stdout)).toEqual({ regular: want, shared: want });
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 
   // node roots a main-founded SHARE_ENV tree at its RealEnvStore, so a worker writing
   // through it reaches the real environment a child process inherits; a snapshot
@@ -1446,12 +1463,14 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
   it.each([
     ["SHARE_ENV", "written-by-worker"],
     ["snapshot", "absent"],
-  ])("a %s worker's env write is %s to a child process", async (mode, want) => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { Worker, SHARE_ENV, isMainThread, parentPort } = require("worker_threads");
+  ])(
+    "a %s worker's env write is %s to a child process",
+    async (mode, want) => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { Worker, SHARE_ENV, isMainThread, parentPort } = require("worker_threads");
          const { execFileSync } = require("child_process");
          if (isMainThread) {
            const opts = ${JSON.stringify(mode)} === "SHARE_ENV" ? { env: SHARE_ENV, eval: true } : { eval: true };
@@ -1464,14 +1483,16 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
              console.log(out);
            });
          }`,
-      ],
-      env: bunEnv,
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stdout.trim()).toBe(want);
-    expect(exitCode).toBe(0);
-  });
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(want);
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 
   // Integer-like keys reach JSC through the indexed hooks; without ByIndex overrides
   // they land in JSObject's indexed storage and never touch the shared store.
@@ -1483,7 +1504,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       main_sees_123: "from-main",
       main_sees_7_after_delete: null,
     });
-  });
+  }, 60_000);
 
   // Two SHARE_ENV children of one thread alias a single store: writes, deletes and
   // enumeration cross between them, and a default-env grandchild snapshots it.
@@ -1496,7 +1517,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
       main_sees_FROM_S1: "s1",
       main_sees_TO_DELETE: null,
     });
-  });
+  }, 60_000);
 
   // Founding a tree replaces process.env; Bun.env is reified from the same object
   // at startup and must not be left observing the orphaned pre-swap env.
@@ -1519,7 +1540,7 @@ describe("env: SHARE_ENV shares the spawning thread's env, not a process-wide on
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({ same: true, bunEnv: "x" });
     expect(exitCode).toBe(0);
-  });
+  }, 60_000);
 });
 
 test("postMessage with a non-object transfer element throws DataCloneError", () => {
@@ -1702,4 +1723,228 @@ test("the SHARE_ENV founding thread's process.env stays live after the swap", as
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("yes,unset");
   expect(exitCode).toBe(0);
+  // Subprocess boots a worker plus a child process; needs headroom over the
+  // default 5s on loaded debug/ASAN machines.
+}, 60_000);
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() reports the worker's activity", async () => {
+  using dir = tempDir("wt-elu", {
+    "worker.mjs": `
+      import { parentPort } from "worker_threads";
+      parentPort.on("message", () => {});
+      // Keep the worker loop busy so active time accumulates.
+      (function busy() {
+        const t = Date.now();
+        while (Date.now() - t < 50);
+        setImmediate(busy);
+      })();
+    `,
+  });
+
+  const worker = new Worker(join(String(dir), "worker.mjs"));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      worker.on("online", () => resolve());
+      worker.on("error", reject);
+    });
+
+    const elu1 = worker.performance.eventLoopUtilization();
+    await Bun.sleep(300);
+    const elu2 = worker.performance.eventLoopUtilization(elu1);
+
+    expect(elu2.active).toBeGreaterThan(50);
+    expect(elu2.utilization).toBeGreaterThan(0.5);
+  } finally {
+    await worker.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() keeps reporting between terminate() and exit", async () => {
+  // Node's gate is !kIsOnline || !kHandle; neither changes at terminate(), so
+  // values stay real until exit handling. To sample that window without racing
+  // the worker's own teardown, park the worker inside a message handler on a
+  // SAB gate: it signals slot 1 once parked, the parent terminates and samples
+  // while the worker thread cannot reach shutdown, then releases slot 0.
+  const sab = new SharedArrayBuffer(8);
+  const gate = new Int32Array(sab);
+  const worker = new Worker(
+    `const { parentPort, workerData } = require("worker_threads");
+     const t = Date.now();
+     while (Date.now() - t < 100); // accumulate active time before parking
+     const g = new Int32Array(workerData.sab);
+     parentPort.on("message", () => {
+       Atomics.store(g, 1, 1);
+       Atomics.notify(g, 1);
+       Atomics.wait(g, 0, 0, 30_000);
+     });`,
+    { eval: true, workerData: { sab } },
+  );
+  try {
+    await new Promise<void>((resolve, reject) => {
+      worker.on("online", () => resolve());
+      worker.on("error", reject);
+    });
+    worker.postMessage(0);
+    Atomics.wait(gate, 1, 0, 30_000); // worker is parked in the handler
+
+    const terminated = worker.terminate();
+    // Same tick as terminate(): the close task has not run (m_state flips on a
+    // parent task) and the parked worker cannot have torn down its VM, so the
+    // entry burn must still be visible rather than forced to zeros.
+    expect(worker.performance.eventLoopUtilization().active).toBeGreaterThan(50);
+
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    await terminated;
+  } finally {
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    await worker.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() returns zeros before 'online' fires", async () => {
+  // 'online' only fires after the worker's entry script finishes evaluating.
+  // The worker signals slot 1 from inside its entry (VM and loop pointer are
+  // published by then) and parks on slot 0, so the parent's sample lands in
+  // the post-publish, pre-online window where only the online gate (Node's
+  // kIsOnline) forces zeros.
+  const sab = new SharedArrayBuffer(8);
+  const gate = new Int32Array(sab);
+  const worker = new Worker(
+    `const { workerData } = require("worker_threads");
+     const g = new Int32Array(workerData.sab);
+     Atomics.store(g, 1, 1);
+     Atomics.notify(g, 1);
+     Atomics.wait(g, 0, 0, 30_000);`,
+    { eval: true, workerData: { sab } },
+  );
+  try {
+    Atomics.wait(gate, 1, 0, 30_000); // worker is mid-entry: published, not online
+    expect(worker.performance.eventLoopUtilization()).toEqual({ idle: 0, active: 0, utilization: 0 });
+  } finally {
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    await worker.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() returns zeros (not negatives) after the worker exits", async () => {
+  using dir = tempDir("wt-elu-exit", {
+    "worker.mjs": `
+      import { parentPort } from "worker_threads";
+      let notified = false;
+      (function busy() {
+        const t = Date.now();
+        while (Date.now() - t < 20);
+        // Signal once the loop has accumulated active time, so the parent waits
+        // on an observable condition instead of a fixed delay.
+        if (!notified) {
+          notified = true;
+          parentPort.postMessage("busy");
+        }
+        setImmediate(busy);
+      })();
+    `,
+  });
+
+  const worker = new Worker(join(String(dir), "worker.mjs"));
+  let terminated = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      worker.once("message", () => resolve());
+      worker.once("error", reject);
+    });
+    const elu1 = worker.performance.eventLoopUtilization();
+    expect(elu1.active).toBeGreaterThan(0);
+
+    await worker.terminate();
+    terminated = true;
+
+    // Sampling against a prior snapshot after the worker has exited must not
+    // produce negative deltas; Node returns zeros and ignores the prior sample.
+    expect(worker.performance.eventLoopUtilization(elu1)).toEqual({ idle: 0, active: 0, utilization: 0 });
+  } finally {
+    if (!terminated) await worker.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() reports low utilization for an idle worker", async () => {
+  using dir = tempDir("wt-elu-idle", {
+    "worker.mjs": `
+      import { parentPort } from "worker_threads";
+      // Stay alive but idle: blocked in the event provider waiting for messages.
+      parentPort.on("message", () => {});
+      parentPort.postMessage("ready");
+    `,
+  });
+
+  const worker = new Worker(join(String(dir), "worker.mjs"));
+  let terminated = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      worker.once("message", () => resolve());
+      worker.once("error", reject);
+    });
+    const elu1 = worker.performance.eventLoopUtilization();
+    await Bun.sleep(200);
+    const elu2 = worker.performance.eventLoopUtilization(elu1);
+
+    // The worker spends the whole window blocked in the event provider. That
+    // in-progress wait must count as idle, not active, even though it hasn't
+    // returned yet when the parent samples it.
+    expect(elu2.idle).toBeGreaterThan(50);
+    expect(elu2.utilization).toBeLessThan(0.5);
+
+    await worker.terminate();
+    terminated = true;
+  } finally {
+    if (!terminated) await worker.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() stays low for a message-driven idle worker", async () => {
+  using dir = tempDir("wt-elu-msg", {
+    "worker.mjs": `
+      import { parentPort } from "worker_threads";
+      // Handle each message in ~no time and go back to waiting: ~0% busy.
+      parentPort.on("message", () => {});
+      parentPort.postMessage("ready");
+    `,
+  });
+
+  const worker = new Worker(join(String(dir), "worker.mjs"));
+  let terminated = false;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      worker.once("message", () => resolve());
+      worker.once("error", reject);
+    });
+
+    const elu1 = worker.performance.eventLoopUtilization();
+    // Drive the worker with periodic messages; each wakes its loop but does
+    // almost no work. The loop is blocked (idle) between messages. The 40ms
+    // gaps keep idle dominant even when a loaded machine stretches each
+    // wakeup's scheduling and handler time.
+    for (let i = 0; i < 15; i++) {
+      worker.postMessage(0);
+      await Bun.sleep(40);
+    }
+    const elu2 = worker.performance.eventLoopUtilization(elu1);
+
+    // A worker that only wakes briefly to handle messages must not report as
+    // saturated: the between-message blocks are idle, not active.
+    expect(elu2.utilization).toBeLessThan(0.5);
+
+    await worker.terminate();
+    terminated = true;
+  } finally {
+    if (!terminated) await worker.terminate();
+  }
 });

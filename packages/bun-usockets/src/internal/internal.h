@@ -75,6 +75,13 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
  * allocations this library has no way to fail gracefully from. */
 extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 
+/* Monotonic clock (ns): uv_hrtime under libuv, else CLOCK_MONOTONIC. Used for
+ * event-loop-utilization accounting and (POSIX) the sweep-timer deadlines, so
+ * anything comparing against a loop deadline must read it and not another. */
+uint64_t us_loop_monotonic_ns(void);
+/* Sample the loop's accumulated idle time and active time (both ns). */
+void us_loop_event_loop_utilization(struct us_loop_t *loop, uint64_t *idle_ns_out, uint64_t *active_ns_out);
+
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
@@ -150,9 +157,6 @@ void us_internal_timer_sweep(us_loop_r loop);
 void us_internal_enable_sweep_timer(struct us_loop_t *loop);
 void us_internal_disable_sweep_timer(struct us_loop_t *loop);
 #ifndef LIBUS_USE_LIBUV
-/* CLOCK_MONOTONIC in ns. The clock every deadline on the loop is measured
- * against, so anything comparing against one must read it and not another. */
-uint64_t us_internal_monotonic_ns(void);
 long long us_internal_sweep_timeout_ns(struct us_loop_t *loop);
 void us_internal_sweep_if_due(struct us_loop_t *loop);
 #endif

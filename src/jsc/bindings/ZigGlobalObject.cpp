@@ -1841,8 +1841,8 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamClosedPromise, (JSGlobalObject * globalObjec
 }
 
 // node:stream's addAbortSignal() errors a WHATWG stream when the signal fires. Its isWebStream()
-// gate also admits TransformStream, but $inheritsTransformStream() is false for a native one, so
-// addAbortSignal() rejects it with ERR_INVALID_ARG_TYPE first; the throw below is a backstop.
+// gate also admits TransformStream, which has no controller to error — node throws there too (it
+// never sets kControllerErrorFunction on one), so the throw below is reachable, not dead code.
 JSC_DEFINE_HOST_FUNCTION(jsWebStreamControllerError, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));

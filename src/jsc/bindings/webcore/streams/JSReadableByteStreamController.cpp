@@ -1249,7 +1249,7 @@ void readableByteStreamControllerRespondWithNewView(JSGlobalObject* globalObject
     }
     const size_t bytesFilled = firstDescriptor->m_bytesFilled;
     if (firstDescriptor->m_byteOffset + bytesFilled != view->byteOffset()) {
-        throwRangeError(globalObject, scope, "The view's byte offset does not match the BYOB request's current write position"_s);
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must match the BYOB request's current write position"_s);
         return;
     }
     RefPtr<JSC::ArrayBuffer> viewedBuffer = view->possiblySharedBuffer();
@@ -1258,7 +1258,7 @@ void readableByteStreamControllerRespondWithNewView(JSGlobalObject* globalObject
         return;
     }
     if (bytesFilled + viewByteLength > firstDescriptor->m_byteLength) {
-        throwRangeError(globalObject, scope, "The view's byte length exceeds the remaining length of the BYOB request"_s);
+        Bun::ERR::INVALID_ARG_VALUE_RangeError(scope, globalObject, "view"_s, view, "must not exceed the remaining length of the BYOB request"_s);
         return;
     }
     RefPtr<JSC::ArrayBuffer> transferredBuffer = transferArrayBufferImpl(globalObject, *viewedBuffer);

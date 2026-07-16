@@ -86,8 +86,11 @@ describe("node:quic under --isolate", () => {
 
     // Both files must run their own callbacks: the second one otherwise dies
     // in the first file's retired module scope ("undefined is not an object").
-    expect(normalizeBunSnapshot(stderr).split("\n").filter(l => l.includes("pass") || l.includes("fail")))
-      .toMatchInlineSnapshot(`
+    expect(
+      normalizeBunSnapshot(stderr)
+        .split("\n")
+        .filter(l => l.includes("pass") || l.includes("fail")),
+    ).toMatchInlineSnapshot(`
       [
         "(pass) quic session opens (a)",
         "(pass) quic session opens (b)",

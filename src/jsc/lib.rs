@@ -1944,7 +1944,7 @@ impl LogJsc for bun_ast::Log {
         // Cap at 256 — the consumer's stack buffer holds at most 256 JSValues.
         let count = msgs.len().min(256);
         match count {
-            0 => Ok(JSValue::UNDEFINED),
+            0 => Ok(bun_core::ZigString::init(message.as_bytes()).to_error_instance(global)),
             1 => msg_to_js(&msgs[0], global),
             _ => {
                 // On-stack array: conservative GC stack scan keeps these

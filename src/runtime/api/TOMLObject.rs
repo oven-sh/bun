@@ -33,7 +33,7 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // for now...
             let buffer_writer = js_printer::BufferWriter::init();
             let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-            if js_printer::print_json(
+            match js_printer::print_json(
                 &mut writer,
                 parse_result,
                 source,
@@ -42,10 +42,14 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                     mangled_props: None,
                     ..Default::default()
                 },
-            )
-            .is_err()
-            {
-                return Err(global.throw_value(log.to_js(global, "Failed to print toml")?));
+            ) {
+                Ok(_) => {}
+                Err(js_printer::Error::StackOverflow) => {
+                    return Err(global.throw_stack_overflow());
+                }
+                Err(_) => {
+                    return Err(global.throw_value(log.to_js(global, "Failed to print toml")?));
+                }
             }
 
             let slice = writer.ctx.buffer.slice();

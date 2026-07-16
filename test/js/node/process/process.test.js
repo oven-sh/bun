@@ -1135,6 +1135,51 @@ describe.concurrent(() => {
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
 
+  it("UnhandledPromiseRejectionWarning installs .stack as non-enumerable", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--unhandled-rejections=warn",
+        "-e",
+        `
+          let result;
+          process.on("warning", w => {
+            if (w.name !== "UnhandledPromiseRejectionWarning") return;
+            if (!(w instanceof Error)) return;
+            const d = Object.getOwnPropertyDescriptor(w, "stack");
+            if (!d || w.stack !== reason.stack) return;
+            let forInHasStack = false;
+            for (const k in w) if (k === "stack") forInHasStack = true;
+            result = {
+              keysIncludesStack: Object.keys(w).includes("stack"),
+              forInHasStack,
+              jsonHasStack: "stack" in JSON.parse(JSON.stringify(w)),
+              enumerable: d.enumerable,
+              configurable: d.configurable,
+            };
+          });
+          const reason = new Error("boom");
+          Promise.reject(reason);
+          process.on("beforeExit", () => console.log(JSON.stringify(result)));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ result: JSON.parse(stdout.trim()), exitCode }).toEqual({
+      result: {
+        keysIncludesStack: false,
+        forInHasStack: false,
+        jsonHasStack: false,
+        enumerable: false,
+        configurable: true,
+      },
+      exitCode: 0,
+    });
+  });
+
   it("aborts when the uncaughtException handler throws", async () => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
       stderr: "pipe",

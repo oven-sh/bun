@@ -2314,6 +2314,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        p.pop_scope();
         p.should_fold_typescript_constant_expressions =
             old_should_fold_typescript_constant_expressions;
 
@@ -2339,7 +2340,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             value_stmts.into_bump_slice_mut(),
             all_values_are_pure,
         )?;
-        p.pop_scope();
         Ok(())
     }
 

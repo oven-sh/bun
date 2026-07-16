@@ -1341,19 +1341,17 @@ impl Tag {
     }
 
     pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+        // This must only return `Some` when the operand is guaranteed to have
+        // no side effects. Array/object/class literals are omitted because
+        // their elements, properties, and static initializers can run code.
         Some(match tag {
-            Tag::EArray
-            | Tag::EObject
-            | Tag::EArrayJSON
-            | Tag::EObjectJSON
-            | Tag::ENull
-            | Tag::ERegExp => b"object",
+            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp => b"object",
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
             Tag::EBigInt => b"bigint",
             Tag::EString => b"string",
-            Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
+            Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
     }

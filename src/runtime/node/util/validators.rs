@@ -191,7 +191,8 @@ pub(crate) fn validate_uint32(
             value,
         ));
     }
-    if !value.is_any_int() {
+    let num = value.as_number();
+    if !num.is_finite() || num.fract() != 0.0 {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
@@ -202,9 +203,8 @@ pub(crate) fn validate_uint32(
             ),
         ));
     }
-    let num: i64 = value.as_int52();
-    let min: i64 = if greater_than_zero { 1 } else { 0 };
-    let max: i64 = i64::from(u32::MAX);
+    let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
+    let max: f64 = f64::from(u32::MAX);
     if num < min || num > max {
         let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(

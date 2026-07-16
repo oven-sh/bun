@@ -133,8 +133,9 @@ fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     Global::crash();
 }
 
-/// Entries that mark a directory as the root of its own project, ending the
-/// ancestor bunfig.toml walk in `load_config`.
+/// Entries marking a directory as the root of its own project, ending the
+/// ancestor bunfig.toml walk in `load_config`. A fresh directory with only a
+/// package.json is not a boundary until its first install writes a lockfile.
 const PROJECT_BOUNDARY_MARKERS: [&[u8]; 6] = [
     b".git",
     b"bun.lock",

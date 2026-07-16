@@ -7,12 +7,7 @@ import { join } from "path";
 // `bunfig.toml` at the project root was ignored when running `bun` from a
 // subdirectory, which broke `preload` (and every other config entry) in
 // monorepos where commands are invoked from inside a package directory.
-//
-// All tests here skip Windows: windows-2019 CI intermittently failed this
-// file with output/timeout flake unrelated to the fix (the behavior itself
-// is covered on Windows by "autoload ancestor bunfig.toml (sub cwd)" in
-// test/cli/install/bun-run-bunfig.test.ts).
-test.skipIf(process.platform === "win32").each([
+test.each([
   { label: "bun file.ts", argv: ["src/index.ts"] },
   { label: "bun run file.ts", argv: ["run", "src/index.ts"] },
 ])("preload in bunfig.toml is respected from a subdirectory ($label)", async ({ argv }) => {
@@ -37,7 +32,7 @@ test.skipIf(process.platform === "win32").each([
   expect(exitCode).toBe(0);
 });
 
-test.skipIf(process.platform === "win32")(
+test(
   "bunfig.toml preload with relative path works from project root",
   async () => {
     using dir = tempDir("bun-issue-29308-root", {
@@ -65,7 +60,7 @@ test.skipIf(process.platform === "win32")(
 // entries the ancestor bunfig.toml contributes. Before the append-fix in
 // loadPreload, the secondary loadConfig call from run_command.zig clobbered
 // CLI preloads when a parent bunfig.toml also had preload entries.
-test.skipIf(process.platform === "win32")(
+test(
   "CLI --preload is merged with ancestor bunfig.toml preload entries",
   async () => {
     using dir = tempDir("bun-issue-29308-merge", {
@@ -96,7 +91,7 @@ test.skipIf(process.platform === "win32")(
 // directory with its own lockfile or .git is that project's root, and a
 // bunfig.toml beyond it (e.g. in a repo that vendors the project) must not
 // apply. Covers both marker kinds.
-test.skipIf(process.platform === "win32").each([
+test.each([
   { label: "lockfile", marker: { "vendor/app/bun.lock": "" } },
   { label: ".git", marker: { "vendor/app/.git/HEAD": "" } },
 ])("ancestor walk stops at a nested project boundary ($label)", async ({ marker }) => {
@@ -124,7 +119,7 @@ test.skipIf(process.platform === "win32").each([
 
 // A lockfile at the project root must not hide a bunfig.toml sitting next to
 // it: within one directory the bunfig check wins over the boundary check.
-test.skipIf(process.platform === "win32")(
+test(
   "bunfig.toml next to the lockfile at the project root still applies",
   async () => {
     using dir = tempDir("bun-issue-29308-root-lock", {
@@ -151,11 +146,9 @@ test.skipIf(process.platform === "win32")(
 );
 
 // Guard against the ancestor walk stopping at a DIRECTORY named bunfig.toml.
-// Without the regular-file check, existsZ would treat the directory as a hit
+// Without the regular-file check, the walk would treat the directory as a hit
 // and the real bunfig.toml higher in the tree would be silently skipped.
-// Skipped on Windows: creating a directory literally named "bunfig.toml" is
-// awkward there and the guard is identical across platforms.
-test.skipIf(process.platform === "win32")(
+test(
   "directory named bunfig.toml in an ancestor does not short-circuit the walk",
   async () => {
     using dir = tempDir("bun-issue-29308-dir-named-bunfig", {

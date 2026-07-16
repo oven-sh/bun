@@ -12,6 +12,7 @@
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JSCommonJSExtensions.h"
@@ -43,90 +44,6 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionWrap);
 
 JSC_DECLARE_CUSTOM_GETTER(getterRequireFunction);
 JSC_DECLARE_CUSTOM_SETTER(setterRequireFunction);
-
-// This is a list of builtin module names that do not have the node prefix. It
-// also includes Bun's builtin modules, as well as Bun's thirdparty overrides.
-// The reason for overstuffing this list is so that uses that use these as the
-// 'external' option to a bundler will properly exclude things like 'ws' which
-// only work with Bun's native 'ws' implementation and not the JS one on NPM.
-static constexpr ASCIILiteral builtinModuleNames[] = {
-    "_http_agent"_s,
-    "_http_client"_s,
-    "_http_common"_s,
-    "_http_incoming"_s,
-    "_http_outgoing"_s,
-    "_http_server"_s,
-    "_stream_duplex"_s,
-    "_stream_passthrough"_s,
-    "_stream_readable"_s,
-    "_stream_transform"_s,
-    "_stream_wrap"_s,
-    "_stream_writable"_s,
-    "_tls_common"_s,
-    "_tls_wrap"_s,
-    "assert"_s,
-    "assert/strict"_s,
-    "async_hooks"_s,
-    "buffer"_s,
-    "bun:ffi"_s,
-    "bun:jsc"_s,
-    "bun:sqlite"_s,
-    "bun:test"_s,
-    "bun:wrap"_s,
-    "bun"_s,
-    "child_process"_s,
-    "cluster"_s,
-    "console"_s,
-    "constants"_s,
-    "crypto"_s,
-    "dgram"_s,
-    "diagnostics_channel"_s,
-    "dns"_s,
-    "dns/promises"_s,
-    "domain"_s,
-    "events"_s,
-    "fs"_s,
-    "fs/promises"_s,
-    "http"_s,
-    "http2"_s,
-    "https"_s,
-    "inspector"_s,
-    "inspector/promises"_s,
-    "module"_s,
-    "net"_s,
-    "os"_s,
-    "path"_s,
-    "path/posix"_s,
-    "path/win32"_s,
-    "perf_hooks"_s,
-    "process"_s,
-    "punycode"_s,
-    "querystring"_s,
-    "readline"_s,
-    "readline/promises"_s,
-    "repl"_s,
-    "stream"_s,
-    "stream/consumers"_s,
-    "stream/promises"_s,
-    "stream/web"_s,
-    "string_decoder"_s,
-    "sys"_s,
-    "timers"_s,
-    "timers/promises"_s,
-    "tls"_s,
-    "trace_events"_s,
-    "tty"_s,
-    "undici"_s,
-    "url"_s,
-    "util"_s,
-    "util/types"_s,
-    "v8"_s,
-    "vm"_s,
-    "wasi"_s,
-    "worker_threads"_s,
-    "ws"_s,
-    "zlib"_s,
-};
 
 template<std::size_t N, class T> consteval std::size_t countof(T (&)[N])
 {
@@ -655,15 +572,27 @@ static JSValue getSourceMapFunction(VM& vm, JSObject* moduleObject)
 
 static JSValue getBuiltinModulesObject(VM& vm, JSObject* moduleObject)
 {
-    MarkedArgumentBuffer args;
-    args.ensureCapacity(countof(builtinModuleNames));
+    auto names = Bun::builtinModuleNames();
 
-    for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
-        args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
+    MarkedArgumentBuffer args;
+    args.ensureCapacity(names.size());
+    for (auto& name : names) {
+        args.append(JSC::jsOwnedString(vm, String(name)));
     }
 
     auto* globalObject = defaultGlobalObject(moduleObject->globalObject());
-    return JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* array = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args));
+    // Neither building nor freezing a dense array of strings runs user code. The
+    // assertions are what let the exception-check validator see both of those
+    // ThrowScopes as checked before the next one opens at the same depth.
+    scope.assertNoException();
+
+    // Node freezes this array. Every reader shares one instance, so leaving it
+    // mutable lets one package's mutation leak into all the others.
+    JSC::objectConstructorFreeze(globalObject, array);
+    scope.assertNoException();
+    return array;
 }
 
 static JSValue getConstantsObject(VM& vm, JSObject* moduleObject)

@@ -299,6 +299,53 @@ it("Database.open", () => {
   new Database().close();
 });
 
+it("Database.interrupt interrupts an active iterator", () => {
+  const db = new Database(":memory:");
+  const iterator = db
+    .query(
+      "WITH RECURSIVE counter(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM counter WHERE value < 100000) SELECT value FROM counter",
+    )
+    .iterate();
+
+  expect(iterator.next().value).toEqual({ value: 1 });
+
+  db.interrupt();
+
+  try {
+    iterator.next();
+    throw new Error("Expected query to be interrupted");
+  } catch (error) {
+    expect(error).toBeInstanceOf(SQLiteError);
+    expect(error.code).toBe("SQLITE_INTERRUPT");
+    expect(error.errno).toBe(9);
+  }
+
+  expect(db.query("SELECT 1 AS value").get()).toEqual({ value: 1 });
+});
+
+it("Statement.interrupt interrupts an active iterator", () => {
+  const db = new Database(":memory:");
+  const stmt = db.query(
+    "WITH RECURSIVE counter(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM counter WHERE value < 100000) SELECT value FROM counter",
+  );
+  const iterator = stmt.iterate();
+
+  expect(iterator.next().value).toEqual({ value: 1 });
+
+  stmt.interrupt();
+
+  try {
+    iterator.next();
+    throw new Error("Expected query to be interrupted");
+  } catch (error) {
+    expect(error).toBeInstanceOf(SQLiteError);
+    expect(error.code).toBe("SQLITE_INTERRUPT");
+    expect(error.errno).toBe(9);
+  }
+
+  expect(db.query("SELECT 1 AS value").get()).toEqual({ value: 1 });
+});
+
 it("upsert cross-process, see #1366", () => {
   const dir = realpathSync(tmpdir()) + "/";
   const { exitCode } = spawnSync([bunExe(), import.meta.dir + "/sqlite-cross-process.js"], {

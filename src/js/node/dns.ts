@@ -2,6 +2,7 @@
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 const { isIP } = require("internal/net/isIP");
+const { hasObserver, startPerf, stopPerf } = require("internal/shared");
 const {
   validateFunction,
   validateArray,
@@ -264,6 +265,83 @@ function validateLookupOptions(options) {
   validateOrderOption(options);
 }
 
+// node:perf_hooks 'dns' entries. As in Node, an entry is recorded only when
+// the resolver operation was dispatched and completed successfully; each
+// helper wraps the native promise and is free when nothing observes 'dns'.
+const kPerfEntry = Symbol("kPerfEntry");
+
+// Detail fields mirror lib/dns.js `lookup`:
+// https://github.com/nodejs/node/blob/v25.2.1/lib/dns.js#L229-L248
+function observeLookup(hostname, options, promise) {
+  if (!hasObserver("dns")) return promise;
+  const ctx = {};
+  startPerf(ctx, kPerfEntry, {
+    type: "dns",
+    name: "lookup",
+    detail: {
+      hostname,
+      family: options.family ?? 0,
+      hints: options.flags ?? 0,
+      verbatim: options.order === "verbatim",
+      order: options.order,
+    },
+  });
+  return promise.then(res => {
+    // An empty result reaches the caller as ENODATA (see throwIfEmpty), so it
+    // records nothing, like every other failed lookup. The addresses are
+    // recorded in the shape and order the caller receives them.
+    if (res.length) {
+      sortByOrder(res, options.order);
+      const addresses = options.all ? res.map(mapLookupAll) : res.map(mapResolveX);
+      stopPerf(ctx, kPerfEntry, { detail: { addresses } });
+    }
+    return res;
+  });
+}
+
+// https://github.com/nodejs/node/blob/v25.2.1/lib/dns.js#L255-L296
+function observeLookupService(host, port, promise) {
+  if (!hasObserver("dns")) return promise;
+  const ctx = {};
+  startPerf(ctx, kPerfEntry, { type: "dns", name: "lookupService", detail: { host, port } });
+  return promise.then(res => {
+    // The native lookupService promise resolves with a [hostname, service] pair.
+    stopPerf(ctx, kPerfEntry, { detail: { hostname: res[0], service: res[1] } });
+    return res;
+  });
+}
+
+// `name` is Node's c-ares binding (and entry) name for the operation, e.g.
+// resolve4 -> "queryA", reverse -> "getHostByAddr". `detail.result` records
+// the wrapped promise's value, so callers pass the one the user observes.
+function observeQuery(name, host, promise, ttl?) {
+  if (!hasObserver("dns")) return promise;
+  const ctx = {};
+  startPerf(ctx, kPerfEntry, { type: "dns", name, detail: { host, ttl: !!ttl } });
+  return promise.then(result => {
+    stopPerf(ctx, kPerfEntry, { detail: { result } });
+    return result;
+  });
+}
+
+// resolve(hostname, "MX") records the same entry name as resolveMx():
+// https://github.com/nodejs/node/blob/v25.2.1/lib/internal/dns/utils.js#L293-L307
+function queryNameFor(rrtype) {
+  rrtype = "" + rrtype;
+  return "query" + rrtype.charAt(0).toUpperCase() + rrtype.slice(1).toLowerCase();
+}
+
+// Applies the requested result order to `res` in place and returns it.
+// Re-applying it is a no-op, so observeLookup may run it before the caller.
+function sortByOrder(res, order) {
+  if (order == "ipv4first") {
+    res.sort((a, b) => a.family - b.family);
+  } else if (order == "ipv6first") {
+    res.sort((a, b) => b.family - a.family);
+  }
+  return res;
+}
+
 function lookup(hostname, options, callback) {
   if (typeof hostname !== "string" && hostname) {
     throw $ERR_INVALID_ARG_TYPE("hostname", "string", hostname);
@@ -306,16 +384,11 @@ function lookup(hostname, options, callback) {
     return;
   }
 
-  dns
-    .lookup(hostname, options)
+  observeLookup(hostname, options, dns.lookup(hostname, options))
     .then(res => {
       throwIfEmpty(res);
 
-      if (options.order == "ipv4first") {
-        res.sort((a, b) => a.family - b.family);
-      } else if (options.order == "ipv6first") {
-        res.sort((a, b) => b.family - a.family);
-      }
+      sortByOrder(res, options.order);
 
       if (options?.all) {
         callback(null, res.map(mapLookupAll));
@@ -348,7 +421,7 @@ function lookupService(address, port, callback) {
 
   validateString(address);
 
-  dns.lookupService(address, port).then(
+  observeLookupService(address, port, dns.lookupService(address, port)).then(
     results => {
       callback(null, ...results);
     },
@@ -411,24 +484,21 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, rrtype)
-      .then(
-        results => {
-          switch (rrtype?.toLowerCase()) {
-            case "a":
-            case "aaaa":
-              callback(null, results.map(mapResolveX));
-              break;
-            default:
-              callback(null, results);
-              break;
-          }
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    let query = Resolver.#getResolver(this).resolve(hostname, rrtype);
+    switch (rrtype?.toLowerCase()) {
+      case "a":
+      case "aaaa":
+        query = query.then(promisifyResolveX(false));
+        break;
+    }
+    observeQuery(queryNameFor(rrtype), hostname, query).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolve4(hostname, options, callback) {
@@ -439,16 +509,19 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, "A")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery(
+      "queryA",
+      hostname,
+      Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+      options?.ttl,
+    ).then(
+      addresses => {
+        callback(null, addresses);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolve6(hostname, options, callback) {
@@ -459,121 +532,110 @@ var InternalResolver = class Resolver {
 
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, "AAAA")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery(
+      "queryAaaa",
+      hostname,
+      Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+      options?.ttl,
+    ).then(
+      addresses => {
+        callback(null, addresses);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveAny(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveAny(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryAny", hostname, Resolver.#getResolver(this).resolveAny(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveCname(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveCname(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryCname", hostname, Resolver.#getResolver(this).resolveCname(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveMx(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveMx(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryMx", hostname, Resolver.#getResolver(this).resolveMx(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveNaptr(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveNaptr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryNaptr", hostname, Resolver.#getResolver(this).resolveNaptr(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveNs(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveNs(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryNs", hostname, Resolver.#getResolver(this).resolveNs(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolvePtr(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolvePtr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryPtr", hostname, Resolver.#getResolver(this).resolvePtr(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveSrv(hostname, callback) {
     validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveSrv(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("querySrv", hostname, Resolver.#getResolver(this).resolveSrv(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveCaa(hostname, callback) {
@@ -581,16 +643,14 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .resolveCaa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryCaa", hostname, Resolver.#getResolver(this).resolveCaa(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveTxt(hostname, callback) {
@@ -598,32 +658,28 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .resolveTxt(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("queryTxt", hostname, Resolver.#getResolver(this).resolveTxt(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
   resolveSoa(hostname, callback) {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .resolveSoa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("querySoa", hostname, Resolver.#getResolver(this).resolveSoa(hostname)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   reverse(ip, callback) {
@@ -631,16 +687,14 @@ var InternalResolver = class Resolver {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
 
-    Resolver.#getResolver(this)
-      .reverse(ip)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    observeQuery("getHostByAddr", ip, Resolver.#getResolver(this).reverse(ip)).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   setLocalAddress(first, second) {
@@ -695,22 +749,14 @@ Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
 
 const promisifyLookup = order => res => {
   throwIfEmpty(res);
-  if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
-  } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
-  }
+  sortByOrder(res, order);
   const [{ address, family }] = res;
   return { address, family };
 };
 
 const promisifyLookupAll = order => res => {
   throwIfEmpty(res);
-  if (order == "ipv4first") {
-    res.sort((a, b) => a.family - b.family);
-  } else if (order == "ipv6first") {
-    res.sort((a, b) => b.family - a.family);
-  }
+  sortByOrder(res, order);
   return res.map(mapLookupAll);
 };
 
@@ -763,10 +809,11 @@ const promises = {
       return Promise.$resolve(options.all ? [obj] : obj);
     }
 
+    const res = observeLookup(hostname, options, dns.lookup(hostname, options));
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
+      return translateErrorCode(res.then(promisifyLookupAll(options.order)));
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
+    return translateErrorCode(res.then(promisifyLookup(options.order)));
   },
 
   lookupService(address, port) {
@@ -777,10 +824,12 @@ const promises = {
     validateString(address);
 
     try {
-      return translateErrorCode(dns.lookupService(address, port)).then(([hostname, service]) => ({
-        hostname,
-        service,
-      }));
+      return translateErrorCode(observeLookupService(address, port, dns.lookupService(address, port))).then(
+        ([hostname, service]) => ({
+          hostname,
+          service,
+        }),
+      );
     } catch (err) {
       if (err.name === "TypeError" || err.name === "RangeError") {
         throw err;
@@ -800,55 +849,65 @@ const promises = {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
     }
 
+    let query = dns.resolve(hostname, rrtype);
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
-      default:
-        return translateErrorCode(dns.resolve(hostname, rrtype));
+        query = query.then(promisifyResolveX(false));
+        break;
     }
+    return translateErrorCode(observeQuery(queryNameFor(rrtype), hostname, query));
   },
 
   resolve4(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)));
+    return translateErrorCode(
+      observeQuery("queryA", hostname, dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)), options?.ttl),
+    );
   },
 
   resolve6(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)));
+    return translateErrorCode(
+      observeQuery(
+        "queryAaaa",
+        hostname,
+        dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+        options?.ttl,
+      ),
+    );
   },
 
   resolveAny(hostname) {
-    return translateErrorCode(dns.resolveAny(hostname));
+    return translateErrorCode(observeQuery("queryAny", hostname, dns.resolveAny(hostname)));
   },
   resolveSrv(hostname) {
-    return translateErrorCode(dns.resolveSrv(hostname));
+    return translateErrorCode(observeQuery("querySrv", hostname, dns.resolveSrv(hostname)));
   },
   resolveTxt(hostname) {
-    return translateErrorCode(dns.resolveTxt(hostname));
+    return translateErrorCode(observeQuery("queryTxt", hostname, dns.resolveTxt(hostname)));
   },
   resolveSoa(hostname) {
-    return translateErrorCode(dns.resolveSoa(hostname));
+    return translateErrorCode(observeQuery("querySoa", hostname, dns.resolveSoa(hostname)));
   },
   resolveNaptr(hostname) {
-    return translateErrorCode(dns.resolveNaptr(hostname));
+    return translateErrorCode(observeQuery("queryNaptr", hostname, dns.resolveNaptr(hostname)));
   },
   resolveMx(hostname) {
-    return translateErrorCode(dns.resolveMx(hostname));
+    return translateErrorCode(observeQuery("queryMx", hostname, dns.resolveMx(hostname)));
   },
   resolveCaa(hostname) {
-    return translateErrorCode(dns.resolveCaa(hostname));
+    return translateErrorCode(observeQuery("queryCaa", hostname, dns.resolveCaa(hostname)));
   },
   resolveNs(hostname) {
-    return translateErrorCode(dns.resolveNs(hostname));
+    return translateErrorCode(observeQuery("queryNs", hostname, dns.resolveNs(hostname)));
   },
   resolvePtr(hostname) {
-    return translateErrorCode(dns.resolvePtr(hostname));
+    return translateErrorCode(observeQuery("queryPtr", hostname, dns.resolvePtr(hostname)));
   },
   resolveCname(hostname) {
-    return translateErrorCode(dns.resolveCname(hostname));
+    return translateErrorCode(observeQuery("queryCname", hostname, dns.resolveCname(hostname)));
   },
   reverse(ip) {
-    return translateErrorCode(dns.reverse(ip));
+    return translateErrorCode(observeQuery("getHostByAddr", ip, dns.reverse(ip)));
   },
 
   Resolver: class Resolver {
@@ -877,71 +936,85 @@ const promises = {
       } else if (typeof rrtype !== "string") {
         rrtype = null;
       }
+      let query = Resolver.#getResolver(this).resolve(hostname, rrtype);
       switch (rrtype?.toLowerCase()) {
         case "a":
         case "aaaa":
-          return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
-          );
-        default:
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
+          query = query.then(promisifyResolveX(false));
+          break;
       }
+      // The native resolver treats the null rrtype above as an A query.
+      return translateErrorCode(observeQuery(queryNameFor(rrtype ?? "A"), hostname, query));
     }
 
     resolve4(hostname, options) {
       return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+        observeQuery(
+          "queryA",
+          hostname,
+          Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+          options?.ttl,
+        ),
       );
     }
 
     resolve6(hostname, options) {
       return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+        observeQuery(
+          "queryAaaa",
+          hostname,
+          Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+          options?.ttl,
+        ),
       );
     }
 
     resolveAny(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveAny(hostname));
+      return translateErrorCode(observeQuery("queryAny", hostname, Resolver.#getResolver(this).resolveAny(hostname)));
     }
 
     resolveCname(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCname(hostname));
+      return translateErrorCode(
+        observeQuery("queryCname", hostname, Resolver.#getResolver(this).resolveCname(hostname)),
+      );
     }
 
     resolveMx(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveMx(hostname));
+      return translateErrorCode(observeQuery("queryMx", hostname, Resolver.#getResolver(this).resolveMx(hostname)));
     }
 
     resolveNaptr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNaptr(hostname));
+      return translateErrorCode(
+        observeQuery("queryNaptr", hostname, Resolver.#getResolver(this).resolveNaptr(hostname)),
+      );
     }
 
     resolveNs(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNs(hostname));
+      return translateErrorCode(observeQuery("queryNs", hostname, Resolver.#getResolver(this).resolveNs(hostname)));
     }
 
     resolvePtr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolvePtr(hostname));
+      return translateErrorCode(observeQuery("queryPtr", hostname, Resolver.#getResolver(this).resolvePtr(hostname)));
     }
 
     resolveSoa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSoa(hostname));
+      return translateErrorCode(observeQuery("querySoa", hostname, Resolver.#getResolver(this).resolveSoa(hostname)));
     }
 
     resolveSrv(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSrv(hostname));
+      return translateErrorCode(observeQuery("querySrv", hostname, Resolver.#getResolver(this).resolveSrv(hostname)));
     }
 
     resolveCaa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname));
+      return translateErrorCode(observeQuery("queryCaa", hostname, Resolver.#getResolver(this).resolveCaa(hostname)));
     }
 
     resolveTxt(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname));
+      return translateErrorCode(observeQuery("queryTxt", hostname, Resolver.#getResolver(this).resolveTxt(hostname)));
     }
 
     reverse(ip) {
-      return translateErrorCode(Resolver.#getResolver(this).reverse(ip));
+      return translateErrorCode(observeQuery("getHostByAddr", ip, Resolver.#getResolver(this).reverse(ip)));
     }
 
     setLocalAddress(first, second) {

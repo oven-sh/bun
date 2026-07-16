@@ -171,6 +171,48 @@ it("process.env defineProperty matches assignment semantics", () => {
   expect(process.env[""]).toBeUndefined();
 });
 
+it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
+  // new Worker(file, { env: {...} }) seeds process.env from a snapshot dict;
+  // writes inside the worker must still coerce to string, reject symbol keys,
+  // and reject accessor descriptors like Node's EnvSetter/EnvDefiner (Node
+  // installs those interceptors on the env ObjectTemplate regardless of the
+  // backing KVStore).
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(
+          \`
+          const out = {};
+          process.env.X = 42;
+          out.coerced = process.env.X;
+          try { process.env[Symbol()] = "v"; out.symbol = "no-throw"; }
+          catch (e) { out.symbol = e instanceof TypeError ? "TypeError" : String(e); }
+          try { Object.defineProperty(process.env, "G", { get() {} }); out.accessor = "no-throw"; }
+          catch (e) { out.accessor = e.code || String(e); }
+          out.seeded = process.env.SEEDED;
+          require("node:worker_threads").parentPort.postMessage(out);
+          \`,
+          { eval: true, env: { SEEDED: "yes" } },
+        );
+        w.once("message", m => console.log(JSON.stringify(m)));
+        w.once("error", e => { console.error(e); process.exit(1); });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: { coerced: "42", symbol: "TypeError", accessor: "ERR_INVALID_OBJECT_DEFINE_PROPERTY", seeded: "yes" },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it("process.env defineProperty routes through the env setter for accessor-backed keys", async () => {
   // Node's EnvDefiner delegates to EnvSetter, so defineProperty(env, "TZ", ...)
   // must both apply the time zone and leave the native TZ accessor intact for

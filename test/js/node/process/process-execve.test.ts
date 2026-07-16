@@ -247,6 +247,32 @@ describe.concurrent("process.execve", () => {
     expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "yes-inherited", exitCode: 0 });
   });
 
+  test.skipIf(isWindows)("inherits process.env when env is omitted with an empty TZ in the OS env", async () => {
+    // The TZ / NODE_TLS_REJECT_UNAUTHORIZED / BUN_CONFIG_VERBOSE_FETCH
+    // accessors read back undefined for an empty value; the execve env loop
+    // must skip those rather than rejecting the defaulted process.env with
+    // ERR_INVALID_ARG_VALUE naming an argument the caller never passed.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `try { process.execve("/definitely/does/not/exist", ["x"]); }
+         catch (e) { console.log(e.code); }`,
+      ],
+      env: { ...bunEnv, TZ: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+      stdout: "ENOENT",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test.skipIf(isWindows)("validates arguments", async () => {
     await using proc = Bun.spawn({
       cmd: [

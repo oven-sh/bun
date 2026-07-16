@@ -119,6 +119,15 @@ describe("Bun.wrapAnsi", () => {
       expect(Bun.wrapAnsi(input, 3, { wordWrap: false })).toBe("\x9B31mabc\x1b[39m\n\x1b[31mdef\x9B39m");
     });
 
+    test("hard wrap keeps a non-SGR C1 CSI (final byte != 'm') intact", () => {
+      // \x9B2K = erase-in-line; wrapWord must end the escape on 'K' (any CSI
+      // final byte in 0x40-0x7E), same as it already does for ESC [ 2 K.
+      expect(Bun.wrapAnsi("\x9B2Kabcdef", 3, { hard: true })).toBe("\x9B2Kabc\ndef");
+      expect(Bun.wrapAnsi("\x9B2Kabcdef", 3, { hard: true })).toBe(
+        Bun.wrapAnsi("\x1b[2Kabcdef", 3, { hard: true }).replace("\x1b[", "\x9B"),
+      );
+    });
+
     test("C1 SGR is closed and reopened across a soft line break", () => {
       const input = "\x9B31mhello world\x9B39m";
       expect(Bun.wrapAnsi(input, 5)).toBe("\x9B31mhello\x1b[39m\n\x1b[31mworld\x9B39m");

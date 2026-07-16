@@ -282,6 +282,14 @@ impl Handlers {
         }
 
         let global_object = self.global_object;
+        // Callers reach here from `callback.call() -> Err`: when the Err is a
+        // termination exception (worker.terminate() fired mid-callback) it
+        // cannot be cleared, so entering JS again trips executeCallImpl's
+        // `assertNoException`. Same guard as EventLoop::run_callback and
+        // UDPSocket::call_error_handler.
+        if global_object.has_exception() {
+            return false;
+        }
         let on_error = self.on_error();
 
         if on_error.is_empty() {

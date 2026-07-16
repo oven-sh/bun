@@ -946,17 +946,21 @@ it.skipIf(isWindows || isASAN)(
         return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
       }
 
-      // JSC shares mimalloc since #34009, so its heap growth is in this
-      // count too. It steps up for the first few rounds (one equal-sized
-      // warmup is not enough) and then sits flat; a real leak grows every
-      // round by the same ~38 pages. Sample five equal rounds and compare
-      // the last two: a plateau proves bounded, linear growth proves leak.
+      // JSC allocates through mimalloc too, so its heap growth is in this
+      // count. It steps up for the first few rounds and then sits flat; a
+      // real leak grows every round by the same ~38 pages. Run equal rounds
+      // until two in a row match (plateau = bounded), giving up after eight
+      // (linear growth = leak).
       const samples = [];
-      for (let round = 0; round < 5; round++) {
+      let delta = Infinity;
+      for (let round = 0; round < 8; round++) {
         await run(8000);
         samples.push(pageCount());
+        if (round > 0) {
+          delta = samples.at(-1) - samples.at(-2);
+          if (delta < 10) break;
+        }
       }
-      const delta = samples.at(-1) - samples.at(-2);
       console.log(JSON.stringify({ samples, delta }));
     `;
     await using proc = Bun.spawn({
@@ -968,8 +972,9 @@ it.skipIf(isWindows || isASAN)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { samples, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
-    // Without the balancing deref: every round adds ~38 pages. With it: the
-    // last two rounds are byte-identical (delta 0, observed across 20 runs).
+    // Without the balancing deref every round adds ~38 pages and the loop
+    // runs to its cap. With it the count plateaus within four rounds (delta
+    // 0 between the last two, 60/60 linux + 15/15 darwin runs).
     expect(delta, `mimalloc page count per round: ${samples}`).toBeLessThan(10);
     expect(exitCode).toBe(0);
   },

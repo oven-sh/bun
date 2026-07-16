@@ -554,8 +554,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
+    /* delay == 0 means "enable SO_KEEPALIVE, keep the kernel-default idle". */
     if (delay == 0)
-        return -1;
+        return 0;
 
 
 #ifdef TCP_KEEPIDLE
@@ -592,14 +593,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
-    if (delay < 1) {
-        #ifdef LIBUS_USE_LIBUV
-            return -4071; //UV_EINVAL;
-        #else
-            //TODO: revisit this when IOCP loop is implemented without libuv here
-            return 4071;
-        #endif
-    }
+    if (delay == 0)
+        return 0;
+
     if (setsockopt(fd,
                     IPPROTO_TCP,
                     TCP_KEEPALIVE,
@@ -1274,7 +1270,8 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
                 return LIBUS_SOCKET_ERROR;
             }
 
-            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
+            // `path` is a ptr+len pair (not NUL-terminated), so bound the basename copy with %.*s.
+            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%.*s", socket_dir_fd, (int)(path_len - dirname_len), path + dirname_len);
             if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
                 close(socket_dir_fd);
                 errno = ENAMETOOLONG;

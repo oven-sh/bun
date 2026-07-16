@@ -352,6 +352,40 @@ it(".query works", () => {
   }
 });
 
+it(".query skips empty-key pairs instead of terminating the parse", () => {
+  const { dir } = make(["posts.tsx", "posts/[id].tsx"]);
+
+  const router = new Bun.FileSystemRouter({
+    dir,
+    style: "nextjs",
+  });
+
+  // An empty-key pair ("=value") should be skipped, not treated as end-of-query.
+  // Previously "?=v&x=1&y=2" yielded {} and "?x=1&=v&y=2" dropped y.
+  for (const [current, expected] of [
+    ["/posts?x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?=v&x=1&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&=v&y=2", { x: "1", y: "2" }],
+    ["/posts?x=1&y=2&=v", { x: "1", y: "2" }],
+    ["/posts?=v", {}],
+    ["/posts?=&x=1", { x: "1" }],
+    ["/posts?==&x=1", { x: "1" }],
+    ["/posts?=v&=w&x=1", { x: "1" }],
+    ["/posts?&&&x=1", { x: "1" }],
+    ["/posts?a=%20&=v&b=2", { a: " ", b: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+
+  // Same scanner is used when path params are present (init_with_scanner path).
+  for (const [current, expected] of [
+    ["/posts/123?=v&x=1&y=2", { id: "123", x: "1", y: "2" }],
+    ["/posts/123?x=1&=v&y=2", { id: "123", x: "1", y: "2" }],
+  ] as const) {
+    expect({ input: current, query: router.match(current)!.query }).toEqual({ input: current, query: expected });
+  }
+});
+
 it("reload() works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);
@@ -743,13 +777,44 @@ it("match() does not panic on a leading '?' or a path that percent-decodes to em
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
+  // These inputs do not start with '/', so they are not valid path strings and
+  // must not match any route (including the index route). The subprocess still
+  // proves the original invariant: no panic on degenerate input.
   expect(JSON.parse(stdout.trim())).toEqual({
-    "?": { name: "/", query: {} },
-    "?foo=bar": { name: "/", query: { foo: "bar" } },
-    "%PUBLIC_URL%": { name: "/", query: {} },
-    "%PUBLIC_URL%?x=1": { name: "/", query: { x: "1" } },
+    "?": null,
+    "?foo=bar": null,
+    "%PUBLIC_URL%": null,
+    "%PUBLIC_URL%?x=1": null,
   });
   expect(exitCode).toBe(0);
+});
+
+it("match() returns null when the path string does not start with '/'", () => {
+  const { dir } = make(["index.tsx", "top.tsx", "op.tsx", "sub/[id].tsx"]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Control: '/'-prefixed inputs resolve.
+  expect(router.match("/top")?.name).toBe("/top");
+  expect(router.match("/op")?.name).toBe("/op");
+  expect(router.match("/sub/x")).toMatchObject({ name: "/sub/[id]", params: { id: "x" } });
+  expect(router.match("/")?.name).toBe("/");
+  expect(router.match("/?q=1")).toMatchObject({ name: "/", query: { q: "1" } });
+  expect(router.match("")?.name).toBe("/");
+
+  // URLPath::parse used to strip byte 0 unconditionally, so any single junk byte
+  // in the '/' position produced a match against the rest of the string.
+  for (const input of ["Xtop", " top", "\ttop", "\\top", ".top", "%58top", "%2Ftop"]) {
+    expect({ input, match: router.match(input) }).toEqual({ input, match: null });
+  }
+  // The bare name (no prefix at all) must not match either: previously "top"
+  // became "op" and matched the /op route.
+  expect(router.match("top")).toBeNull();
+  expect(router.match("ttop")).toBeNull();
+  // Dynamic routes were affected the same way.
+  expect(router.match("Xsub/x")).toBeNull();
+  expect(router.match("sub/x")).toBeNull();
+  // A leading '?' has no path component and must not fall through to index.
+  expect(router.match("?anything")).toBeNull();
 });
 
 it("reload() while Bun.build() resolves the same directory", async () => {
@@ -771,17 +836,26 @@ it("reload() while Bun.build() resolves the same directory", async () => {
         style: "nextjs",
         fileExtensions: [".tsx"],
       });
-      const builds = Array.from({ length: 4 }, () =>
-        Bun.build({ entrypoints, target: "bun", throw: false }),
-      );
+      // The first build completes with generation 0 and the bundle thread then
+      // bumps its generation, so every later build's resolver re-reads the
+      // directory listing in place. reload() iterates the same listing on the
+      // main thread, and that in-place re-read is what the reload loop races.
+      await Bun.build({ entrypoints, target: "bun", throw: false });
       let matches = 0;
-      for (let i = 0; i < 50; i++) {
-        router.reload();
-        const m = router.match("/p7");
-        if (m && m.filePath.endsWith("p7.tsx")) matches++;
+      let buildsOk = true;
+      for (let round = 0; round < 40; round++) {
+        const builds = Array.from({ length: 4 }, () =>
+          Bun.build({ entrypoints, target: "bun", throw: false }),
+        );
+        for (let i = 0; i < 50; i++) {
+          router.reload();
+          const m = router.match("/p7");
+          if (m && m.filePath.endsWith("p7.tsx")) matches++;
+        }
+        const results = await Promise.all(builds);
+        buildsOk &&= results.every(r => r.success);
       }
-      const results = await Promise.all(builds);
-      console.log("matches", matches, "builds-ok", results.every(r => r.success));
+      console.log("matches", matches, "builds-ok", buildsOk);
     `,
   };
   for (let i = 1; i <= 40; i++) {
@@ -798,8 +872,12 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("matches 50 builds-ok true");
-  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
 it("loads routes from a directory already cached by Bun.build()", async () => {
@@ -832,6 +910,10 @@ it("loads routes from a directory already cached by Bun.build()", async () => {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(normalizeBunSnapshot(stdout, String(dir))).toBe("/a /b /sub/c /b");
-  expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "/a /b /sub/c /b", stderr: "", exitCode: 0, signalCode: null });
 });

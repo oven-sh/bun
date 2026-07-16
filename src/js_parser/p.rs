@@ -6452,7 +6452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }]);
             let _ = arena;
 
-            if self.enclosing_namespace_arg_ref.is_none() {
+            if self.current_scope == self.module_scope {
                 // Top-level namespace: "var"
                 stmts.push(self.s(
                     S::Local {

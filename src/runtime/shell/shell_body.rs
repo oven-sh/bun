@@ -988,14 +988,10 @@ impl<'a> ShellSrcBuilder<'a> {
         if invalid {
             return Ok(false);
         }
-        // Empty interpolated values must still produce an argument (e.g. `${''}` should
-        // pass "" as an arg). Route through appendJSStrRef so the \x08 marker is recognized
-        // by the lexer regardless of quote context (e.g. inside single quotes).
-        if ALLOW_ESCAPE && bunstr.length() == 0 {
-            self.append_js_str_ref(bunstr)?;
-            return Ok(true);
-        }
         if ALLOW_ESCAPE {
+            // `needs_escape_bunstr` is true for empty strings: `${''}` must still
+            // produce an argument. Routing through appendJSStrRef makes the \x08
+            // marker recognized regardless of quote context (e.g. inside single quotes).
             if needs_escape_bunstr(bunstr) || is_if_clause_keyword_bunstr(bunstr) {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
@@ -1046,13 +1042,8 @@ impl<'a> ShellSrcBuilder<'a> {
     }
 
     pub fn append_latin1_impl(&mut self, latin1: &[u8]) -> Result<(), bun_alloc::AllocError> {
-        let non_ascii_idx = strings::first_non_ascii(latin1).unwrap_or(0);
-
-        if non_ascii_idx > 0 {
-            self.append_utf8_impl(&latin1[..non_ascii_idx as usize])?;
-        }
-
-        // Move the Vec out, transform it, and store it back.
+        // `allocate_latin1_into_utf8_with_list` appends ALL of `latin1` after `len`,
+        // including its leading ASCII run; pre-appending any of it would duplicate it.
         let len = self.outbuf.len();
         let buf = core::mem::take(self.outbuf);
         *self.outbuf = strings::allocate_latin1_into_utf8_with_list(buf, len, latin1);

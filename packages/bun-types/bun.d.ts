@@ -6200,11 +6200,12 @@ declare module "bun" {
     /**
      * Enable/disable keep-alive functionality, and optionally set the initial delay before the first keepalive probe is sent on an idle socket.
      * Set `initialDelay` (in milliseconds) to set the delay between the last data packet received and the first keepalive probe.
+     * Setting `0` for `initialDelay` (the default) will leave the value unchanged from the default (or previous) setting.
      * Only available for already connected sockets; returns `false` otherwise.
      *
      * Enabling the keep-alive functionality sets the following socket options:
      * SO_KEEPALIVE=1
-     * TCP_KEEPIDLE=initialDelay
+     * TCP_KEEPIDLE=initialDelay/1000
      * TCP_KEEPCNT=10
      * TCP_KEEPINTVL=1
      * @param enable Default: `false`
@@ -7908,8 +7909,14 @@ declare module "bun" {
 
     /**
      * Write data to the terminal.
+     *
+     * All bytes are accepted; any portion that cannot be flushed to the PTY
+     * immediately is buffered and delivered later. The `drain` callback fires
+     * once buffered data has been flushed. Do not re-send any part of `data`
+     * based on the return value.
+     *
      * @param data The data to write (string or BufferSource)
-     * @returns The number of bytes written
+     * @returns The number of bytes accepted (the byte length of `data`)
      */
     write(data: string | BufferSource): number;
 

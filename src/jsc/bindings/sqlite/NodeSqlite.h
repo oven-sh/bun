@@ -60,9 +60,11 @@ static constexpr size_t kNodeSqliteLimitCount = 11;
 //                 deletes the orphaned handle on its next entry point
 //   inUse       — a sqlite3session_changeset/patchset is on the C stack for
 //                 this handle (it re-enters the authorizer via its internal
-//                 SAVEPOINT/SELECT); session.close() refuses and
-//                 deleteTrackedSessions() skips so the handle isn't freed
-//                 under sessionGenerateChangeset()
+//                 SAVEPOINT/SELECT). session.close()/Symbol.dispose refuse
+//                 while set. The BusyScope taken before inUse is set means
+//                 deleteTrackedSessions()/sweepOrphanedSessions() are never
+//                 reached while any record is inUse; the sweep loops ASSERT
+//                 that, rather than branching on it.
 struct NodeSqliteSessionRecord : public WTF::RefCounted<NodeSqliteSessionRecord> {
     sqlite3_session* handle { nullptr };
     bool dbGone { false };

@@ -1494,6 +1494,29 @@ describe("serialize() / deserialize()", () => {
 });
 
 describe("createTagStore()", () => {
+  test("reusing the same SQL while a tag.iterate() iterator is live invalidates the iterator", () => {
+    // Deliberate divergence: Node's SQLTagStore resets the cached statement
+    // without bumping reset_generation_, so the iterator silently re-yields
+    // from row 1 (wrong data) instead of throwing. Bun throws
+    // ERR_INVALID_STATE. A tag call with DIFFERENT SQL is a cache miss and
+    // leaves the iterator alone.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1),(2),(3)");
+    const sql = db.createTagStore();
+
+    const it = sql.iterate`SELECT n FROM t ORDER BY n`;
+    expect(it.next().value).toEqual({ n: 1 });
+    expect(sql.get`SELECT n FROM t ORDER BY n`).toEqual({ n: 1 });
+    expect(() => it.next()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+
+    const it2 = sql.iterate`SELECT n FROM t WHERE n > 0 ORDER BY n`;
+    expect(it2.next().value).toEqual({ n: 1 });
+    sql.get`SELECT n FROM t WHERE n > 1`;
+    expect(it2.next().value).toEqual({ n: 2 });
+    it2.return();
+    db.close();
+  });
+
   test("caches prepared statements by template-literal shape", () => {
     const db = new DatabaseSync(":memory:");
     db.exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)");

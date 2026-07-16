@@ -978,6 +978,9 @@ extern "C" void Bun__closeAllNodeSqliteDatabasesForTermination(JSC::JSGlobalObje
 void JSDatabaseSync::deleteTrackedSessions()
 {
     for (auto& record : m_sessions) {
+        // Every caller is gated on m_busyDepth == 0 and inUse is only set
+        // inside a BusyScope, so this can never see a live changeset().
+        ASSERT(!record->inUse);
         if (record->handle) {
             sqlite3session_delete(record->handle);
             record->handle = nullptr;
@@ -3266,10 +3269,10 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
         return throwNodeState(globalObject, scope, "session is already generating a changeset"_s);
     }
     // sqlite3session_changeset/patchset internally run SAVEPOINT + prepared
-    // SELECTs on the connection, which fires the authorizer. A BusyScope
-    // defers db.close()'s sqlite3_close_v2/deleteTrackedSessions; inUse
-    // refuses session.close() and makes the db's session sweep skip this
-    // handle so it isn't freed under sessionGenerateChangeset().
+    // SELECTs on the connection, which fires the authorizer. BusyScope
+    // defers db.close() (and so deleteTrackedSessions/sweepOrphanedSessions)
+    // until this frame unwinds; inUse refuses session.close()/Symbol.dispose
+    // so the handle isn't freed under sessionGenerateChangeset().
     JSDatabaseSync::BusyScope busy { db };
     record->inUse = true;
     sqlite3* conn = db->connection();
@@ -3695,6 +3698,12 @@ JSStatementSync* JSNodeSqliteTagStore::prepare(JSGlobalObject* globalObject, Thr
     // reason.
     sqlite3_stmt* stmt = stmtObj->statement();
     sqlite3_reset(stmt);
+    // Deliberate divergence from Node v26.3.0: Node's SQLTagStore calls raw
+    // sqlite3_reset and never bumps the statement's reset_generation_, so an
+    // iterator from tag.iterate`…` silently re-yields from row 1 after any
+    // other tag call on the same SQL hits the LRU cache and resets it. Bump
+    // here so that iterator throws ERR_INVALID_STATE instead of returning
+    // wrong rows.
     stmtObj->bumpResetGeneration();
     sqlite3_clear_bindings(stmt);
     int paramCount = sqlite3_bind_parameter_count(stmt);

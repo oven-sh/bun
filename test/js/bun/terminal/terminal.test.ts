@@ -660,9 +660,12 @@ describe("Bun.Terminal", () => {
       terminal.setRawMode(true);
 
       // First write is below CHUNK_SIZE so it buffers; second write exceeds
-      // CHUNK_SIZE so the combined buffer is flushed synchronously inside
-      // write(). The buffered→drained transition happens during the second
-      // with_mut call, which must still surface as a drain callback.
+      // CHUNK_SIZE (4K here) but fits in the kernel PTY input queue, so the
+      // combined buffer is flushed synchronously inside write() and drain
+      // must fire from the had_buffered && !has_pending check. On Apple
+      // Silicon CHUNK_SIZE is 16K so the second write also buffers and the
+      // test resolves via the async-poll path instead; the sync-flush branch
+      // has no target-specific code so Linux coverage is the regression guard.
       expect(terminal.write("hello")).toBe(5);
       expect(terminal.write(Buffer.alloc(5000, 66))).toBe(5000);
 

@@ -3689,12 +3689,12 @@ Server.prototype[kRealListen] = function (
     }
   }
 
-  // Unref the handle if the server was unref'ed prior to listening
-  if (this._unref) this.unref();
-
   if (netServerListen.hasSubscribers) {
     netServerListen.asyncEnd.publish({ server: this });
   }
+
+  // Unref the handle if the server was unref'ed prior to listening
+  if (this._unref) this.unref();
 
   // We must schedule the emitListeningNextTick() only after the next run of
   // the event loop's IO queue. Otherwise, the server may not actually be listening

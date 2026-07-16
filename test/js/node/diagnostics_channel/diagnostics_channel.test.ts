@@ -381,6 +381,7 @@ describe("node:http server channels", () => {
     // Node's parserOnIncoming returns early for upgrades before the response
     // is constructed, so only the normal request should publish here.
     const counts = { created: 0, start: 0, finish: 0 };
+    let upgradeSeen = false;
     const onCreated = () => counts.created++;
     const onStart = () => counts.start++;
     const onFinish = () => counts.finish++;
@@ -390,6 +391,7 @@ describe("node:http server channels", () => {
 
     const server = createServer((req, res) => res.end("ok"));
     server.on("upgrade", (req, socket) => {
+      upgradeSeen = true;
       socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
     });
     try {
@@ -407,6 +409,8 @@ describe("node:http server channels", () => {
       sock.on("error", onSockErr);
       sock.on("close", onUpgraded);
       await upgraded;
+      expect(upgradeSeen).toBe(true);
+      expect(counts).toEqual({ created: 0, start: 0, finish: 0 });
 
       const response = await fetch(`http://127.0.0.1:${port}/`);
       expect(await response.text()).toBe("ok");

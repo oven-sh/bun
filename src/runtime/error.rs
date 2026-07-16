@@ -536,13 +536,6 @@ impl From<bun_shell_parser::braces::ParserError> for Error {
     }
 }
 
-impl From<bun_parsers::toml::lexer::Error> for Error {
-    #[inline]
-    fn from(e: bun_parsers::toml::lexer::Error) -> Self {
-        Self::Parsers(e.into())
-    }
-}
-
 impl From<bun_jsc::JsTerminated> for Error {
     #[inline]
     fn from(_: bun_jsc::JsTerminated) -> Self {

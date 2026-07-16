@@ -26,6 +26,10 @@ pub struct Options {
     pub scope: Npm::registry::Scope,
 
     pub registries: Npm::registry::Map,
+    /// `.npmrc` `//host/path/:*=` auth entries that do not match any
+    /// configured registry. Consulted by tarball downloads when
+    /// `dist.tarball` points at a different origin than the registry.
+    pub tarball_url_auth: Vec<Npm::registry::Scope>,
     pub cache_directory: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
@@ -104,6 +108,7 @@ impl Default for Options {
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
+            tarball_url_auth: Vec::new(),
             cache_directory: b"",
             enable: Enable::default(),
             do_: Do::default(),
@@ -433,6 +438,11 @@ impl Options {
                         Npm::registry::Scope::from_api(name, registry, env)?,
                     )?;
                 }
+            }
+
+            for registry_ in &config.tarball_url_auth {
+                self.tarball_url_auth
+                    .push(Npm::registry::Scope::from_api(b"", registry_.clone(), env)?);
             }
 
             if let Some(ca) = &config.ca {

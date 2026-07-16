@@ -81,6 +81,19 @@ The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/runti
 myorg = { url = "http://localhost:4873/", username = "myusername", password = "$NPM_PASSWORD" }
 ```
 
+#### Tarballs served from a different host than the registry
+
+Bun only forwards a registry's `Authorization` header to tarball downloads from the same origin as that registry. If your registry serves package manifests from one host and tarballs from a separate authenticated host (for example, Artifactory or Nexus with a CDN), add an auth entry for the tarball host too:
+
+```ini .npmrc icon="npm"
+@myorg:registry=https://packages.example.com/npm/
+//packages.example.com/npm/:_authToken=${NPM_TOKEN}
+# dist.tarball points at a separate authenticated host:
+//cdn.example.com/:_authToken=${NPM_TOKEN}
+```
+
+Bun looks up tarball auth by the host and path prefix of the download URL, the same way npm does.
+
 ### `link-workspace-packages`: Control workspace package installation
 
 Controls how workspace packages are installed when available locally:

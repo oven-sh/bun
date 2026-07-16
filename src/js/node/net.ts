@@ -164,10 +164,9 @@ function hasNativeLoopHold(self) {
   const upgraded = self[kupgraded];
   return !upgraded || upgraded instanceof Socket;
 }
-// libuv deactivates the handle at UV_EOF/readStop and a pending uv_write
-// holds the loop via active_reqs; mirror that: unref once reading has stopped
-// (kended or kPausedUnref) and no native write is pending. Called from FIN,
-// read backpressure, and drain. _write re-refs so a post-FIN write still holds.
+// libuv deactivates the handle at UV_EOF/readStop and a pending uv_write holds
+// the loop via active_reqs; mirror that: unref once reading has stopped (kended
+// or kPausedUnref) and no native write is pending. _write re-refs on backpressure.
 function maybeUnrefIdle(self, socket) {
   if ((self[kended] || self[kPausedUnref]) && !self[kwriteCallback] && !self[kUserUnrefed]) socket.unref();
 }
@@ -2105,9 +2104,9 @@ Socket.prototype.resume = function resume() {
   // pause-then-resume sequence is symmetric. Gated on the pause flag so a
   // socket that was never paused (e.g. a wrapped duplex with no fd) is not
   // newly pinned to the loop.
-  if (this[kPausedUnref] && !this[kUserUnrefed]) {
-    this._handle?.ref?.();
+  if (this[kPausedUnref]) {
     this[kPausedUnref] = false;
+    if (!this[kUserUnrefed]) this._handle?.ref?.();
   }
   return Duplex.prototype.resume.$call(this);
 };
@@ -2182,9 +2181,9 @@ Socket.prototype.read = function read(size) {
     // Restarting kernel reads makes the handle hold the loop open again;
     // mirror resume()'s re-ref or a paused-then-read() socket waits for
     // data without keeping the process alive.
-    if (this[kPausedUnref] && !this[kUserUnrefed]) {
-      this._handle?.ref?.();
+    if (this[kPausedUnref]) {
       this[kPausedUnref] = false;
+      if (!this[kUserUnrefed]) this._handle?.ref?.();
     }
   }
   return Duplex.prototype.read.$call(this, size);
@@ -2198,9 +2197,9 @@ Socket.prototype._read = function _read(size) {
     socket?.resume?.();
     // See read() above - the Readable machinery's pull path must also
     // restore the handle's hold on the loop.
-    if (this[kPausedUnref] && !this[kUserUnrefed]) {
-      socket?.ref?.();
+    if (this[kPausedUnref]) {
       this[kPausedUnref] = false;
+      if (!this[kUserUnrefed]) socket?.ref?.();
     }
   }
 };

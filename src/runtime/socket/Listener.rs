@@ -575,7 +575,8 @@ impl Listener {
         let s = this_socket;
         s.ref_();
         // Each accepted socket holds the loop via its own poll_ref so
-        // node:net's per-socket unref() is meaningful (balanced in mark_inactive).
+        // node:net's per-socket unref() is meaningful. Balanced in
+        // mark_inactive, or in on_client_connect's accept-failure branch.
         s.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
         if let Some(default_data) = listener.strong_data.get().get() {
             let global = listener.handlers.global_object;
@@ -1646,6 +1647,13 @@ impl WindowsNamedPipeListeningContext {
         };
         if result.is_err() {
             // connection dropped
+            // on_open will never dispatch, so balance on_name_pipe_created's poll_ref
+            // ref here; mark_inactive (the normal release) is unreachable.
+            match socket {
+                PipeSocketType::Tls(s) => s.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx())),
+                PipeSocketType::Tcp(s) => s.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx())),
+                PipeSocketType::None => {}
+            }
             // Release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
             // deferred path is required because `get_accepted_by` may have already `uv_pipe_init`'d
             // the client's inner handle on the loop; freeing the backing storage in-callback

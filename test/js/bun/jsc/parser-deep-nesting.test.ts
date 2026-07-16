@@ -14,9 +14,10 @@ for (const [name, open, close] of [
   test(`deeply nested ${name} passed to eval() throws RangeError instead of hanging`, async () => {
     // 50000 is far beyond the stack limit on every platform and build config;
     // before the fix this hung forever (killed by the spawn timeout below).
+    const depth = 50000;
     const fixture = `
-      const src = "const y = " + Buffer.alloc(50000, ${JSON.stringify(open)}).toString()
-        + "1" + Buffer.alloc(50000, ${JSON.stringify(close)}).toString() + ";";
+      const src = "const y = " + Buffer.alloc(${depth * open.length}, ${JSON.stringify(open)}).toString()
+        + "1" + Buffer.alloc(${depth * close.length}, ${JSON.stringify(close)}).toString() + ";";
       try {
         eval(src);
         console.log("no-throw");

@@ -422,10 +422,7 @@ export const webkit: Dependency = {
       // into depLibs for full and link-only modes. The /WHOLEARCHIVE: for
       // the thunk is added at the link step (bun.ts).
       if (cfg.windows && cfg.asan) {
-        libs.push(
-          "lib/clang_rt.asan_dynamic-x86_64.lib",
-          "lib/clang_rt.asan_static_runtime_thunk-x86_64.lib",
-        );
+        libs.push("lib/clang_rt.asan_dynamic-x86_64.lib", "lib/clang_rt.asan_static_runtime_thunk-x86_64.lib");
       }
 
       const includes = ["include"];

@@ -785,10 +785,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // there is no bun-webkit-windows-amd64-debug-asan. Fail early with a clear
   // message rather than 404ing on the tarball fetch.
   if (windows && asan && debug) {
-    throw new BuildError(
-      "Windows ASAN is release-only (no bun-webkit-windows-amd64-debug-asan prebuilt exists)",
-      { hint: "Use --profile=release-asan, or build the missing WebKit variant first" },
-    );
+    throw new BuildError("Windows ASAN is release-only (no bun-webkit-windows-amd64-debug-asan prebuilt exists)", {
+      hint: "Use --profile=release-asan, or build the missing WebKit variant first",
+    });
   }
 
   // Assertions: default on in debug OR asan. ASAN coupling is ABI-critical:

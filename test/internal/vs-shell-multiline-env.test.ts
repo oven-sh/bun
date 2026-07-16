@@ -56,5 +56,4 @@ test.skipIf(!isWindows || !existsSync(vswhere))(
     expect(stderr).not.toContain("invalid JSC environment variable");
     expect(exitCode).toBe(0);
   },
-  60_000,
 );

@@ -826,6 +826,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     "fixture.ts": /* ts */ `
       import path from "path";
       const pagesDir = path.join(import.meta.dir, "pages");
+      const pagesDirPosix = pagesDir.replaceAll(path.sep, "/");
       const entrypoints: string[] = [];
       for (let i = 1; i <= 40; i++) {
         entrypoints.push(path.join(pagesDir, "p" + i + ".tsx"));
@@ -858,7 +859,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
         // Entry after every bust+reread; a torn value surfaces as a
         // filePath that isn't the absolute .tsx path.
         for (const fp of Object.values(router.routes)) {
-          pathsOk &&= typeof fp === "string" && fp.startsWith(pagesDir) && fp.endsWith(".tsx");
+          pathsOk &&= typeof fp === "string" && fp.startsWith(pagesDirPosix) && fp.endsWith(".tsx");
         }
         const results = await Promise.all(builds);
         buildsOk &&= results.every(r => r.success);

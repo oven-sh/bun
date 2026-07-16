@@ -835,6 +835,28 @@ mod _async_tasks {
                     let args: &args::Readv = args_as!(args::Readv);
                     let fd = args.fd.uv();
                     let bufs = &args.buffers.buffers;
+                    if bufs.is_empty() {
+                        // uv_fs_read(nbufs==0) returns UV_EINVAL synchronously
+                        // (no callback); surface it as Node does.
+                        // SAFETY: identity write — `R == ret::Readv` for this `F`.
+                        unsafe {
+                            core::ptr::write(
+                                &mut task.result as *mut Maybe<R> as *mut Maybe<ret::Readv>,
+                                Err(sys::Error {
+                                    errno: SystemErrno::EINVAL as _,
+                                    syscall: sys::Tag::read,
+                                    fd: args.fd,
+                                    ..Default::default()
+                                }),
+                            )
+                        };
+                        let task_ptr: *mut Self = task;
+                        task.global_object()
+                            .bun_vm()
+                            .event_loop_mut()
+                            .enqueue_task(Task::init(task_ptr));
+                        return task.promise.value();
+                    }
                     let pos: i64 = args.position.map(|p| p as i64).unwrap_or(-1);
                     let sum: u64 = bufs.iter().map(|b| b.slice().len() as u64).sum();
                     // SAFETY: `bufs` (Vec<PlatformIoVec> == Vec<uv_buf_t>) lives in
@@ -6275,7 +6297,14 @@ impl NodeFS {
 
     pub fn readv(&mut self, args: &args::Readv, _: Flavor) -> Maybe<ret::Readv> {
         if args.buffers.buffers.is_empty() {
-            return Ok(ret::Readv { bytes_read: 0 });
+            // Node (via libuv's uv_fs_read nbufs==0 guard) fails EINVAL here.
+            // writev differs: Node short-circuits to 0 in JS before libuv.
+            return Err(sys::Error {
+                errno: SystemErrno::EINVAL as _,
+                syscall: sys::Tag::read,
+                fd: args.fd,
+                ..Default::default()
+            });
         }
         if args.position.is_some() {
             self.preadv_inner(args)

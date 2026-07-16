@@ -419,7 +419,7 @@ it.skipIf(!isWindows)("Bun.file(0).writer() on a TTY stdin does not close the sh
   const childSrc = `
     const tty = require("node:tty");
     if (!tty.isatty(0)) {
-      process.stdout.write("RESULT not-a-tty");
+      process.stdout.write("RESULT not-a-tty [END]");
       process.exit(0);
     }
     for (let i = 0; i < 8; i++) {
@@ -436,7 +436,7 @@ it.skipIf(!isWindows)("Bun.file(0).writer() on a TTY stdin does not close the sh
     process.stdin.setRawMode(true);
     process.stdin.setRawMode(false);
     process.stdin.unref();
-    process.stdout.write("RESULT ok setRawErr=" + setRawErr);
+    process.stdout.write("RESULT ok setRawErr=" + setRawErr + " [END]");
   `;
 
   let output = "";
@@ -452,7 +452,7 @@ it.skipIf(!isWindows)("Bun.file(0).writer() on a TTY stdin does not close the sh
       rows: 24,
       data(_t, chunk) {
         output += decoder.decode(chunk, { stream: true });
-        if (output.includes("setRawErr=") || output.includes("not-a-tty")) done.resolve();
+        if (output.includes("[END]")) done.resolve();
       },
       exit() {
         eof.resolve();

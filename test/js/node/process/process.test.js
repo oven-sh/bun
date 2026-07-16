@@ -1220,6 +1220,53 @@ console.log(JSON.stringify(out));
       expect(stderr).not.toContain("Writing Node.js report");
       expect(exitCode).toBe(0);
     });
+
+    it.concurrent("threads the supplied err into javascriptStack", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+process.report.compact = true;
+const e = new Error("custom-marker-msg");
+process.report.writeReport("stdout", e);
+`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const body = JSON.parse(stdout);
+      expect(body.javascriptStack.message).toContain("custom-marker-msg");
+      expect(Array.isArray(body.javascriptStack.stack)).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("getReport(err) uses the supplied error's stack", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+const e = new Error("from-getReport");
+const rep = process.report.getReport(e);
+console.log(JSON.stringify({
+  message: rep.javascriptStack.message,
+  synthetic: process.report.getReport().javascriptStack.message,
+}));
+`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const out = JSON.parse(stdout);
+      expect(out.message).toContain("from-getReport");
+      expect(out.synthetic).toContain("ERR_SYNTHETIC");
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("process.exit with jsDoubleNumber that is an integer", async () => {

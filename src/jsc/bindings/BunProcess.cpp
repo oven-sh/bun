@@ -2095,7 +2095,68 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessConnected, (JSC::JSGlobalObject * lexicalGlob
     return false;
 }
 
-static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName, bool excludeEnv, bool excludeNetwork)
+JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, JSValue errValue)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSObject* javascriptStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    WTF::String stackProperty;
+    bool synthetic = !errValue.isObject();
+    if (synthetic) {
+        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
+
+        WTF::Vector<JSC::StackFrame> stackFrames;
+        vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
+        String name = "Error"_s;
+        String message = "JavaScript Callstack"_s;
+        OrdinalNumber line = OrdinalNumber::beforeFirst();
+        OrdinalNumber column = OrdinalNumber::beforeFirst();
+        WTF::String sourceURL;
+        stackProperty = Bun::formatStackTrace(
+            vm, globalObject, globalObject, name, message,
+            line, column,
+            sourceURL, stackFrames, nullptr);
+    } else {
+        JSObject* errObj = errValue.getObject();
+        JSValue stackVal = errObj->get(globalObject, vm.propertyNames->stack);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!stackVal.isUndefinedOrNull()) {
+            stackProperty = stackVal.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+    }
+
+    WTF::String stack;
+    size_t firstLine = stackProperty.find('\n');
+    if (firstLine != WTF::notFound) {
+        if (!synthetic) {
+            javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, stackProperty.left(firstLine)), 0);
+        }
+        stack = stackProperty.substring(firstLine + 1);
+    } else if (!synthetic) {
+        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, stackProperty), 0);
+    }
+
+    JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    stack.split('\n', [&](const WTF::StringView& line) {
+        stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
+        RETURN_IF_EXCEPTION(scope, );
+    });
+    RETURN_IF_EXCEPTION(scope, {});
+    javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
+
+    JSC::JSObject* errorProperties = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (synthetic) {
+        errorProperties->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
+    }
+    javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
+    return javascriptStack;
+}
+
+static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if !OS(WINDOWS)
@@ -2337,49 +2398,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     };
 
     auto constructJavaScriptStack = [&]() -> JSC::JSValue {
-        JSC::JSObject* javascriptStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-        RETURN_IF_EXCEPTION(scope, {});
-
-        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
-
-        // TODO: allow errors as an argument
-        {
-            WTF::Vector<JSC::StackFrame> stackFrames;
-            vm.interpreter.getStackTrace(javascriptStack, stackFrames, 1);
-            String name = "Error"_s;
-            String message = "JavaScript Callstack"_s;
-            OrdinalNumber line = OrdinalNumber::beforeFirst();
-            OrdinalNumber column = OrdinalNumber::beforeFirst();
-            WTF::String sourceURL;
-            WTF::String stackProperty = Bun::formatStackTrace(
-                vm, globalObject, globalObject, name, message,
-                line, column,
-                sourceURL, stackFrames, nullptr);
-
-            WTF::String stack;
-            // first line after "Error:"
-            size_t firstLine = stackProperty.find('\n');
-            if (firstLine != WTF::notFound) {
-                stack = stackProperty.substring(firstLine + 1);
-            }
-
-            JSC::JSArray* stackArray = JSC::constructEmptyArray(globalObject, nullptr);
-            RETURN_IF_EXCEPTION(scope, {});
-
-            stack.split('\n', [&](const WTF::StringView& line) {
-                stackArray->push(globalObject, JSC::jsString(vm, line.toString().trim(isASCIIWhitespace)));
-                RETURN_IF_EXCEPTION(scope, );
-            });
-            RETURN_IF_EXCEPTION(scope, {});
-
-            javascriptStack->putDirect(vm, vm.propertyNames->stack, stackArray, 0);
-        }
-
-        JSC::JSObject* errorProperties = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
-        RETURN_IF_EXCEPTION(scope, {});
-        errorProperties->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
-        javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
-        return javascriptStack;
+        return constructReportJavaScriptStack(vm, globalObject, errValue);
     };
 
     auto constructSharedObjects = [&]() -> JSC::JSValue {
@@ -2479,12 +2498,12 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     }
 #else // OS(WINDOWS)
     // Forward declaration - implemented in BunProcessReportObjectWindows.cpp
-    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process, bool excludeEnv, bool excludeNetwork);
+    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork);
 
     // Get the Process object - needed for accessing report settings
     Process* process = globalObject->processObject();
 
-    return constructReportObjectWindows(vm, globalObject, process, excludeEnv, excludeNetwork);
+    return constructReportObjectWindows(vm, globalObject, process, fileName, errValue, excludeEnv, excludeNetwork);
 #endif
 }
 
@@ -2510,8 +2529,13 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObje
         if (excludeNetworkValue) excludeNetwork = excludeNetworkValue.toBoolean(globalObject);
     }
 
+    JSValue errArg = callFrame->argument(0);
+    if (!errArg.isUndefined() && (errArg.isNull() || !errArg.isObject())) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "err"_s, "Object"_s, errArg);
+    }
+
     // TODO: node:vm
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, zigGlobal, String(), excludeEnv, excludeNetwork)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, zigGlobal, String(), errArg, excludeEnv, excludeNetwork)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2619,7 +2643,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
         file = String::fromLatin1(buf);
     }
 
-    JSValue reportValue = constructReportObjectComplete(vm, zigGlobal, file, excludeEnv, excludeNetwork);
+    JSValue reportValue = constructReportObjectComplete(vm, zigGlobal, file, errArg, excludeEnv, excludeNetwork);
     RETURN_IF_EXCEPTION(scope, {});
 
     String json = JSC::JSONStringify(globalObject, reportValue, compact ? 0 : 2);

@@ -1,5 +1,6 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented, kNodeEntryTypes, NodeEntryObserver } = require("internal/shared");
+const { validateObject } = require("internal/validators");
 
 const cppCreateHistogram = $newCppFunction("JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram", 3) as (
   min: number,
@@ -268,6 +269,9 @@ export default {
     highest?: number | bigint;
     figures?: number;
   }): import("node:perf_hooks").RecordableHistogram {
+    if (options !== undefined) {
+      validateObject(options, "options");
+    }
     const opts = options || {};
 
     let lowest = 1;

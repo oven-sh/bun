@@ -1442,12 +1442,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (true, false) => {
                 route_list_cached::https::on_client_error_set_cached(server_js, global, callback)
             }
-            (false, true) => {
-                route_list_cached::debug_http::on_client_error_set_cached(server_js, global, callback)
-            }
-            (true, true) => {
-                route_list_cached::debug_https::on_client_error_set_cached(server_js, global, callback)
-            }
+            (false, true) => route_list_cached::debug_http::on_client_error_set_cached(
+                server_js, global, callback,
+            ),
+            (true, true) => route_list_cached::debug_https::on_client_error_set_cached(
+                server_js, global, callback,
+            ),
         }
     }
 
@@ -1475,9 +1475,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (false, true) => {
                 route_list_cached::debug_http::on_connection_set_cached(server_js, global, callback)
             }
-            (true, true) => {
-                route_list_cached::debug_https::on_connection_set_cached(server_js, global, callback)
-            }
+            (true, true) => route_list_cached::debug_https::on_connection_set_cached(
+                server_js, global, callback,
+            ),
         }
     }
 

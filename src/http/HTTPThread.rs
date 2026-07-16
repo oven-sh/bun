@@ -275,6 +275,10 @@ pub struct ShutdownMessage {
 /// certificate; un-park the connection so the request is written.
 pub struct CertCheckResumeMessage {
     pub async_http_id: u32,
+    /// `HTTPClient::remaining_redirect_count` at the hop that parked for this
+    /// certificate (forwarded from `CertificateInfo`). A stale approval from a
+    /// previous hop is dropped rather than un-parking a later hop.
+    pub remaining_redirect_count: i8,
 }
 
 pub struct LibdeflateState {
@@ -784,7 +788,10 @@ impl HttpThread {
                                 // May synchronously reach close_and_fail →
                                 // dispatch_result_and_reset; do not touch
                                 // `client` after this call.
-                                client.resume_after_cert_check::<true>(socket);
+                                client.resume_after_cert_check::<true>(
+                                    socket,
+                                    resume.remaining_redirect_count,
+                                );
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
@@ -794,7 +801,10 @@ impl HttpThread {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
                                 // See Tls arm.
-                                client.resume_after_cert_check::<false>(socket);
+                                client.resume_after_cert_check::<false>(
+                                    socket,
+                                    resume.remaining_redirect_count,
+                                );
                             }
                         }
                     }
@@ -982,12 +992,13 @@ impl HttpThread {
         self.wakeup();
     }
 
-    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp) {
+    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp, remaining_redirect_count: i8) {
         bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", http.async_http_id);
         {
             let _guard = self.queued_cert_check_resumes_lock.lock_guard();
             self.queued_cert_check_resumes.push(CertCheckResumeMessage {
                 async_http_id: http.async_http_id,
+                remaining_redirect_count,
             });
         }
         self.wakeup();

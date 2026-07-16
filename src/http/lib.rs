@@ -1725,6 +1725,7 @@ impl<'a> HTTPClient<'a> {
                             cert,
                             hostname: Box::<[u8]>::from(hostname),
                             cert_error,
+                            remaining_redirect_count: self.remaining_redirect_count,
                         });
 
                         // Park the connection until the JS-side
@@ -3605,9 +3606,19 @@ impl<'a> HTTPClient<'a> {
     /// The JS-side `checkServerIdentity` callback approved the peer
     /// certificate: clear the park flag and write the request that
     /// `on_writable` has been holding back since the handshake completed.
-    pub fn resume_after_cert_check<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+    pub fn resume_after_cert_check<const IS_SSL: bool>(
+        &mut self,
+        socket: HttpSocket<IS_SSL>,
+        remaining_redirect_count: i8,
+    ) {
         if !self.state.flags.is_waiting_for_cert_check {
             // Never parked, or already resumed/reset by a redirect or failure.
+            return;
+        }
+        if remaining_redirect_count != self.remaining_redirect_count {
+            // Approval is for a previous hop's certificate (the `on_close`
+            // parked-replay can follow a buffered redirect before that hop's
+            // resume is drained); the current hop parks independently.
             return;
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");

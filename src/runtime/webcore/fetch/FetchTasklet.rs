@@ -964,13 +964,14 @@ impl FetchTasklet {
                 cleanup(self);
                 return r;
             }
-            drop(certificate_info);
             // checkServerIdentity passed: un-park the HTTP-thread connection
-            // so the request is finally written to the now-verified peer. If
-            // the connection already closed/failed the resume is a no-op
-            // (keyed through the abort tracker).
+            // so the request is finally written to the now-verified peer. The
+            // hop's `remaining_redirect_count` is threaded through so an
+            // approval for a previous hop cannot un-park a later one.
+            let remaining_redirect_count = certificate_info.remaining_redirect_count;
+            drop(certificate_info);
             if let Some(http_) = self.http.as_mut() {
-                http::http_thread().schedule_cert_check_resume(http_);
+                http::http_thread().schedule_cert_check_resume(http_, remaining_redirect_count);
             }
             // Fall through. The common case (certificate-only update) returns
             // at the metadata-less early return below; the #27275 coalesced

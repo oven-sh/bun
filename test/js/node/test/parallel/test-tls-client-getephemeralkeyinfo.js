@@ -18,7 +18,7 @@ const tls = require('tls');
 const key = fixtures.readKey('agent2-key.pem');
 const cert = fixtures.readKey('agent2-cert.pem');
 
-// Upstream note (@sam-github): test works with TLS1.3, rework test to add
+// TODO(@sam-github) test works with TLS1.3, rework test to add
 //   'ECDH' with 'TLS_AES_128_GCM_SHA256',
 
 function loadDHParam(n) {

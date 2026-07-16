@@ -1010,9 +1010,27 @@ function onServerClientError(ssl: boolean, socket: unknown, errorCode: number, r
   if (!existingDuplex) {
     self.emit("connection", nodeSocket);
   }
-  self.emit("clientError", err, nodeSocket);
-  if (nodeSocket.listenerCount("error") > 0) {
-    nodeSocket.emit("error", err);
+  // Mirror Node.js's socketOnError (lib/_http_server.js): a 'clientError'
+  // listener owns the response and socket lifecycle; only when none is
+  // attached do we reply with the canned status and destroy.
+  nodeSocket.removeListener("error", onServerSocketError);
+  if (nodeSocket.listenerCount("error") === 0) {
+    nodeSocket.on("error", noopOnError);
+  }
+  if (!self.emit("clientError", err, nodeSocket)) {
+    // Write via the native handle (us_socket_write), not the Duplex: a
+    // pipelined request in the same read may have corked the Duplex for its
+    // ServerResponse, which would buffer this write and drop it on destroy.
+    const handle = socket as any;
+    if (handle && !handle.closed && (!nodeSocket._httpMessage || !nodeSocket._httpMessage.headersSent)) {
+      const response =
+        errorCode === HttpParserError.HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE
+          ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+          : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n";
+      handle.write(response);
+      handle.end();
+    }
+    nodeSocket.destroy(err);
   }
 }
 

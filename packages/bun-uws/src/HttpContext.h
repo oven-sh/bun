@@ -415,7 +415,15 @@ private:
         /* If we got fullptr that means the parser wants us to close the socket from error (same as calling the errorHandler) */
         if (httpErrorStatusCode) {
             if(httpContextData->onClientError) {
+                /* node:http 'clientError' owns the response and socket; re-arm
+                 * the parser for any further bytes, flush corked responses (JS
+                 * writes bypass the cork buffer), then hand off. */
+                httpResponseData->resetParserState();
+                httpResponseData->isConnectRequest = false;
+                ((AsyncSocket<SSL> *) s)->uncork();
                 httpContextData->onClientError(SSL, s, result.parserError, data, length);
+                us_socket_unref(s);
+                return s;
             }
             /* For errors, we only deliver them "at most once". We don't care if they get halfways delivered or not. */
             us_socket_write(s, httpErrorResponses[httpErrorStatusCode].data(), (int) httpErrorResponses[httpErrorStatusCode].length());

@@ -1,0 +1,749 @@
+{
+ "known:jit-optional-group-containing-only-BOL~noncapture-to-capture": null,
+ "known:jit-optional-group-containing-only-BOL~append-dollar": null,
+ "known:jit-optional-group-containing-only-BOL~append-alternative": null,
+ "known:jit-optional-group-containing-only-BOL~prepend-alternative": null,
+ "known:jit-optional-group-containing-only-BOL~add-i": null,
+ "known:jit-optional-group-containing-only-BOL~add-s": null,
+ "known:jit-optional-group-containing-only-BOL~add-u": null,
+ "known:jit-optional-group-containing-only-BOL~add-g": null,
+ "known:jit-optional-group-containing-only-BOL~with-prefix": null,
+ "known:jit-optional-group-containing-only-BOL~with-suffix": null,
+ "known:jit-optional-group-containing-only-BOL~doubled": null,
+ "known:jit-optional-group-containing-only-BOL~with-newlines": null,
+ "known:jit-star-group-containing-only-BOL~noncapture-to-capture": null,
+ "known:jit-star-group-containing-only-BOL~append-dollar": null,
+ "known:jit-star-group-containing-only-BOL~append-alternative": null,
+ "known:jit-star-group-containing-only-BOL~prepend-alternative": null,
+ "known:jit-star-group-containing-only-BOL~add-i": null,
+ "known:jit-star-group-containing-only-BOL~add-s": null,
+ "known:jit-star-group-containing-only-BOL~add-u": null,
+ "known:jit-star-group-containing-only-BOL~add-g": null,
+ "known:jit-star-group-containing-only-BOL~with-prefix": null,
+ "known:jit-star-group-containing-only-BOL~with-suffix": null,
+ "known:jit-star-group-containing-only-BOL~doubled": null,
+ "known:jit-star-group-containing-only-BOL~with-newlines": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~lazy-quantifiers": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~append-dollar": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~prepend-alternative": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-i": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-s": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-g": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~uppercased": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~with-prefix": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~with-suffix": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~doubled": null,
+ "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~with-newlines": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~append-dollar": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~prepend-alternative": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~add-i": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~add-s": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~add-g": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~uppercased": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~with-prefix": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~with-suffix": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~doubled": null,
+ "known:jit-u-mode-astral-alternative-with-dot-sibling~with-newlines": null,
+ "known:jit-u-mode-astral-alternative-wrong-alternative~lazy-quantifiers": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~append-dollar": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~prepend-alternative": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~add-i": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~add-s": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~add-g": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~uppercased": null,
+ "known:jit-u-mode-astral-alternative-wrong-alternative~with-prefix": {
+  "match": [
+   " q"
+  ],
+  "index": 7
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~with-suffix": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~doubled": {
+  "match": [
+   " q"
+  ],
+  "index": 5
+ },
+ "known:jit-u-mode-astral-alternative-wrong-alternative~with-newlines": {
+  "match": [
+   " q"
+  ],
+  "index": 6
+ },
+ "known:match-end-wraparound-lastindex~greedy-quantifiers": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~bound-plus-one": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~star-to-plus": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~capture-to-noncapture": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~noncapture-to-capture": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~prepend-caret": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~append-dollar": [],
+ "known:match-end-wraparound-lastindex~wrap-in-optional-group": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~append-alternative": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~prepend-alternative": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~add-i": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~add-m": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~add-s": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~add-u": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~add-y": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~remove-flags": [
+  {
+   "match": [
+    "prefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 0
+  }
+ ],
+ "known:match-end-wraparound-lastindex~uppercased": [
+  {
+   "match": [
+    "PREFIX _  SUFFIX",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~with-prefix": [
+  {
+   "match": [
+    "zzprefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~with-suffix": [
+  {
+   "match": [
+    "prefix _  suffixzz",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:match-end-wraparound-lastindex~doubled": [
+  {
+   "match": [
+    "prefix _  suffixprefix _  suffix",
+    null,
+    null
+   ],
+   "index": 0,
+   "lastIndex": 18446744073709552000
+  }
+ ],
+ "known:split-optional-named-BOL-group~append-dollar": [
+  "prefix 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~append-alternative": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~prepend-alternative": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~add-s": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~add-u": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~add-g": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~remove-flags": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~uppercased": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 SUFFIX"
+ ],
+ "known:split-optional-named-BOL-group~with-prefix": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~with-suffix": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffixzz"
+ ],
+ "known:split-optional-named-BOL-group~doubled": [
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  "",
+  null,
+  " 9 suffixprefix 9 suffix"
+ ],
+ "known:split-optional-named-BOL-group~with-newlines": [
+  "\nprefix 9 suffix\n"
+ ],
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~capture-to-noncapture": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~noncapture-to-capture": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~prepend-caret": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~wrap-in-optional-group": {
+  "match": [
+   "",
+   null
+  ],
+  "index": 0
+ },
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~append-alternative": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~prepend-alternative": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~add-m": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~add-s": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~add-u": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~add-g": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~add-y": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~remove-flags": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~uppercased": null,
+ "known:plus-loop-quantified-class-boundary-with-counted-capture~with-suffix": null,
+ "known:empty-iteration-clears-capture~prepend-caret": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~append-alternative": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~prepend-alternative": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~add-i": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~add-m": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~add-s": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~add-u": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~add-g": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~add-y": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:empty-iteration-clears-capture~uppercased": {
+  "match": [
+   "",
+   ""
+  ],
+  "index": 0
+ },
+ "known:jit-nonword-boundary-optional-BOL-group~noncapture-to-capture": null,
+ "known:jit-nonword-boundary-optional-BOL-group~append-alternative": null,
+ "known:jit-nonword-boundary-optional-BOL-group~prepend-alternative": null,
+ "known:jit-nonword-boundary-optional-BOL-group~add-i": null,
+ "known:jit-nonword-boundary-optional-BOL-group~add-s": null,
+ "known:jit-nonword-boundary-optional-BOL-group~add-u": null,
+ "known:jit-nonword-boundary-optional-BOL-group~add-g": null,
+ "known:jit-nonword-boundary-optional-BOL-group~uppercased": null,
+ "known:jit-nonword-boundary-optional-BOL-group~with-prefix": null,
+ "known:jit-nonword-boundary-optional-BOL-group~with-suffix": null,
+ "known:jit-nonword-boundary-optional-BOL-group~doubled": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~greedy-quantifiers": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~noncapture-to-capture": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~append-alternative": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~prepend-alternative": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~add-i": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~add-s": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~add-u": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~add-g": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~uppercased": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~with-prefix": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~with-suffix": null,
+ "known:jit-nonword-boundary-lazy-BOL-group~doubled": null,
+ "known:v-mode-lookbehind-code-point-step~append-alternative": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~prepend-alternative": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~add-i": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~add-m": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~add-s": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~add-g": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~with-suffix": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~doubled": {
+  "match": [
+   ""
+  ],
+  "index": 1
+ },
+ "known:v-mode-lookbehind-code-point-step~with-newlines": {
+  "match": [
+   ""
+  ],
+  "index": 2
+ },
+ "known:v-mode-fold-before-subtract~capture-to-noncapture": {
+  "match": [
+   "FooBĀĂĄr"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~prepend-caret": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~append-dollar": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~wrap-in-optional-group": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~append-alternative": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~prepend-alternative": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~add-m": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~add-s": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~add-g": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~add-y": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~uppercased": {
+  "match": [
+   "FOOBĀĂĄR",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~with-prefix": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 2
+ },
+ "known:v-mode-fold-before-subtract~with-suffix": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~doubled": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 0
+ },
+ "known:v-mode-fold-before-subtract~with-newlines": {
+  "match": [
+   "FooBĀĂĄr",
+   "BĀĂĄ"
+  ],
+  "index": 1
+ }
+}

@@ -215,6 +215,20 @@ export const cases = [
 // The test asserts these still FAIL (with the current wrong result), so that
 // an engine fix produces an unexpected pass and the case gets promoted above.
 export const knownBunFailures = [
+  // JIT-only; live on WebKit main: an optional group whose only content is ^ misfires the zero-length-match handling. Interpreter is correct.
+  {"name": "jit-optional-group-containing-only-BOL", "source": "(?:^)?a", "flags": "", "input": "ba", "op": "exec", "expected": {"match": ["a"], "index": 1}, "currentBun": null},
+  // Same family as above with * quantifier.
+  {"name": "jit-star-group-containing-only-BOL", "source": "(?:^)*a", "flags": "", "input": "ba", "op": "exec", "expected": {"match": ["a"], "index": 1}, "currentBun": null},
+  // JIT-only; live on WebKit main: an alternative starting with an astral literal is lost when a sibling alternative starts with a broad/inverted class. Interpreter is correct.
+  {"name": "jit-u-mode-astral-alternative-with-inverted-class-sibling", "source": "😀|\\P{L}y", "flags": "u", "input": "z 😀0 q", "op": "exec", "expected": {"match": ["😀"], "index": 2}, "currentBun": null},
+  // Same family (dot sibling).
+  {"name": "jit-u-mode-astral-alternative-with-dot-sibling", "source": "😀.|.y", "flags": "u", "input": "z 😀0 q", "op": "exec", "expected": {"match": ["😀0"], "index": 2}, "currentBun": null},
+  // Same family; JIT returns the LATER alternative's match instead of the leftmost.
+  {"name": "jit-u-mode-astral-alternative-wrong-alternative", "source": "😀.|\\P{L}q", "flags": "u", "input": "z 😀0 q", "op": "exec", "expected": {"match": ["😀0"], "index": 2}, "currentBun": {"match": [" q"], "index": 5}},
+  // Fixed on WebKit main; stock bun matches the whole input and reports a wrapped-around lastIndex (2^64). Not reduced further.
+  {"name": "match-end-wraparound-lastindex", "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|", "flags": "gd", "input": "prefix _  suffix", "op": "iterate", "expected": [{"match": ["", null, null], "index": 0, "lastIndex": 0}], "currentBun": [{"match": ["prefix _  suffix", null, null], "index": 0, "lastIndex": 18446744073709552000}]},
+  // split-facing manifestation of the optional-BOL-group family.
+  {"name": "split-optional-named-BOL-group", "source": "(?<b>^)?[x\\-\\w]", "flags": "i", "input": "prefix 9 suffix", "op": "split", "expected": ["", null, "", null, "", null, "", null, "", null, "", null, " ", null, " ", null, "", null, "", null, "", null, "", null, "", null, ""], "currentBun": ["", null, "", null, "", null, "", null, "", null, "", null, " 9 suffix"]},
   {
     // Fixed in WebKit main; wrong in bun's currently-pinned JSC (JIT tier):
     // a `+`-repeated alternation whose first alternative is a bounded

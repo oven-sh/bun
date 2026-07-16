@@ -5890,5 +5890,4225 @@ export const neighbors = [
   "input": "",
   "op": "exec",
   "expected": null
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~lazy-quantifiers",
+  "source": "(??:^)?a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~noncapture-to-capture",
+  "source": "(^)?a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~prepend-caret",
+  "source": "^(?:^)?a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~append-dollar",
+  "source": "(?:^)?a$",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~wrap-in-optional-group",
+  "source": "(?:(?:^)?a)?",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~append-alternative",
+  "source": "(?:^)?a|zz",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~prepend-alternative",
+  "source": "qq|(?:^)?a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~add-i",
+  "source": "(?:^)?a",
+  "flags": "i",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~add-m",
+  "source": "(?:^)?a",
+  "flags": "m",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~add-s",
+  "source": "(?:^)?a",
+  "flags": "s",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~add-u",
+  "source": "(?:^)?a",
+  "flags": "u",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~add-g",
+  "source": "(?:^)?a",
+  "flags": "g",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~add-y",
+  "source": "(?:^)?a",
+  "flags": "y",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~uppercased",
+  "source": "(?:^)?a",
+  "flags": "",
+  "input": "BA",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~with-prefix",
+  "source": "(?:^)?a",
+  "flags": "",
+  "input": "zzba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~with-suffix",
+  "source": "(?:^)?a",
+  "flags": "",
+  "input": "bazz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~doubled",
+  "source": "(?:^)?a",
+  "flags": "",
+  "input": "baba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~with-newlines",
+  "source": "(?:^)?a",
+  "flags": "",
+  "input": "\nba\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-optional-group-containing-only-BOL~empty",
+  "source": "(?:^)?a",
+  "flags": "",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~lazy-quantifiers",
+  "source": "(??:^)*a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~star-to-plus",
+  "source": "(?:^)+a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~noncapture-to-capture",
+  "source": "(^)*a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~prepend-caret",
+  "source": "^(?:^)*a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~append-dollar",
+  "source": "(?:^)*a$",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~wrap-in-optional-group",
+  "source": "(?:(?:^)*a)?",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~append-alternative",
+  "source": "(?:^)*a|zz",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~prepend-alternative",
+  "source": "qq|(?:^)*a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~add-i",
+  "source": "(?:^)*a",
+  "flags": "i",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~add-m",
+  "source": "(?:^)*a",
+  "flags": "m",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~add-s",
+  "source": "(?:^)*a",
+  "flags": "s",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~add-u",
+  "source": "(?:^)*a",
+  "flags": "u",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~add-g",
+  "source": "(?:^)*a",
+  "flags": "g",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~add-y",
+  "source": "(?:^)*a",
+  "flags": "y",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~uppercased",
+  "source": "(?:^)*a",
+  "flags": "",
+  "input": "BA",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~with-prefix",
+  "source": "(?:^)*a",
+  "flags": "",
+  "input": "zzba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~with-suffix",
+  "source": "(?:^)*a",
+  "flags": "",
+  "input": "bazz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~doubled",
+  "source": "(?:^)*a",
+  "flags": "",
+  "input": "baba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~with-newlines",
+  "source": "(?:^)*a",
+  "flags": "",
+  "input": "\nba\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-star-group-containing-only-BOL~empty",
+  "source": "(?:^)*a",
+  "flags": "",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~lazy-quantifiers",
+  "source": "😀|\\P{L}?y",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~prepend-caret",
+  "source": "^😀|\\P{L}y",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~append-dollar",
+  "source": "😀|\\P{L}y$",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~wrap-in-optional-group",
+  "source": "(?:😀|\\P{L}y)?",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~append-alternative",
+  "source": "😀|\\P{L}y|zz",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~prepend-alternative",
+  "source": "qq|😀|\\P{L}y",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-i",
+  "source": "😀|\\P{L}y",
+  "flags": "ui",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-m",
+  "source": "😀|\\P{L}y",
+  "flags": "um",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-s",
+  "source": "😀|\\P{L}y",
+  "flags": "us",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-g",
+  "source": "😀|\\P{L}y",
+  "flags": "ug",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~add-y",
+  "source": "😀|\\P{L}y",
+  "flags": "uy",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~remove-flags",
+  "source": "😀|\\P{L}y",
+  "flags": "",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~uppercased",
+  "source": "😀|\\P{L}y",
+  "flags": "u",
+  "input": "Z 😀0 Q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~with-prefix",
+  "source": "😀|\\P{L}y",
+  "flags": "u",
+  "input": "zzz 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 4
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~with-suffix",
+  "source": "😀|\\P{L}y",
+  "flags": "u",
+  "input": "z 😀0 qzz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~doubled",
+  "source": "😀|\\P{L}y",
+  "flags": "u",
+  "input": "z 😀0 qz 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~with-newlines",
+  "source": "😀|\\P{L}y",
+  "flags": "u",
+  "input": "\nz 😀0 q\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀"
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-inverted-class-sibling~empty",
+  "source": "😀|\\P{L}y",
+  "flags": "u",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~prepend-caret",
+  "source": "^😀.|.y",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~append-dollar",
+  "source": "😀.|.y$",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~wrap-in-optional-group",
+  "source": "(?:😀.|.y)?",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~append-alternative",
+  "source": "😀.|.y|zz",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~prepend-alternative",
+  "source": "qq|😀.|.y",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~add-i",
+  "source": "😀.|.y",
+  "flags": "ui",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~add-m",
+  "source": "😀.|.y",
+  "flags": "um",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~add-s",
+  "source": "😀.|.y",
+  "flags": "us",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~add-g",
+  "source": "😀.|.y",
+  "flags": "ug",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~add-y",
+  "source": "😀.|.y",
+  "flags": "uy",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~remove-flags",
+  "source": "😀.|.y",
+  "flags": "",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~uppercased",
+  "source": "😀.|.y",
+  "flags": "u",
+  "input": "Z 😀0 Q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~with-prefix",
+  "source": "😀.|.y",
+  "flags": "u",
+  "input": "zzz 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 4
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~with-suffix",
+  "source": "😀.|.y",
+  "flags": "u",
+  "input": "z 😀0 qzz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~doubled",
+  "source": "😀.|.y",
+  "flags": "u",
+  "input": "z 😀0 qz 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~with-newlines",
+  "source": "😀.|.y",
+  "flags": "u",
+  "input": "\nz 😀0 q\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-with-dot-sibling~empty",
+  "source": "😀.|.y",
+  "flags": "u",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~lazy-quantifiers",
+  "source": "😀.|\\P{L}?q",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~prepend-caret",
+  "source": "^😀.|\\P{L}q",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " q"
+   ],
+   "index": 5
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~append-dollar",
+  "source": "😀.|\\P{L}q$",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~wrap-in-optional-group",
+  "source": "(?:😀.|\\P{L}q)?",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~append-alternative",
+  "source": "😀.|\\P{L}q|zz",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~prepend-alternative",
+  "source": "qq|😀.|\\P{L}q",
+  "flags": "u",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~add-i",
+  "source": "😀.|\\P{L}q",
+  "flags": "ui",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~add-m",
+  "source": "😀.|\\P{L}q",
+  "flags": "um",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~add-s",
+  "source": "😀.|\\P{L}q",
+  "flags": "us",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~add-g",
+  "source": "😀.|\\P{L}q",
+  "flags": "ug",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~add-y",
+  "source": "😀.|\\P{L}q",
+  "flags": "uy",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~remove-flags",
+  "source": "😀.|\\P{L}q",
+  "flags": "",
+  "input": "z 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~uppercased",
+  "source": "😀.|\\P{L}q",
+  "flags": "u",
+  "input": "Z 😀0 Q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~with-prefix",
+  "source": "😀.|\\P{L}q",
+  "flags": "u",
+  "input": "zzz 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 4
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~with-suffix",
+  "source": "😀.|\\P{L}q",
+  "flags": "u",
+  "input": "z 😀0 qzz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~doubled",
+  "source": "😀.|\\P{L}q",
+  "flags": "u",
+  "input": "z 😀0 qz 😀0 q",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~with-newlines",
+  "source": "😀.|\\P{L}q",
+  "flags": "u",
+  "input": "\nz 😀0 q\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "😀0"
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-u-mode-astral-alternative-wrong-alternative~empty",
+  "source": "😀.|\\P{L}q",
+  "flags": "u",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~lazy-quantifiers",
+  "source": "(??:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~greedy-quantifiers",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~bound-plus-one",
+  "source": "(?:[\\w\\sa-fa-f]\\S{1}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~star-to-plus",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8+é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~plus-to-star",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d*)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "p",
+     "p",
+     null
+    ],
+    "index": 0,
+    "lastIndex": 1
+   },
+   {
+    "match": [
+     "r",
+     "r",
+     null
+    ],
+    "index": 1,
+    "lastIndex": 2
+   },
+   {
+    "match": [
+     "e",
+     "e",
+     null
+    ],
+    "index": 2,
+    "lastIndex": 3
+   },
+   {
+    "match": [
+     "f",
+     "f",
+     null
+    ],
+    "index": 3,
+    "lastIndex": 4
+   },
+   {
+    "match": [
+     "i",
+     "i",
+     null
+    ],
+    "index": 4,
+    "lastIndex": 5
+   },
+   {
+    "match": [
+     "x ",
+     null,
+     null
+    ],
+    "index": 5,
+    "lastIndex": 7
+   },
+   {
+    "match": [
+     "_  ",
+     null,
+     null
+    ],
+    "index": 7,
+    "lastIndex": 10
+   },
+   {
+    "match": [
+     "s",
+     "s",
+     null
+    ],
+    "index": 10,
+    "lastIndex": 11
+   },
+   {
+    "match": [
+     "u",
+     "u",
+     null
+    ],
+    "index": 11,
+    "lastIndex": 12
+   },
+   {
+    "match": [
+     "ff",
+     "f",
+     null
+    ],
+    "index": 12,
+    "lastIndex": 14
+   },
+   {
+    "match": [
+     "i",
+     "i",
+     null
+    ],
+    "index": 14,
+    "lastIndex": 15
+   },
+   {
+    "match": [
+     "x",
+     "x",
+     null
+    ],
+    "index": 15,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~capture-to-noncapture",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|(?:(?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~noncapture-to-capture",
+  "source": "([\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~prepend-caret",
+  "source": "^(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~append-dollar",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|$",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "x ",
+     null,
+     null
+    ],
+    "index": 5,
+    "lastIndex": 7
+   },
+   {
+    "match": [
+     "_  ",
+     null,
+     null
+    ],
+    "index": 7,
+    "lastIndex": 10
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   },
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 16,
+    "lastIndex": 16
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~wrap-in-optional-group",
+  "source": "(?:(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|)?",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~append-alternative",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t||zz",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~prepend-alternative",
+  "source": "qq|(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~add-i",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gdi",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~add-m",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gdm",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~add-s",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gds",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~add-u",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gdu",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~add-y",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gdy",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~remove-flags",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "",
+  "input": "prefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~uppercased",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "PREFIX _  SUFFIX",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~with-prefix",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "zzprefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~with-suffix",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffixzz",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~doubled",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "prefix _  suffixprefix _  suffix",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~with-newlines",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "\nprefix _  suffix\n",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:match-end-wraparound-lastindex~empty",
+  "source": "(?:[\\w\\sa-fa-f]\\S{0}\\s{1,3}|((?:\\1)[^\\s])?d+)(?:\\1)?|(.\\0{2,}||(?:\\d(?=)|.(?=.{1,3}?||\\t?8*é|-:)){2})\\t|",
+  "flags": "gd",
+  "input": "",
+  "op": "iterate",
+  "expected": [
+   {
+    "match": [
+     "",
+     null,
+     null
+    ],
+    "index": 0,
+    "lastIndex": 0
+   }
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~lazy-quantifiers",
+  "source": "(??<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~prepend-caret",
+  "source": "^(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "refix 9 suffix"
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~append-dollar",
+  "source": "(?<b>^)?[x\\-\\w]$",
+  "flags": "i",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "prefix 9 suffi",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~wrap-in-optional-group",
+  "source": "(?:(?<b>^)?[x\\-\\w])?",
+  "flags": "i",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~append-alternative",
+  "source": "(?<b>^)?[x\\-\\w]|zz",
+  "flags": "i",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~prepend-alternative",
+  "source": "qq|(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~add-m",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "im",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~add-s",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "is",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~add-u",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "iu",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~add-g",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "ig",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~add-y",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "iy",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~remove-flags",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "",
+  "input": "prefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~uppercased",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "PREFIX 9 SUFFIX",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   ""
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~with-prefix",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "zzprefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~with-suffix",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "prefix 9 suffixzz",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~doubled",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "prefix 9 suffixprefix 9 suffix",
+  "op": "split",
+  "expected": [
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~with-newlines",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "\nprefix 9 suffix\n",
+  "op": "split",
+  "expected": [
+   "\n",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   " ",
+   null,
+   " ",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "",
+   null,
+   "\n"
+  ]
+ },
+ {
+  "name": "known:split-optional-named-BOL-group~empty",
+  "source": "(?<b>^)?[x\\-\\w]",
+  "flags": "i",
+  "input": "",
+  "op": "split",
+  "expected": [
+   ""
+  ]
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~lazy-quantifiers",
+  "source": "(??:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~bound-plus-one",
+  "source": "(?:\\D{1,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~plus-to-star",
+  "source": "(?:\\D{0,2}\\b|(.){2,})*f",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~capture-to-noncapture",
+  "source": "(?:\\D{0,2}\\b|(?:.){2,})+f",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f"
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~noncapture-to-capture",
+  "source": "(\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~prepend-caret",
+  "source": "^(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~append-dollar",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f$",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~wrap-in-optional-group",
+  "source": "(?:(?:\\D{0,2}\\b|(.){2,})+f)?",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~append-alternative",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f|zz",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~prepend-alternative",
+  "source": "qq|(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~add-m",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "im",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~add-s",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "is",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~add-u",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "iu",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~add-g",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "ig",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~add-y",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "iy",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~remove-flags",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "",
+  "input": "f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~uppercased",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "F-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "F",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~with-prefix",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "zzf-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "zzf",
+    "z"
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~with-suffix",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "f-zz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~doubled",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "f-f-",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "f-f",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~with-newlines",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "\nf-\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "\nf",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:plus-loop-quantified-class-boundary-with-counted-capture~empty",
+  "source": "(?:\\D{0,2}\\b|(.){2,})+f",
+  "flags": "i",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~lazy-quantifiers",
+  "source": "(.*?){0,2}\\1",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~bound-plus-one",
+  "source": "(.*){1,2}\\1",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~star-to-plus",
+  "source": "(.+){0,2}\\1",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~capture-to-noncapture",
+  "source": "(?:.*){0,2}\\1",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~prepend-caret",
+  "source": "^(.*){0,2}\\1",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~append-dollar",
+  "source": "(.*){0,2}\\1$",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~wrap-in-optional-group",
+  "source": "(?:(.*){0,2}\\1)?",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~append-alternative",
+  "source": "(.*){0,2}\\1|zz",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~prepend-alternative",
+  "source": "qq|(.*){0,2}\\1",
+  "flags": "",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~add-i",
+  "source": "(.*){0,2}\\1",
+  "flags": "i",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~add-m",
+  "source": "(.*){0,2}\\1",
+  "flags": "m",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~add-s",
+  "source": "(.*){0,2}\\1",
+  "flags": "s",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~add-u",
+  "source": "(.*){0,2}\\1",
+  "flags": "u",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~add-g",
+  "source": "(.*){0,2}\\1",
+  "flags": "g",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~add-y",
+  "source": "(.*){0,2}\\1",
+  "flags": "y",
+  "input": "ab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~uppercased",
+  "source": "(.*){0,2}\\1",
+  "flags": "",
+  "input": "AB",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~with-prefix",
+  "source": "(.*){0,2}\\1",
+  "flags": "",
+  "input": "zzab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "zz",
+    "z"
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~with-suffix",
+  "source": "(.*){0,2}\\1",
+  "flags": "",
+  "input": "abzz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "abzz",
+    "z"
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~doubled",
+  "source": "(.*){0,2}\\1",
+  "flags": "",
+  "input": "abab",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "abab",
+    "ab"
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~with-newlines",
+  "source": "(.*){0,2}\\1",
+  "flags": "",
+  "input": "\nab\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:empty-iteration-clears-capture~empty",
+  "source": "(.*){0,2}\\1",
+  "flags": "",
+  "input": "",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~lazy-quantifiers",
+  "source": "\\B(??:^)?",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~noncapture-to-capture",
+  "source": "\\B(^)?",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~prepend-caret",
+  "source": "^\\B(?:^)?",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~append-dollar",
+  "source": "\\B(?:^)?$",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~wrap-in-optional-group",
+  "source": "(?:\\B(?:^)?)?",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~append-alternative",
+  "source": "\\B(?:^)?|zz",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~prepend-alternative",
+  "source": "qq|\\B(?:^)?",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~add-i",
+  "source": "\\B(?:^)?",
+  "flags": "i",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~add-m",
+  "source": "\\B(?:^)?",
+  "flags": "m",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~add-s",
+  "source": "\\B(?:^)?",
+  "flags": "s",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~add-u",
+  "source": "\\B(?:^)?",
+  "flags": "u",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~add-g",
+  "source": "\\B(?:^)?",
+  "flags": "g",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~add-y",
+  "source": "\\B(?:^)?",
+  "flags": "y",
+  "input": "xx",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~uppercased",
+  "source": "\\B(?:^)?",
+  "flags": "",
+  "input": "XX",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~with-prefix",
+  "source": "\\B(?:^)?",
+  "flags": "",
+  "input": "zzxx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~with-suffix",
+  "source": "\\B(?:^)?",
+  "flags": "",
+  "input": "xxzz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~doubled",
+  "source": "\\B(?:^)?",
+  "flags": "",
+  "input": "xxxx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~with-newlines",
+  "source": "\\B(?:^)?",
+  "flags": "",
+  "input": "\nxx\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-optional-BOL-group~empty",
+  "source": "\\B(?:^)?",
+  "flags": "",
+  "input": "",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~lazy-quantifiers",
+  "source": "\\B(??:^x)??",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~greedy-quantifiers",
+  "source": "\\B(?:^x)?",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~noncapture-to-capture",
+  "source": "\\B(^x)??",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~prepend-caret",
+  "source": "^\\B(?:^x)??",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~append-dollar",
+  "source": "\\B(?:^x)??$",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~wrap-in-optional-group",
+  "source": "(?:\\B(?:^x)??)?",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~append-alternative",
+  "source": "\\B(?:^x)??|zz",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~prepend-alternative",
+  "source": "qq|\\B(?:^x)??",
+  "flags": "",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~add-i",
+  "source": "\\B(?:^x)??",
+  "flags": "i",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~add-m",
+  "source": "\\B(?:^x)??",
+  "flags": "m",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~add-s",
+  "source": "\\B(?:^x)??",
+  "flags": "s",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~add-u",
+  "source": "\\B(?:^x)??",
+  "flags": "u",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~add-g",
+  "source": "\\B(?:^x)??",
+  "flags": "g",
+  "input": "xx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~add-y",
+  "source": "\\B(?:^x)??",
+  "flags": "y",
+  "input": "xx",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~uppercased",
+  "source": "\\B(?:^x)??",
+  "flags": "",
+  "input": "XX",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~with-prefix",
+  "source": "\\B(?:^x)??",
+  "flags": "",
+  "input": "zzxx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~with-suffix",
+  "source": "\\B(?:^x)??",
+  "flags": "",
+  "input": "xxzz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~doubled",
+  "source": "\\B(?:^x)??",
+  "flags": "",
+  "input": "xxxx",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~with-newlines",
+  "source": "\\B(?:^x)??",
+  "flags": "",
+  "input": "\nxx\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-nonword-boundary-lazy-BOL-group~empty",
+  "source": "\\B(?:^x)??",
+  "flags": "",
+  "input": "",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~prepend-caret",
+  "source": "^a|ab|^a",
+  "flags": "",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "ab"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~append-dollar",
+  "source": "a|ab|^a$",
+  "flags": "",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~wrap-in-optional-group",
+  "source": "(?:a|ab|^a)?",
+  "flags": "",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~append-alternative",
+  "source": "a|ab|^a|zz",
+  "flags": "",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~prepend-alternative",
+  "source": "qq|a|ab|^a",
+  "flags": "",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~add-i",
+  "source": "a|ab|^a",
+  "flags": "i",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~add-m",
+  "source": "a|ab|^a",
+  "flags": "m",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~add-s",
+  "source": "a|ab|^a",
+  "flags": "s",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~add-u",
+  "source": "a|ab|^a",
+  "flags": "u",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~add-g",
+  "source": "a|ab|^a",
+  "flags": "g",
+  "input": "xabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~add-y",
+  "source": "a|ab|^a",
+  "flags": "y",
+  "input": "xabc",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~uppercased",
+  "source": "a|ab|^a",
+  "flags": "",
+  "input": "XABC",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~with-prefix",
+  "source": "a|ab|^a",
+  "flags": "",
+  "input": "zzxabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~with-suffix",
+  "source": "a|ab|^a",
+  "flags": "",
+  "input": "xabczz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~doubled",
+  "source": "a|ab|^a",
+  "flags": "",
+  "input": "xabcxabc",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~with-newlines",
+  "source": "a|ab|^a",
+  "flags": "",
+  "input": "\nxabc\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:interp-leftmost-alt-with-caret-alternative~empty",
+  "source": "a|ab|^a",
+  "flags": "",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~lazy-quantifiers",
+  "source": "(??<=.)",
+  "flags": "v",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~prepend-caret",
+  "source": "^(?<=.)",
+  "flags": "v",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~append-dollar",
+  "source": "(?<=.)$",
+  "flags": "v",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 4
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~wrap-in-optional-group",
+  "source": "(?:(?<=.))?",
+  "flags": "v",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~append-alternative",
+  "source": "(?<=.)|zz",
+  "flags": "v",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~prepend-alternative",
+  "source": "qq|(?<=.)",
+  "flags": "v",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~add-i",
+  "source": "(?<=.)",
+  "flags": "vi",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~add-m",
+  "source": "(?<=.)",
+  "flags": "vm",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~add-s",
+  "source": "(?<=.)",
+  "flags": "vs",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~add-g",
+  "source": "(?<=.)",
+  "flags": "vg",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~add-y",
+  "source": "(?<=.)",
+  "flags": "vy",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~remove-flags",
+  "source": "(?<=.)",
+  "flags": "",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~with-prefix",
+  "source": "(?<=.)",
+  "flags": "v",
+  "input": "zz😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~with-suffix",
+  "source": "(?<=.)",
+  "flags": "v",
+  "input": "😀😀zz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~doubled",
+  "source": "(?<=.)",
+  "flags": "v",
+  "input": "😀😀😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~with-newlines",
+  "source": "(?<=.)",
+  "flags": "v",
+  "input": "\n😀😀\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:v-mode-lookbehind-code-point-step~empty",
+  "source": "(?<=.)",
+  "flags": "v",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~lazy-quantifiers",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}?--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~capture-to-noncapture",
+  "source": "Foo(?:B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~prepend-caret",
+  "source": "^Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~append-dollar",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r$",
+  "flags": "vi",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~wrap-in-optional-group",
+  "source": "(?:Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r)?",
+  "flags": "vi",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~append-alternative",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r|zz",
+  "flags": "vi",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~prepend-alternative",
+  "source": "qq|Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~add-m",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vim",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~add-s",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vis",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~add-g",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vig",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~add-y",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "viy",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~remove-flags",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "",
+  "input": "FooBĀĂĄr",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~uppercased",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "FOOBĀĂĄR",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~with-prefix",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "zzFooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~with-suffix",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "FooBĀĂĄrzz",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~doubled",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "FooBĀĂĄrFooBĀĂĄr",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~with-newlines",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "\nFooBĀĂĄr\n",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:v-mode-fold-before-subtract~empty",
+  "source": "Foo(B[\\q{ĀĂĄ|AaA}--\\q{āăą}])r",
+  "flags": "vi",
+  "input": "",
+  "op": "exec",
+  "expected": null
  }
 ];

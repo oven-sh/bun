@@ -23,13 +23,16 @@ describe("regex known bun/JSC divergences", () => {
   for (const c of knownBunFailures) {
     test(`(known failure) ${c.name}: /${c.source}/${c.flags} on ${JSON.stringify(c.input)}`, () => {
       const got = tryEvaluate(c);
+      const actual = JSON.stringify(got.value);
       if (c.tierDependent) {
         // JIT and interpreter disagree; accept either the fixed or the broken
         // result but never anything else.
-        expect([JSON.stringify(c.expected), JSON.stringify(c.currentBun)]).toContain(JSON.stringify(got.value));
+        expect([JSON.stringify(c.expected), JSON.stringify(c.currentBun)]).toContain(actual);
         return;
       }
-      expect(got.value).toEqual(c.currentBun);
+      // Compare canonical JSON: results include values like a 2^64
+      // lastIndex that do not survive structural equality on doubles.
+      expect(actual).toBe(JSON.stringify(c.currentBun));
     });
   }
 });

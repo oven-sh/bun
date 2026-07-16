@@ -264,10 +264,16 @@ pub fn e_from_negated(errno: core::ffi::c_int) -> E {
     let n = errno.wrapping_neg();
     #[cfg(windows)]
     {
-        u16::try_from(n)
-            .ok()
-            .and_then(E::try_from_raw)
-            .unwrap_or(E::SUCCESS)
+        // `to_system_error` now writes libuv's UV_E* code (e.g. -4082 for
+        // EBUSY). Fold that back to the dense `E` variant so callers can keep
+        // comparing against `E::EBUSY` instead of the UV_* tail variant.
+        match translate_uv_error_to_e(errno) {
+            E::UNKNOWN => u16::try_from(n)
+                .ok()
+                .and_then(E::try_from_raw)
+                .unwrap_or(E::SUCCESS),
+            e => e,
+        }
     }
     #[cfg(not(windows))]
     {

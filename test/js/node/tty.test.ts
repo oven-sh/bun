@@ -231,9 +231,15 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
     // stdin EOF means the pty master is closed, so the next stdout write is
     // guaranteed to fail with EIO. No polling, no timers.
     process.stdin.on("end", () => {
-      process.stdout.write("after hangup\\n", err => {
-        if (err) events.push("cb:" + err.code);
-      });
+      if (process.env.USE_END) {
+        // Writable.prototype.end(chunk) routes through _write (underscoreWriteFast)
+        // with state.onwrite as the callback, rather than the writeFast override.
+        process.stdout.end("after hangup\\n");
+      } else {
+        process.stdout.write("after hangup\\n", err => {
+          if (err) events.push("cb:" + err.code);
+        });
+      }
     });
     process.stdin.resume();
 
@@ -289,6 +295,15 @@ describe.concurrent.skipIf(isWindows)("process.stdout on a hung-up tty", () => {
     expect(await runUntilHangup({})).toEqual({
       events: ["cb:EIO", "error:EIO", "exit:0"],
       exitCode: 0,
+      signalCode: null,
+    });
+  });
+
+  // node v26.3.0: ["uncaught:EIO","exit:7"]
+  test("unhandled end(chunk) error via _write surfaces as uncaughtException", async () => {
+    expect(await runUntilHangup({ NO_ERROR_LISTENER: "1", USE_END: "1" })).toEqual({
+      events: ["uncaught:EIO", "exit:7"],
+      exitCode: 7,
       signalCode: null,
     });
   });

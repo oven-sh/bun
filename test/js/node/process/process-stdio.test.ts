@@ -216,7 +216,8 @@ describe.concurrent("process-stdio", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       // The bulk writes all land on stdout; the result line is on stderr.
       expect(stdout.length).toBeGreaterThan(0);
-      const line = stderr.trim().split("\n").pop()!;
+      const line = stderr.split("\n").find(l => l.startsWith("["));
+      if (!line) throw new Error("no result line on stderr: " + JSON.stringify(stderr));
       expect(JSON.parse(line)).toEqual(["cb:null", "uncaught:boom"]);
       expect(exitCode).toBe(7);
     },

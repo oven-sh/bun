@@ -1192,6 +1192,7 @@ describe.concurrent(() => {
       ["directory", 123, "ERR_INVALID_ARG_TYPE", "dir"],
       ["filename", 123, "ERR_INVALID_ARG_TYPE", "file"],
       ["signal", "NOTASIG", "ERR_UNKNOWN_SIGNAL", "SIGINT"],
+      ["signal", "NOTASIG", "ERR_UNKNOWN_SIGNAL", "SIGUSR2"],
       ["signal", 123, "ERR_INVALID_ARG_TYPE", "SIGINT"],
       ["reportOnFatalError", 1, "ERR_INVALID_ARG_TYPE", true],
       ["reportOnSignal", 1, "ERR_INVALID_ARG_TYPE", true],

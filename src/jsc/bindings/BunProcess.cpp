@@ -1055,6 +1055,7 @@ static const NeverDestroyed<String>* getSignalNames()
 
     return signalNames;
 }
+static constexpr size_t numSignalNames = 32;
 
 static void loadSignalNumberMap()
 {
@@ -2642,9 +2643,19 @@ JSC_DEFINE_CUSTOM_SETTER(processReport_setSignal, (JSC::JSGlobalObject * globalO
     RETURN_IF_EXCEPTION(scope, false);
     WTF::String str = value.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!isSignalName(str)) {
+    // Validate against the full known-name table rather than signalNameToNumberMap; on
+    // Windows the latter only contains the seven libuv-registerable console signals, which
+    // would reject the "SIGUSR2" default that Node (via os.constants.signals) accepts.
+    auto isKnownName = [](const WTF::String& s) {
+        auto signalNames = getSignalNames();
+        for (size_t i = 0; i < numSignalNames; i++) {
+            if (s == signalNames[i]) return true;
+        }
+        return false;
+    };
+    if (!isKnownName(str)) {
         WTF::String upper = str.convertToUppercaseWithoutLocale();
-        if (isSignalName(upper)) {
+        if (isKnownName(upper)) {
             Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, value, true);
         } else {
             Bun::ERR::UNKNOWN_SIGNAL(scope, globalObject, value);

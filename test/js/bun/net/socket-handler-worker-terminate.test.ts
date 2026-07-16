@@ -21,7 +21,7 @@ const server = Bun.listen({
     data() {},
     // The close handler is the dispatch point socket_body.rs:on_close drives:
     // a termination raised here returns Err to the native caller, which then
-    // invokes Handlers::call_error_handler.
+    // invokes the error handler via another JSValue::call.
     close() {
       // Signal the parent that we are inside the handler so it terminates us
       // while this frame is still on the stack.
@@ -35,6 +35,9 @@ const server = Bun.listen({
         sink.push(i & 0xff);
         if (sink.length > 64) sink.length = 0;
       }
+      // Reaching this line means termination did not land mid-handler this
+      // iteration; the parent observes 2 and does not count it as a hit.
+      Atomics.store(shared, 0, 2);
     },
     error() {},
   },
@@ -50,6 +53,7 @@ const net = require("net");
   // Each iteration is an independent opportunity for terminate() to land inside
   // the close handler. Atomics coordination makes it land reliably on the
   // first try; a handful leave headroom for CI scheduling jitter.
+  let hits = 0;
   for (let i = 0; i < 8; i++) {
     const sab = new SharedArrayBuffer(4);
     const shared = new Int32Array(sab);
@@ -63,10 +67,17 @@ const net = require("net");
     conn.destroy();
     // Wait until the worker signals it is inside the close handler, then
     // terminate so the termination exception lands mid-handler.
-    Atomics.wait(shared, 0, 0, 2000);
+    const waited = Atomics.wait(shared, 0, 0, 2000);
+    if (waited === "timed-out") throw new Error("close() never fired");
     await worker.terminate();
+    // shared[0] === 1 means termination landed mid-handler (the spin loop was
+    // interrupted); 2 means the handler returned normally first.
+    if (Atomics.load(shared, 0) === 1) hits++;
   }
-  console.log("ok");
+  if (hits === 0) {
+    throw new Error("terminate() never landed inside the close handler (0/8)");
+  }
+  console.log("ok", hits);
 })();
 `;
 
@@ -88,7 +99,7 @@ test.skipIf(isWindows)(
     // so benign debug-build stderr noise cannot cause a false positive; the
     // crash's stderr is included in the failure diff either way.
     expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
-      stdout: "ok",
+      stdout: expect.stringMatching(/^ok [1-8]$/),
       exitCode: 0,
     });
   },

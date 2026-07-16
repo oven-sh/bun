@@ -4,6 +4,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { channel, Channel, hasSubscribers, subscribe, unsubscribe } from "node:diagnostics_channel";
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { connect as netConnect } from "node:net";
 
 describe("Channel", () => {
   // test-diagnostics-channel-has-subscribers.js
@@ -374,6 +375,49 @@ describe("node:http server channels", () => {
     // The channel fires while the response is still being constructed, so the
     // request must already be attached to it.
     expect((events[0].response as ServerResponse).req).toBe(events[0].request);
+  });
+
+  test("http.server.* channels do not publish for accepted upgrades", async () => {
+    // Node's parserOnIncoming returns early for upgrades before the response
+    // is constructed, so only the normal request should publish here.
+    const counts = { created: 0, start: 0, finish: 0 };
+    const onCreated = () => counts.created++;
+    const onStart = () => counts.start++;
+    const onFinish = () => counts.finish++;
+    subscribe("http.server.response.created", onCreated);
+    subscribe("http.server.request.start", onStart);
+    subscribe("http.server.response.finish", onFinish);
+
+    const server = createServer((req, res) => res.end("ok"));
+    server.on("upgrade", (req, socket) => {
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+    });
+    try {
+      const { promise: listening, resolve: onListening, reject } = Promise.withResolvers<void>();
+      server.on("error", reject);
+      server.listen(0, "127.0.0.1", onListening);
+      await listening;
+      const { port } = server.address() as AddressInfo;
+
+      const { promise: upgraded, resolve: onUpgraded, reject: onSockErr } = Promise.withResolvers<void>();
+      const sock = netConnect(port, "127.0.0.1", () => {
+        sock.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+      });
+      sock.on("data", () => {});
+      sock.on("error", onSockErr);
+      sock.on("close", onUpgraded);
+      await upgraded;
+
+      const response = await fetch(`http://127.0.0.1:${port}/`);
+      expect(await response.text()).toBe("ok");
+    } finally {
+      unsubscribe("http.server.response.created", onCreated);
+      unsubscribe("http.server.request.start", onStart);
+      unsubscribe("http.server.response.finish", onFinish);
+      server.close();
+    }
+
+    expect(counts).toEqual({ created: 1, start: 1, finish: 1 });
   });
 });
 

@@ -741,7 +741,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     regular partition (no cross-language inlining at all), and
     //     (b) go through the LLVM 22 ThinLTO backend pipeline that
     //     miscompiles JSC on linux.
-    env.CARGO_PROFILE_RELEASE_LTO = cfg.darwin || cfg.windows ? "off" : "fat";
+    env.CARGO_PROFILE_RELEASE_LTO = cfg.darwin || cfg.windows ? "off" : "thin";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this
     // override Cargo.toml's `[profile.release] lto = "fat"` still applies —

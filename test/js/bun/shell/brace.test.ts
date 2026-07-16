@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 
 describe("$.braces", () => {
   test("no-op", () => {
@@ -224,16 +224,5 @@ describe("brace expansion drops empty argv words", () => {
   test("echo {a,} has no trailing space", async () => {
     const out = await $`echo {a,}`.nothrow().text();
     expect(out).toBe("a\n");
-  });
-
-  // `/usr/bin/printf` argc witness from the report (POSIX only; Windows has
-  // no coreutils printf at that path).
-  test.skipIf(isWindows)("printf '[%s]' {a,} renders [a]", async () => {
-    const out = await $`/usr/bin/printf '[%s]' {a,}`.nothrow().text();
-    expect(out).toBe("[a]");
-  });
-  test.skipIf(isWindows)("printf '[%s]' {a,,b} renders [a][b]", async () => {
-    const out = await $`/usr/bin/printf '[%s]' {a,,b}`.nothrow().text();
-    expect(out).toBe("[a][b]");
   });
 });

@@ -5892,6 +5892,712 @@ export const neighbors = [
   "expected": null
  },
  {
+  "name": "known:jit-capturing-group-only-BOL-star~lazy-quantifiers",
+  "source": "(^)*?a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~star-to-plus",
+  "source": "(^)+a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~capture-to-noncapture",
+  "source": "(?:^)*a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a"
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~prepend-caret",
+  "source": "^(^)*a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~append-dollar",
+  "source": "(^)*a$",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~wrap-in-optional-group",
+  "source": "(?:(^)*a)?",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~append-alternative",
+  "source": "(^)*a|zz",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~prepend-alternative",
+  "source": "qq|(^)*a",
+  "flags": "",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~add-i",
+  "source": "(^)*a",
+  "flags": "i",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~add-m",
+  "source": "(^)*a",
+  "flags": "m",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~add-s",
+  "source": "(^)*a",
+  "flags": "s",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~add-u",
+  "source": "(^)*a",
+  "flags": "u",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~add-g",
+  "source": "(^)*a",
+  "flags": "g",
+  "input": "ba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~add-y",
+  "source": "(^)*a",
+  "flags": "y",
+  "input": "ba",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~uppercased",
+  "source": "(^)*a",
+  "flags": "",
+  "input": "BA",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~with-prefix",
+  "source": "(^)*a",
+  "flags": "",
+  "input": "zzba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~with-suffix",
+  "source": "(^)*a",
+  "flags": "",
+  "input": "bazz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~doubled",
+  "source": "(^)*a",
+  "flags": "",
+  "input": "baba",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~with-newlines",
+  "source": "(^)*a",
+  "flags": "",
+  "input": "\nba\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "a",
+    null
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star~empty",
+  "source": "(^)*a",
+  "flags": "",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~lazy-quantifiers",
+  "source": "(^)*? \\b",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~star-to-plus",
+  "source": "(^)+ \\b",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~capture-to-noncapture",
+  "source": "(?:^)* \\b",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " "
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~prepend-caret",
+  "source": "^(^)* \\b",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~append-dollar",
+  "source": "(^)* \\b$",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~wrap-in-optional-group",
+  "source": "(?:(^)* \\b)?",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    "",
+    null
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~append-alternative",
+  "source": "(^)* \\b|zz",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~prepend-alternative",
+  "source": "qq|(^)* \\b",
+  "flags": "v",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~add-i",
+  "source": "(^)* \\b",
+  "flags": "vi",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~add-m",
+  "source": "(^)* \\b",
+  "flags": "vm",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~add-s",
+  "source": "(^)* \\b",
+  "flags": "vs",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~add-g",
+  "source": "(^)* \\b",
+  "flags": "vg",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~add-y",
+  "source": "(^)* \\b",
+  "flags": "vy",
+  "input": "a b",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~remove-flags",
+  "source": "(^)* \\b",
+  "flags": "",
+  "input": "a b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~uppercased",
+  "source": "(^)* \\b",
+  "flags": "v",
+  "input": "A B",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~with-prefix",
+  "source": "(^)* \\b",
+  "flags": "v",
+  "input": "zza b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~with-suffix",
+  "source": "(^)* \\b",
+  "flags": "v",
+  "input": "a bzz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~doubled",
+  "source": "(^)* \\b",
+  "flags": "v",
+  "input": "a ba b",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~with-newlines",
+  "source": "(^)* \\b",
+  "flags": "v",
+  "input": "\na b\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    " ",
+    null
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-capturing-group-only-BOL-star-v~empty",
+  "source": "(^)* \\b",
+  "flags": "v",
+  "input": "",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~lazy-quantifiers",
+  "source": "(??![^bx])",
+  "flags": "v",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "error": "SyntaxError"
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~prepend-caret",
+  "source": "^(?![^bx])",
+  "flags": "v",
+  "input": "😀",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~append-dollar",
+  "source": "(?![^bx])$",
+  "flags": "v",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~wrap-in-optional-group",
+  "source": "(?:(?![^bx]))?",
+  "flags": "v",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~append-alternative",
+  "source": "(?![^bx])|zz",
+  "flags": "v",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~prepend-alternative",
+  "source": "qq|(?![^bx])",
+  "flags": "v",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~add-i",
+  "source": "(?![^bx])",
+  "flags": "vi",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~add-m",
+  "source": "(?![^bx])",
+  "flags": "vm",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~add-s",
+  "source": "(?![^bx])",
+  "flags": "vs",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~add-g",
+  "source": "(?![^bx])",
+  "flags": "vg",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~add-y",
+  "source": "(?![^bx])",
+  "flags": "vy",
+  "input": "😀",
+  "op": "exec",
+  "expected": null
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~remove-flags",
+  "source": "(?![^bx])",
+  "flags": "",
+  "input": "😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~with-prefix",
+  "source": "(?![^bx])",
+  "flags": "v",
+  "input": "zz😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 3
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~with-suffix",
+  "source": "(?![^bx])",
+  "flags": "v",
+  "input": "😀zz",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~doubled",
+  "source": "(?![^bx])",
+  "flags": "v",
+  "input": "😀😀",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 1
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~with-newlines",
+  "source": "(?![^bx])",
+  "flags": "v",
+  "input": "\n😀\n",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 2
+  }
+ },
+ {
+  "name": "known:jit-u-mode-empty-match-position-in-pair~empty",
+  "source": "(?![^bx])",
+  "flags": "v",
+  "input": "",
+  "op": "exec",
+  "expected": {
+   "match": [
+    ""
+   ],
+   "index": 0
+  }
+ },
+ {
   "name": "known:jit-optional-group-containing-only-BOL~lazy-quantifiers",
   "source": "(??:^)?a",
   "flags": "",

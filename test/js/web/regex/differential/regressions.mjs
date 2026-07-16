@@ -215,6 +215,15 @@ export const cases = [
 // The test asserts these still FAIL (with the current wrong result), so that
 // an engine fix produces an unexpected pass and the case gets promoted above.
 export const knownBunFailures = [
+  // Capturing-group form of the optional-BOL-group family (#9): a capture holding only ^ under */? loses matches away from index 0. JIT-only; live on WebKit main.
+  {"name": "jit-capturing-group-only-BOL-star", "source": "(^)*a", "flags": "", "input": "ba", "op": "exec", "expected": {"match": ["a", null], "index": 1}, "currentBun": null},
+  // Same family reached via /v: the whole match is lost, not just the position. JIT-only.
+  {"name": "jit-capturing-group-only-BOL-star-v", "source": "(^)* \\b", "flags": "v", "input": "a b", "op": "exec", "expected": {"match": [" ", null], "index": 1}, "currentBun": null},
+  // Unicode-mode empty match relative to a surrogate pair: V8 and the bytecode interpreter both
+  // report index 1 for a negative-lookahead-only pattern; the JIT reports 2. Recorded as a JIT
+  // divergence (two independent implementations agree on 1); the exact spec position semantics
+  // (search-index advance vs. matcher position) should be nailed down when fixing it.
+  {"name": "jit-u-mode-empty-match-position-in-pair", "source": "(?![^bx])", "flags": "v", "input": "😀", "op": "exec", "expected": {"match": [""], "index": 1}, "currentBun": {"match": [""], "index": 2}},
   // JIT-only; live on WebKit main: an optional group whose only content is ^ misfires the zero-length-match handling. Interpreter is correct.
   {"name": "jit-optional-group-containing-only-BOL", "source": "(?:^)?a", "flags": "", "input": "ba", "op": "exec", "expected": {"match": ["a"], "index": 1}, "currentBun": null},
   // Same family as above with * quantifier.

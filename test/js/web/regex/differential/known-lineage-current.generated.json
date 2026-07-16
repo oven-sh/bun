@@ -1,4 +1,78 @@
 {
+ "known:jit-capturing-group-only-BOL-star~lazy-quantifiers": null,
+ "known:jit-capturing-group-only-BOL-star~capture-to-noncapture": null,
+ "known:jit-capturing-group-only-BOL-star~append-dollar": null,
+ "known:jit-capturing-group-only-BOL-star~append-alternative": null,
+ "known:jit-capturing-group-only-BOL-star~prepend-alternative": null,
+ "known:jit-capturing-group-only-BOL-star~add-i": null,
+ "known:jit-capturing-group-only-BOL-star~add-s": null,
+ "known:jit-capturing-group-only-BOL-star~add-u": null,
+ "known:jit-capturing-group-only-BOL-star~add-g": null,
+ "known:jit-capturing-group-only-BOL-star~with-prefix": null,
+ "known:jit-capturing-group-only-BOL-star~with-suffix": null,
+ "known:jit-capturing-group-only-BOL-star~doubled": null,
+ "known:jit-capturing-group-only-BOL-star~with-newlines": null,
+ "known:jit-capturing-group-only-BOL-star-v~lazy-quantifiers": null,
+ "known:jit-capturing-group-only-BOL-star-v~capture-to-noncapture": null,
+ "known:jit-capturing-group-only-BOL-star-v~append-alternative": null,
+ "known:jit-capturing-group-only-BOL-star-v~prepend-alternative": null,
+ "known:jit-capturing-group-only-BOL-star-v~add-i": null,
+ "known:jit-capturing-group-only-BOL-star-v~add-s": null,
+ "known:jit-capturing-group-only-BOL-star-v~add-g": null,
+ "known:jit-capturing-group-only-BOL-star-v~remove-flags": null,
+ "known:jit-capturing-group-only-BOL-star-v~uppercased": null,
+ "known:jit-capturing-group-only-BOL-star-v~with-prefix": null,
+ "known:jit-capturing-group-only-BOL-star-v~with-suffix": null,
+ "known:jit-capturing-group-only-BOL-star-v~doubled": null,
+ "known:jit-capturing-group-only-BOL-star-v~with-newlines": null,
+ "known:jit-u-mode-empty-match-position-in-pair~prepend-alternative": {
+  "match": [
+   ""
+  ],
+  "index": 2
+ },
+ "known:jit-u-mode-empty-match-position-in-pair~add-i": {
+  "match": [
+   ""
+  ],
+  "index": 2
+ },
+ "known:jit-u-mode-empty-match-position-in-pair~add-s": {
+  "match": [
+   ""
+  ],
+  "index": 2
+ },
+ "known:jit-u-mode-empty-match-position-in-pair~add-g": {
+  "match": [
+   ""
+  ],
+  "index": 2
+ },
+ "known:jit-u-mode-empty-match-position-in-pair~with-prefix": {
+  "match": [
+   ""
+  ],
+  "index": 4
+ },
+ "known:jit-u-mode-empty-match-position-in-pair~with-suffix": {
+  "match": [
+   ""
+  ],
+  "index": 4
+ },
+ "known:jit-u-mode-empty-match-position-in-pair~doubled": {
+  "match": [
+   ""
+  ],
+  "index": 4
+ },
+ "known:jit-u-mode-empty-match-position-in-pair~with-newlines": {
+  "match": [
+   ""
+  ],
+  "index": 4
+ },
  "known:jit-optional-group-containing-only-BOL~noncapture-to-capture": null,
  "known:jit-optional-group-containing-only-BOL~append-dollar": null,
  "known:jit-optional-group-containing-only-BOL~append-alternative": null,

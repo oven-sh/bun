@@ -84,9 +84,17 @@ function isCurrentExecution(box: any): boolean {
 // context had an active domain, i.e. the equivalent of node's before() hook
 // being about to enter `box.d`. A box with a null/undefined active is not a
 // pairing: node resources created with no active domain observe the module
-// globals at callback time, exactly like synchronous code does.
+// globals at callback time, exactly like synchronous code does. Node's init
+// hook stores process.domain[kWeak], which is undefined for a non-Domain, so
+// before() never enters one — the _errorHandler check is the same filter
+// fatalErrorDispatch and domainWouldClaim already apply.
 function isRestoredPairing(box: any): boolean {
-  return box !== undefined && box.token !== currentToken && box.d != null;
+  return (
+    box !== undefined &&
+    box.token !== currentToken &&
+    box.d != null &&
+    typeof box.d._errorHandler === "function"
+  );
 }
 
 // adopt() (below) may have entered a paired domain on the global stack for

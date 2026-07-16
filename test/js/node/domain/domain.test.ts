@@ -26,6 +26,27 @@ test("a non-Domain process.domain does not mask the original error in the fatal 
   expect(r.exitCode).toBe(1);
 });
 
+test("a non-Domain process.domain is never pushed onto the stack by an async pairing", async () => {
+  // Node's init hook stores process.domain[kWeak], undefined for a
+  // non-Domain, so before() never enters one; the stack stays [d] -> []
+  // after d's throwing handler, and the handler's own throw escapes cleanly
+  // to exit 7. isRestoredPairing without the _errorHandler guard pushed the
+  // non-Domain, so _errorHandler's catch saw stack.length > 0 and recursed
+  // into it: an internal TypeError masked "from handler".
+  const r = await run(`
+    const domain = require("domain");
+    process.domain = { foo: 1 };
+    setTimeout(() => {
+      const d = domain.create();
+      d.on("error", () => { throw new Error("from handler"); });
+      d.run(() => { throw new Error("boom"); });
+    }, 0);
+  `);
+  expect(r.stderr).toContain("from handler");
+  expect(r.stderr).not.toContain("_errorHandler is not a function");
+  expect(r.exitCode).toBe(7);
+});
+
 test("patching AsyncLocalStorage.prototype.getStore after loading node:domain does not hijack domain error routing", async () => {
   const r = await run(`
     const domain = require("domain");

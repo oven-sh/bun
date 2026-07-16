@@ -343,13 +343,15 @@ export function initializeNextTickQueue(
   const { validateFunction } = require("internal/validators");
 
   // node: a throwing hook callback is fatal (fatalError: print + exit 1),
-  // never surfaced to the caller.
+  // never surfaced to the caller. Only init receives (id, type, trigger,
+  // resource); before/after/destroy receive exactly one argument.
   function emitTickHook(hooks, which, asyncId, type?, triggerAsyncId?, resource?) {
     for (let i = 0; i < hooks.length; i++) {
       const fn = hooks[i][which];
       if (fn === undefined) continue;
       try {
-        fn(asyncId, type, triggerAsyncId, resource);
+        if (type === undefined) fn(asyncId);
+        else fn(asyncId, type, triggerAsyncId, resource);
       } catch (err) {
         try {
           console.error(typeof err?.stack === "string" ? err.stack : err);

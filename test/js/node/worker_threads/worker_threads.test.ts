@@ -1,4 +1,5 @@
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -21,6 +22,10 @@ import wt, {
   Worker,
   workerData,
 } from "worker_threads";
+
+// Many of these tests spawn nested workers or whole bun subprocesses that each
+// spawn workers, which the 5s default does not cover on a debug/ASAN build.
+setDefaultTimeout(isDebug ? 90_000 : 10_000);
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -251,6 +256,79 @@ test("receiveMessageOnPort works as FIFO", () => {
     }).toThrow();
   }
 }, 9999999);
+
+test("receiveMessageOnPort rejects arguments that are not a MessagePort", () => {
+  const call = receiveMessageOnPort as (...args: unknown[]) => unknown;
+
+  for (const args of [[], [undefined], [null], [0], [-1], [""], [{}], [[]]]) {
+    let error: any;
+    try {
+      call(...args);
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(TypeError);
+    expect(error.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(error.message).toBe('The "port" argument must be a MessagePort instance');
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/26501
+test("receiveMessageOnPort preserves a queue of interleaved falsy and truthy messages", () => {
+  const { port1, port2 } = new MessageChannel();
+
+  const values = [undefined, null, 0, 1, false, true, "", "hello world"];
+  for (const value of values) port1.postMessage(value);
+
+  const received = values.map(() => receiveMessageOnPort(port2));
+  expect(received).toStrictEqual(values.map(message => ({ message })));
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+
+  port1.close();
+  port2.close();
+});
+
+test("receiveMessageOnPort does not drop falsy messages", () => {
+  const { port1, port2 } = new MessageChannel();
+
+  port1.postMessage(0);
+  port1.postMessage(1);
+  port1.postMessage(2);
+
+  expect([receiveMessageOnPort(port2), receiveMessageOnPort(port2), receiveMessageOnPort(port2)]).toStrictEqual([
+    { message: 0 },
+    { message: 1 },
+    { message: 2 },
+  ]);
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+
+  port1.close();
+  port2.close();
+});
+
+// A popped message is gone from the queue, so reporting a falsy one as "queue
+// empty" loses it. The envelope is what distinguishes the two cases.
+test.each([
+  ["0", 0],
+  ["-0", -0],
+  ["an empty string", ""],
+  ["false", false],
+  ["null", null],
+  ["undefined", undefined],
+  ["NaN", NaN],
+  ["0n", 0n],
+])("receiveMessageOnPort returns an envelope for %s", (_label, value) => {
+  const { port1, port2 } = new MessageChannel();
+  port1.postMessage(value);
+
+  const received = receiveMessageOnPort(port2);
+  expect(received).toStrictEqual({ message: value });
+  expect(Object.hasOwn(received!, "message")).toBe(true);
+  expect(receiveMessageOnPort(port2)).toBeUndefined();
+
+  port1.close();
+  port2.close();
+});
 
 test("you can override globalThis.postMessage", async () => {
   const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url));

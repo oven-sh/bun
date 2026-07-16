@@ -366,18 +366,18 @@ void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWit
     dispatchEvent(event.event);
 }
 
-JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
+std::optional<JSValue> MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject)
 {
     if (!isEntangled())
-        return jsUndefined();
+        return std::nullopt;
 
     auto* context = scriptExecutionContext();
     if (!context)
-        return jsUndefined();
+        return std::nullopt;
 
     auto message = m_pipe->takeOne(m_side);
     if (!message)
-        return jsUndefined();
+        return std::nullopt;
 
     auto ports = MessagePort::entanglePorts(*context, WTF::move(message->transferredPorts));
     return message->message.releaseNonNull()->deserialize(*lexicalGlobalObject, lexicalGlobalObject, WTF::move(ports), SerializationErrorMode::NonThrowing);

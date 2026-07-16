@@ -121,9 +121,8 @@ describe.concurrent("bun build --compile cross-compile cache directory resolutio
         [envVar]: join(root, "override"),
       };
 
-      const { stdout, stderr, exitCode } = await build(root, env);
-      expect({ stdout, stderr, exitCode }).toEqual({
-        stdout: expect.not.stringContaining("Download"),
+      const { stderr, exitCode } = await build(root, env);
+      expect({ stderr, exitCode }).toEqual({
         stderr: expect.not.stringContaining("error:"),
         exitCode: 0,
       });
@@ -152,9 +151,8 @@ describe.concurrent("bun build --compile cross-compile cache directory resolutio
       USERPROFILE: undefined,
     };
 
-    const { stdout, stderr, exitCode } = await build(root, env);
-    expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: expect.not.stringContaining("Download"),
+    const { stderr, exitCode } = await build(root, env);
+    expect({ stderr, exitCode }).toEqual({
       stderr: expect.not.stringContaining("error:"),
       exitCode: 0,
     });

@@ -165,9 +165,19 @@ export const lsquic: Dependency = {
         LSQUIC_QIR: 0,
         LSQUIC_WEBTRANSPORT_SERVER_SUPPORT: 0,
       },
-      // -w: lsquic emits a lot of -Wsign-compare and -Wunused under -Wall;
-      // upstream builds with -Werror disabled. Treat as a third-party lib.
-      cflags: ["-w"],
+      cflags: [
+        // -w: lsquic emits a lot of -Wsign-compare and -Wunused under -Wall;
+        // upstream builds with -Werror disabled. Treat as a third-party lib.
+        "-w",
+        // lsquic_logger.h defaults LSQUIC_LOWEST_LOG_LEVEL to LSQ_LOG_DEBUG, so
+        // every LSQ_DEBUG body and format string compiles in: `LSQ_LOG_ENABLED`
+        // then gates on a runtime array lookup the optimizer cannot fold, and
+        // ~1,400 call sites cost ~113 KB. Upstream's own CMake sets
+        // LSQ_LOG_INFO for non-Debug builds; do the same, and keep the debug
+        // messages in debug builds, where BUN_DEBUG_lsquic=1 reads them --
+        // matching bun's own scoped loggers, which release already strips.
+        ...(cfg.debug ? [] : ["-DLSQUIC_LOWEST_LOG_LEVEL=LSQ_LOG_INFO"]),
+      ],
     };
     return spec;
   },

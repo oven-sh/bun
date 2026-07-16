@@ -420,7 +420,41 @@ pub fn parse_override_value(
                 .name
                 .eql(ref_name_str, builder.string_bytes.as_slice(), ref_name)
             {
-                return Ok(Some(dep.clone()));
+                // `$ref` only borrows the version spec from the referenced
+                // dependency; the overridden package keeps its own identity.
+                // Returning the referenced dependency wholesale would rename
+                // the overridden package and install the reference in its
+                // place (and serialize the override under the wrong key).
+                let name_hash = SemverBuilder::string_hash(key);
+                let name = builder.append_with_hash::<SemverString>(key, name_hash);
+                // The referenced dependency's strings already live in this
+                // lockfile's string buffer, so its literal can be re-parsed
+                // in place under the overridden package's name.
+                let literal_sliced = dep
+                    .version
+                    .literal
+                    .sliced(builder.string_bytes.as_slice());
+                let Some(version) = dependency::parse(
+                    name,
+                    name_hash,
+                    literal_sliced.slice,
+                    &literal_sliced,
+                    &mut *log,
+                    package_manager,
+                ) else {
+                    log.add_warning_fmt(
+                        Some(source),
+                        loc,
+                        format_args!("Invalid {} value \"{}\"", field, bstr::BStr::new(value)),
+                    );
+                    return Ok(None);
+                };
+                return Ok(Some(Dependency {
+                    name,
+                    name_hash,
+                    version,
+                    behavior: Behavior::default(),
+                }));
             }
         }
         log.add_warning_fmt(

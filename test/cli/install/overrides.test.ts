@@ -186,6 +186,113 @@ test("overrides reset when removed", async () => {
   ensureLockfileDoesntChangeOnBunI(tmp);
 });
 
+test("$ override takes the referenced dependency's version but keeps the package's identity", async () => {
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "react": "18.3.1",
+        "react-is": "18.2.0",
+      },
+      overrides: {
+        "react-is": "$react",
+      },
+    }),
+  );
+  install(tmp, ["install"]);
+
+  // react-is must stay react-is, only its version comes from "$react"
+  const reactIs = JSON.parse(readFileSync(join(tmp, "node_modules/react-is/package.json"), "utf-8"));
+  expect(reactIs.name).toBe("react-is");
+  expect(reactIs.version).toBe("18.3.1");
+
+  const react = JSON.parse(readFileSync(join(tmp, "node_modules/react/package.json"), "utf-8"));
+  expect(react.name).toBe("react");
+
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});
+
+test("multiple packages using the same $ override target stay independent", async () => {
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "react": "18.3.1",
+        "react-dom": "18.2.0",
+        "react-is": "18.2.0",
+      },
+      overrides: {
+        "react-dom": "$react",
+        "react-is": "$react",
+      },
+    }),
+  );
+  install(tmp, ["install"]);
+
+  for (const pkg of ["react", "react-dom", "react-is"]) {
+    const json = JSON.parse(readFileSync(join(tmp, "node_modules", pkg, "package.json"), "utf-8"));
+    expect(json.name).toBe(pkg);
+    expect(json.version).toBe("18.3.1");
+  }
+
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});
+
+test("$ reference in resolutions keeps the package's identity", async () => {
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "react": "18.3.1",
+        "react-is": "18.2.0",
+      },
+      resolutions: {
+        "react-is": "$react",
+      },
+    }),
+  );
+  install(tmp, ["install"]);
+
+  const reactIs = JSON.parse(readFileSync(join(tmp, "node_modules/react-is/package.json"), "utf-8"));
+  expect(reactIs.name).toBe("react-is");
+  expect(reactIs.version).toBe("18.3.1");
+
+  ensureLockfileDoesntChangeOnBunI(tmp);
+});
+
+test("$ override referencing a missing dependency warns and keeps the original version", async () => {
+  const tmp = tmpdirSync();
+  writeFileSync(
+    join(tmp, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        bytes: "1.0.0",
+      },
+      overrides: {
+        bytes: "$nonexistent-reference",
+      },
+    }),
+  );
+
+  const { exitCode, stderr } = Bun.spawnSync({
+    cmd: [bunExe(), "install"],
+    cwd: tmp,
+    stdout: "inherit",
+    stdin: "inherit",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stderr.toString()).toContain(
+    'Could not resolve override "$nonexistent-reference" (you need "nonexistent-reference" in your dependencies)',
+  );
+  expect(exitCode).toBe(0);
+  expect(versionOf(tmp, "node_modules/bytes/package.json")).toBe("1.0.0");
+});
+
 test("overrides do not apply to workspaces", async () => {
   const tmp = tmpdirSync();
   await Promise.all([

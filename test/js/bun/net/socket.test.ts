@@ -10,6 +10,7 @@ import {
   getMaxFD,
   isWindows,
   libcPathForDlopen,
+  normalizeBunSnapshot,
   tempDir,
   tls,
 } from "harness";
@@ -2201,6 +2202,7 @@ Reo=
             error(_socket, err) {
               errors.push(err);
               handshake.reject(err);
+              echoed.reject(err);
             },
             connectError(_socket, err) {
               handshake.reject(err);
@@ -2213,6 +2215,10 @@ Reo=
         server.stop(true);
         throw e;
       }
+
+      // Reject-path tests observe the error via `errors[]` and never await
+      // `echoed`; swallow here so that rejection is not unhandled.
+      echoed.promise.catch(() => {});
 
       return {
         server,
@@ -2565,12 +2571,11 @@ Reo=
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout.trim())).toEqual([
-        "handshake:true:UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-        "close:UNABLE_TO_VERIFY_LEAF_SIGNATURE",
-      ]);
-      expect(exitCode).toBe(0);
+      expect({ events: JSON.parse(stdout.trim()), stderr: normalizeBunSnapshot(stderr), exitCode }).toEqual({
+        events: ["handshake:true:UNABLE_TO_VERIFY_LEAF_SIGNATURE", "close:UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     it("delivers the hostname-mismatch error through error/close when rejectUnauthorized closes the connection", async () => {

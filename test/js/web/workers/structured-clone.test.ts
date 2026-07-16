@@ -75,7 +75,8 @@ const crossProcessChildScript = `
         chunks = [buf];
         break;
       }
-      const cloned = serialize(deserialize(buf.subarray(4, 4 + len)));
+      // serialize() hands back a SharedArrayBuffer, which Writable rejects (as node does).
+      const cloned = new Uint8Array(serialize(deserialize(buf.subarray(4, 4 + len))));
       const header = Buffer.alloc(4);
       header.writeUInt32LE(cloned.byteLength, 0);
       process.stdout.write(header);

@@ -2383,4 +2383,58 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     expect({ body, ok }).toEqual({ body: "1", ok: true });
     expect(exitCode).toBe(0);
   }, 30_000);
+
+  // A ws.close() inside the message handler on the last socket of a stopped
+  // server downgrades the wrapper (the sole GC root for wsOnError) before the
+  // message handler returns. The error path must have copied on_error to the
+  // stack before entering user JS, or a GC between the close and the throw
+  // collects it and run_error_callback calls a freed cell.
+  test("error handler survives ws.close()+throw inside the last socket's message handler under collectContinuously", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        let errorFired = 0;
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1",
+          fetch(req, s) { if (s.upgrade(req)) return; return new Response("no"); },
+          websocket: {
+            open() {},
+            message(ws) {
+              ws.close(); // last socket of a stopped server → wrapper downgrades
+              Bun.gc(true);
+              throw new Error("boom");
+            },
+            error(e) { errorFired++; },
+          },
+        });
+        const opened = Promise.withResolvers();
+        const closed = Promise.withResolvers();
+        const ws = new WebSocket("ws://127.0.0.1:" + server.port);
+        ws.onopen = () => opened.resolve();
+        ws.onerror = e => opened.reject(e);
+        ws.onclose = () => closed.resolve();
+        await opened.promise;
+        server.stop(); // graceful: listener gone, this ws keeps wrapper Strong
+        globalThis.srv = null; // drop our own ref
+        ws.send("go");
+        await closed.promise;
+        console.log(JSON.stringify({ errorFired }));
+        process.exit(0);
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1", BUN_JSC_useConcurrentGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ out: JSON.parse(stdout.trim() || "null"), stderr, exitCode }).toEqual({
+      out: { errorFired: 1 },
+      stderr: "",
+      exitCode: 0,
+    });
+  }, 30_000);
 });

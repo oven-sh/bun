@@ -397,6 +397,7 @@ impl ServerWebSocket {
         }
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
+        let on_error = handler.on_error;
         if vm.is_shutting_down() {
             bun_output::scoped_log!(WebSocketServer, "onOpen called after script execution");
             ws.close();
@@ -444,7 +445,7 @@ impl ServerWebSocket {
                 this_value.unprotect();
             }
 
-            handler.run_error_callback(vm, global_object, err_value);
+            handler.run_error_callback(on_error, vm, global_object, err_value);
             if closed_here {
                 if let Some(server) = server {
                     // May run the idle pass; no `&Handler` borrow is live here.
@@ -463,6 +464,7 @@ impl ServerWebSocket {
             bstr::BStr::new(message)
         );
         let on_message_handler = self.handler().on_message;
+        let on_error = self.handler().on_error;
         if on_message_handler.is_empty_or_undefined_or_null() {
             return;
         }
@@ -509,7 +511,7 @@ impl ServerWebSocket {
 
         if let Some(err_value) = result.to_error() {
             self.handler()
-                .run_error_callback(vm, global_object, err_value);
+                .run_error_callback(on_error, vm, global_object, err_value);
             return;
         }
 
@@ -543,6 +545,7 @@ impl ServerWebSocket {
         }
 
         let on_drain = handler.on_drain;
+        let on_error = handler.on_error;
         if !on_drain.is_empty() {
             let global_object = handler.global_object();
 
@@ -563,7 +566,7 @@ impl ServerWebSocket {
             let result = corker.result;
 
             if let Some(err_value) = result.to_error() {
-                handler.run_error_callback(vm, global_object, err_value);
+                handler.run_error_callback(on_error, vm, global_object, err_value);
             }
         }
     }
@@ -583,6 +586,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onPing: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_ping;
+        let on_error = handler.on_error;
         let vm = handler.vm();
         if cb.is_empty_or_undefined_or_null() || vm.is_shutting_down() {
             return;
@@ -603,7 +607,7 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPing error");
-            handler.run_error_callback(vm, global_this, err);
+            handler.run_error_callback(on_error, vm, global_this, err);
         }
     }
 
@@ -612,6 +616,7 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onPong: {}", bstr::BStr::new(data));
         let handler = self.handler();
         let cb = handler.on_pong;
+        let on_error = handler.on_error;
         if cb.is_empty_or_undefined_or_null() {
             return;
         }
@@ -637,7 +642,7 @@ impl ServerWebSocket {
         if let Err(e) = cb.call(global_this, JSValue::UNDEFINED, &args) {
             let err = global_this.take_exception(e);
             bun_output::scoped_log!(WebSocketServer, "onPong error");
-            handler.run_error_callback(vm, global_this, err);
+            handler.run_error_callback(on_error, vm, global_this, err);
         }
     }
 
@@ -704,6 +709,7 @@ impl ServerWebSocket {
         // Copy to a stack local before `sig.signal()` re-enters JS: a GC
         // between the test and the `.call(...)` could otherwise collect it.
         let on_close_handler = handler.on_close;
+        let on_error = handler.on_error;
         if !on_close_handler.is_empty_or_undefined_or_null() {
             let global_object = handler.global_object();
 
@@ -727,7 +733,7 @@ impl ServerWebSocket {
                         "onClose error (message) {}",
                         was_not_empty
                     );
-                    handler.run_error_callback(vm, global_object, err);
+                    handler.run_error_callback(on_error, vm, global_object, err);
                     return;
                 }
             };
@@ -736,7 +742,7 @@ impl ServerWebSocket {
             if let Err(e) = on_close_handler.call(global_object, JSValue::UNDEFINED, &call_args) {
                 let err = global_object.take_exception(e);
                 bun_output::scoped_log!(WebSocketServer, "onClose error {}", was_not_empty);
-                handler.run_error_callback(vm, global_object, err);
+                handler.run_error_callback(on_error, vm, global_object, err);
                 return;
             }
         } else if let Some(sig) = signal {

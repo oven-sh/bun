@@ -73,13 +73,18 @@ impl Handler {
         self.vm.get()
     }
 
+    /// `on_error` must be copied to a stack local by the caller before any
+    /// user JS runs: a re-entrant `ws.close()` on the last socket of a stopped
+    /// server can downgrade the wrapper (the sole GC root for `wsOnError`)
+    /// mid-handler, so a fresh `self.on_error` read after user JS could be a
+    /// freed cell.
     pub fn run_error_callback(
         &self,
+        on_error: JSValue,
         vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         error_value: JSValue,
     ) {
-        let on_error = self.on_error;
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[error_value])

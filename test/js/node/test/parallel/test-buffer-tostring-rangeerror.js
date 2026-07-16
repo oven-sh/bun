@@ -12,7 +12,7 @@ if (!common.enoughTestMem) {
 
 const assert = require('assert');
 const {
-  Buffer,
+  SlowBuffer,
   constants: {
     MAX_STRING_LENGTH,
   },
@@ -38,6 +38,7 @@ function test(getBuffer) {
 }
 
 test(() => Buffer(len));
+test(() => SlowBuffer(len));
 test(() => Buffer.alloc(len));
 test(() => Buffer.allocUnsafe(len));
 test(() => Buffer.allocUnsafeSlow(len));

@@ -1755,31 +1755,75 @@ test("worker.performance.eventLoopUtilization() reports the worker's activity", 
 
     expect(elu2.active).toBeGreaterThan(50);
     expect(elu2.utilization).toBeGreaterThan(0.5);
-
-    // Node keeps reporting real values between terminate() and 'exit' (kHandle
-    // is only nulled on exit); sampled in the same tick as terminate(), the
-    // close task cannot have run yet and the accumulated activity must still
-    // be visible rather than forced to zeros.
-    const terminated = worker.terminate();
-    expect(worker.performance.eventLoopUtilization().active).toBeGreaterThan(50);
-    await terminated;
   } finally {
     await worker.terminate();
   }
 });
 
 // https://github.com/oven-sh/bun/issues/32609
-test("worker.performance.eventLoopUtilization() returns zeros before 'online' fires", async () => {
-  // 'online' only fires after the worker's entry script finishes evaluating,
-  // so an Atomics.wait barrier inside the entry pins the worker pre-online
-  // while the parent samples; Node gates on kIsOnline and reports zeros here.
-  const sab = new SharedArrayBuffer(4);
+test("worker.performance.eventLoopUtilization() keeps reporting between terminate() and exit", async () => {
+  // Node's gate is !kIsOnline || !kHandle; neither changes at terminate(), so
+  // values stay real until exit handling. To sample that window without racing
+  // the worker's own teardown, park the worker inside a message handler on a
+  // SAB gate: it signals slot 1 once parked, the parent terminates and samples
+  // while the worker thread cannot reach shutdown, then releases slot 0.
+  const sab = new SharedArrayBuffer(8);
   const gate = new Int32Array(sab);
   const worker = new Worker(
-    "const { workerData } = require('worker_threads'); Atomics.wait(new Int32Array(workerData.sab), 0, 0, 30_000);",
+    `const { parentPort, workerData } = require("worker_threads");
+     const t = Date.now();
+     while (Date.now() - t < 100); // accumulate active time before parking
+     const g = new Int32Array(workerData.sab);
+     parentPort.on("message", () => {
+       Atomics.store(g, 1, 1);
+       Atomics.notify(g, 1);
+       Atomics.wait(g, 0, 0, 30_000);
+     });`,
     { eval: true, workerData: { sab } },
   );
   try {
+    await new Promise<void>((resolve, reject) => {
+      worker.on("online", () => resolve());
+      worker.on("error", reject);
+    });
+    worker.postMessage(0);
+    Atomics.wait(gate, 1, 0, 30_000); // worker is parked in the handler
+
+    const terminated = worker.terminate();
+    // Same tick as terminate(): the close task has not run (m_state flips on a
+    // parent task) and the parked worker cannot have torn down its VM, so the
+    // entry burn must still be visible rather than forced to zeros.
+    expect(worker.performance.eventLoopUtilization().active).toBeGreaterThan(50);
+
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    await terminated;
+  } finally {
+    Atomics.store(gate, 0, 1);
+    Atomics.notify(gate, 0);
+    await worker.terminate();
+  }
+});
+
+// https://github.com/oven-sh/bun/issues/32609
+test("worker.performance.eventLoopUtilization() returns zeros before 'online' fires", async () => {
+  // 'online' only fires after the worker's entry script finishes evaluating.
+  // The worker signals slot 1 from inside its entry (VM and loop pointer are
+  // published by then) and parks on slot 0, so the parent's sample lands in
+  // the post-publish, pre-online window where only the online gate (Node's
+  // kIsOnline) forces zeros.
+  const sab = new SharedArrayBuffer(8);
+  const gate = new Int32Array(sab);
+  const worker = new Worker(
+    `const { workerData } = require("worker_threads");
+     const g = new Int32Array(workerData.sab);
+     Atomics.store(g, 1, 1);
+     Atomics.notify(g, 1);
+     Atomics.wait(g, 0, 0, 30_000);`,
+    { eval: true, workerData: { sab } },
+  );
+  try {
+    Atomics.wait(gate, 1, 0, 30_000); // worker is mid-entry: published, not online
     expect(worker.performance.eventLoopUtilization()).toEqual({ idle: 0, active: 0, utilization: 0 });
   } finally {
     Atomics.store(gate, 0, 1);

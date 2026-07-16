@@ -461,15 +461,17 @@ function setupWorkerStdio(stdio) {
   // Shadow the native PropertyCallback slots via plain [[Set]] first: defineProperty
   // on one reifies the process static table and invokes constructStdout/Stderr/Stdin,
   // cold-loading node:stream just to build fd streams we then discard.
-  proc.stdin = proc.stdout = proc.stderr = undefined;
+  proc.stdin = undefined;
+  if (stdout) proc.stdout = undefined;
+  if (stderr) proc.stderr = undefined;
   // Lazy: the streams graph + Console constructor are several ms cold, and most
   // workers never touch process.stdout/stderr/stdin directly.
-  if (stdout) defineLazy(process, "stdout", true, () => makePortWritable(stdout));
-  if (stderr) defineLazy(process, "stderr", true, () => makePortWritable(stderr));
+  if (stdout) defineLazy(proc, "stdout", true, () => makePortWritable(stdout));
+  if (stderr) defineLazy(proc, "stderr", true, () => makePortWritable(stderr));
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
-  defineLazy(process, "stdin", true, () =>
+  defineLazy(proc, "stdin", true, () =>
     stdin
       ? makePortReadable(stdin)
       : new (Readable ??= require("internal/streams/readable"))({

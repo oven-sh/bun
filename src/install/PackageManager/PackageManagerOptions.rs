@@ -441,8 +441,11 @@ impl Options {
             }
 
             for registry_ in &config.tarball_url_auth {
-                self.tarball_url_auth
-                    .push(Npm::registry::Scope::from_api(b"", registry_.clone(), env)?);
+                self.tarball_url_auth.push(Npm::registry::Scope::from_api(
+                    b"",
+                    registry_.clone(),
+                    env,
+                )?);
             }
 
             if let Some(ca) = &config.ca {

@@ -331,6 +331,50 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+it("process.env reads are never stale after a write (JIT inline-cache soundness)", async () => {
+  // process.env only sets OverridesPut (not ProhibitsPropertyCaching), so
+  // reads hit the ordinary self-access IC. This test verifies that writes
+  // through the overridden put() still invalidate that IC: same-key Replace,
+  // delete-then-set, and a hot read loop that FTL constant-folds before a
+  // single write. Spawned so the subprocess gets its own tier-up.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const env = process.env;
+        const N = 100000;
+        for (let i = 0; i < N; i++) {
+          const expected = "v" + i;
+          env.PROBE_KEY = expected;
+          if (env.PROBE_KEY !== expected) throw new Error("same-key stale at " + i + ": " + env.PROBE_KEY);
+        }
+        env.PROBE_KEY = 42;
+        if (env.PROBE_KEY !== "42") throw new Error("coerce: " + env.PROBE_KEY);
+        env.HOT = "initial";
+        let sink = "";
+        for (let i = 0; i < 2 * N; i++) sink = env.HOT;
+        if (sink !== "initial") throw new Error("hot warmup: " + sink);
+        env.HOT = "changed";
+        if (env.HOT !== "changed") throw new Error("hot post-write: " + env.HOT);
+        const key = "PROBE_BYVAL";
+        for (let i = 0; i < 2000; i++) {
+          env[key] = "b" + i;
+          if (env[key] !== "b" + i) throw new Error("by-val stale at " + i);
+          delete env[key];
+          if (env[key] !== undefined) throw new Error("by-val delete stale at " + i);
+        }
+        console.log("ok");
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({ stdout: "ok\n", stderr: "", exitCode: 0 });
+});
+
 const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
   "darwin-x64": "70.1",
   "darwin-arm64": "72.1",

@@ -1812,9 +1812,10 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
-// Node: `typeof position !== 'number'` is coerced to null, and libuv treats any
-// offset < 0 as non-positional. Both select the current file offset.
-describe.each([-1, -5, "3", {}, true, 3n] as any[])(
+// Node: `typeof position !== 'number'` is coerced to null, and native
+// GetOffset() returns -1 unless IsSafeJsInt(value). Both select the current
+// file offset.
+describe.each([-1, -5, "3", {}, true, 3n, NaN, Infinity, -Infinity, 3.7, Number.MAX_SAFE_INTEGER + 1] as any[])(
   "readv/writev with position=%p uses the current file offset",
   position => {
     it("writevSync", () => {
@@ -5343,6 +5344,7 @@ it("fs.writev keeps buffers attached while the write is in flight", async () => 
     // Released once the write completes.
     buf.buffer.transfer();
     expect(buf.buffer.detached).toBe(true);
+    expect(readFileSync(file, "latin1")).toBe("CCCCCCCC");
 
     // A non-number position is treated as null (Node.js behaviour); the call
     // succeeds and the pin is released after completion.

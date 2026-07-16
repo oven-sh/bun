@@ -2841,15 +2841,17 @@ pub mod args {
                 // each element and pin its backing store until completion.
                 arguments.will_be_async,
             )?;
-            // Node: `typeof position !== 'number'` is coerced to null; libuv
-            // treats offset < 0 as non-positional readv/writev. Only a
-            // non-negative number selects preadv/pwritev.
+            // Node: `typeof position !== 'number'` is coerced to null, and
+            // native GetOffset() returns -1 (non-positional) unless
+            // IsSafeJsInt(value) — finite, integral, |v| <= MAX_SAFE_INTEGER.
             let mut position: Option<u64> = None;
             if let Some(pos_value) = arguments.next_eat() {
-                if pos_value.is_number() {
-                    let pos = pos_value.to_int64();
-                    if pos >= 0 {
-                        position = Some(pos as u64);
+                if let Some(num) = pos_value.get_number() {
+                    if num >= 0.0
+                        && num <= bun_jsc::MAX_SAFE_INTEGER as f64
+                        && num.trunc() == num
+                    {
+                        position = Some(num as u64);
                     }
                 }
             }

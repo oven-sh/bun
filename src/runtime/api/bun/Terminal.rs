@@ -165,7 +165,7 @@ pub struct Terminal {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u8 {
+    pub struct Flags: u16 {
         const CLOSED         = 1 << 0;
         const FINALIZED      = 1 << 1;
         const RAW_MODE       = 1 << 2;
@@ -177,6 +177,10 @@ bitflags::bitflags! {
         /// reuse. Windows: first exit's ClosePseudoConsole would kill a second
         /// child. POSIX: slave_fd is held until first exit (`drain_and_close_slave_fd`).
         const INLINE_SPAWNED = 1 << 7;
+        /// A `write()` left bytes in the streaming writer's internal buffer
+        /// that will flush on a later writable poll; the `drain` callback is
+        /// owed once that buffer empties.
+        const WRITE_PENDING  = 1 << 8;
     }
 }
 
@@ -1729,9 +1733,22 @@ impl Terminal {
     }
 
     fn on_write(&self, amount: usize, status: WriteStatus) {
-        let _ = status;
         bun_output::scoped_log!(Terminal, "onWrite: {} bytes", amount);
-        let _ = self;
+        let _ = amount;
+        match status {
+            WriteStatus::Pending => {
+                self.update_flags(|f| f.insert(Flags::WRITE_PENDING));
+            }
+            // POSIX `on_poll` reports `Drained` after the buffered tail of a
+            // short write flushes but never reaches `on_ready`; fire `drain`
+            // on the Pending→Drained edge. Windows: `on_writable` covers it.
+            #[cfg(unix)]
+            WriteStatus::Drained if self.flags.get().contains(Flags::WRITE_PENDING) => {
+                self.update_flags(|f| f.remove(Flags::WRITE_PENDING));
+                self.on_writer_ready();
+            }
+            _ => {}
+        }
     }
 
     // IOReader callbacks

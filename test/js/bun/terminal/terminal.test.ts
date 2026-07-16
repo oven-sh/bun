@@ -651,6 +651,65 @@ describe("Bun.Terminal", () => {
     });
   });
 
+  // POSIX: the PTY master has a small kernel buffer, so a large write()
+  // returns short and the streaming writer buffers the tail internally.
+  // When that buffered tail finishes flushing on a later writable poll,
+  // the `drain` callback must fire so callers can resume writing.
+  test.skipIf(isWindows)("drain fires after a short write's buffered tail flushes", async () => {
+    const N = 256 * 1024;
+    let drains = 0;
+    let drainWrite = -1;
+    let received = "";
+    const decoder = new TextDecoder();
+    const drained = Promise.withResolvers<void>();
+    const gotAll = Promise.withResolvers<void>();
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `let n = 0;
+         process.stdin.on("data", d => {
+           n += d.length;
+           if (n >= ${N}) { console.log("GOTALL"); process.exit(0); }
+         });`,
+      ],
+      env: bunEnv,
+      terminal: {
+        data(_t, d) {
+          received += decoder.decode(d);
+          if (received.includes("GOTALL")) gotAll.resolve();
+        },
+        drain(t) {
+          drains++;
+          if (drainWrite === -1) drainWrite = t.write("x");
+          drained.resolve();
+        },
+        exit() {
+          gotAll.reject(new Error("pty closed before GOTALL"));
+          drained.reject(new Error("pty closed before drain"));
+        },
+      },
+    });
+
+    const t = proc.terminal!;
+    t.setRawMode(true);
+    const wrote = t.write(Buffer.alloc(N, 66));
+    // The whole point: kernel took a partial chunk, rest is buffered
+    // internally. If the kernel happened to take it all (huge pty buffer),
+    // there is no backpressure and nothing to assert.
+    if (wrote < N) {
+      await drained.promise;
+      expect(drains).toBeGreaterThan(0);
+      // Re-entering write() from the drain callback is the whole point of
+      // the backpressure signal; this is the on_poll → on_write → JS →
+      // writer.write() re-entry path.
+      expect(drainWrite).toBe(1);
+    }
+    await gotAll.promise;
+    expect(received).toContain("GOTALL");
+  });
+
   describe.concurrent("subprocess interaction", () => {
     test("spawns subprocess with PTY", async () => {
       await using terminal = new Bun.Terminal({

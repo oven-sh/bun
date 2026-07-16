@@ -57,6 +57,40 @@ describe("Bun.wrapAnsi", () => {
     test("trim false preserves leading whitespace", () => {
       expect(Bun.wrapAnsi("  hello", 10, { trim: false })).toBe("  hello");
     });
+
+    // Leading-whitespace trim must not depend on which escape sequence precedes
+    // it: the CSI scanner ends on any final byte in 0x40-0x7E (ECMA-48 §5.4),
+    // not just SGR's 'm'. With the escape stripped the result is identical.
+    describe("leading trim after non-SGR escape prefixes", () => {
+      const trimCases: [label: string, input: string, columns: number, expected: string][] = [
+        ["SGR red", "\x1b[31m\tab cd", 2, "\x1b[31mab\x1b[39m\n\x1b[31mcd"],
+        ["clear screen", "\x1b[2J\tab cd", 2, "\x1b[2Jab\ncd"],
+        ["erase line", "\x1b[0K\tab cd", 2, "\x1b[0Kab\ncd"],
+        ["cursor home", "\x1b[H\tab cd", 2, "\x1b[Hab\ncd"],
+        ["cursor up", "\x1b[1A\tab cd", 2, "\x1b[1Aab\ncd"],
+        ["cursor position", "\x1b[1;1H\tab cd", 2, "\x1b[1;1Hab\ncd"],
+        ["DEC private mode", "\x1b[?25l\tab cd", 2, "\x1b[?25lab\ncd"],
+        [
+          "OSC 8 hyperlink",
+          "\x1b]8;;http://x\x07\tab cd",
+          2,
+          "\x1b]8;;http://x\x07ab\x1b]8;;\x07\n\x1b]8;;http://x\x07cd",
+        ],
+        ["CSI then SGR", "\x1b[2J\x1b[31m\tab cd", 2, "\x1b[2J\x1b[31mab\x1b[39m\n\x1b[31mcd"],
+      ];
+
+      describe.each(trimCases)("%s", (_, input, columns, expected) => {
+        test("trims leading tab", () => {
+          expect(Bun.wrapAnsi(input, columns)).toBe(expected);
+        });
+        test("stripANSI composes with wrapAnsi", () => {
+          expect(Bun.stripANSI(Bun.wrapAnsi(input, columns))).toBe(Bun.wrapAnsi(Bun.stripANSI(input), columns));
+        });
+        test("trim:false preserves leading tab", () => {
+          expect(Bun.wrapAnsi(input, columns, { trim: false })).toContain("\t");
+        });
+      });
+    });
   });
 
   describe("ANSI escape codes", () => {
@@ -94,6 +128,31 @@ describe("Bun.wrapAnsi", () => {
       // ANSI codes should not count toward width
       // "ab" is 2 chars, should fit in width 2
       expect(Bun.wrapAnsi(input, 2)).toBe(input);
+    });
+
+    // SGR close codes (22-29, 49, 55) and unknown codes have no close mapping
+    // in ansi-styles' codes map, so npm wrap-ansi never re-emits them after a
+    // line break. Only open codes with a known close code are closed-then-reopened.
+    test.each([22, 23, 24, 25, 27, 28, 29, 49, 55, 39, 0, 200])(
+      "does not re-open SGR close/unknown code %p after line break",
+      code => {
+        expect(Bun.wrapAnsi(`\x1b[${code}mabc def`, 3)).toBe(`\x1b[${code}mabc\ndef`);
+      },
+    );
+
+    test.each([
+      [1, 22],
+      [4, 24],
+      [31, 39],
+      [42, 49],
+      [53, 55],
+      [100, 49],
+    ])("re-opens SGR open code %p after line break", (open, close) => {
+      expect(Bun.wrapAnsi(`\x1b[${open}mabc def`, 3)).toBe(`\x1b[${open}mabc\x1b[${close}m\n\x1b[${open}mdef`);
+    });
+
+    test("close code following an open code is not carried across line break", () => {
+      expect(Bun.wrapAnsi("\x1b[42mab\x1b[49mcd ef", 4)).toBe("\x1b[42mab\x1b[49mcd\nef");
     });
   });
 

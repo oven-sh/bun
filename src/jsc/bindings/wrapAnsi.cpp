@@ -104,6 +104,23 @@ static inline bool wordSeamIsAscii(Char rowTail, const Char* wordStart, const Ch
     return static_cast<char32_t>(rowTail) < 0x80 && static_cast<char32_t>(*wordStart) < 0x80;
 }
 
+// Helper to check if a character ends a CSI escape sequence
+// CSI sequences end with bytes in 0x40-0x7E range (excluding '[' which is the introducer)
+template<typename Char>
+static bool isCsiTerminator(Char c)
+{
+    return c >= 0x40 && c <= 0x7E && c != '[';
+}
+
+// Helper to check if a character ends an ANSI escape sequence
+template<typename Char>
+static bool isAnsiEscapeTerminator(Char c, bool isOscSequence)
+{
+    if (isOscSequence)
+        return c == 0x07; // BEL terminates OSC sequences
+    return isCsiTerminator(c); // CSI terminator
+}
+
 // ============================================================================
 // Row Management (using WTF::Vector)
 // ============================================================================
@@ -145,15 +162,19 @@ public:
         size_t read = m_trimScanOffset;
         size_t write = m_trimScanOffset;
         bool inEscape = m_trimInEscape;
+        bool inOscEscape = m_trimInOscEscape;
         size_t removedWidth = 0;
 
         while (read < size) {
             Char c = m_data[read];
             if (c == 0x1b) {
                 inEscape = true;
+                inOscEscape = (read + 1 < size && m_data[read + 1] == ']');
             } else if (inEscape) {
-                if (c == 'm' || c == 0x07)
+                if (isAnsiEscapeTerminator(c, inOscEscape)) {
                     inEscape = false;
+                    inOscEscape = false;
+                }
             } else if (c == ' ' || c == '\t') {
                 if (c == ' ')
                     removedWidth++;
@@ -179,11 +200,13 @@ public:
 
         m_trimScanOffset = write;
         m_trimInEscape = inEscape;
+        m_trimInOscEscape = inOscEscape;
         return removedWidth;
     }
 
     size_t m_trimScanOffset = 0;
     bool m_trimInEscape = false;
+    bool m_trimInOscEscape = false;
     bool m_leadingTrimComplete = false;
 };
 
@@ -279,23 +302,6 @@ static void wrapWord(Vector<Row<Char>>& rows, const Char* wordStart, const Char*
         rows.removeLast();
         rows.last().append(lastRow);
     }
-}
-
-// Helper to check if a character ends a CSI escape sequence
-// CSI sequences end with bytes in 0x40-0x7E range (excluding '[' which is the introducer)
-template<typename Char>
-static bool isCsiTerminator(Char c)
-{
-    return c >= 0x40 && c <= 0x7E && c != '[';
-}
-
-// Helper to check if a character ends an ANSI escape sequence
-template<typename Char>
-static bool isAnsiEscapeTerminator(Char c, bool isOscSequence)
-{
-    if (isOscSequence)
-        return c == 0x07; // BEL terminates OSC sequences
-    return isCsiTerminator(c); // CSI terminator
 }
 
 template<typename Char>
@@ -435,6 +441,8 @@ static std::optional<uint32_t> getCloseCode(uint32_t code)
         return 28;
     case 9:
         return 29;
+    case 53:
+        return 55;
     }
 
     if (code >= 30 && code <= 37)
@@ -511,8 +519,9 @@ static void joinRowsWithAnsiPreservation(const Vector<Row<Char>>& rows, StringBu
                 }
             }
         } else if (c == '\n') {
-            // Restore styles after newline
-            if (escapeCode) {
+            // Restore styles after newline (only open codes; close/unknown codes
+            // have no close mapping and are not re-emitted, matching npm wrap-ansi)
+            if (escapeCode && getCloseCode(*escapeCode)) {
                 result.append("\x1b["_s);
                 result.append(String::number(*escapeCode));
                 result.append('m');

@@ -1318,7 +1318,10 @@ static WTF::String sliceAnsiImpl(std::span<const Char> input, double startD, dou
         SliceBounds b = resolveSliceBounds(startD, endD, totalW);
         if (b.empty) return emptyString();
         start = b.start;
-        end = b.end;
+        // !cutEnd ⇔ resolved end == totalW. Emit unbounded so trailing
+        // zero-width clusters and ANSI at column totalW are kept, matching
+        // the non-negative path's endD == +Inf behaviour.
+        end = b.cutEnd ? b.end : SIZE_MAX;
         cutEndKnown = true;
         cutEndHint = b.cutEnd;
     }

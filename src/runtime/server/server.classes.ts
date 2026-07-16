@@ -90,7 +90,7 @@ function generate(name) {
     finalize: true,
     construct: true,
     noConstructor: true,
-    values: ["routeList"],
+    values: ["routeList", "onClientError", "onConnection"],
   });
 }
 export default [

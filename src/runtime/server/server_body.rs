@@ -3498,7 +3498,10 @@ where
         error_code: u8,
         raw_packet: &[u8],
     ) {
-        let Some(callback) = self.on_clienterror.get() else {
+        let Some(server_js) = self.js_value.try_get() else {
+            return;
+        };
+        let Some(callback) = Self::js_on_client_error_get_cached(server_js) else {
             return;
         };
         {
@@ -3546,7 +3549,10 @@ where
     /// `onConnection` callback so `node:http` can emit 'connection' before any
     /// request bytes arrive.
     pub fn on_connection_callback(&mut self, socket: *mut c_void) {
-        let Some(callback) = self.on_connection.get() else {
+        let Some(server_js) = self.js_value.try_get() else {
+            return;
+        };
+        let Some(callback) = Self::js_on_connection_get_cached(server_js) else {
             return;
         };
         let global = self.global();
@@ -3671,8 +3677,7 @@ pub(super) fn server_set_on_client_error_(
                 // SAFETY: as_ returned a non-null *mut to a live server.
                 let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
-                    this.on_clienterror.deinit();
-                    this.on_clienterror = StrongOptional::create(callback, global);
+                    <$T>::js_gc_on_client_error_set(server, global, callback);
                     // uws_sys::App::on_client_error takes the raw C-ABI handler shape;
                     // wrap our typed callback in an extern "C" thunk that slices raw_packet.
                     extern "C" fn thunk(
@@ -3734,8 +3739,7 @@ pub(super) fn server_set_on_connection_(
                 // SAFETY: as_ returned a non-null *mut to a live server.
                 let this = unsafe { &mut *this };
                 if let Some(app) = this.app {
-                    this.on_connection.deinit();
-                    this.on_connection = StrongOptional::create(callback, global);
+                    <$T>::js_gc_on_connection_set(server, global, callback);
                     // uws filters fire with `1` when an HTTP connection is opened
                     // (for TLS, when its handshake completes) and `-1` on close;
                     // only the open notification is forwarded to JS.

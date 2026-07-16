@@ -288,13 +288,6 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     /// times due to SNI, so we have to store them.
     pub user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
-    pub on_clienterror: jsc::StrongOptional,
-
-    /// node:http compat: JS callback invoked with the JSNodeHTTPServerSocket
-    /// when a connection is accepted (for TLS, when its handshake completes),
-    /// before any request bytes. Backs `server.emit("connection", ...)`.
-    pub on_connection: jsc::StrongOptional,
-
     pub inspector_server_id: jsc::DebuggerId,
 }
 
@@ -307,8 +300,7 @@ pub struct UserRoute<const SSL: bool, const DEBUG: bool> {
 impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         // The remaining owned fields (config, base_url, h3_alt_svc, dev_server,
-        // user_routes, all_closed_promise, on_clienterror, on_connection) drop
-        // automatically.
+        // user_routes, all_closed_promise) drop automatically.
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
@@ -1429,6 +1421,66 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
+    pub(crate) fn js_on_client_error_get_cached(server_js: JSValue) -> Option<JSValue> {
+        match (SSL, DEBUG) {
+            (false, false) => route_list_cached::http::on_client_error_get_cached(server_js),
+            (true, false) => route_list_cached::https::on_client_error_get_cached(server_js),
+            (false, true) => route_list_cached::debug_http::on_client_error_get_cached(server_js),
+            (true, true) => route_list_cached::debug_https::on_client_error_get_cached(server_js),
+        }
+    }
+
+    pub(crate) fn js_gc_on_client_error_set(
+        server_js: JSValue,
+        global: &JSGlobalObject,
+        callback: JSValue,
+    ) {
+        match (SSL, DEBUG) {
+            (false, false) => {
+                route_list_cached::http::on_client_error_set_cached(server_js, global, callback)
+            }
+            (true, false) => {
+                route_list_cached::https::on_client_error_set_cached(server_js, global, callback)
+            }
+            (false, true) => {
+                route_list_cached::debug_http::on_client_error_set_cached(server_js, global, callback)
+            }
+            (true, true) => {
+                route_list_cached::debug_https::on_client_error_set_cached(server_js, global, callback)
+            }
+        }
+    }
+
+    pub(crate) fn js_on_connection_get_cached(server_js: JSValue) -> Option<JSValue> {
+        match (SSL, DEBUG) {
+            (false, false) => route_list_cached::http::on_connection_get_cached(server_js),
+            (true, false) => route_list_cached::https::on_connection_get_cached(server_js),
+            (false, true) => route_list_cached::debug_http::on_connection_get_cached(server_js),
+            (true, true) => route_list_cached::debug_https::on_connection_get_cached(server_js),
+        }
+    }
+
+    pub(crate) fn js_gc_on_connection_set(
+        server_js: JSValue,
+        global: &JSGlobalObject,
+        callback: JSValue,
+    ) {
+        match (SSL, DEBUG) {
+            (false, false) => {
+                route_list_cached::http::on_connection_set_cached(server_js, global, callback)
+            }
+            (true, false) => {
+                route_list_cached::https::on_connection_set_cached(server_js, global, callback)
+            }
+            (false, true) => {
+                route_list_cached::debug_http::on_connection_set_cached(server_js, global, callback)
+            }
+            (true, true) => {
+                route_list_cached::debug_https::on_connection_set_cached(server_js, global, callback)
+            }
+        }
+    }
+
     /// Wrap an already-heap-allocated server pointer in its JS object.
     /// Ownership transfers to the C++ wrapper (freed via `finalize`).
     pub fn ptr_to_js(this: *mut Self, global: &JSGlobalObject) -> JSValue {
@@ -1874,7 +1926,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         // owned-field cleanup (all_closed_promise / user_routes /
-        // config / on_clienterror / h3_alt_svc / dev_server / plugins) is
+        // config / h3_alt_svc / dev_server / plugins) is
         // handled by the heap::take drop below — see `impl Drop for NewServer`.
         if Self::HAS_H3 {
             if let Some(h3a) = this_ref.h3_app.take() {
@@ -1940,8 +1992,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             flags: ServerFlags::default(),
             plugins: None,
             user_routes: Vec::new(),
-            on_clienterror: jsc::StrongOptional::empty(),
-            on_connection: jsc::StrongOptional::empty(),
             inspector_server_id: jsc::DebuggerId::init(0),
         }));
 
@@ -2903,21 +2953,22 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 // them here instead of redeclaring with a divergent `req` pointer type.
 use server_body::{Bun__ServerRouteList__callRoute, Bun__ServerRouteList__create};
 
-/// Per-type cached-accessor shims for the `routeList` `WriteBarrier` slot.
-/// `codegen_cached_accessors!` emits `route_list_{get,set}_cached` wrapping
-/// `${T}Prototype__routeList{Get,Set}CachedValue` (generate-classes.ts).
+/// Per-type cached-accessor shims for the server `WriteBarrier` value slots
+/// (`routeList`, `onClientError`, `onConnection`). `codegen_cached_accessors!`
+/// emits `${snake}_{get,set}_cached` wrapping
+/// `${T}Prototype__${prop}{Get,Set}CachedValue` (generate-classes.ts).
 mod route_list_cached {
     pub(super) mod http {
-        bun_jsc::codegen_cached_accessors!("HTTPServer"; routeList);
+        bun_jsc::codegen_cached_accessors!("HTTPServer"; routeList, onClientError, onConnection);
     }
     pub(super) mod https {
-        bun_jsc::codegen_cached_accessors!("HTTPSServer"; routeList);
+        bun_jsc::codegen_cached_accessors!("HTTPSServer"; routeList, onClientError, onConnection);
     }
     pub(super) mod debug_http {
-        bun_jsc::codegen_cached_accessors!("DebugHTTPServer"; routeList);
+        bun_jsc::codegen_cached_accessors!("DebugHTTPServer"; routeList, onClientError, onConnection);
     }
     pub(super) mod debug_https {
-        bun_jsc::codegen_cached_accessors!("DebugHTTPSServer"; routeList);
+        bun_jsc::codegen_cached_accessors!("DebugHTTPSServer"; routeList, onClientError, onConnection);
     }
 }
 

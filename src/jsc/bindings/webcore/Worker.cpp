@@ -536,6 +536,13 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     // property read must not propagate exceptions out of this function.
     auto& vm = JSC::getVM(workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // A TerminatedExecutionError can be live on entry (this runs after the
+    // worker's termination trap fired); bail before serialization would
+    // re-raise it. Clear any other inherited exception so the serializer is
+    // never entered with one pending.
+    if (vm.hasPendingTerminationException())
+        return false;
+    CLEAR_IF_EXCEPTION(scope);
 
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
@@ -700,9 +707,9 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     // it either way, so clear it here so JSC::call doesn't assert. On the success
     // path scope.exception() is null and this is a no-op.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    CLEAR_IF_EXCEPTION(scope);
     if (vm.hasPendingTerminationException())
         return;
+    CLEAR_IF_EXCEPTION(scope);
     JSC::MarkedArgumentBuffer args;
     JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
     CLEAR_IF_EXCEPTION(scope);

@@ -101,3 +101,49 @@ describe("node:quic under --isolate", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// An endpoint that both listens and dials keeps two lsquic engines on one
+// socket. A 1-RTT packet for the client leg that also reaches the server
+// engine misses its conns_hash, and the server engine answers unknown packets
+// with a stateless reset -- at our own live connection.
+describe("dual-mode endpoint", () => {
+  test("does not stateless-reset its own client connection", async () => {
+    const tp = { maxIdleTimeout: 1 };
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    const onstream = (s: any) => {
+      s.onstream = (st: any) => st.closed.catch(() => {});
+      return s.closed.catch(() => {});
+    };
+
+    await using peer = await listen(onstream, {
+      sni: sniOpt,
+      transportParams: tp,
+      onheaders(this: any) {
+        this.sendHeaders({ ":status": "200" });
+        this.writer.endSync();
+      },
+    });
+    await using dual = await listen(onstream, { sni: sniOpt, transportParams: tp });
+
+    const client = await connect(peer.address, {
+      endpoint: dual,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+    });
+    await client.opened;
+
+    const answered = Promise.withResolvers<void>();
+    await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders: () => answered.resolve(),
+    });
+    await answered.promise;
+    client.close();
+
+    expect({ dual: dual.stats.statelessResetCount, peer: peer.stats.statelessResetCount }).toEqual({
+      dual: 0n,
+      peer: 0n,
+    });
+  });
+});

@@ -350,18 +350,22 @@ extern "C" fn on_data(
                 continue;
             }
         }
+        // Which of our engines already hashes this DCID, if either. Feeding the
+        // other one a packet it cannot match makes it answer with a stateless
+        // reset, so remember the owner for the feed below.
+        let mut owner_engine = None;
         if payload[0] & HEADER_FORM_LONG == 0 && payload.len() > 1 + SHORT_HEADER_DCID_LEN {
             let dcid = &payload[1..1 + SHORT_HEADER_DCID_LEN];
-            let mine = [this.server_engine.get(), this.client_engine.get()]
+            owner_engine = [this.server_engine.get(), this.client_engine.get()]
                 .into_iter()
                 .filter(|e| !e.is_null())
-                .any(|e| {
+                .find(|&e| {
                     // SAFETY: engines are live while the endpoint is.
                     let in_use =
                         unsafe { lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len()) };
                     in_use != 0
                 });
-            if !mine {
+            if owner_engine.is_none() {
                 let owner = ENDPOINT_REGISTRY.with_borrow(|v| {
                     v.iter().copied().find(|&other| {
                         !core::ptr::eq(other, this)
@@ -460,7 +464,12 @@ extern "C" fn on_data(
         // Node announces server sessions at Initial receipt — before the
         // handshake — so `onsession` precedes the client's `opened`.
         this.maybe_announce_provisional(global, payload, core::ptr::from_ref(peer).cast());
-        for engine in [this.server_engine.get(), this.client_engine.get()] {
+        let engines = match owner_engine {
+            // Already matched above: the other engine would only miss it.
+            Some(e) => [e, null_mut()],
+            None => [this.server_engine.get(), this.client_engine.get()],
+        };
+        for engine in engines {
             if engine.is_null() {
                 continue;
             }
@@ -605,7 +614,10 @@ lsquic_callback! {
                 // SAFETY: `errno_ptr()` is this thread's errno slot.
                 unsafe {
                     let e = bun_core::ffi::errno_ptr();
-                    if *e != libc::EAGAIN && *e != libc::EWOULDBLOCK {
+                    // EMSGSIZE has to survive: it is how lsquic learns to drop
+                    // an oversized packet and feed DPLPMTUD (ci_packet_too_large).
+                    // Anything else it cannot act on becomes backpressure.
+                    if *e != libc::EAGAIN && *e != libc::EWOULDBLOCK && *e != libc::EMSGSIZE {
                         *e = libc::EAGAIN;
                     }
                 }
@@ -1371,12 +1383,17 @@ impl QuicEndpoint {
         if self.provisional.get().iter().any(|p| p.dcid == dcid) {
             return;
         }
-        // SAFETY: server engine checked non-null above and lives until
-        // release_socket.
-        let known = unsafe {
-            lsquic::lsquic_engine_cid_in_use(self.server_engine.get(), dcid.as_ptr(), dcid.len())
-        };
-        if known != 0 {
+        // On a dual-mode endpoint the peer's Initial *response* carries our
+        // client's SCID, which only the client engine hashes -- checking the
+        // server engine alone would announce a phantom server session for it.
+        let known = [self.server_engine.get(), self.client_engine.get()]
+            .into_iter()
+            .filter(|e| !e.is_null())
+            .any(|e| {
+                // SAFETY: engines live until release_socket.
+                unsafe { lsquic::lsquic_engine_cid_in_use(e, dcid.as_ptr(), dcid.len()) != 0 }
+            });
+        if known {
             return;
         }
         let peer_stored = stored_addr_from_sockaddr(peer);
@@ -1440,6 +1457,11 @@ impl QuicEndpoint {
                 });
                 session.push_event(session::SessionEvent::Closed);
             }
+        }
+        if n_expired > 0 {
+            // This runs after `process()` already drained the event queues, so
+            // ask `rearm_timer` for the follow-up pass that delivers these.
+            self.followup_due.set(true);
         }
         self.dead_provisional_peers
             .with_mut(|d| d.retain(|&(_, at)| now.saturating_sub(at) < PROVISIONAL_TIMEOUT_NS));

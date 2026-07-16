@@ -4,9 +4,9 @@
 // (BUN_INSTALL_CACHE_DIR -> BUN_INSTALL -> XDG_CACHE_HOME -> HOME),
 // not a stub that only reads HOME.
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, tempDir } from "harness";
 
 // Target darwin so inject() takes the Mach-O path on every host. The cached
 // "binary" is a minimal Mach-O with a __BUN/__bun section big enough for the

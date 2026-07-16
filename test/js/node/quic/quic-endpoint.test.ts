@@ -40,6 +40,33 @@ describe("QuicEndpoint client-engine mode", () => {
   });
 });
 
+// The engine's HTTP/3-vs-raw framing is fixed from the first ALPN entry, but
+// alpn_select_cb offers the whole list, so a mixed list could negotiate the
+// framing the engine was not built for and silently corrupt the session.
+describe("server ALPN list", () => {
+  test("rejects a list mixing HTTP/3 and non-HTTP/3 protocols", async () => {
+    const sniOpt = { "*": { keys: [key], certs: [cert] } };
+    const tp = { maxIdleTimeout: 1 };
+    const onSession = async (s: any) => {
+      await s.closed.catch(() => {});
+    };
+
+    for (const alpn of [
+      ["custom", "h3"],
+      ["h3", "custom"],
+    ]) {
+      await expect(listen(onSession, { sni: sniOpt, transportParams: tp, alpn })).rejects.toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+      );
+    }
+
+    // Uniform lists on either side of the split are still accepted.
+    await using h3 = await listen(onSession, { sni: sniOpt, transportParams: tp, alpn: ["h3", "h3-29"] });
+    await using raw = await listen(onSession, { sni: sniOpt, transportParams: tp, alpn: ["a", "b"] });
+    expect([typeof h3.address.port, typeof raw.address.port]).toEqual(["number", "number"]);
+  });
+});
+
 // `setCallbacks` is once-only, but its holder lives on the VM's RareData, which
 // outlives the per-file global swap. A second file's call would be ignored and
 // its sessions would dispatch into the retired realm.

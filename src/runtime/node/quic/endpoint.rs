@@ -698,6 +698,29 @@ fn alpn_cstr_is_http(alpn_cstr: &[u8]) -> bool {
     }
 }
 
+/// Whether every protocol in a wire-format ALPN list agrees on HTTP/3-ness.
+/// The engine's framing is fixed from the first entry, but `alpn_select_cb`
+/// offers the whole list, so a mixed one can negotiate the framing we did not
+/// build for.
+fn alpn_list_is_uniform(alpn: &[u8]) -> bool {
+    let mut i = 0usize;
+    let mut want: Option<bool> = None;
+    while i < alpn.len() {
+        let n = alpn[i] as usize;
+        i += 1;
+        if n == 0 || i + n > alpn.len() {
+            break;
+        }
+        let p = &alpn[i..i + n];
+        let is_http = p == b"h3" || p.starts_with(b"h3-");
+        if *want.get_or_insert(is_http) != is_http {
+            return false;
+        }
+        i += n;
+    }
+    true
+}
+
 pub(super) fn read_u64_option(
     global: &JSGlobalObject,
     obj: JSValue,
@@ -1610,6 +1633,16 @@ impl QuicEndpoint {
         // Node accepts a list, so own ALPN on the SSL_CTX and pass NULL here.
         let alpn_cstr = TlsContext::alpn_cstr(config);
         let is_http = alpn_cstr_is_http(&alpn_cstr);
+        if is_server && !alpn_list_is_uniform(&config.alpn) {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "options.alpn cannot mix HTTP/3 and non-HTTP/3 protocols on one endpoint; use a separate QuicEndpoint for each"
+                    ),
+                )
+                .throw());
+        }
         if is_server {
             self.server_tls.set(Some(tls));
             self.server_alpn.set(alpn_cstr);

@@ -51,7 +51,7 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
     struct udp_sendbuf *buf = (struct udp_sendbuf *)s->loop->data.send_buf;
 
     int total_sent = 0;
-    while (total_sent < num) {
+    while (num > 0) {
         int count = bsd_udp_setup_sendbuf(buf, LIBUS_SEND_BUFFER_LENGTH, payloads, lengths, addresses, num);
         payloads += count;
         lengths += count;
@@ -60,19 +60,36 @@ int us_udp_socket_send(struct us_udp_socket_t *s, void** payloads, size_t* lengt
         // TODO nohang flag?
         int sent = bsd_sendmmsg(fd, buf, MSG_DONTWAIT);
         if (sent < 0) {
+            /* Linux sendmmsg reports EAGAIN as -1 (per-msg-loop platforms
+             * report it as sent==0): re-arm writable so on_drain fires and
+             * report how many earlier batches went out. */
+            if (bsd_would_block()) {
+                us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+                return total_sent;
+            }
             return sent;
         }
         total_sent += sent;
-        if (0 <= sent && sent < num) {
-            // if we couldn't send all packets, register a writable event so we can call the drain callback
+        if (sent < count) {
+            /* Partial batch: kernel send buffer is full. Re-arm writable so
+             * on_drain fires and stop — retrying now would just spin on EAGAIN. */
             us_poll_change((struct us_poll_t *) s, s->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+            return total_sent;
         }
     }
     return total_sent;
 }
 
 int us_udp_socket_bound_port(struct us_udp_socket_t *s) {
-    return ((struct us_udp_socket_t *) s)->port;
+    /* An adopted-but-unbound descriptor cached port 0 at creation; the kernel
+     * auto-binds on the first sendto(), so re-query then. */
+    if (s->port == 0) {
+        struct bsd_addr_t tmp = {0};
+        if (bsd_local_addr(us_poll_fd(&s->p), &tmp) == 0) {
+            s->port = (uint16_t) bsd_addr_get_port(&tmp);
+        }
+    }
+    return s->port;
 }
 
 void us_udp_socket_bound_ip(struct us_udp_socket_t *s, char *buf, int *length) {
@@ -114,6 +131,14 @@ int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled) {
     return bsd_socket_broadcast(us_poll_fd(&s->p), enabled);
 }
 
+int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int size, int *out) {
+    return bsd_socket_buffer_size(us_poll_fd(&s->p), is_recv, size, out);
+}
+
+LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s) {
+    return us_poll_fd(&s->p);
+}
+
 int us_udp_socket_set_ttl_unicast(struct us_udp_socket_t *s, int ttl) {
     return bsd_socket_ttl_unicast(us_poll_fd(&s->p), ttl);
 }
@@ -146,27 +171,28 @@ int us_udp_socket_set_source_specific_membership(struct us_udp_socket_t *s, cons
     return bsd_socket_set_source_specific_membership(us_poll_fd(&s->p), source, group, iface, drop);
 }
 
-LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s) {
-    return us_poll_fd(&s->p);
-}
 
 struct us_udp_socket_t *us_create_udp_socket_from_fd(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
     void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
-    void (*recv_error_cb)(struct us_udp_socket_t *, int),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int, int),
     LIBUS_SOCKET_DESCRIPTOR fd,
     int shared,
     int *err,
     void *user
 ) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    if (err) *err = ENOTSUP;
-    return 0;
+    if (bsd_prepare_adopted_udp_socket(fd)) {
+        if (err != NULL) {
+#ifdef _WIN32
+            *err = WSAGetLastError();
 #else
-    apple_no_sigpipe(fd);
-    bsd_set_nonblocking(fd);
+            *err = errno;
+#endif
+        }
+        return 0;
+    }
 
     int ext_size = 0;
     int fallthrough = 0;
@@ -201,7 +227,6 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     }
 
     return (struct us_udp_socket_t *) udp;
-#endif
 }
 
 struct us_udp_socket_t *us_create_udp_socket(
@@ -209,7 +234,7 @@ struct us_udp_socket_t *us_create_udp_socket(
     void (*data_cb)(struct us_udp_socket_t *, void *, int),
     void (*drain_cb)(struct us_udp_socket_t *),
     void (*close_cb)(struct us_udp_socket_t *),
-    void (*recv_error_cb)(struct us_udp_socket_t *, int),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int, int),
     const char *host,
     unsigned short port,
     int flags,

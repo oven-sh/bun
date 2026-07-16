@@ -258,14 +258,15 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── state queries ───────────────────────────────────────────────────────
 
-    /// Raw-TCP write that also reports a fatal send error; non-Connected and
-    /// TLS-wrapped sockets fall back to the plain write (no fatal signal).
-    pub fn write_check_error(&self, data: &[u8]) -> (i32, bool) {
+    /// Raw-TCP write that also reports a fatal send error as the positive
+    /// errno of the failed `send()` (0 = none); non-Connected and TLS-wrapped
+    /// sockets fall back to the plain write (no fatal signal).
+    pub fn write_check_error(&self, data: &[u8]) -> (i32, i32) {
         on_socket!(self.socket;
             connected s => s.write_check_error(data),
-            duplex d => (d.encode_and_write(data), false),
-            pipe p => (p.encode_and_write(data), false),
-            else => (0, false),
+            duplex d => (d.encode_and_write(data), 0),
+            pipe p => (p.encode_and_write(data), 0),
+            else => (0, 0),
         )
     }
 

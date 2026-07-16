@@ -4,39 +4,40 @@
 // (or BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING); debug builds always allow it.
 // See HardcodedModule::InternalTestBinding.
 
-const clusterRawBind = $newRustFunction("node_cluster_binding.rs", "clusterRawBind", 4);
-
 const agent = require("internal/trace_events");
 
-let fs;
+const newRawSocketFd = $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2);
+const listenRawFd = $newRustFunction("udp_socket.rs", "jsDgramListenFd", 1);
+const closeRawFd = $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1);
 
-class UDP {
-  fd = -1;
+// Just enough of internalBinding('tcp_wrap').TCP for vendored dgram tests to
+// produce a listening stream descriptor and assert it gets rejected.
+class TestTCPWrap {
+  #fd = -1;
 
-  bind(address, port, flags) {
-    return bindInternal(this, address, port, flags, "udp4");
+  constructor(_type: number) {
+    this.#fd = newRawSocketFd(false, true);
   }
 
-  bind6(address, port, flags) {
-    return bindInternal(this, address, port, flags, "udp6");
+  get fd() {
+    return this.#fd;
+  }
+
+  listen() {
+    try {
+      listenRawFd(this.#fd);
+      return 0;
+    } catch (err) {
+      return typeof err?.errno === "number" && err.errno < 0 ? err.errno : -1;
+    }
   }
 
   close() {
-    if (this.fd >= 0) {
-      fs ??= require("node:fs");
-      try {
-        fs.closeSync(this.fd);
-      } catch {}
-      this.fd = -1;
+    if (this.#fd >= 0) {
+      closeRawFd(this.#fd);
+      this.#fd = -1;
     }
   }
-}
-
-function bindInternal(self, address, port, flags, type) {
-  const rval = clusterRawBind(type, address, port | 0, flags | 0);
-  if (typeof rval === "number") return rval;
-  self.fd = rval.fd;
-  return 0;
 }
 
 function internalBinding(name: string) {
@@ -54,8 +55,22 @@ function internalBinding(name: string) {
           TRACE_EVENT_PHASE_NESTABLE_ASYNC_END: 101,
         },
       };
+    // libuv error codes, the UDP handle wrap, and the minimal TCP wrap the
+    // vendored dgram tests consume.
+    case "uv": {
+      const isWindows = process.platform === "win32";
+      const errno = require("node:os").constants.errno;
+      return {
+        UV_UNKNOWN: -4094,
+        UV_EBADF: isWindows ? -4083 : -errno.EBADF,
+        UV_EINVAL: isWindows ? -4071 : -errno.EINVAL,
+        UV_ENOTSOCK: isWindows ? -4050 : -errno.ENOTSOCK,
+      };
+    }
     case "udp_wrap":
-      return { UDP };
+      return { UDP: require("internal/dgram").UDP };
+    case "tcp_wrap":
+      return { TCP: TestTCPWrap, constants: { SOCKET: 0, SERVER: 1 } };
     default:
       throw new Error(`internalBinding("${name}") is not implemented in Bun`);
   }

@@ -184,6 +184,20 @@ export function parseHandle(target, serialized, fd) {
       emit(target, serialized.msg, socket);
       return;
     }
+    case "dgram.Native": {
+      // A non-reading UDP handle (cluster-shared dgram socket): wrap the
+      // received descriptor so the cluster child can adopt it.
+      const { UDP } = require("internal/dgram");
+      const wrap = new UDP();
+      const err = wrap.open(fd);
+      if (err) {
+        // The wrap only owns the descriptor on success; don't leak it.
+        require("node:fs").closeSync(fd);
+        throw new Error(`failed to open received dgram handle: ${err}`);
+      }
+      emit(target, serialized.message, wrap);
+      return;
+    }
     case "dgram.Socket": {
       throw new Error("dgram.Socket handles are not supported over IPC");
     }

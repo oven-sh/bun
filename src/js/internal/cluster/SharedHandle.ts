@@ -7,6 +7,7 @@ export default class SharedHandle {
   workers;
   handle;
   errno;
+  data;
   sharedOnly;
 
   constructor(key, address, { port, addressType, fd, flags, sharedOnly }) {
@@ -14,6 +15,7 @@ export default class SharedHandle {
     this.workers = new Map();
     this.handle = null;
     this.errno = 0;
+    this.data = undefined;
     this.sharedOnly = sharedOnly === true;
 
     if (typeof fd === "number" && fd >= 0) {
@@ -36,7 +38,7 @@ export default class SharedHandle {
   }
 
   add(worker, send) {
-    $assert(this.workers.has(worker.id) === false);
+    $assert(!this.workers.has(worker.id));
     this.workers.set(worker.id, worker);
     send(this.errno, null, this.handle);
   }

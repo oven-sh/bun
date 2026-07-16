@@ -84,20 +84,33 @@ impl InternalMsgHolder {
             .push(crate::StrongOptional::create(message, global));
     }
 
-    pub fn dispatch(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    pub fn dispatch(
+        &mut self,
+        message: JSValue,
+        handle: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
         if !self.is_ready() {
+            // Queued messages drop their handle; the cluster listener is
+            // installed before any handle-bearing reply can arrive.
             self.enqueue(message, global);
             return Ok(());
         }
-        self.dispatch_unsafe(message, global)
+        self.dispatch_unsafe(message, handle, global)
     }
 
-    fn dispatch_unsafe(&mut self, message: JSValue, global: &JSGlobalObject) -> JsResult<()> {
+    fn dispatch_unsafe(
+        &mut self,
+        message: JSValue,
+        handle: JSValue,
+        global: &JSGlobalObject,
+    ) -> JsResult<()> {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
         let event_loop = global.bun_vm().event_loop_mut();
 
+        let _ = handle;
         event_loop.run_callback(
             cb,
             global,
@@ -129,7 +142,7 @@ impl InternalMsgHolder {
                 // dispatcher is owned by the Subprocess/Worker which outlives
                 // this `flush` frame; `&mut *this` is the unique mutable view
                 // for this call.
-                unsafe { &mut *this }.dispatch_unsafe(message, global)?;
+                unsafe { &mut *this }.dispatch_unsafe(message, JSValue::NULL, global)?;
             }
             // strong drops here (== `strong.deinit()`)
         }

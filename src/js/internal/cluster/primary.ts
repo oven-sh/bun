@@ -276,6 +276,13 @@ function queryServer(worker, message) {
     // UDP is exempt from round-robin connection balancing for what should
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
+    if (process.platform === "win32" && (message.addressType === "udp4" || message.addressType === "udp6")) {
+      const error = new Error(`write ENOTSUP - cannot share a dgram socket with a worker on Windows`);
+      error.code = "ENOTSUP";
+      error.syscall = "write";
+      worker.emit("error", error);
+      return;
+    }
     if (
       schedulingPolicy !== SCHED_RR ||
       message.sharedOnly === true ||
@@ -339,6 +346,13 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
+  if (handle) {
+    // Descriptor-bearing replies travel as a NODE_HANDLE envelope so the
+    // worker pairs the descriptor with the message and acks it; the inner
+    // message is marked NODE_CLUSTER so it is dispatched as a cluster-internal
+    // message rather than a process 'message' event.
+    message = { cmd: "NODE_HANDLE", type: "dgram.Native", message: { ...message, cmd: "NODE_CLUSTER" } };
+  }
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 

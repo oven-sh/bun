@@ -57,10 +57,11 @@ pub(crate) fn on_internal_message_child(
 pub(crate) fn handle_internal_message_child(
     global: &JSGlobalObject,
     message: JSValue,
+    handle: JSValue,
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
-    child_singleton().dispatch(message, global)
+    child_singleton().dispatch(message, handle, global)
 }
 
 #[bun_jsc::host_fn]

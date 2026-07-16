@@ -43,7 +43,7 @@ extern "C" EncodedJSValue Bun__Process__createExecArgv(JSGlobalObject*);
 
 JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, JSValue errValue);
 
-JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork)
+JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Process* process, ASCIILiteral trigger, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -57,7 +57,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
 
         header->putDirect(vm, Identifier::fromString(vm, "reportVersion"_s), jsNumber(3), 0);
         header->putDirect(vm, Identifier::fromString(vm, "event"_s), jsString(vm, String("JavaScript API"_s)), 0);
-        header->putDirect(vm, Identifier::fromString(vm, "trigger"_s), jsString(vm, String("GetReport"_s)), 0);
+        header->putDirect(vm, Identifier::fromString(vm, "trigger"_s), jsString(vm, String(trigger)), 0);
         if (fileName.isEmpty()) {
             header->putDirect(vm, Identifier::fromString(vm, "filename"_s), jsNull(), 0);
         } else {

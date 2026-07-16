@@ -2151,12 +2151,27 @@ JSValue constructReportJavaScriptStack(VM& vm, Zig::GlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
     if (synthetic) {
         errorProperties->putDirect(vm, JSC::Identifier::fromString(vm, "code"_s), JSC::jsString(vm, String("ERR_SYNTHETIC"_s)), 0);
+    } else {
+        JSObject* errObj = errValue.getObject();
+        JSC::PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        errObj->methodTable()->getOwnPropertyNames(errObj, globalObject, names, DontEnumPropertiesMode::Exclude);
+        RETURN_IF_EXCEPTION(scope, {});
+        for (unsigned i = 0; i < names.size(); i++) {
+            const auto& name = names[i];
+            if (name == vm.propertyNames->name || name == vm.propertyNames->message || name == vm.propertyNames->stack)
+                continue;
+            JSValue v = errObj->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, {});
+            JSString* str = v.toString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            errorProperties->putDirect(vm, name, str, 0);
+        }
     }
     javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "errorProperties"_s), errorProperties, 0);
     return javascriptStack;
 }
 
-static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork)
+static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalObject, ASCIILiteral trigger, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if !OS(WINDOWS)
@@ -2251,7 +2266,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
 
         header->putDirect(vm, JSC::Identifier::fromString(vm, "reportVersion"_s), JSC::jsNumber(3), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "event"_s), JSC::jsString(vm, String("JavaScript API"_s)), 0);
-        header->putDirect(vm, JSC::Identifier::fromString(vm, "trigger"_s), JSC::jsString(vm, String("GetReport"_s)), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "trigger"_s), JSC::jsString(vm, String(trigger)), 0);
         if (fileName.isEmpty()) {
             header->putDirect(vm, JSC::Identifier::fromString(vm, "filename"_s), JSC::jsNull(), 0);
         } else {
@@ -2498,12 +2513,12 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     }
 #else // OS(WINDOWS)
     // Forward declaration - implemented in BunProcessReportObjectWindows.cpp
-    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork);
+    JSValue constructReportObjectWindows(VM & vm, Zig::GlobalObject * globalObject, Process * process, ASCIILiteral trigger, const String& fileName, JSValue errValue, bool excludeEnv, bool excludeNetwork);
 
     // Get the Process object - needed for accessing report settings
     Process* process = globalObject->processObject();
 
-    return constructReportObjectWindows(vm, globalObject, process, fileName, errValue, excludeEnv, excludeNetwork);
+    return constructReportObjectWindows(vm, globalObject, process, trigger, fileName, errValue, excludeEnv, excludeNetwork);
 #endif
 }
 
@@ -2536,7 +2551,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetReport, (JSGlobalObject * globalObje
     }
 
     // TODO: node:vm
-    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, zigGlobal, String(), errArg, excludeEnv, excludeNetwork)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructReportObjectComplete(vm, zigGlobal, "GetReport"_s, String(), errArg, excludeEnv, excludeNetwork)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
@@ -2577,7 +2592,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
     bool excludeNetwork = false;
     String directory;
     String configFilename;
-    if (JSObject* thisObj = callFrame->thisValue().getObject()) {
+    JSValue reportObjValue = zigGlobal->processObject()->getIfPropertyExists(globalObject, Identifier::fromString(vm, "report"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (JSObject* thisObj = reportObjValue.isObject() ? reportObjValue.getObject() : nullptr) {
         JSValue v;
         v = thisObj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "compact"_s));
         RETURN_IF_EXCEPTION(scope, {});
@@ -2643,7 +2660,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteReport, (JSGlobalObject * globalOb
         file = String::fromLatin1(buf);
     }
 
-    JSValue reportValue = constructReportObjectComplete(vm, zigGlobal, file, errArg, excludeEnv, excludeNetwork);
+    JSValue reportValue = constructReportObjectComplete(vm, zigGlobal, "API"_s, file, errArg, excludeEnv, excludeNetwork);
     RETURN_IF_EXCEPTION(scope, {});
 
     String json = JSC::JSONStringify(globalObject, reportValue, compact ? 0 : 2);

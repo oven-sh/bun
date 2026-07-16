@@ -1224,6 +1224,7 @@ console.log(JSON.stringify(out));
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const body = JSON.parse(stdout);
       expect(body.header.filename).toBe("stdout");
+      expect(body.header.trigger).toBe("API");
       expect(typeof body.header.processId).toBe("number");
       expect(stderr).not.toContain("Writing Node.js report");
       expect(exitCode).toBe(0);
@@ -1251,16 +1252,18 @@ process.report.writeReport("stdout", e);
       expect(exitCode).toBe(0);
     });
 
-    it.concurrent("getReport(err) uses the supplied error's stack", async () => {
+    it.concurrent("getReport(err) uses the supplied error's stack and properties", async () => {
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
           `
-const e = new Error("from-getReport");
+const e = Object.assign(new Error("from-getReport"), { code: "E_FOO", extra: 42 });
 const rep = process.report.getReport(e);
 console.log(JSON.stringify({
   message: rep.javascriptStack.message,
+  errorProperties: rep.javascriptStack.errorProperties,
+  trigger: rep.header.trigger,
   synthetic: process.report.getReport().javascriptStack.message,
 }));
 `,
@@ -1272,7 +1275,31 @@ console.log(JSON.stringify({
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const out = JSON.parse(stdout);
       expect(out.message).toContain("from-getReport");
+      expect(out.errorProperties).toEqual({ code: "E_FOO", extra: "42" });
+      expect(out.trigger).toBe("GetReport");
       expect(out.synthetic).toContain("ERR_SYNTHETIC");
+      expect(exitCode).toBe(0);
+    });
+
+    it.concurrent("detached call still honors process.report config", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+process.report.compact = true;
+const { writeReport } = process.report;
+writeReport("stdout");
+`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.indexOf("\n")).toBe(stdout.length - 1);
+      const body = JSON.parse(stdout);
+      expect(body.header.trigger).toBe("API");
       expect(exitCode).toBe(0);
     });
   });

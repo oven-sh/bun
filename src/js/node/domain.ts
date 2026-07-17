@@ -5,10 +5,50 @@ const ObjectDefineProperty = Object.defineProperty;
 
 // Export Domain
 var domain: any = {};
+
+// Wrap `cb` so that when it runs, `d` is entered for the duration of the call
+// and any synchronous throw is routed through the domain's 'error' event.
+function bindCallbackToDomain(d, cb) {
+  return function boundDomainCallback() {
+    d.enter();
+    try {
+      return cb.$apply(this, arguments);
+    } catch (err) {
+      d._emitError(err);
+    } finally {
+      d.exit();
+    }
+  };
+}
+
+// Patch the global timer APIs once so that callbacks scheduled while a domain
+// is active are bound to that domain at schedule time, matching node's
+// implicit async binding for timers (https://github.com/oven-sh/bun/issues/30672).
+let timersPatched = false;
+function patchTimersOnce() {
+  if (timersPatched) return;
+  timersPatched = true;
+
+  function wrapTimerApi(orig) {
+    return function (callback, ...rest) {
+      const d = domain.active;
+      if (d && $isCallable(callback)) {
+        callback = bindCallbackToDomain(d, callback);
+      }
+      return orig(callback, ...rest);
+    };
+  }
+
+  globalThis.setTimeout = wrapTimerApi(globalThis.setTimeout);
+  globalThis.setInterval = wrapTimerApi(globalThis.setInterval);
+  globalThis.setImmediate = wrapTimerApi(globalThis.setImmediate);
+}
+
 domain.createDomain = domain.create = function () {
   if (!EventEmitter) {
     EventEmitter = require("node:events");
   }
+  patchTimersOnce();
   var d = new EventEmitter();
 
   function emitError(e) {
@@ -26,6 +66,7 @@ domain.createDomain = domain.create = function () {
     }
     d.emit("error", e);
   }
+  d._emitError = emitError;
 
   d.add = function (emitter) {
     emitter.on("error", emitError);
@@ -92,5 +133,9 @@ domain.createDomain = domain.create = function () {
 const stack: any[] = [];
 domain._stack = stack;
 domain.active = null;
+
+// Match node: after `require('domain')`, `process.domain` exists (and is null)
+// even if no domain has been entered yet.
+if ((process as any).domain === undefined) (process as any).domain = null;
 
 export default domain;

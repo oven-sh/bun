@@ -286,11 +286,12 @@ class InspectorCDPAdapter {
         return;
 
       case "Runtime.callFunctionOn": {
-        const forward = (objectId: unknown) =>
+        const { objectId, executionContextId } = params;
+        const forward = (targetObjectId: unknown) =>
           this.#sendToBackend(
             "Runtime.callFunctionOn",
             {
-              objectId,
+              objectId: targetObjectId,
               functionDeclaration: params.functionDeclaration,
               arguments: params.arguments,
               doNotPauseOnExceptionsAndMuteConsole: params.silent,
@@ -301,11 +302,11 @@ class InspectorCDPAdapter {
             id,
             method,
           );
-        if (params.objectId) {
-          forward(params.objectId);
+        if (objectId) {
+          forward(objectId);
           return;
         }
-        if (params.executionContextId === undefined) {
+        if (executionContextId === undefined) {
           this.#replyErrorToClient(id, -32602, "Either objectId or executionContextId must be specified");
           return;
         }
@@ -313,12 +314,12 @@ class InspectorCDPAdapter {
         // JSC requires an objectId, so fetch the global's first. JSC has a
         // single execution context and rejects contextId, so omit it.
         this.#sendToBackend("Runtime.evaluate", { expression: "globalThis" }, null, method, (result, error) => {
-          const objectId = result.result?.objectId;
-          if (error || !objectId) {
+          const globalObjectId = result.result?.objectId;
+          if (error || !globalObjectId) {
             this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
             return;
           }
-          forward(objectId);
+          forward(globalObjectId);
         });
         return;
       }

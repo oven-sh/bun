@@ -104,6 +104,7 @@ let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 // lazily inside the constructor would build the channel out of whatever
 // Map/Object user code had tampered with by then.
 const workerThreadsChannel = require("node:diagnostics_channel").channel("worker_threads");
+const { tickInitHooks, newAsyncId } = require("internal/async_hooks_tick");
 
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
@@ -932,6 +933,9 @@ class Worker extends EventEmitter {
   #stderr;
   #stdoutAutoPipe = false;
   #stderrAutoPipe = false;
+  // Mirrors ref()/unref() for the async_hooks WORKER resource's hasRef();
+  // undefined once the thread has exited, as node's handle reads back.
+  #hasRef: boolean | undefined = true;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -1097,6 +1101,40 @@ class Worker extends EventEmitter {
     if (workerThreadsChannel.hasSubscribers) {
       workerThreadsChannel.publish({ worker: this });
     }
+    this.#emitAsyncHooksInit();
+  }
+
+  // node's WORKER resource is the C++ handle, so hasRef() follows ref()/unref()
+  // and reads back undefined once the handle is gone. Bun delivered init for
+  // TickObject only; this extends the same array to the type worker consumers
+  // look for. Only hasRef() is exposed, not the full handle.
+  #emitAsyncHooksInit() {
+    const count = tickInitHooks.length;
+    if (count === 0) return;
+    const worker = this;
+    const resource = {
+      hasRef() {
+        return worker.#hasRef;
+      },
+    };
+    const asyncId = newAsyncId();
+    // Snapshot: enable()/disable() from inside a hook must not affect the
+    // in-flight dispatch (node stages such mutations in tmp_array).
+    const snapshot = $newArrayWithSize<Function>(count);
+    for (let i = 0; i < count; i++) snapshot[i] = tickInitHooks[i];
+    for (let i = 0; i < count; i++) {
+      try {
+        snapshot[i](asyncId, "WORKER", 0, resource);
+      } catch (err) {
+        // node: a throwing init hook is fatal (fatalError: print + exit 1),
+        // never surfaced to the `new Worker` caller — which here has already
+        // spawned the thread. console is user-mutable, so shield the print.
+        try {
+          console.error(typeof err?.stack === "string" ? err.stack : err);
+        } catch {}
+        process.exit(1);
+      }
+    }
   }
 
   get threadId() {
@@ -1114,6 +1152,9 @@ class Worker extends EventEmitter {
     if (!this.#stdoutAutoPipe) this.#stdoutPort?.ref();
     if (!this.#stderrAutoPipe) this.#stderrPort?.ref();
     this.#stdinPort?.ref();
+    // node's ref()/unref() no-op once the handle is gone, leaving hasRef()
+    // undefined rather than resurrecting it.
+    if (!this.#exited) this.#hasRef = true;
   }
 
   unref() {
@@ -1121,6 +1162,7 @@ class Worker extends EventEmitter {
     if (!this.#stdoutAutoPipe) this.#stdoutPort?.unref();
     if (!this.#stderrAutoPipe) this.#stderrPort?.unref();
     this.#stdinPort?.unref();
+    if (!this.#exited) this.#hasRef = false;
   }
 
   get stdin() {
@@ -1314,6 +1356,10 @@ class Worker extends EventEmitter {
     this.#stdinPort?.close();
     this.#onExitPromise = e.code;
     this.emit("exit", e.code);
+    // node's WORKER handle is gone once the thread has exited, so its
+    // hasRef() reads back undefined. 'exit' listeners ran synchronously above
+    // and still saw the live value.
+    this.#hasRef = undefined;
   }
 
   #onError(event: ErrorEvent) {

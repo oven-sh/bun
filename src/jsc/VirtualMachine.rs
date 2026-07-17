@@ -1978,6 +1978,15 @@ fn get_origin_timestamp() -> u64 {
     (now - ORIGIN_RELATIVE_EPOCH).max(0) as u64
 }
 
+/// `performance.timeOrigin` is the PROCESS start time and every thread reports
+/// the same one — a worker's timeOrigin equals the main thread's in node, and
+/// `performance.now()` inside a worker is relative to that same origin. Capture
+/// it on the first VM so worker VMs inherit it instead of restarting the clock.
+fn process_origin() -> (std::time::Instant, u64) {
+    static ORIGIN: std::sync::OnceLock<(std::time::Instant, u64)> = std::sync::OnceLock::new();
+    *ORIGIN.get_or_init(|| (std::time::Instant::now(), get_origin_timestamp()))
+}
+
 impl VirtualMachine {
     /// `VirtualMachine.init(opts)` — allocate + wire the per-thread VM.
     ///
@@ -2069,8 +2078,9 @@ impl VirtualMachine {
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
-            addr_of_mut!((*vm).origin_timer).write(std::time::Instant::now());
-            addr_of_mut!((*vm).origin_timestamp).write(get_origin_timestamp());
+            let (origin_timer, origin_timestamp) = process_origin();
+            addr_of_mut!((*vm).origin_timer).write(origin_timer);
+            addr_of_mut!((*vm).origin_timestamp).write(origin_timestamp);
             addr_of_mut!((*vm).smol).write(opts.smol);
             // `Option<{CPU,Heap}ProfilerConfig>` are NOT zero-valid: each
             // payload contains a `bool`, and rustc picks that field's invalid

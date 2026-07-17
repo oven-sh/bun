@@ -377,16 +377,19 @@ function createHook(hook) {
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
   let enabledInit;
-  return {
+  const asyncHook = {
     enable() {
       if (init !== undefined && enabledInit === undefined) {
-        // init is delivered for TickObject resources (process.nextTick);
-        // other resource types are still unimplemented.
+        // init is delivered for TickObject (process.nextTick) and WORKER
+        // resources; other resource types are still unimplemented.
         // Per-instance wrapper: two hooks registered with the same init
         // function must stay independently removable (removal is by
         // identity, and removing the other instance's entry would reorder
         // its callback relative to unrelated hooks).
-        enabledInit = (asyncId, type, triggerAsyncId, resource) => init(asyncId, type, triggerAsyncId, resource);
+        // node invokes init as a method on the AsyncHook instance
+        // (lib/internal/async_hooks.js), so `this.disable()` inside init works.
+        enabledInit = (asyncId, type, triggerAsyncId, resource) =>
+          init.$call(asyncHook, asyncId, type, triggerAsyncId, resource);
         require("internal/async_hooks_tick").tickInitHooks.push(enabledInit);
       }
       if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
@@ -413,6 +416,7 @@ function createHook(hook) {
       return this;
     },
   };
+  return asyncHook;
 }
 
 const executionAsyncIdNotImpl = createWarning(

@@ -30,6 +30,7 @@ import {
 import { readFile } from "node:fs/promises";
 import { availableParallelism, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
+import { createConnection, createServer } from "node:net";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
 import { parseArgs } from "node:util";
@@ -472,10 +473,73 @@ function assertExpectedPlatform() {
 }
 
 /**
+ * Verifies the agent can talk to itself over 127.0.0.1. On the macOS fleet the
+ * lo0 DLIL input thread has been observed to wedge under load: the kernel logs
+ * "dlil_input_async lo0 burst limit 8192 exceeded", `ping 127.0.0.1` drops 100%
+ * and every HTTP/UDP/WebSocket test that touches localhost then times out for
+ * the rest of the uptime. That turns a broken box into 45 minutes of unrelated
+ * "timeout" failures per job. Detecting it lets us abort the shard with a
+ * single actionable error instead.
+ *
+ * Runs once before the suite and again whenever a test result is "timeout" so a
+ * mid-run wedge short-circuits the retry loop instead of burning 4 attempts per
+ * remaining network test. Cheap (<100ms) when healthy.
+ *
+ * @param {string} [context] label for the error message when called mid-run
+ * @returns {Promise<boolean>} true if loopback responded
+ */
+async function checkLoopbackHealth(context) {
+  const attempt = host =>
+    new Promise(resolve => {
+      const server = createServer(s => s.end());
+      server.once("error", () => resolve(`listen error`));
+      server.listen(0, host, () => {
+        const { port } = server.address();
+        const done = result => {
+          client.destroy();
+          server.close();
+          resolve(result);
+        };
+        const client = createConnection({ port, host });
+        client.once("connect", () => done("ok"));
+        client.once("error", e => done(`connect ${e.code || e.message}`));
+        setTimeout(() => done("connect timed out"), 5000).unref();
+      });
+    });
+
+  const [v4, v6] = await Promise.all([attempt("127.0.0.1"), attempt("::1")]);
+  if (v4 === "ok" || v6 === "ok") return true;
+
+  const where = context ? ` after ${context} timed out` : "";
+  const diag = isMacOS ? spawnSync("netstat", ["-I", "lo0"]).stdout?.toString().trim() : "";
+  const message =
+    `Loopback health check FAILED${where}: 127.0.0.1 => ${v4}, ::1 => ${v6}.\n` +
+    `This agent (${getHostname()}) cannot reach its own listening sockets; every ` +
+    `localhost-dependent test will time out. On macOS this is the lo0 DLIL input ` +
+    `thread wedging (kernel logs "dlil_input_async lo0 burst limit ... exceeded"). ` +
+    `The box needs a reboot.` +
+    (diag ? `\n\nnetstat -I lo0:\n${diag}` : "");
+
+  console.error(`${getAnsi("red")}${message}${getAnsi("reset")}`);
+  if (isBuildkite) {
+    reportAnnotationToBuildKite({
+      label: "loopback health check",
+      content: "```term\n" + message + "\n```",
+      style: "error",
+      context: "loopback",
+    });
+  }
+  return false;
+}
+
+/**
  * @returns {Promise<TestResult[]>}
  */
 async function runTests() {
   assertExpectedPlatform();
+  if (isCI && isMacOS && !(await checkLoopbackHealth())) {
+    process.exit(1);
+  }
 
   let execPath;
   if (options["step"]) {
@@ -644,6 +708,13 @@ async function runTests() {
 
       failure ||= result;
       flaky ||= true;
+
+      if (isCI && isMacOS && error === "timeout" && !(await checkLoopbackHealth(title))) {
+        // The agent's loopback died mid-run; every remaining network test will
+        // also time out. Abort the shard instead of retrying into the job-level
+        // timeout. checkLoopbackHealth() already annotated the build.
+        process.exit(1);
+      }
 
       if (attempt >= maxAttempts || isAlwaysFailure(error)) {
         flaky = false;

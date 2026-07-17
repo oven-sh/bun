@@ -572,6 +572,14 @@ struct HttpResponseData;
         bool nodeHttpSawConnectionClose = false;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
+        /* maxHeaderSize bounds what llhttp counts — the URL plus each field name and
+         * value — but the raw block also carries framing llhttp never charges: the
+         * method and " HTTP/1.1\r\n", a ": " and "\r\n" per header, and the terminating
+         * "\r\n". Bounding raw bytes by maxHeaderSize itself would reject a request
+         * Node accepts, so the raw bounds get exactly that framing as slack. It stays
+         * finite: at most UWS_HTTP_MAX_HEADERS_COUNT headers contribute 4 bytes each,
+         * and a field value's raw span is already bounded by the in-loop check. */
+        static constexpr size_t MAX_HEADER_FRAMING_SLACK = UWS_HTTP_MAX_HEADERS_COUNT * 4 + 64;
 
         /* Maximum size of the chunk extensions of a single chunk, matching Node's
          * kMaxChunkExtensionsSize in src/node_http_parser.cc (16 KiB). Enforced
@@ -940,6 +948,20 @@ struct HttpResponseData;
             }
             /* No request headers found */
             const char * headerStart = (headers[0].key.length() > 0) ? headers[0].key.data() : end;
+            (void) headerStart;
+
+            /* llhttp — and therefore Node — bounds the header block by the bytes it hands
+             * to its callbacks: on_url, then each field name and field value. It does not
+             * charge the method, " HTTP/1.1\r\n", the ": " separators or the "\r\n" line
+             * endings against that budget, so counting the raw offset into the buffer
+             * rejects requests Node accepts. Mirror llhttp's TrackHeader: accumulate
+             * name + value lengths and fail once the total reaches maxHeaderSize. The
+             * fallback buffer keeps its own bound (maxBufferedHeaderSize below), which is
+             * what caps how much raw data a fragmented request may buffer. */
+            uint64_t headerNread = headers[0].value.length();
+            if (maxHeaderSize && headerNread >= maxHeaderSize) {
+                return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
+            }
 
             /* Check if we can see if headers follow or not */
             if (postPaddedBuffer + 2 > end) {
@@ -961,7 +983,8 @@ struct HttpResponseData;
                 preliminaryKey = postPaddedBuffer;
                 postPaddedBuffer = consumeFieldName(postPaddedBuffer);
                 headers->key = std::string_view(preliminaryKey, (size_t) (postPaddedBuffer - preliminaryKey));
-                if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
+                headerNread += headers->key.length();
+                if(maxHeaderSize && headerNread >= maxHeaderSize) {
                     return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }
                 /* We should not accept whitespace between key and colon, so colon must foloow immediately */
@@ -1004,7 +1027,16 @@ struct HttpResponseData;
                     }
                     break;
                 }
-                if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
+                /* Bound the value before its terminator is found — a value that never
+                 * terminates must still overflow here, exactly where llhttp would, or an
+                 * oversized unterminated header just waits for more data instead of
+                 * failing. llhttp is handed the value with leading OWS already skipped,
+                 * so that OWS is not charged. */
+                const char *countedValueStart = preliminaryValue;
+                while (countedValueStart < postPaddedBuffer && isHTTPHeaderValueWhitespace((unsigned char) *countedValueStart)) {
+                    countedValueStart++;
+                }
+                if(maxHeaderSize && headerNread + (uintptr_t)(postPaddedBuffer - countedValueStart) >= maxHeaderSize) {
                     return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                 }
                 if (end - postPaddedBuffer < 2) {
@@ -1026,7 +1058,8 @@ struct HttpResponseData;
                         headers->value.remove_prefix(1);
                     }
 
-                    if(maxHeaderSize && (uintptr_t)(postPaddedBuffer - headerStart) > maxHeaderSize) {
+                    headerNread += headers->value.length();
+                    if(maxHeaderSize && headerNread >= maxHeaderSize) {
                         return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
                     }
                     headers++;
@@ -1118,7 +1151,7 @@ struct HttpResponseData;
             consumedTotal += consumed;
 
             /* Even if we could parse it, check for length here as well */
-            const uint64_t maxBufferedHeaderSize = maxHeaderSize ? maxHeaderSize : MAX_FALLBACK_SIZE;
+            const uint64_t maxBufferedHeaderSize = maxHeaderSize ? (maxHeaderSize + MAX_HEADER_FRAMING_SLACK) : MAX_FALLBACK_SIZE;
             if (consumed > maxBufferedHeaderSize) {
                 return HttpParserResult::error(HTTP_ERROR_431_REQUEST_HEADER_FIELDS_TOO_LARGE, HTTP_PARSER_ERROR_REQUEST_HEADER_FIELDS_TOO_LARGE);
             }
@@ -1340,7 +1373,7 @@ public:
     HttpParserResult consumePostPadded(uint64_t maxHeaderSize, bool& isConnectRequest, bool requireHostHeader, bool useStrictMethodValidation, bool useInsecureHTTPParser, std::string *nodeHttpRequestTrailers, uint64_t *chunkedExtensionsByteCount, char *data, unsigned int length, void *user, void *reserved, MoveOnlyFunction<void *(void *, HttpRequest *)> &&requestHandler, MoveOnlyFunction<void *(void *, std::string_view, bool)> &&dataHandler) {
         /* The fallback buffer may not exceed the configured per-request header
          * limit (per-server maxHeaderSize can raise it above the default). */
-        const size_t maxFallbackSize = maxHeaderSize ? (size_t) maxHeaderSize : MAX_FALLBACK_SIZE;
+        const size_t maxFallbackSize = maxHeaderSize ? (size_t) (maxHeaderSize + MAX_HEADER_FRAMING_SLACK) : MAX_FALLBACK_SIZE;
         /* This resets BloomFilter by construction, but later we also reset it again.
         * Optimize this to skip resetting twice (req could be made global) */
         HttpRequest req;

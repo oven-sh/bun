@@ -3,6 +3,7 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+const { hasOpenSSL3 } = require('../common/crypto');
 const assert = require('assert');
 const util = require('util');
 const crypto = require('crypto');
@@ -87,31 +88,32 @@ test('rsa_public.pem', 'rsa_private.pem', 'sha256', false,
 
 // ED25519
 test('ed25519_public.pem', 'ed25519_private.pem', undefined, true);
-// ED448
-// skip tests from electron
-// https://github.com/electron/electron/blob/add374ef6a3e576fa4f73dbf68199540668a75cf/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L56
-if (!common.openSSLIsBoringSSL) {
-test('ed448_public.pem', 'ed448_private.pem', undefined, true);
 
-// ECDSA w/ der signature encoding
-test('ec_secp256k1_public.pem', 'ec_secp256k1_private.pem', 'sha384',
-     false);
-test('ec_secp256k1_public.pem', 'ec_secp256k1_private.pem', 'sha384',
-     false, { dsaEncoding: 'der' });
+if (!process.features.openssl_is_boringssl) {
+  // ED448
+  test('ed448_public.pem', 'ed448_private.pem', undefined, true);
 
-// ECDSA w/ ieee-p1363 signature encoding
-test('ec_secp256k1_public.pem', 'ec_secp256k1_private.pem', 'sha384', false,
-     { dsaEncoding: 'ieee-p1363' });
+  // ECDSA w/ der signature encoding
+  test('ec_secp256k1_public.pem', 'ec_secp256k1_private.pem', 'sha384',
+       false);
+  test('ec_secp256k1_public.pem', 'ec_secp256k1_private.pem', 'sha384',
+       false, { dsaEncoding: 'der' });
 
-// DSA w/ der signature encoding
-test('dsa_public.pem', 'dsa_private.pem', 'sha256',
-     false);
-test('dsa_public.pem', 'dsa_private.pem', 'sha256',
-     false, { dsaEncoding: 'der' });
+  // ECDSA w/ ieee-p1363 signature encoding
+  test('ec_secp256k1_public.pem', 'ec_secp256k1_private.pem', 'sha384', false,
+       { dsaEncoding: 'ieee-p1363' });
 
-// DSA w/ ieee-p1363 signature encoding
-test('dsa_public.pem', 'dsa_private.pem', 'sha256', false,
-     { dsaEncoding: 'ieee-p1363' });
+  // DSA w/ der signature encoding
+  test('dsa_public.pem', 'dsa_private.pem', 'sha256',
+       false);
+  test('dsa_public.pem', 'dsa_private.pem', 'sha256',
+       false, { dsaEncoding: 'der' });
+
+  // DSA w/ ieee-p1363 signature encoding
+  test('dsa_public.pem', 'dsa_private.pem', 'sha256', false,
+       { dsaEncoding: 'ieee-p1363' });
+} else {
+  common.printSkipMessage('Skipping unsupported ed448/secp256k1/dsa test cases');
 }
 
 // Test Parallel Execution w/ KeyObject is threadsafe in openssl3
@@ -141,7 +143,39 @@ test('dsa_public.pem', 'dsa_private.pem', 'sha256', false,
       verify('sha256', data, publicKey, signature),
       verify('sha256', data, publicKey, signature),
       verify('sha256', data, publicKey, signature),
-    ]).then(common.mustCall());
+    ]);
   })
-  .catch(common.mustNotCall());
+  .then(common.mustCall());
+}
+
+{
+  const untrustedKey = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VuAyEA6pwGRbadNQAI/tYN8+/p/0/hbsdHfOEGr1ADiLVk/Gc=
+-----END PUBLIC KEY-----`;
+  const data = crypto.randomBytes(32);
+  const signature = crypto.randomBytes(16);
+
+  let expected = /no default digest/;
+  let expectedCode = 'ERR_OSSL_EVP_NO_DEFAULT_DIGEST';
+  if (hasOpenSSL3 || process.features.openssl_is_boringssl) {
+    expected = /operation[\s_]not[\s_]supported[\s_]for[\s_]this[\s_]keytype/i;
+    expectedCode = 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE';
+  }
+
+  crypto.verify(undefined, data, untrustedKey, signature, common.mustCall((err) => {
+    assert.ok(err);
+    assert.match(err.message, expected);
+    assert.strictEqual(err.code, expectedCode);
+  }));
+}
+
+{
+  const { privateKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength: 512
+  });
+  crypto.sign('sha512', 'message', privateKey, common.mustCall((err) => {
+    assert.ok(err);
+    assert.match(err.message, /digest[\s_]too[\s_]big[\s_]for[\s_]rsa[\s_]key/i);
+    assert.match(err.code, /^ERR_OSSL_.*DIGEST_TOO_BIG_FOR_RSA_KEY$/);
+  }));
 }

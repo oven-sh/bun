@@ -731,11 +731,21 @@ class TestPlan {
             makeTestFailure(`plan timed out after ${wait}ms with ${this.actual} assertions when expecting ${expected}`),
           );
         }, wait);
-        // Not unref'd: count()/the timer callback always clear it, and on
-        // Windows an unref'd timer alone under bun:test busy-spins (8664279d).
+        // Not unref'd: count()/cancel()/the timer callback always clear it, and
+        // on Windows an unref'd timer alone under bun:test busy-spins (8664279d).
       }
       this.#pending = { resolve, reject, timer };
     });
+  }
+
+  // Mirrors count()'s cleanup for the stop-wins-race path: if the test-level
+  // timeout fires before a numeric {wait: K} is fulfilled, the ref'd plan
+  // timer must not stay armed for K - N more ms after the test reported.
+  cancel() {
+    const pending = this.#pending;
+    if (pending === undefined) return;
+    this.#pending = undefined;
+    if (pending.timer !== undefined) realClearTimeout(pending.timer);
   }
 }
 
@@ -792,9 +802,10 @@ function runWithNode<T>(node: TestNode, fn: () => T): T {
   return getAsyncLocalStorage().run(node, fn);
 }
 
-function getTestContext(): TestContext | undefined {
+function getTestContext(): TestContext | SuiteContext | undefined {
   const node = currentNode();
-  return node?.getCtx();
+  if (node === undefined) return undefined;
+  return node.isSuite ? node.getSuiteCtx() : node.getCtx();
 }
 
 // -----------------------------------------------------------------------------
@@ -928,6 +939,7 @@ function getRootNode(): TestNode {
       // module-level mocks and assert.register() additions with its root.
       mock.reset();
       customAssertions = { __proto__: null } as unknown as Record<string, Function>;
+      tagsExperimentalWarningEmitted = false;
     }
   }
   return rootNode;
@@ -1531,6 +1543,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       }
     } finally {
       stop?.dispose();
+      node.plan?.cancel();
     }
 
     const { failedSubtests, firstSubtestError } = node;

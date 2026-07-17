@@ -19,17 +19,23 @@ async function runClusterFixture(fixture: string, deadlineMs: number) {
     stdout: "pipe",
     stderr: "pipe",
   });
+  // One reader per stream for the whole helper — a second .text() on an
+  // already-read stream throws ERR_INVALID_STATE and loses the diagnostic.
+  const stdoutPromise = proc.stdout.text();
+  const stderrPromise = proc.stderr.text();
   const timedOut = Bun.sleep(deadlineMs).then(() => {
     proc.kill("SIGKILL");
     return "deadline" as const;
   });
-  const result = await Promise.race([Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]), timedOut]);
+  // Leaked grandchildren (cluster workers) can keep the pipes open after the
+  // primary exits, so race on exit alone; the pipe reads finish once the
+  // SIGKILL above (via NO_ORPHANS) reaps them.
+  const result = await Promise.race([proc.exited, timedOut]);
+  const [stdout, stderr] = await Promise.all([stdoutPromise, stderrPromise]);
   if (result === "deadline") {
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
     return { stdout, stderr, exitCode: null as number | null, signalCode: proc.signalCode };
   }
-  const [stdout, stderr, exitCode] = result;
-  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  return { stdout, stderr, exitCode: result, signalCode: proc.signalCode };
 }
 
 describe("createSocket()", () => {
@@ -409,6 +415,39 @@ test.skipIf(isWindows)("bind({ fd }) rejects a same-tick duplicate adoption", as
   first.close();
   second.close();
   wrap.close();
+});
+
+// An adopted descriptor is armed for READABLE only (like libuv's uv_udp_open +
+// uv_udp_recv_start): no drain callback fires before the first send that hits
+// backpressure. With the previous READ|WRITE initial mask a cluster-shared
+// descriptor carried two knotes per worker on one inpcb, and on macOS 14.4+ the
+// first kevent() self-deadlocked in kqueue_scan -> udp_lock, stalling lo0's
+// dlil input thread machine-wide. The drain count is the observable proxy for
+// that mask on every platform.
+test.skipIf(isWindows)("adopting a descriptor does not arm EVFILT_WRITE (no drain before send)", async () => {
+  const { newRawSocketFd } = require("bun:internal-for-testing").dgramInternals;
+  const fd = newRawSocketFd(false, false);
+  expect(fd).toBeGreaterThan(0);
+
+  let drains = 0;
+  const socket = await Bun.udpSocket({
+    fd,
+    socket: {
+      data() {},
+      drain() {
+        drains++;
+      },
+    },
+  });
+  try {
+    // Two event-loop turns are enough for a level-triggered WRITABLE knote to
+    // fire; the old initial READ|WRITE mask fired drain exactly once here.
+    await Bun.sleep(1);
+    await Bun.sleep(1);
+    expect(drains).toBe(0);
+  } finally {
+    socket.close();
+  }
 });
 
 // The same guard lives in the native layer so `Bun.udpSocket({ fd })` cannot

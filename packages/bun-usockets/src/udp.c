@@ -274,8 +274,18 @@ struct us_udp_socket_t *us_create_udp_socket_from_fd(
     udp->next = NULL;
 
     /* Unlike us_create_udp_socket we don't own the adopted fd, so on failure
-     * only the poll is freed and the caller keeps the descriptor. */
-    if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE) != 0) {
+     * only the poll is freed and the caller keeps the descriptor.
+     *
+     * READABLE only — matching libuv's uv_udp_open + uv_udp_recv_start, which
+     * never arm POLLOUT up front. An adopted descriptor is typically one UDP
+     * inpcb shared (via SCM_RIGHTS) across several cluster workers; arming
+     * EVFILT_WRITE here would give each worker two knotes on that one socket,
+     * and on macOS 14.4+ the first kevent() then takes udp_lock twice inside
+     * kqueue_scan (once per knote) and self-deadlocks. That thread never
+     * releases udp_lock, so lo0's dlil input blocks on it and loopback goes
+     * dead machine-wide until reboot. us_udp_socket_send arms WRITABLE on
+     * actual backpressure, and the loop disarms it again after on_drain. */
+    if (us_poll_start_rc((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE) != 0) {
         int saved_errno = errno;
         us_poll_free((struct us_poll_t *) udp, loop);
         if (err) {

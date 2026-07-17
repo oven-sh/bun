@@ -98,7 +98,12 @@ async function decodeNumeric(col: Buffer): Promise<unknown> {
     socket.on("error", () => {});
   });
   try {
-    await using sql = new SQL({ url: `postgres://u@127.0.0.1:${port}/db`, max: 1, idleTimeout: 5, connectionTimeout: 5 });
+    await using sql = new SQL({
+      url: `postgres://u@127.0.0.1:${port}/db`,
+      max: 1,
+      idleTimeout: 5,
+      connectionTimeout: 5,
+    });
     const [row]: any = await sql`select n`.simple();
     return row.n;
   } finally {

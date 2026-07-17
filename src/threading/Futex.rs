@@ -18,9 +18,9 @@ pub enum TimeoutError {
     Timeout,
 }
 
-impl From<TimeoutError> for crate::Error {
+impl From<TimeoutError> for crate::threading::Error {
     fn from(_: TimeoutError) -> Self {
-        crate::Error::Timeout
+        crate::threading::Error::Timeout
     }
 }
 

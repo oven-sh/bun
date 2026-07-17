@@ -26,16 +26,16 @@ use core::ffi::c_char;
 pub mod posix_spawn {
     pub use bun_spawn_sys::posix_spawn::*;
 
-    pub mod bun_spawn {
+    pub mod bun_spawn_impl {
         pub use crate::process;
         pub use crate::process::{
             Process, SpawnOptions, SpawnProcessResult, Status, spawn_process, sync,
         };
         #[cfg(windows)]
         pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
-        pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
+        pub use bun_spawn_sys::posix_spawn::bun_spawn_impl::*;
     }
-    pub use bun_spawn as BunSpawn;
+    pub use bun_spawn_impl as BunSpawn;
     pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
 }
 

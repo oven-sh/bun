@@ -26,6 +26,8 @@ bun_errno.workspace = true
 bun_windows_sys.workspace = true
 bun_wyhash.workspace = true
 thiserror.workspace = true
+# Step 4.1 mounts:
+bun_macros.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
 # Raw Linux syscalls (linux_raw backend — no libc trampoline). Mirrors Zig's
@@ -40,3 +42,6 @@ memchr = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 bun_libuv_sys.workspace = true
 bun_output.workspace = true
+
+[features]
+show_crash_trace = []

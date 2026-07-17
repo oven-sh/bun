@@ -1,9 +1,9 @@
-use crate::Error;
+use crate::crash_handler::Error;
 use bun_core::alloc_impl::AllocError;
 
 // "OOM-only" vs "other errors possible" is encoded structurally in the
 // `HandleOom` trait impls below — the `AllocError` impls ARE the "OOM-only"
-// arm (Output = T / Output = !), and the `crate::Error` impls ARE the
+// arm (Output = T / Output = !), and the `crate::crash_handler::Error` impls ARE the
 // "other errors possible" arm (Output = Result<T, E> / Output = E).
 
 /// If `error_union_or_set` is `error.OutOfMemory`, calls `bun.outOfMemory`. Otherwise:
@@ -64,7 +64,7 @@ impl HandleOom for AllocError {
 
 // ── .error_union, mixed error set → same union with OOM subtracted ───────
 // Rust error enums are nominal, not sets — there is no set subtraction. For
-// the catch-all `crate::Error` we compare against the interned tag and
+// the catch-all `crate::crash_handler::Error` we compare against the interned tag and
 // return the same type. Per-crate `thiserror` enums that carry an
 // `OutOfMemory` variant should add their own `HandleOom` impl.
 impl<T> HandleOom for Result<T, Error> {

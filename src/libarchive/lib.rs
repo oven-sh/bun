@@ -1416,7 +1416,7 @@ pub fn path_traverses_created_symlink(path: &[u8], created_symlinks: &[Vec<u8>])
 /// `bun.makePathW` helper which transcodes via `from_w_path` and would lose
 /// lone surrogates / skip `\??\` long-path prefixing).
 #[cfg(windows)]
-fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::Result<()> {
+fn make_path_u16(dir_fd: Fd, sub_path: &[u16]) -> crate::libarchive::Result<()> {
     use bun_sys::{E, WindowsOpenDirOp, WindowsOpenDirOptions, open_dir_at_windows};
     // Access mask (`STANDARD_RIGHTS_READ | FILE_READ_ATTRIBUTES |
     // FILE_READ_EA | SYNCHRONIZE | FILE_TRAVERSE`) is selected by setting `read_only`,
@@ -1487,7 +1487,7 @@ pub mod archiver {
     }
 
     impl Plucker {
-        pub fn init(filepath: &[OSPathChar], estimated_size: usize) -> crate::Result<Plucker> {
+        pub fn init(filepath: &[OSPathChar], estimated_size: usize) -> crate::libarchive::Result<Plucker> {
             Ok(Plucker {
                 contents: MutableString::init(estimated_size)?,
                 filename_hash: hash(slice_as_bytes(filepath)),
@@ -1530,11 +1530,11 @@ pub trait ArchiveAppender {
     }
     fn on_first_directory_name(&mut self, _name: &[u8]) {}
 
-    fn append(&mut self, path: &[u8]) -> crate::Result<&[u8]> {
+    fn append(&mut self, path: &[u8]) -> crate::libarchive::Result<&[u8]> {
         let _ = path;
         unreachable!()
     }
-    fn append_mutable(&mut self, path: &[OSPathChar]) -> crate::Result<&mut [OSPathChar]> {
+    fn append_mutable(&mut self, path: &[OSPathChar]) -> crate::libarchive::Result<&mut [OSPathChar]> {
         let _ = path;
         unreachable!()
     }
@@ -1548,7 +1548,7 @@ impl Archiver {
         root: &[u8],
         ctx: &mut Context,
         appender: &mut A,
-    ) -> crate::Result<()> {
+    ) -> crate::libarchive::Result<()> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
@@ -1585,7 +1585,7 @@ impl Archiver {
                 lib::Result::Eof => break 'loop_,
                 lib::Result::Retry => continue 'loop_,
                 lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(crate::Error::Fail);
+                    return Err(crate::libarchive::Error::Fail);
                 }
                 _ => {
                     // do not use the utf8 name there
@@ -1684,7 +1684,7 @@ impl Archiver {
         ctx: Option<&mut Context>,
         appender: &mut A,
         options: ExtractOptions,
-    ) -> crate::Result<u32> {
+    ) -> crate::libarchive::Result<u32> {
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
@@ -1715,7 +1715,7 @@ impl Archiver {
                 lib::Result::Eof => break 'loop_,
                 lib::Result::Retry => continue 'loop_,
                 lib::Result::Failed | lib::Result::Fatal => {
-                    return Err(crate::Error::Fail);
+                    return Err(crate::libarchive::Error::Fail);
                 }
                 _ => {
                     // TODO:
@@ -2218,7 +2218,7 @@ impl Archiver {
                                                     ),
                                                 );
                                             }
-                                            return Err(crate::Error::Fail);
+                                            return Err(crate::libarchive::Error::Fail);
                                         }
                                     }
                                     retries_remaining -= 1;
@@ -2240,7 +2240,7 @@ impl Archiver {
         ctx: Option<&mut Context>,
         appender: &mut A,
         options: ExtractOptions,
-    ) -> crate::Result<u32> {
+    ) -> crate::libarchive::Result<u32> {
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();
             let _ = cwd.make_path_u8(root);

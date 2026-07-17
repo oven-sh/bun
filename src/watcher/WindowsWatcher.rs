@@ -220,7 +220,7 @@ impl EventIterator {
 impl WindowsWatcher {
     // `self` is the pre-allocated `platform` slot inside crate::Watcher
     // (64KB+ buffers; avoid moving).
-    pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), crate::Error> {
+    pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), crate::watcher::Error> {
         use bun_core::paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
         let wpath = paths::to_nt_path(&mut pathbuf, root);
@@ -268,7 +268,7 @@ impl WindowsWatcher {
         });
 
         self.iocp = w::CreateIoCompletionPort(*handle_guard, ptr::null_mut(), 0, 1)
-            .map_err(|_| crate::Error::from(Error::IocpFailed))?;
+            .map_err(|_| crate::watcher::Error::from(Error::IocpFailed))?;
         let iocp_guard = scopeguard::guard(self.iocp, |h| unsafe {
             // SAFETY: iocp handle was successfully created above.
             let _ = w::CloseHandle(h);

@@ -8,7 +8,7 @@ use core::ffi::{c_char, c_int};
 use core::ptr;
 use std::ffi::{CStr, CString};
 
-use crate::Error;
+use crate::spawn_sys::Error;
 #[cfg(unix)]
 use bun_sys as sys;
 use bun_sys::Fd;
@@ -52,7 +52,7 @@ use self::posix_compat::{fd_t, pid_t, to_posix_path};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {
-    use crate::Error;
+    use crate::spawn_sys::Error;
     #[cfg(unix)]
     use core::ffi::c_int;
     use std::ffi::CString;
@@ -108,7 +108,7 @@ mod posix_compat {
 
     /// Copy a path into a NUL-terminated buffer.
     pub(super) fn to_posix_path(path: &[u8]) -> Result<CString, Error> {
-        CString::new(path).map_err(|_| crate::Error::Unexpected)
+        CString::new(path).map_err(|_| crate::spawn_sys::Error::Unexpected)
     }
 }
 
@@ -116,7 +116,7 @@ mod posix_compat {
 // submodule (which depends on the JSC-tier `Subprocess`) stays in
 // `bun_runtime::api::bun_spawn` and is not declared here.
 
-pub mod bun_spawn {
+pub mod bun_spawn_impl {
     use super::*;
 
     // The #[repr(C)] FFI mirrors (`FileActionType`, `Action`) live in
@@ -204,7 +204,7 @@ pub mod bun_spawn {
         pub fn chdir(&mut self, path: &[u8]) -> Result<(), Error> {
             // previous buffer (if any) is dropped by assignment.
             // CString::new errors on interior NUL.
-            self.chdir_buf = Some(CString::new(path).map_err(|_| crate::Error::Unexpected)?);
+            self.chdir_buf = Some(CString::new(path).map_err(|_| crate::spawn_sys::Error::Unexpected)?);
             Ok(())
         }
     }
@@ -278,7 +278,7 @@ pub mod bun_spawn {
 
 pub mod posix_spawn {
     #[cfg(unix)]
-    use super::bun_spawn;
+    use super::bun_spawn_impl;
     use super::*;
 
     #[cfg(unix)]
@@ -460,9 +460,9 @@ pub mod posix_spawn {
     // Use BunSpawn types on POSIX (both Linux and macOS) for PTY support via posix_spawn_bun.
     // Windows uses different spawn mechanisms.
     #[cfg(unix)]
-    pub(crate) type Actions = bun_spawn::Actions;
+    pub(crate) type Actions = bun_spawn_impl::Actions;
     #[cfg(unix)]
-    pub(crate) type Attr = bun_spawn::Attr;
+    pub(crate) type Attr = bun_spawn_impl::Attr;
     // No not(unix) Actions/Attr aliases: Windows goes through
     // `process.rs::spawn_process_windows` (libuv) and never reaches these.
 
@@ -560,19 +560,19 @@ pub mod posix_spawn {
         if let Some(act) = actions {
             for action in &act.actions {
                 match action.kind {
-                    bun_spawn::FileActionType::Close => {
+                    bun_spawn_impl::FileActionType::Close => {
                         // Redundant: POSIX_SPAWN_CLOEXEC_DEFAULT (always set on
                         // this path) closes any fd without an open/dup2/inherit
                         // action. Darwin also fails the whole spawn with EBADF
                         // when an addclose fd is not open, so never register one.
                     }
-                    bun_spawn::FileActionType::Dup2 => {
+                    bun_spawn_impl::FileActionType::Dup2 => {
                         posix_actions.dup2(
                             Fd::from_native(action.fds[0]),
                             Fd::from_native(action.fds[1]),
                         )?;
                     }
-                    bun_spawn::FileActionType::Open => {
+                    bun_spawn_impl::FileActionType::Open => {
                         // SAFETY: `.Open` actions always have a non-null path
                         // backed by a CString in `act.paths` (see `open_z`).
                         let p = unsafe { bun_core::ffi::cstr(action.path) };
@@ -583,7 +583,7 @@ pub mod posix_spawn {
                             mode_t::try_from(action.mode).unwrap(),
                         )?;
                     }
-                    bun_spawn::FileActionType::None => {}
+                    bun_spawn_impl::FileActionType::None => {}
                 }
             }
 

@@ -14,7 +14,6 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
   "src/md",
   "src/resolver",
   "src/safety",
@@ -22,12 +21,9 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
-  "src/threading",
   "src/valkey",
-  "src/watcher",
   "src/cares_sys",
   "src/clap",
-  "src/crash_handler",
   "src/csrf",
   "src/css_jsc",
   "src/dns",
@@ -50,13 +46,11 @@ members = [
   "src/picohttp",
   "src/s3_signing",
   "src/sql_jsc",
-  "src/zlib",
   "src/patch",
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
   "src/zlib_sys",
-  "src/brotli",
   "src/bundler_jsc",
   "src/perf",
   "src/resolve_builtins",
@@ -91,7 +85,6 @@ members = [
   "src/transpiler",
   "src/react_compiler",
   "src/spawn",
-  "src/spawn_sys",
   "src/bunfig",
   "src/bun_bin",
 ]
@@ -355,7 +348,7 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_libarchive = { path = "src/sys", package = "bun_sys" }
 bun_md = { path = "src/md" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
@@ -363,12 +356,12 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
-bun_threading = { path = "src/threading" }
+bun_threading = { path = "src/sys", package = "bun_sys" }
 bun_valkey = { path = "src/valkey" }
-bun_watcher = { path = "src/watcher" }
+bun_watcher = { path = "src/sys", package = "bun_sys" }
 bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
-bun_crash_handler = { path = "src/crash_handler" }
+bun_crash_handler = { path = "src/sys", package = "bun_sys" }
 bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
@@ -391,14 +384,14 @@ bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/s3_signing" }
 bun_sql_jsc = { path = "src/sql_jsc" }
-bun_zlib = { path = "src/zlib" }
+bun_zlib = { path = "src/sys", package = "bun_sys" }
 bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
 bun_macros = { path = "src/macros" }
-bun_brotli = { path = "src/brotli" }
+bun_brotli = { path = "src/sys", package = "bun_sys" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
 bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
@@ -422,7 +415,7 @@ bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }
 bun_spawn = { path = "src/spawn" }
-bun_spawn_sys = { path = "src/spawn_sys" }
+bun_spawn_sys = { path = "src/sys", package = "bun_sys" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }

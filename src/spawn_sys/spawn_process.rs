@@ -638,7 +638,7 @@ pub unsafe fn spawn_process_posix(
     options: &PosixSpawnOptions,
     argv: Argv,
     envp: Envp,
-) -> crate::Result<bun_sys::Result<PosixSpawnResult>> {
+) -> crate::spawn_sys::Result<bun_sys::Result<PosixSpawnResult>> {
     bun_core::analytics::features::spawn.fetch_add(1, Ordering::Relaxed);
     let mut actions = PosixSpawnActions::init()?;
     // defer actions.deinit() — Drop

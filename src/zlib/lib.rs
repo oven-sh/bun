@@ -45,8 +45,8 @@ pub use bun_zlib_sys::shared::{Byte, Bytef, gzFile, struct_gzFile_s, uInt, uLong
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub use crate::internal::z_stream;
-pub use crate::internal::z_streamp;
+pub use crate::zlib::internal::z_stream;
+pub use crate::zlib::internal::z_streamp;
 
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
@@ -70,10 +70,10 @@ pub use crate::internal::z_streamp;
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
 
-pub use crate::internal::FlushValue;
-pub use crate::internal::ReturnCode;
+pub use crate::zlib::internal::FlushValue;
+pub use crate::zlib::internal::ReturnCode;
 
-use crate::internal::{DataType, zStream_struct};
+use crate::zlib::internal::{DataType, zStream_struct};
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
@@ -156,7 +156,7 @@ pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
     crc as u32
 }
 
-// `W: bun_io::Write` bound is applied on `read_all` (the only method that touches `context`).
+// `W: bun_core::io::Write` bound is applied on `read_all` (the only method that touches `context`).
 pub struct ZlibReader<'a, W, const BUFFER_SIZE: usize> {
     pub context: W,
     pub input: &'a [u8],
@@ -246,9 +246,9 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
         None
     }
 
-    pub fn read_all(&mut self, is_done: bool) -> crate::Result<()>
+    pub fn read_all(&mut self, is_done: bool) -> crate::zlib::Result<()>
     where
-        W: bun_io::Write,
+        W: bun_core::io::Write,
     {
         while self.state == ZlibReaderState::Uninitialized
             || self.state == ZlibReaderState::Inflating
@@ -300,7 +300,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 }
                 ReturnCode::MemError => {
                     self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::Alloc(bun_core::alloc_impl::AllocError));
+                    return Err(crate::zlib::Error::Alloc(bun_core::alloc_impl::AllocError));
                 }
                 ReturnCode::BufError => {
                     // BufError with avail_in == 0 means we need more input data
@@ -308,13 +308,13 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                         if is_done {
                             // Stream is truncated - we're at EOF but decoder needs more data
                             self.state = ZlibReaderState::Error;
-                            return Err(crate::Error::ZlibError);
+                            return Err(crate::zlib::Error::ZlibError);
                         }
                         // Not at EOF - we can retry with more data
-                        return Err(crate::Error::ShortRead);
+                        return Err(crate::zlib::Error::ShortRead);
                     }
                     self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::ZlibError);
+                    return Err(crate::zlib::Error::ZlibError);
                 }
                 ReturnCode::StreamError
                 | ReturnCode::DataError
@@ -322,7 +322,7 @@ impl<'a, W, const BUFFER_SIZE: usize> ZlibReader<'a, W, BUFFER_SIZE> {
                 | ReturnCode::VersionError
                 | ReturnCode::ErrNo => {
                     self.state = ZlibReaderState::Error;
-                    return Err(crate::Error::ZlibError);
+                    return Err(crate::zlib::Error::ZlibError);
                 }
                 ReturnCode::Ok => {}
             }

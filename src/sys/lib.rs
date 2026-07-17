@@ -3,8 +3,74 @@
 // it to satisfy disallowed-types would create a dependency cycle. `File` here
 // IS the bun_sys::File the lint routes everyone else through.
 #![allow(clippy::disallowed_types, clippy::disallowed_methods)]
+#![allow(ambiguous_glob_reexports, hidden_glob_reexports)]
+#![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
+#![allow(internal_features)]
 #![warn(unused_must_use)]
 //! `bun_sys` — syscall wrappers.
+
+extern crate self as bun_sys;
+
+// ──────────────────────────────────────────────────────────────────────────
+// §8 Step 4.1 — absorbed-crate #[path] mounts + flat root re-exports.
+// Source files stay at their original disk paths; only crate-of-record changes.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "../which/lib.rs"]
+pub mod which;
+#[path = "../perf/lib.rs"]
+pub mod perf;
+#[path = "../platform/lib.rs"]
+pub mod platform;
+#[path = "../threading/lib.rs"]
+pub mod threading;
+#[path = "../spawn_sys/lib.rs"]
+pub mod spawn_sys;
+#[path = "../glob/lib.rs"]
+pub mod glob;
+#[path = "../watcher/lib.rs"]
+pub mod watcher;
+#[path = "../libarchive/lib.rs"]
+pub mod libarchive;
+#[path = "../zlib/lib.rs"]
+pub mod zlib;
+#[path = "../zlib_sys/lib.rs"]
+pub mod zlib_sys;
+#[path = "../zstd/lib.rs"]
+pub mod zstd;
+#[path = "../brotli/lib.rs"]
+pub mod brotli;
+#[path = "../brotli_sys/lib.rs"]
+pub mod brotli_sys;
+#[path = "../libdeflate_sys/lib.rs"]
+pub mod libdeflate_sys;
+#[path = "../tcc_sys/lib.rs"]
+pub mod tcc_sys;
+#[path = "../cares_sys/lib.rs"]
+pub mod cares;
+#[path = "../dns/lib.rs"]
+pub mod dns;
+#[path = "../crash_handler/lib.rs"]
+pub mod crash_handler;
+
+pub use which::*;
+pub use perf::*;
+#[allow(unused_imports)]
+pub use platform::*;
+pub use threading::*;
+pub use spawn_sys::*;
+pub use glob::*;
+pub use watcher::*;
+pub use libarchive::*;
+pub use zlib::*;
+pub use zlib_sys::*;
+pub use zstd::*;
+pub use brotli::*;
+pub use brotli_sys::*;
+pub use libdeflate_sys::*;
+pub use tcc_sys::*;
+pub use cares::*;
+pub use dns::*;
+pub use crash_handler::*;
 
 // `Fd` struct + pure-data accessors are hoisted to `bun_core::Fd`
 // (canonical T0). `fd.rs` is `pub trait FdExt` over that.

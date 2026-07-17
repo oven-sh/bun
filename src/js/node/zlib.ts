@@ -564,7 +564,11 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
+        throw $ERR_INVALID_ARG_TYPE(
+          "options.dictionary",
+          ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+          dictionary,
+        );
       }
     }
   }
@@ -718,7 +722,11 @@ function Brotli(opts, mode) {
     if (isAnyArrayBuffer(dictionary)) {
       dictionary = Buffer.from(dictionary);
     } else {
-      throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
+      throw $ERR_INVALID_ARG_TYPE(
+        "options.dictionary",
+        ["Buffer", "TypedArray", "DataView", "ArrayBuffer"],
+        dictionary,
+      );
     }
   }
 

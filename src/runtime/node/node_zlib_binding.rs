@@ -713,9 +713,11 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // the threadpool would be a use-after-free / data race, so node throws
         // a plain Error here rather than touching live state.
         if this.write_in_progress().get() {
-            return Err(global_this.throw_value(global_this.create_error_instance(format_args!(
-                "Cannot reset zlib stream while a write is in progress"
-            ))));
+            return Err(
+                global_this.throw_value(global_this.create_error_instance(format_args!(
+                    "Cannot reset zlib stream while a write is in progress"
+                ))),
+            );
         }
         Self::reset_internal(this, global_this, callframe.this());
         Ok(JSValue::UNDEFINED)

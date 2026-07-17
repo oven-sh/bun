@@ -42,7 +42,7 @@ export const zstd: Dependency = {
   }),
 
   patches: (cfg: import("../config.ts").Config) => {
-    if (cfg.ohos) return ["zstd/ohos-qsort-r"];
+    if (cfg.ohos) return ["patches/zstd/ohos-qsort-r.patch"];
     return [];
   },
 

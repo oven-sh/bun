@@ -268,9 +268,30 @@ JIT tiers — every site that does `load fiber → branch-if-rope → deref as S
 
 The branch-widening is mechanically: replace `testPtr(fiber, TrustedImm32(isRopeInPointer))` with `testPtr(fiber, TrustedImm32(isRopeInPointer | isInlineInPointer))` and route both to the existing slow path initially; fast-path `length`/`charCodeAt` for inline can follow once correctness lands.
 
-### Expected yield
+### Prototype Results
 
-A unique 5-char Latin-1 string today costs ~48-64 B (16 B `JSString` + 32 B `StringImpl` rounded). Inline: 16 B. For the 1M-unique-short-string microbench, `heap/obj` was 61 B; that would drop to ~16 B (74%). In workloads dominated by short identifiers/tokens, string memory is typically 20-40% of heap, so the overall win scales with that fraction.
+Implemented on `oven-sh/WebKit@bun-inline-small-strings` (11 files). `jsString(VM&, StringView)` and `jsSubstringOfResolved` create inline cells for 2-7 Latin-1 / 1-3 UTF-16 code units; all C++ accessors handle the inline bit; `branchIfRopeStringImpl` and `FTL::isRopeString` test `notStringImplMask` (0x3) so JIT tiers route inline to the existing rope slow paths; `operationResolveRopeString` materializes inline in place. DFG/FTL string-length got a direct inline-decode fast path.
+
+All four tiers pass a 1M-iteration loop exercising `length`/`charAt`/`charCodeAt`/`===`/`+`/`indexOf`/`slice`/`toUpperCase`/`switch` on Latin-1 and UTF-16. Bun's own `stringWidth`/`bunstring-tothreadsafe`/`path` suites pass unchanged; `fetch.test.ts` has fewer failures than the unpatched baseline.
+
+Memory (heap bytes/obj, 1M instances, verified via `$vm.value()` describe):
+
+| Pattern | Baseline | Patched | Delta |
+|---|---:|---:|---:|
+| `slice(3..7)` Latin-1 | 32 | 16 | -50% |
+| `slice(2..3)` UTF-16 | 32 | 16 | -50% |
+| `slice(8+)` | 32 | 32 | 0 |
+
+Performance (2M ops, patched RelWithDebInfo vs baseline release; builds not perfectly comparable):
+
+| Op on 5-char inline | Baseline | Patched | Delta |
+|---|---:|---:|---:|
+| `slice()` create | ~80 ms | ~88 ms | +10% |
+| `.length` | ~8 ms | ~11 ms | +34% |
+| `.charCodeAt(0)` | ~67 ms | ~57 ms | **-15%** |
+| `.length` on 20-char rope (control) | ~12 ms | ~12 ms | +3% |
+
+The `.length` regression is phase-1 routing (two branches, `& 0x3` then `& 0x1`). Phase-2 fast paths (single shift+mask in every tier; m_fiber-word compare for `===` when both inline) remove the extra branch and are expected to bring `.length` to parity or better. `charCodeAt` is already faster because inline avoids the rope-substring base-pointer indirection.
 
 ## Change Set 5: Deduplicate `JSString` for Atom Strings
 

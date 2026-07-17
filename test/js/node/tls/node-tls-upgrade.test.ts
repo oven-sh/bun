@@ -1,8 +1,40 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { once } from "events";
 import { tls as certs } from "harness";
 import net from "net";
 import tls from "tls";
+
+// A net.Socket handed to tls.connect({ socket }) must be destroyed (and emit
+// 'close') when the handshake fails. The 'end'-listener release path only
+// covers a graceful close; _destroy must tear down the wrapped socket too.
+describe.each([
+  ["connecting", false],
+  ["already connected", true],
+])("tls.connect({ socket }) with a failing handshake destroys the wrapped net.Socket (%s)", (_, waitForConnect) => {
+  test.concurrent("destroys the wrapped socket and fires its 'close'", async () => {
+    await using server = net.createServer(c => {
+      c.on("error", () => {});
+      c.on("data", () => c.write("NOT TLS AT ALL\r\n"));
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const netSock = net.connect({ host: "127.0.0.1", port: (server.address() as net.AddressInfo).port });
+    netSock.on("error", () => {});
+    if (waitForConnect) await once(netSock, "connect");
+
+    const netClose = once(netSock, "close");
+    const tlsSock = tls.connect({ socket: netSock, servername: "localhost" });
+    const [tlsErr] = await once(tlsSock, "error");
+    expect((tlsErr as NodeJS.ErrnoException).code).toBe("ERR_SSL_WRONG_VERSION_NUMBER");
+
+    const [hadError] = await netClose;
+    expect(netSock.destroyed).toBe(true);
+    expect(hadError).toBe(false);
+
+    await once(tlsSock, "close");
+    expect(tlsSock.destroyed).toBe(true);
+  });
+});
 
 test("should be able to upgrade a paused socket and also have backpressure on it #15438", async () => {
   // enought to trigger backpressure

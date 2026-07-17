@@ -56,8 +56,6 @@ use crate::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 #[allow(unused_imports)]
 use bun_core::paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
-// `FromJsEnum for FetchRedirect` lives in bun_http_jsc; importing the impl crate
-// brings the trait impl into scope for `JSValue::get_optional_enum::<FetchRedirect>`.
 use crate::node;
 use crate::node::types::PathLikeExt as _;
 use crate::node::types::{Encoding, PathOrFileDescriptor};
@@ -70,7 +68,6 @@ use crate::webcore::{
     AbortSignal, Blob, Body, FetchHeaders, ObjectURLRegistry, ReadableStream, Request, Response,
 };
 use crate::webcore::{blob, readable_stream, response};
-use bun_http_jsc as _;
 use crate::http_jsc::headers_jsc::from_fetch_headers;
 #[cfg(windows)]
 use bun_core::paths::resolve_path::PosixToWinNormalizer;
@@ -428,7 +425,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
 
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments.slice());
+    let mut args = crate::vm::ArgumentsSlice::init(vm, arguments.slice());
 
     let first_arg = args.next_eat().unwrap();
 

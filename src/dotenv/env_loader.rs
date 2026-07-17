@@ -962,7 +962,7 @@ impl<'a> Loader<'a> {
 /// memo slot they write — those stay in the callers. Only the shared read
 /// tail is factored here.
 enum ReadEnvFile {
-    /// Zero-length — caller marks the slot and returns.
+    /// Zero-length or non-regular file — caller marks the slot and returns.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
@@ -972,6 +972,11 @@ enum ReadEnvFile {
 }
 
 fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
+    #[cfg(not(windows))]
+    if bun_sys::kind_from_mode(file.stat()?.st_mode as bun_sys::Mode) != bun_sys::FileKind::File {
+        // `read_to_end` uses `pread(2)`, which fails with ESPIPE for FIFOs.
+        return Ok(ReadEnvFile::Empty);
+    }
     match file.read_to_end() {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),

@@ -12,6 +12,7 @@ import {
   isWindows,
   tempDirWithFiles,
 } from "harness";
+import { mkfifo } from "mkfifo";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -592,6 +593,30 @@ describe("--env-file", () => {
   test("should ignore a file that doesn't exist", () => {
     const res = bunRun(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+
+  test.skipIf(isWindows)("should ignore a FIFO", async () => {
+    const fifoPath = path.join(dir, ".env.fifo");
+    mkfifo(fifoPath);
+    // Keep a read+write handle open so the loader's read-only open doesn't block.
+    const fd = fs.openSync(fifoPath, "r+");
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), `--env-file=${fifoPath}`, "-e", "console.log('hello')"],
+        cwd: dir,
+        env: {
+          ...bunEnv,
+          NODE_ENV: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stdout, stderr, exitCode }).toMatchObject({ stdout: "hello\n", exitCode: 0 });
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 });
 

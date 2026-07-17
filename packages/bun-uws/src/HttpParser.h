@@ -573,9 +573,9 @@ struct HttpResponseData;
 
         const size_t MAX_FALLBACK_SIZE = BUN_DEFAULT_MAX_HTTP_HEADER_SIZE;
 
-        /* Maximum size of the chunk extensions of a single chunk, matching Node's
-         * kMaxChunkExtensionsSize in src/node_http_parser.cc (16 KiB). Enforced
-         * only for node:http compat servers. */
+        /* Maximum chunk-extension bytes per chunk, matching Node/llhttp's
+         * kMaxChunkExtensionsSize (16 KiB). Enforced for every server
+         * personality so a client cannot stream unbounded extension bytes. */
         static const uint64_t MAX_CHUNK_EXTENSION_SIZE = 16 * 1024;
 
         /* Returns UINT64_MAX on error. Maximum 999999999 is allowed. */
@@ -1261,9 +1261,7 @@ struct HttpResponseData;
             } else if (transferEncoding.has) {
                 /* We already validated that chunked is last if present, before calling the handler */
                 remainingStreamingBytes = STATE_IS_CHUNKED;
-                if constexpr (IsNodeHttp) {
-                    *chunkedExtensionsByteCount = 0;
-                }
+                *chunkedExtensionsByteCount = 0;
                 /* If consume minimally, we do not want to consume anything but we want to mark this as being chunked */
                 if constexpr (!ConsumeMinimally) {
                     /* Go ahead and parse it (todo: better heuristics for emitting FIN to the app level) */
@@ -1271,7 +1269,7 @@ struct HttpResponseData;
                     for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxBufferedHeaderSize)) {
                         /* llhttp errors at the offending extension byte, before any body bytes from
                          * that chunk reach the application; check before every dispatch. */
-                        if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                        if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
                         /* The fin dispatch completes the message: a malformed trailer field
@@ -1286,7 +1284,7 @@ struct HttpResponseData;
                             return HttpParserResult::success(consumedTotal, returnedUser);
                         }
                     }
-                    if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                    if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
                     if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) [[unlikely]] {
@@ -1352,7 +1350,7 @@ public:
                  /* It's either chunked or with a content-length */
                 std::string_view dataToConsume(data, length);
                 for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
-                    if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                    if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                         return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                     }
                     /* The fin dispatch completes the message: a malformed trailer field
@@ -1365,7 +1363,7 @@ public:
                         return HttpParserResult::success(0, returnedUser);
                     }
                 }
-                if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                     return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                 }
                 if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {
@@ -1435,7 +1433,7 @@ public:
                         /* It's either chunked or with a content-length */
                         std::string_view dataToConsume(data, length);
                         for (auto chunk : uWS::ChunkIterator(&dataToConsume, &remainingStreamingBytes, false, chunkedExtensionsByteCount, nodeHttpRequestTrailers, maxFallbackSize)) {
-                            if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                            if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                                 return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                             }
                             /* The fin dispatch completes the message: a malformed trailer field
@@ -1448,7 +1446,7 @@ public:
                                 return HttpParserResult::success(0, returnedUser);
                             }
                         }
-                        if (IsNodeHttp && *chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
+                        if (*chunkedExtensionsByteCount > MAX_CHUNK_EXTENSION_SIZE) [[unlikely]] {
                             return HttpParserResult::error(HTTP_ERROR_413_PAYLOAD_TOO_LARGE, HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW);
                         }
                         if (isParsingInvalidChunkedEncoding(remainingStreamingBytes)) {

@@ -698,10 +698,9 @@ impl QuicSession {
     }
     pub(super) fn remove_stream(&self, stream: *mut super::stream::QuicStream) {
         self.streams.with_mut(|v| v.retain(|&s| s != stream));
-        // Null the slot instead of dropping it: these are positional FIFOs
-        // that lsquic fulfils in order. Leaving the raw pointer would let a
-        // recycled allocation at the same address satisfy the `contains()`
-        // check in take_pending_local_stream and bind to the wrong wrapper.
+        // Null the slot rather than drop it: these are positional FIFOs
+        // lsquic fulfils in order, and a recycled allocation at the same
+        // address would otherwise bind to the wrong wrapper.
         for queue in [&self.pending_local_bidi, &self.pending_local_uni] {
             queue.with_mut(|v| {
                 for slot in v.iter_mut() {
@@ -862,20 +861,14 @@ impl QuicSession {
 
     pub(super) fn process_events(&self, global: &JSGlobalObject) {
         self.refresh_conn_stats();
-        // Every callback below can run user JS that synchronously destroys
-        // this session (safeCallbackInvoke catches a thrown user callback
-        // and calls `session.destroy(err)`, dropping the wrapper Strong),
-        // and `run_callback`'s microtask drain can trigger GC. Hold a
-        // Strong on the wrapper for the duration so `self` survives --
-        // including `deliver_pending_tickets`, which fires onSessionTicket
-        // and then touches `self` again to re-arm the timer.
+        // Every callback below can run user JS that destroys this session
+        // (dropping the wrapper Strong) and can trigger GC, so hold a Strong
+        // for the duration -- `deliver_pending_tickets` touches `self` after.
         let _keep_alive = Strong::create(self.handle(), global);
         self.deliver_pending_tickets(global);
-        // Whether this pass already ran user-visible JS. node guarantees at
-        // least one microtask window between a session's lifecycle events and
-        // its close (its packet processing dispatches them separately); the
-        // loop driver can batch a whole exchange into one pass, so a Closed
-        // that follows other dispatch in the same batch is deferred one turn.
+        // node leaves a microtask window between a session's lifecycle events
+        // and its close; the loop driver can batch a whole exchange into one
+        // pass, so a Closed behind other dispatch is deferred one turn.
         let mut dispatched_js = false;
         loop {
             let Some(event) = self.events.with_mut(|e| {
@@ -930,16 +923,9 @@ impl QuicSession {
                                     match ev {
                                         SessionEvent::StreamReady { .. }
                                         | SessionEvent::Datagram { .. } => return false,
-                                        // A refusal (transport error) in the same
-                                        // batch means the server never accepted
-                                        // this connection, so `opened` must not
-                                        // settle. A clean or application-level
-                                        // close is a server that accepted and
-                                        // then closed: report the handshake
-                                        // first, as node does -- the loop driver
-                                        // batches more events per pass than the
-                                        // old timer did, so both closes now land
-                                        // in the same batch as the confirmation.
+                                        // A refusal means never accepted, so
+                                        // `opened` must not settle; a clean
+                                        // close reports the handshake first.
                                         SessionEvent::PeerClose {
                                             app_error, code, ..
                                         } => {
@@ -978,14 +964,9 @@ impl QuicSession {
                         stream.suppress_announce();
                         continue;
                     }
-                    // The user already asked this session to close (possibly
-                    // earlier in this very batch): node never surfaces the
-                    // stream, because its per-packet dispatch runs the close
-                    // callback -- and with it the CONNECTION_CLOSE -- before
-                    // the packet that opened this stream is processed, and a
-                    // closing endpoint discards new streams (RFC 9000
-                    // s10.2.1). Raw QUIC only: an h3 close drains via GOAWAY,
-                    // which by design still serves in-flight streams.
+                    // Already closing: the CONNECTION_CLOSE precedes this
+                    // stream's packet and a closing endpoint discards new
+                    // streams (RFC 9000 s10.2.1). Raw QUIC only.
                     if remote
                         && self.with_state(|st| st.graceful_close == 1)
                         && !self
@@ -1117,9 +1098,8 @@ impl QuicSession {
                     };
                     let handle = stream.handle();
                     // Latin-1, as node does for HTTP headers. Allocate inside
-                    // the closure: a collected `Vec<JSValue>` lives on the Rust
-                    // heap, which the GC does not scan, so strings built early
-                    // would be collectible while later ones allocate.
+                    // the closure: a collected `Vec<JSValue>` is not GC-scanned,
+                    // so early strings would be collectible.
                     let js_arr = JSValue::create_array_from_iter(global, pairs.iter(), |s| {
                         Ok(bun_core::String::clone_latin1(s)
                             .to_js(global)
@@ -1358,10 +1338,9 @@ impl QuicSession {
                     let Ok(result_js) = bun_core::String::static_(result).to_js(global) else {
                         continue;
                     };
-                    // Node only passes the old path and the preferredAddress
-                    // flag on the side that owns each fact: the server knows
-                    // the previous path, the client knows it migrated to the
-                    // preferred address.
+                    // Node passes each fact only from the side that owns it:
+                    // the server knows the previous path, the client knows it
+                    // migrated to the preferred address.
                     let (old_local_js, old_remote_js, preferred_js) = if self.is_server.get() {
                         (
                             old_local.to_js_socket_address(global),
@@ -1424,10 +1403,9 @@ impl QuicSession {
                         continue;
                     };
                     self.streams.with_mut(|v| v.retain(|&s| s != stream_ptr));
-                    // Registry entry gone and `raw` already null, so nothing
-                    // else reaches this stream: drop the self-root and let the
-                    // wrapper be collected once JS is done with it. `stream`
-                    // stays valid — the retain above only dropped a pointer.
+                    // Nothing else reaches this stream now, so drop the
+                    // self-root; `stream` stays valid because the retain above
+                    // only dropped a pointer.
                     stream.release_close_root();
                 }
             }
@@ -1521,12 +1499,9 @@ impl QuicSession {
         let cipher_version = bun_core::String::static_(b"TLSv1.3")
             .to_js(global)
             .unwrap_or(JSValue::UNDEFINED);
-        // Node reports both fields only when validation failed; the JS layer
-        // gates the 'auto'-mode rejection on `validationErrorReason !==
-        // undefined`, so a clean verify must pass undefined here. A server
-        // that received NO client certificate reports X509_V_ERR_UNSPECIFIED
-        // (Node: `verifyPeerCertificate()` returns nullopt without a peer
-        // cert, mapped through `value_or(X509_V_ERR_UNSPECIFIED)`).
+        // Node reports both fields only on failure -- the JS 'auto' rejection
+        // gates on `validationErrorReason !== undefined` -- and a server with
+        // no client certificate reports X509_V_ERR_UNSPECIFIED.
         let pair = match snap_validation {
             Some(pair) => Some(pair),
             None if self.is_server.get() && !have_peer_cert => {
@@ -1734,10 +1709,9 @@ impl QuicSession {
             return;
         }
         let streams = self.streams.with_mut(core::mem::take);
-        // Each `teardown` fires the parked reader wakeup, whose microtask drain
-        // can run user JS that destroys a *later* entry -- downgrading its
-        // wrapper to Weak so GC frees the Box out from under this loop. The
-        // taken Vec is not a GC root, so root every wrapper up front.
+        // Each `teardown` can run user JS that destroys a later entry and
+        // lets GC free its Box mid-loop; the taken Vec is not a GC root, so
+        // root every wrapper up front.
         let _roots: Vec<Strong> = streams
             .iter()
             .map(|&qs| {
@@ -1762,10 +1736,9 @@ impl QuicSession {
         self.events.with_mut(Vec::clear);
         let ep = self.endpoint.replace(null_mut());
         if !ep.is_null() {
-            // SAFETY: endpoint is alive (endpoint_js Strong still held below).
-            // The endpoint's `process()` re-validates against this set before
-            // touching any session, so removing here is what makes the
-            // pointer it snapshotted safe to skip.
+            // SAFETY: endpoint is alive (endpoint_js Strong held below). Its
+            // `process()` re-validates against this set, so removing here is
+            // what makes the pointer it snapshotted safe to skip.
             unsafe { (*ep).unregister_session(core::ptr::from_ref(self).cast_mut()) };
         }
         self.endpoint_js.set(None);
@@ -2479,9 +2452,8 @@ lsquic_callback! {
 
     pub(super) fn on_early_data_failed(session: &QuicSession) {
         // Front of the queue: lsquic resets the early streams before this
-        // callback, so their clean StreamClosed events are already queued --
-        // the failure must dispatch first, or `closed` settles cleanly before
-        // the rejection node delivers can land.
+        // callback, so their clean closes are already queued and would settle
+        // `closed` before the rejection node delivers could land.
         session.events.with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed));
         session.schedule_process();
     }

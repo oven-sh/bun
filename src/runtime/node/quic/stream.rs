@@ -423,10 +423,9 @@ impl QuicStream {
         });
         self.with_state(|s| {
             s.reset = 1;
-            // First reset wins: lsquic resets rejected 0-RTT streams with
-            // code 0 after cancel_early_rejected already recorded the
-            // application error node reports; a second, weaker code must not
-            // erase it.
+            // First reset wins: lsquic re-resets rejected 0-RTT streams with
+            // code 0 after cancel_early_rejected recorded the application
+            // error node reports, which would erase it.
             if s.reset_code == 0 {
                 s.reset_code = code;
             }
@@ -567,10 +566,9 @@ impl QuicStream {
         // session is alive (session_js Strong still held below).
         let session = self.session.replace(null_mut());
         if !session.is_null() {
-            // The session's `streams` Vec is the only other holder of this
-            // raw pointer; remove it before downgrading so process_events
-            // can't iterate a freed stream.
-            // SAFETY: as above.
+            // The session's `streams` Vec is the only other holder; remove
+            // it before downgrading so process_events can't iterate a freed
+            // stream. SAFETY: as above.
             unsafe { (*session).remove_stream(core::ptr::from_ref(self).cast_mut()) };
         }
         self.outbound.with_mut(|o| o.data.clear());
@@ -788,10 +786,9 @@ impl QuicStream {
         let session = self.session.get();
         self.teardown(global);
         if !session.is_null() {
-            // SAFETY: the session outlives its streams (session_js Strong was
-            // dropped only just now in teardown; the session is registered on
-            // the endpoint while any stream existed, so it has not been
-            // finalized between those two lines).
+            // SAFETY: the session outlives its streams -- it stays registered
+            // on the endpoint while any stream exists, so it cannot have been
+            // finalized between teardown and here.
             unsafe { (*session).schedule_process() };
         }
         Ok(JSValue::UNDEFINED)
@@ -897,13 +894,9 @@ impl QuicStream {
         let packed = frame.arguments_as_array::<1>()[0].coerce_to_i32(global)? as u32;
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
         let previous = self.priority.replace((urgency, incremental));
-        // Only an actual change goes on the wire. createBidirectionalStream
-        // calls this for every stream (node's quic.js does too), and a stream
-        // starts at RFC 9218's default, so the usual call is a no-op -- but
-        // lsquic's set_http_prio writes a PRIORITY_UPDATE unconditionally where
-        // nghttp3 writes nothing. That was a control-stream frame per request
-        // node never sends, and a node server answers the one naming a stream
-        // id at its MAX_STREAMS edge with H3_ID_ERROR, killing the session.
+        // Only an actual change goes on the wire: set_http_prio writes a
+        // PRIORITY_UPDATE unconditionally where nghttp3 writes nothing, and a
+        // node server answers one at its MAX_STREAMS edge with H3_ID_ERROR.
         if (urgency, incremental) != previous {
             if let Some(s) = self.ls() {
                 let _ = s.set_http_prio(urgency, incremental);
@@ -1038,10 +1031,9 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
             .chunks_exact(2)
             .find(|kv| kv[0] == b":status")
             .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
-        // Only a client can receive a response. A :status in a request is
-        // malformed; node's nghttp3 resets the stream rather than delivering
-        // it (RFC 9114 §4.1.2), and routing it to `oninfo` would leave the
-        // request unanswered until the idle timeout.
+        // A :status in a request is malformed: node's nghttp3 resets the
+        // stream (RFC 9114 §4.1.2), and routing it to `oninfo` would leave
+        // the request unanswered until the idle timeout.
         let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
         if peer_is_client && has_status.is_some() {
             if let Some(s) = qs.ls() {

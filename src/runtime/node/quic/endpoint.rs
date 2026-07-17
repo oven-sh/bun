@@ -452,11 +452,9 @@ extern "C" fn on_data(
     // global outlives every live endpoint.
     let global = unsafe { &*global_ptr };
     let local = this.local_addr.get();
-    // A graceful close stashed by an earlier turn applies before new packets
-    // feed: its data flight has flushed by now, and node's close would already
-    // be on the wire -- a closing peer discards new streams instead of
-    // announcing them (RFC 9000 s10.2.1). ci_close only schedules, so run the
-    // engines once to put the conn into the closing state first.
+    // Apply a stashed close before feeding: a closing peer discards new
+    // streams rather than announcing them (RFC 9000 s10.2.1), and ci_close
+    // only schedules, so the engines have to run for it to take effect.
     let mut closed_any = false;
     for session in this.sessions.get().clone() {
         if let Some(session) = this.live_session(session) {
@@ -560,9 +558,8 @@ extern "C" fn on_data(
                         });
                     for other_ptr in others {
                         // Registration is the liveness guarantee: `teardown`
-                        // unregisters before dropping the strong self-reference
-                        // that gates finalize, so a still-listed pointer is
-                        // still allocated.
+                        // unregisters before dropping the self-reference that
+                        // gates finalize, so a listed pointer is allocated.
                         if !ENDPOINT_REGISTRY.with_borrow(|v| v.contains(&other_ptr)) {
                             continue;
                         }
@@ -1011,11 +1008,9 @@ fn apply_transport_params(
             // `max_idle_timeout * NGTCP2_SECONDS`; the getter at :473 divides
             // it back out.
             if secs == 0 {
-                // Only the seconds field can say "disabled" (RFC 9000 §18.2):
-                // every lsquic reader falls back to it when the ms field is
-                // zero. Non-zero stays ms-only -- lsquic rejects an
-                // es_idle_timeout above 600 (lsquic_engine.c), which node's
-                // ngtcp2 has no equivalent of.
+                // Only the seconds field can say "disabled" (RFC 9000 §18.2);
+                // lsquic readers fall back to it when ms is zero. Non-zero
+                // stays ms-only: lsquic rejects es_idle_timeout above 600.
                 s.idle_timeout(0);
             }
             s.idle_timeout_ms(secs.saturating_mul(MS_PER_SEC).min(c_uint::MAX as u64) as _);
@@ -1426,11 +1421,9 @@ impl QuicEndpoint {
         }
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         self.followup_due.set(false);
-        // Not from the mid-turn drain pass: a deferred abort is dropped when a
-        // later stream writes first, and node evaluates that over the whole
-        // turn (its send scope spans the C->JS->C unwind). Flushing between
-        // microtask batches would put a ghost stream's RESET on the wire that
-        // node never sends.
+        // Not from the mid-turn drain pass: a deferred abort is dropped when
+        // a later stream writes first, and node decides that over the whole
+        // turn -- flushing mid-chain puts a RESET on the wire node never sends.
         if !self.defer_closes.get() {
             for session in self.sessions.get().clone() {
                 if let Some(session) = self.live_session(session) {
@@ -1513,11 +1506,9 @@ impl QuicEndpoint {
             self.finish_close();
         }
         self.send_scope_depth.set(self.send_scope_depth.get() - 1);
-        // Writes made by the dispatch above (handlers answering what this pass
-        // delivered) could not flush inline -- the scope was held. Hand them to
-        // the socket now, at the pass's outer edge, the way node's
-        // SendPendingDataScope flushes when the receive path unwinds; left to
-        // the loop driver they would sit out the next epoll timeout.
+        // Writes made by the dispatch above could not flush inline (the scope
+        // was held). Send them at the pass's outer edge, where node's
+        // SendPendingDataScope flushes, not a loop turn later.
         if self
             .nq_driver
             .with_mut(|d| core::mem::replace(&mut d.pending, 0))
@@ -1548,18 +1539,15 @@ impl QuicEndpoint {
             return;
         }
         self.followup_due.set(true);
-        // Flush at the outermost native exit, node's SendPendingDataScope:
-        // wire timing is contract -- a response written in a handler must
-        // leave before the close a later handler queues, or the peer sees
-        // GOAWAY/CONNECTION_CLOSE coalesced ahead of data (lsquic gives the
-        // control stream priority within a flight).
+        // Flush at the outermost native exit (node's SendPendingDataScope):
+        // a response must leave before a later handler's close, or lsquic's
+        // control-stream priority coalesces GOAWAY ahead of the data.
         if self.send_scope_depth.get() == 0 {
             self.drive_engines_once();
         }
-        // The loop driver dispatches the events the flush queued at the next
-        // loop point (no 1ms timer wait); the timer below stays as backstop
-        // for lsquic's time-driven state (RTO, ACK delay, idle) and the
-        // deferred endpoint close.
+        // The loop driver dispatches what the flush queued at the next loop
+        // point; the timer below is only the backstop for lsquic's
+        // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         timer_all().update(self.event_loop_timer.as_ptr(), &next);
@@ -1734,10 +1722,9 @@ impl QuicEndpoint {
                 session.push_event(session::SessionEvent::Closed);
             }
         }
-        // A version-negotiation probe has no lsquic conn, so no handshake or
-        // idle timeout covers it, and RFC 9000 s6.1 makes the server's reply
-        // optional with no retransmit. Without this, a dropped reply hangs
-        // `opened` forever and keeps `endpoint.close()` from ever resolving.
+        // A probe has no lsquic conn, so no handshake or idle timeout covers
+        // it, and RFC 9000 s6.1 makes the reply optional with no retransmit:
+        // without this a dropped reply hangs `opened` and `close()` forever.
         let mut verneg_expired: Vec<*mut QuicSession> = Vec::new();
         self.pending_verneg.with_mut(|v| {
             v.retain(|(session, _, created_ns)| {
@@ -1790,16 +1777,10 @@ impl QuicEndpoint {
                 return session;
             }
         }
-        // A graceful close() has to stop accepting: a session promoted now
-        // keeps `sessions` non-empty, so the `closing && sessions.is_empty()`
-        // finish gate never trips and `endpoint.closed` never resolves. Send
-        // CONNECTION_REFUSED so the client's close_wins rule rejects `opened`
-        // (a code-0 close reads as accepted-then-closed), matching the busy
-        // path and test-quic-endpoint-busy.mjs. serverBusyCount stays put.
+        // A close() must stop accepting: a session promoted now keeps
+        // `sessions` non-empty and the finish gate never trips. CONNECTION_
+        // REFUSED (not a code-0 close) is what makes the client reject.
         if self.closing.get() {
-            // CONNECTION_REFUSED, as the busy path below: a clean close would
-            // let the client's handshake confirmation win and `opened`
-            // resolve for a session this endpoint will never service.
             // SAFETY: `conn` is the live conn lsquic just created.
             unsafe {
                 lsquic::lsquic_conn_abort_error(
@@ -2320,11 +2301,9 @@ impl QuicEndpoint {
                 0,
                 resume_ptr,
                 resume_len,
-                // `options.token` (the blob from onnewtoken) is validated in JS
-                // but deliberately not replayed: handing it to lsquic here makes
-                // test-quic-token-secret and both zero-rtt tests fail with
-                // "handshake timed out", so the Retry path needs understanding
-                // first. Costs the extra Retry RTT the token would have saved.
+                // `options.token` is validated in JS but deliberately not
+                // replayed: handing it to lsquic breaks the token and zero-rtt
+                // tests, at the cost of the Retry RTT it would have saved.
                 null(),
                 0,
             )

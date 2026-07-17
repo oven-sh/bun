@@ -533,9 +533,8 @@ void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
 
 /* ───── node:quic loop driver ─────
  *
- * The corking model quic.c uses for Bun.serve's HTTP/3 listener: JS calls mark
- * the endpoint pending, and one process pass runs per loop turn from
- * loop_pre/loop_post (and the microtask drain), so a burst of writes becomes
+ * The corking model quic.c uses for Bun.serve's HTTP/3 listener: JS marks the
+ * endpoint pending and one pass runs per loop turn, so a burst of writes is
  * one engine pass and one sendmmsg batch instead of one per call.
  */
 

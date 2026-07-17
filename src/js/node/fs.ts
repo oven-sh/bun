@@ -666,16 +666,16 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
-let insideAppContainer: boolean | undefined = undefined;
-function isPermissionDenied(err: any) {
-  const code = err?.code;
-  return code === "EPERM" || code === "EACCES";
-}
+// process.platform is a compile-time constant; on non-Windows the probe is
+// dead-code-eliminated and this folds to `false`.
+const insideAppContainer = process.platform === "win32" && fs.isInsideAppContainer();
 // Defer a denied component to the native resolver only inside an AppContainer
 // (denied ancestors are the sandbox norm there and can hide links). Outside
 // one, Node parity: the walk's own error propagates unchanged.
 function shouldDeferDeniedComponent(err: any) {
-  return isPermissionDenied(err) && (insideAppContainer ??= fs.isInsideAppContainer());
+  if (!insideAppContainer) return false;
+  const code = err?.code;
+  return code === "EPERM" || code === "EACCES";
 }
 // A denied component (e.g. drive roots when sandboxed) can hide a link, so
 // never assume it is a plain directory: resolve through the native path

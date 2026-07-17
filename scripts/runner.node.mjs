@@ -491,19 +491,27 @@ function assertExpectedPlatform() {
 async function checkLoopbackHealth(context) {
   const attempt = host =>
     new Promise(resolve => {
+      let client;
+      let settled = false;
       const server = createServer(s => s.end());
-      server.once("error", () => resolve(`listen error`));
+      const done = result => {
+        if (settled) return;
+        settled = true;
+        client?.destroy();
+        try {
+          server.close();
+        } catch {}
+        resolve(result);
+      };
+      // Deadline covers listen() as well as connect(); on a badly wedged box
+      // either can hang, and the point of this probe is to never hang.
+      setTimeout(() => done(client ? "connect timed out" : "listen timed out"), 5000).unref();
+      server.once("error", e => done(`listen ${e.code || e.message}`));
       server.listen(0, host, () => {
         const { port } = server.address();
-        const done = result => {
-          client.destroy();
-          server.close();
-          resolve(result);
-        };
-        const client = createConnection({ port, host });
+        client = createConnection({ port, host });
         client.once("connect", () => done("ok"));
         client.once("error", e => done(`connect ${e.code || e.message}`));
-        setTimeout(() => done("connect timed out"), 5000).unref();
       });
     });
 

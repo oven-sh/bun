@@ -218,11 +218,14 @@ export async function runAsync(dir: string, test: string) {
     cmd: [bunExe(), "run", test],
     cwd: dir,
     stderr: "inherit",
-    stdout: "ignore",
+    stdout: "pipe",
     stdin: "inherit",
     env: envFor(test),
   });
-  const exitCode = await child.exited;
+  const [stdout, exitCode] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+  if (exitCode !== 0 && stdout.length > 0) {
+    console.error(`--- ${test} stdout ---\n${stdout}`);
+  }
   expect(child.signalCode).toBeNull();
   expect(exitCode).toBe(0);
 }

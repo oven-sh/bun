@@ -801,11 +801,11 @@ function TLSSocket(socket?, options?) {
     // Server-side verify settings, applied per socket like Node's
     // TLSWrap::SetVerifyMode: without these, [buntls] hands
     // requestCert: undefined to the native layer and the client is never
-    // asked for a certificate. An omitted rejectUnauthorized stays falsy on
+    // asked for a certificate. An omitted rejectUnauthorized stays false on
     // this path (Node only defaults it to true in tls.Server).
     const requestCert = options.requestCert;
     if (requestCert) this._requestCert = requestCert;
-    this._rejectUnauthorized = options.rejectUnauthorized;
+    this._rejectUnauthorized = !!options.rejectUnauthorized;
   }
 
   this.ciphers = options.ciphers;

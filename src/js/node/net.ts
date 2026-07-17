@@ -913,7 +913,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         // Emit error
         data._emitTLSError(error);
         this.emit("_tlsError", error);
-        this.server.emit("tlsClientError", error, data);
+        // A standalone `new TLSSocket(socket, { isServer: true })` has no
+        // owning server to report to.
+        this.server?.emit("tlsClientError", error, data);
         SocketHandlers.error(socket, error, true);
         return;
       }

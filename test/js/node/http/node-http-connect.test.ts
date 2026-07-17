@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExe } from "harness";
+import { bunEnv, bunExe, isLinux, nodeExe, tls as tlsCert } from "harness";
 import http from "http";
 
 import { once } from "node:events";
@@ -553,6 +553,68 @@ describe("HTTP server CONNECT", () => {
       // Should either get an error response or timeout/connection error
       expect(response).not.toContain("200 Connection established");
     }
+  });
+
+  // https CONNECT: server socket.end() after peer FIN must also FIN at the TCP
+  // layer. us_internal_ssl_shutdown with SSL_RECEIVED_SHUTDOWN already set
+  // (peer's half-close) reaches SSL_shutdown() == 1 and previously returned
+  // without the raw TCP shutdown, so the poll type never moved to SHUT_DOWN
+  // and (on epoll, with autoDestroy disabled) nothing ever closed the socket.
+  // Linux-only: the close is reported via EPOLLHUP once both halves have FIN'd;
+  // kqueue/libuv need the readable_ended re-arm to re-derive it.
+  test.skipIf(!isLinux)("https CONNECT socket.end() after peer FIN half-closes TCP so the socket can close", async () => {
+    // The client uses tls.connect({ socket: rawNetSocket }) so end() routes
+    // through the raw FIN path (not a TLS close_notify first), which is the
+    // ordering that leaves the server's eof already consumed by the
+    // allow_half_open branch before the deferred socket.end() runs.
+    const fixture = /* js */ `
+      const https = require("node:https");
+      const net = require("node:net");
+      const tls = require("node:tls");
+
+      const server = https.createServer({ cert: process.env.CERT, key: process.env.KEY }, () => {});
+      server.on("connect", (req, socket) => {
+        // Disable autoDestroy so the only thing that can close this socket is
+        // the transport reporting both directions shut (EPOLLHUP once our FIN
+        // answers the peer's). With the missing raw_shutdown, that never fires.
+        socket._readableState.autoDestroy = false;
+        socket._writableState.autoDestroy = false;
+        socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+        socket.on("end", () => {
+          console.log("server:end");
+          socket.end();
+        });
+        socket.on("finish", () => console.log("server:finish"));
+        socket.on("close", () => {
+          console.log("server:close");
+          server.close();
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const raw = net.connect({ port: server.address().port, host: "127.0.0.1", allowHalfOpen: true });
+        const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+        client.on("secureConnect", () => {
+          client.write("CONNECT example.com:443 HTTP/1.1\\r\\nHost: example.com:443\\r\\n\\r\\n");
+        });
+        client.on("data", () => client.end());
+        client.on("close", () => console.log("client:close"));
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, CERT: tlsCert.cert, KEY: tlsCert.key },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // Before the fix the server socket never closes: stdout stops at
+    // server:finish and the process hangs until the test timeout. client:close
+    // and server:close may interleave, so assert presence + server ordering.
+    const lines = stdout.split("\n").filter(Boolean);
+    expect(lines.filter(l => l.startsWith("server:"))).toEqual(["server:end", "server:finish", "server:close"]);
+    expect(lines).toContain("client:close");
+    expect(exitCode).toBe(0);
   });
 });
 

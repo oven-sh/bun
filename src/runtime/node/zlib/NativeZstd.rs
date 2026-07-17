@@ -451,11 +451,9 @@ mod _impl {
         }
 
         pub fn reset(&mut self) -> Error {
-            if self.state.is_some() {
-                self.deinit_state();
-            }
             // Matches node's `ZstdContext::ResetStream()`, which calls `Init()`
             // with its default (empty) dictionary — a reset drops the dictionary.
+            // `init` frees the previous context itself.
             self.init(self.pledged_src_size, None)
         }
 

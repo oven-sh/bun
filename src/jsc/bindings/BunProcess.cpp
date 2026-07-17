@@ -3234,6 +3234,39 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionsetgroups, (JSGlobalObject * globalObje
     return JSValue::encode(jsNumber(result));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functioninitgroups, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto userValue = callFrame->argument(0);
+    if (!userValue.isString()) {
+        return Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "user"_s, "string"_s, userValue);
+    }
+    auto userStr = userValue.getString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto userUtf8 = userStr.utf8();
+
+    auto groupValue = callFrame->argument(1);
+    bool isNumber = groupValue.isNumber();
+    groupValue = maybe_gid_by_name(scope, globalObject, groupValue);
+    RETURN_IF_EXCEPTION(scope, {});
+    uint32_t extraGroup = 0;
+    if (isNumber) {
+        Bun::V::validateUint32(scope, globalObject, groupValue, "extraGroup"_s, jsUndefined());
+        RETURN_IF_EXCEPTION(scope, {});
+        extraGroup = groupValue.toUInt32(globalObject);
+    } else {
+        extraGroup = groupValue.toUInt32(globalObject);
+    }
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto result = callWithoutThreadSuspension([&] { return initgroups(userUtf8.data(), (gid_t)extraGroup); });
+    if (result != 0) throwSystemError(scope, globalObject, "initgroups"_s, errno);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionAssert, (JSGlobalObject * globalObject, CallFrame* callFrame))
@@ -4517,6 +4550,8 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   setgid                           Process_functionsetgid                              Function 1
   setgroups                        Process_functionsetgroups                           Function 1
   setuid                           Process_functionsetuid                              Function 1
+
+  initgroups                       Process_functioninitgroups                          Function 2
 #endif
 @end
 */

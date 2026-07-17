@@ -45,24 +45,21 @@ impl Expect {
             return Err(global.throw_invalid_argument_type("expect", "received", "number"));
         }
 
-        let mut expected = expected_.as_number();
-        let mut received = received_.as_number();
+        let expected = expected_.as_number();
+        let received = received_.as_number();
 
-        if expected == f64::NEG_INFINITY {
-            expected = -expected;
-        }
-
-        if received == f64::NEG_INFINITY {
-            received = -received;
-        }
-
-        if expected == f64::INFINITY && received == f64::INFINITY {
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        let expected_diff = 10.0_f64.powf(-precision) / 2.0;
-        let actual_diff = (received - expected).abs();
-        let mut pass = actual_diff < expected_diff;
+        // Infinity - Infinity and (-Infinity) - (-Infinity) are NaN, so the
+        // difference comparison would never pass. Match jest: two infinities
+        // of the same sign are "close" and report a zero diff; opposite signs
+        // go through the normal diff computation (|Inf - -Inf| is Inf).
+        let (expected_diff, actual_diff, mut pass) =
+            if received.is_infinite() && received == expected {
+                (0.0, 0.0, true)
+            } else {
+                let expected_diff = 10.0_f64.powf(-precision) / 2.0;
+                let actual_diff = (received - expected).abs();
+                (expected_diff, actual_diff, actual_diff < expected_diff)
+            };
 
         let not = this.flags.get().not();
         if not {
@@ -106,12 +103,25 @@ impl Expect {
         // SUFFIX_FMT into the `format_args!` call (or make `throw!` a macro).
         if not {
             let signature = get_signature("toBeCloseTo", "<green>expected<r>, precision", true);
+            // Jest omits the precision/difference block when the received
+            // difference is 0 (exact match or same-sign infinities).
+            if actual_diff == 0.0 {
+                return this.throw_fmt(
+                    global,
+                    signature,
+                    SUFFIX_FMT,
+                    format_args!(
+                        "\n\nExpected: not <green>{}<r>\nReceived: <red>{}<r>\n",
+                        expected_fmt, received_fmt
+                    ),
+                );
+            }
             return this.throw_fmt(
                 global,
                 signature,
                 SUFFIX_FMT,
                 format_args!(
-                    "\n\nExpected: <green>{}<r>\nReceived: <red>{}<r>\n\nExpected precision: {}\nExpected difference: \\< <green>{}<r>\nReceived difference: <red>{}<r>\n",
+                    "\n\nExpected: not <green>{}<r>\nReceived: <red>{}<r>\n\nExpected precision: {}\nExpected difference: not \\< <green>{}<r>\nReceived difference: <red>{}<r>\n",
                     expected_fmt, received_fmt, precision, expected_diff, actual_diff
                 ),
             );

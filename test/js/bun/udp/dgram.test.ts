@@ -2,7 +2,7 @@ import { describe, expect, jest, test } from "bun:test";
 import { createSocket } from "dgram";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, disableAggressiveGCScope, isIntelMacOS, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -251,7 +251,12 @@ describe.skipIf(isWindows)("cluster", () => {
   // Multi-worker traffic + close: exercises the DGRAM_FDS Owned/Adopted state
   // machine and SharedHandle teardown. A regression removing the double-close
   // guard would EBADF an IPC pipe and hang this fixture.
-  test("multi-worker shared socket adopts and tears down cleanly", async () => {
+  //
+  // Skipped on Intel macOS: on macOS 14 x64 the four workers wedge in kernel
+  // exit (?E) with all four in recvmsg_x on the same SCM_RIGHTS-shared
+  // descriptor, which takes loopback down for the whole machine until reboot.
+  // Observed on every macOS 14 x64 CI agent; 13 and 15 not reproduced.
+  test.skipIf(isIntelMacOS)("multi-worker shared socket adopts and tears down cleanly", async () => {
     // Assert the success line, not just exit 0: the fixture has bail-out paths
     // that also exit 0. 25s deadline sits between the fixture's 20s watchdog
     // and this test's own timeout so the watchdog's diagnostic reaches stderr.

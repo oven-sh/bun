@@ -1,7 +1,3 @@
-/*
-Skipped test
-https://github.com/electron/electron/blob/e57b69f106ae9c53a527038db4e8222692fa0ce7/script/node-disabled-tests.json#L13
-
 'use strict';
 const common = require('../common');
 if (!common.hasCrypto)
@@ -9,6 +5,10 @@ if (!common.hasCrypto)
 
 const assert = require('assert');
 const crypto = require('crypto');
+
+const ciphers = crypto.getCiphers();
+if (!ciphers.includes('des3-wrap'))
+  common.skip('des3-wrap cipher is not available');
 
 // Test case for des-ede3 wrap/unwrap. des3-wrap needs extra 2x blocksize
 // then plaintext to store ciphertext.
@@ -27,5 +27,3 @@ const decipher = crypto.createDecipheriv('des3-wrap', test.key, test.iv);
 const msg = decipher.update(ciphertext, 'buffer', 'utf8');
 
 assert.strictEqual(msg, test.plaintext);
-
-*/

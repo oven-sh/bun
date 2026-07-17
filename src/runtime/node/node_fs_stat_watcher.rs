@@ -10,7 +10,7 @@ use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_loop::AnyTask::AnyTask;
 use bun_loop::ConcurrentTask::{ConcurrentTask, Task};
 use bun_loop::KeepAlive;
-use crate::call_frame::ArgumentsSlice;
+use crate::ArgumentsSlice;
 use crate::node::PathLike;
 use crate::vm::virtual_machine::VirtualMachine;
 use crate::{

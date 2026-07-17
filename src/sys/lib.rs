@@ -4768,6 +4768,18 @@ pub fn platform_iovec_create(buf: &mut [u8]) -> PlatformIoVec {
     }
 }
 
+#[inline]
+pub const fn platform_iovec_len(iov: &PlatformIoVec) -> usize {
+    #[cfg(unix)]
+    {
+        iov.iov_len
+    }
+    #[cfg(windows)]
+    {
+        iov.len as usize
+    }
+}
+
 /// Windows `PlatformIOVecConst` — same `uv_buf_t` layout (libuv has no
 /// const-buf type), with `base` typed `*const u8` so callers can build it
 /// from `&[u8]` without casts.
@@ -7509,22 +7521,16 @@ fn exists_at_type_nt(dir: Fd, mut path: &[u16]) -> Maybe<ExistsAtType> {
             Tag::access,
         ));
     }
-    let attrs = basic_info.FileAttributes;
-    // From libuv: directories cannot be read-only.
-    // https://github.com/libuv/libuv/blob/eb5af8e3/src/win/fs.c#L2144-L2146
-    let is_dir = attrs != windows::INVALID_FILE_ATTRIBUTES
-        && (attrs & w::FILE_ATTRIBUTE_DIRECTORY) != 0
-        && (attrs & w::FILE_ATTRIBUTE_READONLY) == 0;
-    let is_regular = attrs != windows::INVALID_FILE_ATTRIBUTES
-        && ((attrs & w::FILE_ATTRIBUTE_DIRECTORY) == 0
-            || (attrs & w::FILE_ATTRIBUTE_READONLY) == 0);
-    if is_dir {
-        Ok(ExistsAtType::Directory)
-    } else if is_regular {
-        Ok(ExistsAtType::File)
-    } else {
-        Err(Error::from_code(E::EUNKNOWN, Tag::access))
-    }
+    // `FILE_ATTRIBUTE_READONLY` on a directory is a folder-customization
+    // marker (OneDrive sets it) and does not affect directory-ness; only
+    // `FILE_ATTRIBUTE_DIRECTORY` decides the type.
+    Ok(
+        if (basic_info.FileAttributes & w::FILE_ATTRIBUTE_DIRECTORY) != 0 {
+            ExistsAtType::Directory
+        } else {
+            ExistsAtType::File
+        },
+    )
 }
 /// `fstatat` then `S_ISDIR`.
 pub fn exists_at_type(dir: Fd, sub: &ZStr) -> Maybe<ExistsAtType> {

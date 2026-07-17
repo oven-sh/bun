@@ -189,8 +189,6 @@ pub mod schema_api {
 pub mod array_buffer;
 #[path = "CommonStrings.rs"]
 pub mod common_strings;
-#[path = "ConsoleObject.rs"]
-pub mod console_object;
 #[path = "Counters.rs"]
 pub mod counters;
 #[path = "DecodedJSValue.rs"]
@@ -201,8 +199,6 @@ pub mod deprecated_strong;
 pub mod dom_url;
 #[path = "Exception.rs"]
 pub mod exception;
-#[path = "ipc.rs"]
-pub mod ipc;
 #[path = "JSArray.rs"]
 pub mod js_array;
 #[path = "JSBigInt.rs"]
@@ -219,14 +215,10 @@ pub mod js_ref;
 pub mod js_type;
 #[path = "JSValue.rs"]
 pub mod js_value;
-#[path = "rare_data.rs"]
-pub mod rare_data;
 #[path = "StringBuilder.rs"]
 pub mod string_builder;
 #[path = "Strong.rs"]
 pub mod strong;
-#[path = "Task.rs"]
-pub mod task;
 #[path = "TopExceptionScope.rs"]
 pub mod top_exception_scope;
 #[path = "uuid.rs"]
@@ -252,157 +244,12 @@ pub use self::js_value::{
 pub use self::array_buffer::{
     ArrayBuffer, BinaryType, JSCArrayBuffer, MarkedArrayBuffer, TypedArrayType,
 };
-pub use self::console_object as ConsoleObject;
-pub use self::console_object::Formatter;
-/// `ConsoleObject.Formatter.Tag` re-exported under both names downstream
-/// drafts use (`FormatAs::Double` in Response.rs, `FormatTag::Private` in
-/// Request.rs / S3Client.rs). Same enum; the split is naming drift only.
-pub use self::console_object::formatter::Tag as FormatTag;
-pub use self::console_object::formatter::Tag as FormatAs;
 pub use self::js_array_iterator::JSArrayIterator;
 pub use self::js_promise::JSPromise;
 /// `JSInternalPromise` was removed upstream; the module loader uses `JSPromise`
 /// everywhere now. Alias kept for existing call sites.
 pub use self::js_promise::JSPromise as JSInternalPromise;
-pub use self::rare_data as RareData;
 pub use self::system_error::SystemError;
-pub use self::task::Taskable;
-
-/// Trait surface for `write_format`-style hooks on runtime types
-/// (`Response::write_format`, `Request::write_format`, `S3File::write_format`,
-/// …). Callers only ever touch `globalThis` and `printAs`, so the trait
-/// exposes just those two and the `bun_jsc::Formatter` struct provides the
-/// canonical impl.
-pub trait ConsoleFormatter {
-    fn global_this(&self) -> &JSGlobalObject;
-    fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        tag: FormatTag,
-        writer: &mut W,
-        value: JSValue,
-        cell: JSType,
-    ) -> JsResult<()>;
-
-    /// `formatter.indent += 1` — bump nesting level for the duration of a
-    /// `{ … }` block. Paired with [`indent_dec`]. Prefer [`IndentScope`] over
-    /// calling this pair manually when the indented region contains `?` early
-    /// returns.
-    fn indent_inc(&mut self);
-    /// Saturating decrement of the nesting level.
-    fn indent_dec(&mut self);
-    /// Shorthand for [`IndentScope::new`]. Shadow the binding for the indented
-    /// block; the guard `Deref`s to `&mut Self` so method calls auto-deref, and
-    /// `Drop` restores the indent on every exit path (including `?`).
-    #[inline]
-    fn indented(&mut self) -> IndentScope<'_, Self> {
-        IndentScope::new(self)
-    }
-    /// `Formatter.writeIndent(Writer, writer)` — emit `2 * indent` spaces.
-    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result;
-    /// `Formatter.resetLine()` — reset `estimated_line_length` to current
-    /// indent so wrap heuristics start fresh on the next line.
-    fn reset_line(&mut self);
-    /// `Formatter.printComma(Writer, writer, enable_ansi_colors)` — dim `,`.
-    fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        writer: &mut W,
-    ) -> core::fmt::Result;
-}
-
-/// RAII indent guard for [`ConsoleFormatter`].
-///
-/// Increments on construction, decrements on `Drop`. `Deref`s to the wrapped
-/// formatter so the guard can shadow the original binding for the indented
-/// block:
-///
-/// ```ignore
-/// {
-///     let mut formatter = IndentScope::new(&mut *formatter);
-///     formatter.write_indent(writer)?;   // auto-derefs to &mut F
-///     // …
-/// } // indent restored here, even on `?` early-return
-/// ```
-pub struct IndentScope<'a, F: ConsoleFormatter + ?Sized>(&'a mut F);
-
-impl<'a, F: ConsoleFormatter + ?Sized> IndentScope<'a, F> {
-    #[inline]
-    pub fn new(f: &'a mut F) -> Self {
-        f.indent_inc();
-        Self(f)
-    }
-}
-impl<F: ConsoleFormatter + ?Sized> core::ops::Deref for IndentScope<'_, F> {
-    type Target = F;
-    #[inline]
-    fn deref(&self) -> &F {
-        self.0
-    }
-}
-impl<F: ConsoleFormatter + ?Sized> core::ops::DerefMut for IndentScope<'_, F> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut F {
-        self.0
-    }
-}
-impl<F: ConsoleFormatter + ?Sized> Drop for IndentScope<'_, F> {
-    #[inline]
-    fn drop(&mut self) {
-        self.0.indent_dec();
-    }
-}
-
-impl<'a> ConsoleFormatter for self::console_object::Formatter<'a> {
-    #[inline]
-    fn global_this(&self) -> &JSGlobalObject {
-        self.global_this
-    }
-    #[inline]
-    fn indent_inc(&mut self) {
-        self.indent += 1;
-    }
-    #[inline]
-    fn indent_dec(&mut self) {
-        self.indent = self.indent.saturating_sub(1);
-    }
-    #[inline]
-    fn reset_line(&mut self) {
-        self::console_object::Formatter::reset_line(self)
-    }
-    fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
-        // Inherent `Formatter::write_indent` takes `&mut dyn bun_io::Write`;
-        // bridge the `core::fmt::Write` sink the same way `print_as` does.
-        let mut sink = bun_io::FmtAdapter::new(writer);
-        self::console_object::Formatter::write_indent(self, &mut sink).map_err(|_| core::fmt::Error)
-    }
-    fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        writer: &mut W,
-    ) -> core::fmt::Result {
-        let mut sink = bun_io::FmtAdapter::new(writer);
-        self::console_object::Formatter::print_comma::<ENABLE_ANSI_COLORS>(self, &mut sink)
-            .map_err(|_| core::fmt::Error)
-    }
-    fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
-        &mut self,
-        tag: FormatTag,
-        writer: &mut W,
-        value: JSValue,
-        cell: JSType,
-    ) -> JsResult<()> {
-        // Downstream `write_format` hooks (Response/Request/S3Client/…) hold a
-        // `core::fmt::Write`; the formatter body is byte-oriented
-        // (`dyn bun_io::Write`). Bridge via `FmtAdapter`, then route through
-        // the runtime-tag dispatcher (`Formatter::format`) which fans out to
-        // the const-generic `print_as::<{ Tag::… }, …>` arms.
-        let mut sink = bun_io::FmtAdapter::new(writer);
-        let result = self::console_object::formatter::TagResult {
-            tag: tag.into(),
-            cell,
-        };
-        let global = self.global_this;
-        self.format::<ENABLE_ANSI_COLORS>(result, &mut sink, value, global)
-    }
-}
 
 pub use self::counters::Counters;
 pub use self::decoded_js_value::DecodedJSValue;
@@ -460,37 +307,16 @@ pub use self::zig_error_type::ZigErrorType;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
-#[path = "GarbageCollectionController.rs"]
-pub mod garbage_collection_controller;
-
 // ──────────────────────────────────────────────────────────────────────────
 // `#[no_mangle]` export modules — compiled so the C++ side links against the
 // real symbols.
 // ──────────────────────────────────────────────────────────────────────────
-#[path = "AbortSignal.rs"]
-pub mod abort_signal;
-#[path = "btjs.rs"]
-pub mod btjs;
-#[path = "CppTask.rs"]
-pub mod cpp_task;
 #[path = "fmt_jsc.rs"]
 pub mod fmt_jsc;
-#[path = "HTTPServerAgent.rs"]
-pub mod http_server_agent;
-#[path = "JSSecrets.rs"]
-pub mod js_secrets;
-#[path = "NodeModuleModule.rs"]
-pub mod node_module_module;
-#[path = "PluginRunner.rs"]
-pub mod plugin_runner;
-#[path = "PosixSignalHandle.rs"]
-pub mod posix_signal_handle;
 #[path = "resolve_path_jsc.rs"]
 pub mod resolve_path_jsc;
 #[path = "resolver_jsc.rs"]
 pub mod resolver_jsc;
-#[path = "virtual_machine_exports.rs"]
-pub mod virtual_machine_exports;
 
 #[rustfmt::skip]
 #[path = "host_fn.rs"] pub mod host_fn;
@@ -525,8 +351,6 @@ pub mod zig_stack_trace;
 // `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
 // every aliased type lives in api/webcore/test_runner/bake, so mounting it
 // here would create a `bun_jsc → bun_runtime` cycle.
-#[path = "AsyncModule.rs"]
-pub mod async_module;
 #[path = "bindgen.rs"]
 pub mod bindgen;
 #[path = "bindgen_test.rs"]
@@ -541,20 +365,10 @@ pub mod bun_string_jsc;
 pub mod codegen_mod;
 #[path = "comptime_string_map_jsc.rs"]
 pub mod comptime_string_map_jsc;
-#[path = "ConcurrentPromiseTask.rs"]
-pub mod concurrent_promise_task;
-#[path = "EventLoopHandle.rs"]
-pub mod event_loop_handle;
 #[path = "FFI.rs"]
 pub mod ffi;
-#[path = "JSCScheduler.rs"]
-pub mod jsc_scheduler;
 #[path = "JSONLineBuffer.rs"]
 pub mod json_line_buffer;
-#[path = "ProcessAutoKiller.rs"]
-pub mod process_auto_killer;
-#[path = "WorkTask.rs"]
-pub mod work_task;
 
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
@@ -990,7 +804,6 @@ pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
 pub use self::zig_stack_frame::ZigStackFrame;
 pub use self::zig_stack_trace::ZigStackTrace;
-pub use abort_signal::{AbortSignal, AbortSignalRef};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined
 // once in their dedicated port files (`VM.rs` / `JSGlobalObject.rs`) and
@@ -1234,10 +1047,6 @@ pub use bun_core::ptr::RefPtr;
 /// `bun.String` — refcounted WTF-backed string. Re-exported at the crate root
 /// so submodules can write `crate::String`.
 pub use bun_core::String;
-
-/// Legacy alias used by runtime drafts: `VirtualMachineRef` is just the
-/// `VirtualMachine` struct itself (callers hold `*mut VirtualMachineRef`).
-pub use self::virtual_machine::VirtualMachine as VirtualMachineRef;
 
 /// `jsc.AnyPromise` — `JSPromise | JSInternalPromise`.
 pub use self::any_promise::AnyPromise;
@@ -1494,47 +1303,10 @@ pub use self::ref_string as RefString;
 
 pub mod jsc_abi;
 
-#[path = "Debugger.rs"]
-pub mod debugger;
-pub use self::debugger as Debugger;
-#[path = "SavedSourceMap.rs"]
-pub mod saved_source_map;
-pub use self::saved_source_map as SavedSourceMap;
-
-// ──────────────────────────────────────────────────────────────────────────
-// VirtualMachine / ModuleLoader / event_loop. Downstream-compat re-exports
-// (`VirtualMachine`, `ModuleLoader`, `EventLoop`, `VirtualMachineInitOptions`)
-// are preserved.
-// ──────────────────────────────────────────────────────────────────────────
-#[path = "VirtualMachine.rs"]
-pub mod virtual_machine;
-pub use self::virtual_machine as VirtualMachine;
-pub use self::virtual_machine::InitOptions as VirtualMachineInitOptions;
-
-#[path = "ModuleLoader.rs"]
-pub mod module_loader;
-pub use self::module_loader as ModuleLoader;
-
 pub type ErrorableResolvedSource = Errorable<ResolvedSource>;
 pub type ErrorableZigString = Errorable<bun_core::ZigString>;
 pub type ErrorableJSValue = Errorable<JSValue>;
 pub type ErrorableString = Errorable<bun_core::String>;
-
-#[path = "hot_reloader.rs"]
-pub mod hot_reloader;
-pub use self::hot_reloader::{HotReloader, ImportWatcher, NewHotReloader, WatchReloader};
-
-#[path = "RuntimeTranspilerCache.rs"]
-pub mod runtime_transpiler_cache;
-pub use self::runtime_transpiler_cache::RuntimeTranspilerCache;
-
-#[path = "RuntimeTranspilerStore.rs"]
-pub mod runtime_transpiler_store;
-pub use self::runtime_transpiler_store::RuntimeTranspilerStore;
-
-#[path = "web_worker.rs"]
-pub mod web_worker;
-pub use self::web_worker::WebWorker;
 
 // LAYERING: `Jest`/`TestScope`/`Expect`/`Snapshot` live in
 // `bun_runtime::test_runner` — a forward-dep on `bun_runtime`, which itself
@@ -1545,24 +1317,6 @@ pub use self::web_worker::WebWorker;
 pub use self::js_property_iterator::{
     IntoIterObject, JSPropertyIterator, JSPropertyIteratorOptions, PropertyIteratorOptions,
 };
-
-#[path = "event_loop.rs"]
-pub mod event_loop;
-pub use self::event_loop as EventLoop;
-#[path = "any_task_job.rs"]
-pub mod any_task_job;
-pub use self::any_task_job::{AnyTaskJob, AnyTaskJobCtx};
-pub use self::event_loop::{
-    AbstractVM, AnyEventLoop, AnyTask, AnyTaskWithExtraContext, ConcurrentCppTask,
-    ConcurrentPromiseTask, ConcurrentTask, CppTask, DeferredTaskQueue, EventLoopHandle,
-    EventLoopKind, EventLoopTask, EventLoopTaskPtr, GarbageCollectionController, JsTerminated,
-    JsTerminatedResult, ManagedTask, MiniEventLoop, MiniVM, PosixSignalHandle, PosixSignalTask,
-    Task, WorkPool, WorkPoolTask, WorkTask, WorkTaskContext,
-};
-#[cfg(unix)]
-pub type PlatformEventLoop = bun_uws::Loop;
-#[cfg(not(unix))]
-pub type PlatformEventLoop = bun_io::Loop;
 
 pub use self::array_buffer::JSTypedArrayBytesDeallocator;
 /// Deprecated: Remove all of these please.

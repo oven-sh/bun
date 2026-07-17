@@ -2,7 +2,7 @@ use core::fmt;
 use crate::test_runner::expect::JSValueTestExt;
 use core::sync::atomic::{AtomicI32, Ordering};
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
@@ -141,7 +141,7 @@ impl ScopeFunctions {
 
         let [array] = frame.arguments_as_array::<1>();
         if array.is_undefined_or_null() || !array.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = crate::vm::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", array.to_fmt(&mut formatter))));
         }
 
@@ -196,7 +196,7 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
 
     if !this.each.is_empty() {
         if this.each.is_undefined_or_null() || !this.each.is_array() {
-            let mut formatter = bun_jsc::ConsoleObject::Formatter::new(global);
+            let mut formatter = crate::vm::ConsoleObject::Formatter::new(global);
             return Err(global.throw(format_args!("Expected array, got {}", this.each.to_fmt(&mut formatter))));
         }
         let mut iter = this.each.array_iterator(global)?;
@@ -843,8 +843,8 @@ pub(crate) fn create_bound(
 // These enum types live on `bun_test::BaseScopeCfg` (`self_mode`, `self_concurrent`).
 // bun_test.rs names them `ScopeMode`/`ConcurrentMode`; alias here for brevity.
 use crate::test_runner::bun_test::{ScopeMode as SelfMode, ConcurrentMode as SelfConcurrent};
-// `TestReporterKind` in the spec is `bun_jsc::debugger::TestType` (Test/Describe).
-use bun_jsc::debugger::TestType as TestReporterKind;
+// `TestReporterKind` in the spec is `crate::vm::debugger::TestType` (Test/Describe).
+use crate::vm::debugger::TestType as TestReporterKind;
 
 /// Local stringifier for `ScopeMode` — sibling `bun_test.rs` does not derive
 /// `IntoStaticStr` on it, so we can't use `<&'static str>::from`.

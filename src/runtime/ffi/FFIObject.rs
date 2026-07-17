@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 
 use bun_core::ZigString;
-use bun_jsc::host_fn::DomCall;
-use bun_jsc::{
+use crate::host_fn::DomCall;
+use crate::{
     self as jsc, ArrayBuffer, CallFrame, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult,
 };
 

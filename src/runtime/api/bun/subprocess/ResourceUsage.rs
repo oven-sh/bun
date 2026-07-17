@@ -1,5 +1,5 @@
 use crate::api::bun::Rusage;
-use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
+use crate::{JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_loop::RusageFields as _; // trait + impls now live in bun_sys::spawn_sys::spawn_process
 
 // `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated

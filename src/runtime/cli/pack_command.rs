@@ -4070,7 +4070,7 @@ fn is_special_file_or_variant(filename: &[u8], name: &'static [u8]) -> bool {
 pub mod bindings {
     use super::*;
     use bun_core::String as BunString;
-    use bun_jsc::{
+    use crate::{
         CallFrame, JSArray, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc,
     };
 

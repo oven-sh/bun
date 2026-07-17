@@ -1,6 +1,6 @@
 //! JSC bridges for `bun_install::hosted_git_info`.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Extension trait providing `.to_js()` on `HostedGitInfo`.
 pub trait HostedGitInfoJsc {

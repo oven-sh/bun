@@ -2,7 +2,7 @@
 //! Exports here are referenced via aliases on the original structs so call
 //! sites do not change.
 
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 use bun_uws::{
     AnyWebSocket, RawWebSocket, create_bun_socket_error_t, us_socket_stream_buffer_t, us_socket_t,
 };
@@ -77,7 +77,7 @@ pub fn create_bun_socket_error_to_js(
 // LAYERING: body sunk to `bun_jsc::system_error` so `bun_sql_jsc` (which this
 // crate depends on) shares the single canonical impl instead of carrying a
 // verbatim copy.
-pub use bun_jsc::system_error::verify_error_to_js;
+pub use crate::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
 // Declared inline; migrate into `bun_uws_sys` with the rest of the

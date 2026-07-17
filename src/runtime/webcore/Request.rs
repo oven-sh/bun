@@ -5,7 +5,7 @@ use core::ffi::c_uint;
 use core::ptr::NonNull;
 use std::borrow::Cow;
 
-use bun_jsc::JsCell;
+use crate::JsCell;
 use enumset::EnumSet;
 
 use super::response::HeadersRef;
@@ -20,17 +20,17 @@ use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream,
 use bun_core::alloc_impl::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{OwnedStringCell, String as BunString, ZigString, strings};
-use bun_http_jsc::fetch_enums_jsc::{
+use crate::http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
-use bun_http_jsc::method_jsc::MethodJsc as _;
+use crate::http_jsc::method_jsc::MethodJsc as _;
 use bun_core::http_types::FetchCacheMode::FetchCacheMode;
 use bun_core::http_types::FetchRedirect::FetchRedirect;
 use bun_core::http_types::FetchRequestMode::FetchRequestMode;
 use bun_core::http_types::Method::Method;
-use bun_jsc::AbortSignalRef;
-use bun_jsc::StringJsc as _;
-use bun_jsc::generated::JSRequest as js_gen;
+use crate::vm::AbortSignalRef;
+use crate::StringJsc as _;
+use crate::generated::JSRequest as js_gen;
 use bun_core::ptr::weak_ptr::WeakPtrData;
 use bun_uws as uws;
 use core::mem::ManuallyDrop;
@@ -588,7 +588,7 @@ impl Request {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: bun_jsc::ConsoleFormatter,
+        F: crate::vm::ConsoleFormatter,
         W: core::fmt::Write,
     {
         // Return type narrowed to `core::fmt::Result` (matches
@@ -612,7 +612,7 @@ impl Request {
         {
             // RAII guard restores indent on every exit incl. `?` error paths.
             // Shadows `formatter` for the block; auto-derefs to `&mut F`.
-            let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
+            let mut formatter = crate::vm::IndentScope::new(&mut *formatter);
 
             formatter.write_indent(writer)?;
             writer.write_str(
@@ -653,7 +653,7 @@ impl Request {
                 )?;
                 formatter
                     .print_as::<_, ENABLE_ANSI_COLORS>(
-                        bun_jsc::FormatTag::Private,
+                        crate::vm::FormatTag::Private,
                         writer,
                         params_object,
                         bun_jsc::JSType::Object,
@@ -672,7 +672,7 @@ impl Request {
             let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatTag::Private,
+                    crate::vm::FormatTag::Private,
                     writer,
                     headers_js,
                     bun_jsc::JSType::DOMWrapper,
@@ -706,7 +706,7 @@ impl Request {
                         formatter.write_indent(writer)?;
                         formatter
                             .print_as::<_, ENABLE_ANSI_COLORS>(
-                                bun_jsc::FormatTag::Object,
+                                crate::vm::FormatTag::Object,
                                 writer,
                                 stream.value,
                                 stream.value.js_type(),

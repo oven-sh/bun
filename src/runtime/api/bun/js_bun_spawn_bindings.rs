@@ -9,12 +9,12 @@ use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
 use bun_loop::SpawnSyncEventLoop::TickState;
 use bun_loop::max_buf::MaxBuf;
-use bun_jsc::ipc as IPC;
-use bun_jsc::{
+use crate::vm::ipc as IPC;
+use crate::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
     JsResult, SystemError,
 };
-use bun_jsc::{JsCell, SysErrorJsc as _};
+use crate::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
 use bun_sys::Fd;
 use bun_sys::UV_E;
@@ -27,7 +27,7 @@ use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
-use crate::api::bun_loop::stdio::{self, Stdio};
+use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
     self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
 };
@@ -50,7 +50,7 @@ impl JSValueSpawnExt for JSValue {
 /// `SignalCode.fromJS` (bun_sys_jsc bridge).
 #[inline]
 fn signal_code_from_js(val: JSValue, global: &JSGlobalObject) -> JsResult<SignalCode> {
-    bun_sys_jsc::signal_code_jsc::from_js(val, global)
+    crate::sys_jsc::signal_code_jsc::from_js(val, global)
 }
 
 /// Convert a `bun_sys::SystemError` (T1 stub shape) into the C-ABI
@@ -91,8 +91,8 @@ impl TerminalCreateResult {
 }
 
 // ── IPC owner trait impl for Subprocess ─────────────────────────────────────
-// Mirrors the `IPCInstance` impl in `bun_jsc::VirtualMachine`; lives here
-// because `Subprocess` is a `bun_runtime` type and `bun_jsc::ipc` (tier-5)
+// Mirrors the `IPCInstance` impl in `crate::vm::VirtualMachine`; lives here
+// because `Subprocess` is a `bun_runtime` type and `crate::vm::ipc` (tier-5)
 // sees only the `dyn SendQueueOwner` trait object.
 impl IPC::SendQueueOwner for SubprocessT<'static> {
     fn global_this(&self) -> *const JSGlobalObject {
@@ -702,7 +702,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     let uid_int = global_this.validate_integer_range::<i32>(
                         uid_value,
                         0,
-                        bun_sql_jsc::jsc::IntegerRange {
+                        crate::sql::jsc::IntegerRange {
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"uid",
@@ -718,7 +718,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     let gid_int = global_this.validate_integer_range::<i32>(
                         gid_value,
                         0,
-                        bun_sql_jsc::jsc::IntegerRange {
+                        crate::sql::jsc::IntegerRange {
                             min: i128::from(i32::MIN),
                             max: i128::from(i32::MAX),
                             field_name: b"gid",
@@ -757,7 +757,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                         let timeout_int = global_this.validate_integer_range::<u64>(
                             timeout_value,
                             0,
-                            bun_sql_jsc::jsc::IntegerRange {
+                            crate::sql::jsc::IntegerRange {
                                 min: 0,
                                 field_name: b"timeout",
                                 ..Default::default()

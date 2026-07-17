@@ -193,7 +193,7 @@ impl LinuxMemFdAllocator {
                 return false;
             }
 
-            if crate::jsc::VirtualMachine::is_smol_mode() {
+            if crate::vm::VirtualMachine::is_smol_mode() {
                 return bytes.len() >= 1024 * 1024;
             }
 

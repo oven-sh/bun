@@ -10,7 +10,7 @@ use core::ptr::NonNull;
 use bun_core::alloc_impl::Arena; // = bumpalo::Bump
 use bun_core::collections::ArrayHashMap;
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
+use crate::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 // peechy batch 2 landed: `bun_options_types::schema::api` now provides
 // {StringMap, LoaderMap, DotEnvBehavior, SourceMapMode, TransformOptions}.
 // Alias as `bun_schema` so existing field paths resolve unchanged.
@@ -95,7 +95,7 @@ fn get_function(
     }
 }
 
-use bun_bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
+use crate::bundler_jsc::source_map_mode_jsc::source_map_mode_from_js;
 
 /// Convert a `crate::Error` into a thrown JS exception in a `JsResult`
 /// context.

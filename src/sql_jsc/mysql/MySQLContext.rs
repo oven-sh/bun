@@ -1,4 +1,4 @@
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
+use crate::sql::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
 
 #[repr(C)]
 #[derive(Default)]

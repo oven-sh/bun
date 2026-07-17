@@ -32,7 +32,7 @@ use bun_core::{FeatureFlags, ZBox};
 use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_loop::KeepAlive;
-use bun_jsc::{JSGlobalObject, VirtualMachineRef};
+use crate::{JSGlobalObject, VirtualMachineRef};
 use bun_core::picohttp as picohttp;
 use bun_core::ptr::ThisPtr;
 use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
@@ -41,7 +41,7 @@ use super::cpp_websocket::CppWebSocket;
 use super::websocket_deflate as WebSocketDeflate;
 use super::websocket_proxy::WebSocketProxy;
 use super::websocket_proxy_tunnel::WebSocketProxyTunnel;
-use crate::websocket_client::ErrorCode;
+use crate::http_jsc::websocket_client::ErrorCode;
 
 // LAYERING: SSLConfig was MOVE_DOWN'd from bun_runtime::api::server_config →
 // bun_http::ssl_config (data + as_usockets/for_client_verification). The
@@ -62,7 +62,7 @@ bun_core::declare_scope!(alloc, hidden);
 #[inline]
 unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_loop::EventLoopCtx {
     // SAFETY: caller contract above.
-    unsafe { bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) }
+    unsafe { crate::vm::virtual_machine::VirtualMachine::event_loop_ctx(vm) }
 }
 
 /// `uws.NewSocketHandler(ssl)`
@@ -413,7 +413,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // through `RuntimeHooks` so this crate stays below `bun_runtime`.
         let secure_ptr: Option<*mut uws::SslCtx> = if SSL {
             let hooks =
-                bun_jsc::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
+                crate::vm::virtual_machine::runtime_hooks().expect("RuntimeHooks not installed");
             'brk: {
                 if let Some(config) = &client_ref.ssl_config {
                     if config.requires_custom_request_ctx {

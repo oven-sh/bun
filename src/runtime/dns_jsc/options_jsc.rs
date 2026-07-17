@@ -1,7 +1,7 @@
 //! `from_js`/`to_js` for `GetAddrInfo` and its nested option types, plus
 //! `address_to_js`/`addr_info_to_js_array`. The pure types stay in `src/dns/`.
 
-use bun_jsc::{
+use crate::{
     ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
 };
 

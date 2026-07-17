@@ -7,7 +7,7 @@
 //! so the callbacks live exactly as long as something that can still invoke
 //! them — no `gcProtect` bookkeeping to unbalance.
 
-use bun_jsc::{JSGlobalObject, JSValue, Strong};
+use crate::{JSGlobalObject, JSValue, Strong};
 
 unsafe extern "C" {
     /// Allocates the cell with the 13 callback fields populated barrier-free

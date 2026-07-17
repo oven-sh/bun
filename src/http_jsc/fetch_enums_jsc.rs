@@ -10,7 +10,7 @@
 use bun_core::http_types::FetchCacheMode::FetchCacheMode;
 use bun_core::http_types::FetchRedirect::FetchRedirect;
 use bun_core::http_types::FetchRequestMode::FetchRequestMode;
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 
 unsafe extern "C" {
     fn Bun__FetchRedirect__toJS(v: u8, global: *mut JSGlobalObject) -> JSValue;

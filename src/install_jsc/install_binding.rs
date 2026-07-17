@@ -1,10 +1,10 @@
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 
 pub mod bun_install_js_bindings {
     use super::*;
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        use bun_jsc::JSFunction;
+        use crate::JSFunction;
         let obj = JSValue::create_empty_object(global, 1);
         obj.put(
             global,

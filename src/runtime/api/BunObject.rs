@@ -91,14 +91,14 @@ use core::ffi::c_void;
 use std::io::Write as _;
 
 use bun_core::Output;
-use bun_jsc::{
+use crate::{
     self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorableString, JSFunction,
     JSGlobalObject, JSObject, JSPromise, JSValue, JsResult,
 };
-// `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
+// `crate::vm::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
 use bun_core::{String as BunString, ZigString, strings};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_core::paths::MAX_PATH_BYTES;
 #[cfg(not(windows))]
 use bun_core::paths::PathBuffer;
@@ -115,13 +115,13 @@ use crate::node;
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
-use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::{StringJsc as _, bun_string_jsc};
+use crate::ZigStringJsc as _; // to_error_instance / to_type_error_instance
+use crate::call_frame::ArgumentsSlice;
+use crate::{StringJsc as _, bun_string_jsc};
 
 /// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).
 pub mod r#gen {
-    pub use bun_jsc::generated::bun_object::BracesOptions;
+    pub use crate::generated::bun_object::BracesOptions;
 }
 
 // ─── wrap_static_method adapters ───────────────────────────────────────────
@@ -337,7 +337,7 @@ pub mod bun_object {
     export_callbacks! {
         BunObject_callback_allocUnsafe => super::alloc_unsafe,
         BunObject_callback_build => super::static_adapters::js_bundler_build,
-        BunObject_callback_color => bun_css_jsc::js_function_color,
+        BunObject_callback_color => crate::css_jsc::js_function_color,
         BunObject_callback_connect => super::static_adapters::listener_connect,
         BunObject_callback_deflateSync => JSZlib::deflate_sync,
         BunObject_callback_file => crate::webcore::blob::construct_bun_file,
@@ -455,7 +455,7 @@ pub(crate) fn shell_escape(
     global_this: &JSGlobalObject,
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
-    use bun_jsc::StringJsc as _;
+    use crate::StringJsc as _;
     let arguments = callframe.arguments_old::<1>();
     if arguments.len < 1 {
         return Err(global_this.throw(format_args!("shell escape expected at least 1 argument")));
@@ -1600,13 +1600,13 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
     let vm = global_object.bun_vm().as_mut();
 
     // NOTE (layering): `HotMap` is a tagged union over the four
-    // `NewServer` monomorphizations + sockets. `bun_jsc::rare_data::HotMapEntry`
+    // `NewServer` monomorphizations + sockets. `crate::vm::rare_data::HotMapEntry`
     // is the erased `(tag: u8, ptr: *mut ())` lowering of that union; the tag
     // values for servers are pinned here to match `crate::server::AnyServerTag`
     // (= the runtime-side discriminant) so a HotMap entry produced by `serve`
     // is round-trippable through `serve` again on hot-reload.
     use crate::server::{AnyServer, AnyServerTag};
-    use bun_jsc::rare_data::HotMapEntry;
+    use crate::vm::rare_data::HotMapEntry;
 
     if config.allow_hot {
         if let Some(hot) = vm.hot_map() {
@@ -1833,7 +1833,7 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
         let map = match bun_sys::mmap_file(buf_z, flags, map_size, offset) {
             Ok(map) => map,
             Err(err) => {
-                use bun_jsc::SysErrorJsc as _;
+                use crate::SysErrorJsc as _;
                 return Err(global_this.throw_value(err.to_js(global_this)));
             }
         };
@@ -1910,12 +1910,12 @@ pub(crate) fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObje
 
 pub(crate) fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
     // NOTE (layering): `RareData::s3_default_client` body lives in
-    // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
+    // `crate::vm::rare_data::_accessor_body` and names `bun_runtime::s3` types.
     // That can't compile in `bun_jsc`, so port the body here where the S3
     // types are in scope and store the cached value through the public
     // `RareData.s3_default_client: Strong` field.
     use crate::webcore::s3_client::S3Client;
-    use bun_jsc::StrongOptional;
+    use crate::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
     // NOTE: reshaped for borrowck — capture the raw env loader pointer
@@ -2068,7 +2068,7 @@ pub(crate) fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> 
 }
 
 pub(crate) fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    bun_semver_jsc::SemverObject::create(global_this)
+    crate::semver_jsc::SemverObject::create(global_this)
 }
 
 pub(crate) fn get_unsafe(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -2252,7 +2252,7 @@ pub mod environment_variables {
         }
 
         let value_slice = value.to_utf8();
-        let new_val = bun_jsc::rare_data::RefCountedEnvValue::create(value_slice.slice());
+        let new_val = crate::vm::rare_data::RefCountedEnvValue::create(value_slice.slice());
         let stored = slot.ptr.insert(new_val);
         // slot.key is a static-lifetime string literal (the struct field name).
         // NOTE: `Map::put` boxes its own copy — the Arc wrapper now
@@ -2340,7 +2340,7 @@ pub fn parse_compress_buffer_and_options(
 #[allow(non_snake_case)]
 pub mod JSZlib {
     use super::*;
-    use bun_jsc::ComptimeStringMapExt as _;
+    use crate::ComptimeStringMapExt as _;
     use bun_sys::libdeflate_sys::libdeflate as bun_libdeflate;
 
     /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
@@ -3013,7 +3013,7 @@ pub mod JSZstd {
 
 // NOTE: symbols are linked via the `#[unsafe(no_mangle)]` exports above.
 // Referenced: Crypto::JSPasswordObject::JSPasswordObject__create,
-// bun_jsc::btjs::dump_btjs_trace.
+// crate::vm::btjs::dump_btjs_trace.
 
 // LazyProperty initializers for stdin/stderr/stdout
 //

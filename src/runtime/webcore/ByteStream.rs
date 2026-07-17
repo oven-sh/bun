@@ -1,8 +1,8 @@
 use core::cell::Cell;
 
 use bun_core::collections::VecExt;
-use bun_jsc::strong::Optional as StrongOptional;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
+use crate::strong::Optional as StrongOptional;
+use crate::{self as jsc, JSGlobalObject, JSValue, JsCell};
 
 use crate::webcore::Pipe;
 use crate::webcore::streams::{self, BufferAction, IntoArray};

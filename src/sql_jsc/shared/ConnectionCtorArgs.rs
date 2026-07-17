@@ -2,7 +2,7 @@
 //! `createConnection(hostname, port, username, password, database, sslMode,
 //! tls, ...)` host functions, through the per-VM `SSL_CTX*` cache lookup.
 
-use crate::jsc::{
+use crate::sql::jsc::{
     JSGlobalObject, JSValue, JsResult, VirtualMachine, VirtualMachineSqlExt as _,
     api::server_config::SSLConfig,
 };
@@ -114,7 +114,7 @@ impl<M: SslModeArg> ConnectionCtorArgs<M> {
             if secure.is_none() {
                 drop(tls_config);
                 return Err(
-                    global_object.throw_value(crate::jsc::create_bun_socket_error_to_js(
+                    global_object.throw_value(crate::sql::jsc::create_bun_socket_error_to_js(
                         err,
                         global_object,
                     )),

@@ -27,7 +27,7 @@
 
 use bun_core::collections::VecExt;
 use bun_core::WTFStringImplExt as _;
-use bun_jsc::JsCell;
+use crate::JsCell;
 use core::cell::Cell;
 use core::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -1503,7 +1503,7 @@ impl Interpreter {
         drop(slice);
         str.deref();
         if let Err(e) = result {
-            use bun_sys_jsc::SystemErrorJsc as _;
+            use crate::sys_jsc::SystemErrorJsc as _;
             return Err(
                 global_this.throw_value(e.to_shell_system_error().to_error_instance(global_this))
             );
@@ -1673,7 +1673,7 @@ impl Interpreter {
 
                 let vm_ptr = event_loop
                     .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
+                    .cast::<crate::vm::virtual_machine::VirtualMachine>();
                 if vm_ptr.is_null() {
                     return;
                 }
@@ -1692,7 +1692,7 @@ impl Interpreter {
                 if let Some(worker_ptr) = vm.worker {
                     // SAFETY: `vm.worker` is set in `VirtualMachine::initWorker`
                     // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                    let worker = unsafe { &*worker_ptr.cast::<crate::vm::web_worker::WebWorker>() };
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
                         return;
@@ -3108,7 +3108,7 @@ pub fn create_shell_interpreter(
         it.this_jsvalue.set(js_value);
         it.keep_alive.with_mut(|k| {
             // `bun_vm_ptr()` is the live per-thread VM singleton.
-            k.ref_(crate::jsc::VirtualMachineRef::event_loop_ctx(
+            k.ref_(crate::vm::VirtualMachineRef::event_loop_ctx(
                 global.bun_vm_ptr(),
             ))
         });

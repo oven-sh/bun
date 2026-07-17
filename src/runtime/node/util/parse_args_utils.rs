@@ -1,5 +1,5 @@
 use bun_core::String;
-use bun_jsc::JSValue;
+use crate::JSValue;
 
 #[derive(Copy, Clone, PartialEq, Eq, Default)]
 pub enum OptionValueType {

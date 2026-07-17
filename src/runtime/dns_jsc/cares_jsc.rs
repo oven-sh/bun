@@ -7,7 +7,7 @@ use core::ffi::c_int;
 use ::bstr::BStr;
 use bun_sys::cares::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
-use bun_jsc::{
+use crate::{
     CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
 };
 
@@ -728,7 +728,7 @@ impl ErrorDeferred {
         global_this
             .bun_vm()
             .as_mut()
-            .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
+            .enqueue_task(crate::vm::ManagedTask::ManagedTask::new(
                 context,
                 Context::callback,
             ));

@@ -1,7 +1,7 @@
 use bun_core::String as BunString;
 use bun_core::strings::EncodingNonAscii;
-use bun_jsc::js_object::PojoFields;
-use bun_jsc::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult};
+use crate::js_object::PojoFields;
+use crate::{FromAny, JSGlobalObject, JSObject, JSValue, JsError, JsResult};
 
 use super::assert::myers_diff as MyersDiff;
 use super::assert::myers_diff::{Diff, DiffKind, Line};

@@ -1,7 +1,7 @@
 //! JSC host fns for `bun_install::npm`, kept here so that `install/` has
 //! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
@@ -57,7 +57,7 @@ pub struct ManifestBindings;
 
 impl ManifestBindings {
     pub fn generate(global: &JSGlobalObject) -> JSValue {
-        use bun_jsc::JSFunction;
+        use crate::JSFunction;
         let obj = JSValue::create_empty_object(global, 1);
         obj.put(
             global,
@@ -84,7 +84,7 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
     use bstr::BStr;
     use bun_core::{String as BunString, strings};
     use bun_install::npm;
-    use bun_jsc::JsError;
+    use crate::JsError;
     use std::io::Write as _;
 
     let args = frame.arguments_old::<2>();

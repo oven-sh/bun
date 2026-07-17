@@ -3,7 +3,7 @@
 use bun_core::collections::ArrayHashMap;
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
-use bun_jsc::{
+use crate::{
     AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
     ZigStringJsc as _,
 };

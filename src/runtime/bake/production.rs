@@ -23,9 +23,9 @@ use bun_core::collections::{AutoBitSet, StringArrayHashMap};
 use bun_core::String as BunString;
 use bun_core::{Global, Output};
 use bun_dotenv as dotenv;
-use bun_jsc::js_promise::{UnwrapMode, Unwrapped};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::js_promise::{UnwrapMode, Unwrapped};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, AnyPromise, JSGlobalObject, JSModuleLoader, JSPromise, JSValue, JsResult,
     StringJsc as _,
 };

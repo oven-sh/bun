@@ -5,7 +5,7 @@ mod _impl {
     use core::ffi::{c_int, c_uint, c_void};
     use core::ptr;
 
-    use bun_jsc::{
+    use crate::{
         self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
         WorkPoolTask,
     };

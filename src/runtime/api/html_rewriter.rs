@@ -5,25 +5,25 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::MutableString;
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, ProtectedJSValue,
     StrongOptional, SystemError, bun_string_jsc,
 };
-// Note: `bun_jsc::VirtualMachine` is a *module* re-export
+// Note: `crate::vm::VirtualMachine` is a *module* re-export
 // (`pub use self::virtual_machine as VirtualMachine;`). The struct lives at
-// `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
+// `crate::vm::virtual_machine::VirtualMachine` — import that directly so the
 // name resolves as a type at `&mut VirtualMachine` annotations and as the
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 
 use crate::webcore::response::HeadersRef;
 use crate::webcore::{self, Response};
 use bun_core::String as BunString;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::zig_string::ZigString;
+use crate::ZigStringJsc as _;
+use crate::call_frame::ArgumentsSlice;
+use crate::zig_string::ZigString;
 
 // lol-html rewritable units, lifetime-erased to `'static` so a `*mut RawX`
 // can be parked in a JsClass `Cell` for the duration of the synchronous

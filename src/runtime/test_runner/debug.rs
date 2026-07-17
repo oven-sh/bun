@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io::Write as _;
 
-use bun_jsc::JsResult;
+use crate::JsResult;
 
 use crate::test_runner::bun_test::{DescribeScope, ExecutionEntry, TestScheduleEntry};
 use crate::test_runner::execution::Execution;

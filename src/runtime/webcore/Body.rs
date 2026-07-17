@@ -21,8 +21,8 @@ use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
 use bun_core::{MutableString, String as BunString, ZigString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::{JsCell, StringJsc as _};
+use crate::ZigStringJsc as _;
+use crate::{JsCell, StringJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
 /// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
@@ -166,7 +166,7 @@ impl Body {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: bun_jsc::ConsoleFormatter,
+        F: crate::vm::ConsoleFormatter,
     {
         formatter.write_indent(writer)?;
         write!(

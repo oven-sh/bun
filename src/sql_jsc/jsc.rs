@@ -10,7 +10,7 @@
 //!
 //! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
 //! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
-//! value — it is *not* a view of `bun_jsc::rare_data::RareData` (which holds
+//! value — it is *not* a view of `crate::vm::rare_data::RareData` (which holds
 //! the per-protocol `SocketGroup`s and is reached via the inherent
 //! `VirtualMachine::rare_data()`).
 
@@ -23,10 +23,10 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 // Core handles — re-exported from `bun_jsc` so proc-macro generated wrappers
 // (which hard-code `bun_jsc::JSGlobalObject` / `bun_jsc::CallFrame` / …) see
-// the same types as user code importing `crate::jsc::*`.
+// the same types as user code importing `crate::sql::jsc::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::{
+pub use crate::{
     ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
     ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
     JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
@@ -36,7 +36,7 @@ pub use bun_jsc::{
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
 /// inherent `JSGlobalObject::{validate_integer_range, validate_big_int_range}`
 /// take it directly, so the previous local mirror is gone.
-pub use bun_jsc::IntegerRange;
+pub use crate::IntegerRange;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Error bridging.
@@ -74,7 +74,7 @@ pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mys
 // `uws.us_bun_verify_error_t::toJS` — sunk to `bun_jsc::system_error` so both
 // `bun_runtime` and this crate import the single canonical body (was
 // triplicated across runtime/socket/uws_jsc, here, and PostgresSQLConnection).
-pub use bun_jsc::system_error::verify_error_to_js;
+pub use crate::system_error::verify_error_to_js;
 
 // ──────────────────────────────────────────────────────────────────────────
 // uws.create_bun_socket_error_t::toJS
@@ -189,8 +189,8 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_loop::KeepAlive;
-pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
-pub use bun_jsc::virtual_machine::VirtualMachine;
+pub use crate::vm::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
+pub use crate::vm::virtual_machine::VirtualMachine;
 
 // ──────────────────────────────────────────────────────────────────────────
 // SqlRuntimeHooks — manual cold-path vtable (CYCLEBREAK §Dispatch).
@@ -255,16 +255,16 @@ fn hooks() -> &'static SqlRuntimeHooks {
     &__BUN_SQL_RUNTIME_HOOKS
 }
 
-/// Per-VM SQL state — the concrete crate::mysql::MySQLContext /
-/// crate::postgres::PostgresSQLContext.
-/// The bun_jsc::rare_data::RareData slots for these are opaque
+/// Per-VM SQL state — the concrete crate::sql::mysql::MySQLContext /
+/// crate::sql::postgres::PostgresSQLContext.
+/// The crate::vm::rare_data::RareData slots for these are opaque
 /// (cycle break: bun_jsc cannot name bun_sql_jsc types), so the storage lives
 /// in bun_runtime::jsc_hooks::RuntimeState.sql_rare and is reached via
 /// [VirtualMachineSqlExt::sql_state].
 #[repr(C)]
 pub struct RareData {
-    pub mysql_context: crate::mysql::MySQLContext,
-    pub postgresql_context: crate::postgres::PostgresSQLContext,
+    pub mysql_context: crate::sql::mysql::MySQLContext,
+    pub postgresql_context: crate::sql::postgres::PostgresSQLContext,
 }
 
 /// SQL-specific accessors on [VirtualMachine] for state owned by the
@@ -336,7 +336,7 @@ impl VirtualMachineSqlExt for VirtualMachine {
 }
 
 /// RAII enter()/exit() for [EventLoop] — wraps the inherent (unsafe,
-/// raw-pointer) bun_jsc::event_loop::EventLoop::enter_scope.
+/// raw-pointer) crate::vm::event_loop::EventLoop::enter_scope.
 pub(crate) trait EventLoopSqlExt {
     fn entered(&mut self) -> EventLoopGuard;
 }
@@ -387,7 +387,7 @@ impl TimerHeap {
 
 // ──────────────────────────────────────────────────────────────────────────
 // AutoFlusher — thin VM-taking wrapper over
-// bun_jsc::event_loop::EventLoop::deferred_tasks.
+// crate::vm::event_loop::EventLoop::deferred_tasks.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Debug)]
@@ -608,7 +608,7 @@ pub mod webcore {
 /// `bun_jsc::JsClass` — generic downcast trait backing `JSValue::as_<T>()`.
 /// Re-exported so the codegen module's blanket impls land on the same trait
 /// `bun_jsc::JSValue::as_<T>()` keys on.
-pub use bun_jsc::JsClass;
+pub use crate::JsClass;
 
 // ──────────────────────────────────────────────────────────────────────────
 // codegen::JS{Type} — per-JsClass cached-value getters/setters generated from
@@ -617,9 +617,9 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+        as crate::sql::postgres::PostgresSQLConnection { queries, onconnect, onclose });
     ::bun_jsc::js_class_module!(
-        JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
+        JSPostgresSQLQuery = "PostgresSQLQuery" as crate::sql::postgres::PostgresSQLQuery,
         impl_js_class {
             binding,
             columns,
@@ -629,11 +629,11 @@ pub mod codegen {
     );
 
     ::bun_jsc::js_class_module!(js_mysql_connection = "MySQLConnection"
-        as crate::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose });
+        as crate::sql::mysql::js_my_sql_connection::JSMySQLConnection { queries, onconnect, onclose });
     pub use js_mysql_connection as JSMySQLConnection;
 
     ::bun_jsc::js_class_module!(
-        js_mysql_query = "MySQLQuery" as crate::mysql::js_mysql_query::JSMySQLQuery,
+        js_mysql_query = "MySQLQuery" as crate::sql::mysql::js_mysql_query::JSMySQLQuery,
         impl_js_class {
             binding,
             columns,
@@ -661,7 +661,7 @@ pub(crate) struct JSFunction {
 /// `jsc.JSHostFn` — the JSC-ABI host-function pointer JSC dispatches to
 /// (`extern "sysv64"` on win-x64, `extern "C"` elsewhere). Re-exported from
 /// `bun_jsc` so the cfg-split lives in one place.
-pub use bun_jsc::host_fn::JsHostFn as JSHostFn;
+pub use crate::host_fn::JsHostFn as JSHostFn;
 
 pub(crate) trait IntoJSHostFn<Marker>: Sized {
     fn into_js_host_fn(self) -> JSHostFn;
@@ -827,7 +827,7 @@ impl JSFunction {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// CallFrame helpers — `bun_jsc::ArgumentsSlice` exists; this local variant
+// CallFrame helpers — `crate::vm::ArgumentsSlice` exists; this local variant
 // keeps the `&VirtualMachine` (local view) signature the SQL callsites use.
 // ──────────────────────────────────────────────────────────────────────────
 

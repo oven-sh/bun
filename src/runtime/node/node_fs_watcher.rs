@@ -10,11 +10,11 @@ use bun_core::strings;
 use bun_loop::ConcurrentTask::ConcurrentTask;
 use bun_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_loop::KeepAlive;
-use bun_jsc::JsCell;
-use bun_jsc::abort_signal::AbortListener;
-use bun_jsc::event_loop::EventLoop;
-use bun_jsc::node::PathLike;
-use bun_jsc::{
+use crate::JsCell;
+use crate::vm::abort_signal::AbortListener;
+use crate::vm::event_loop::EventLoop;
+use crate::node::PathLike;
+use crate::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
     CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsRef, JsResult, SysErrorJsc,
     VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
@@ -461,7 +461,7 @@ impl FSWatchTaskWindows {
 
     #[cfg(windows)]
     fn run_path<const EVENT_TYPE: EventType>(ctx: &FSWatcher, path: &mut StringOrBytesToDecode) {
-        use bun_jsc::StringJsc;
+        use crate::StringJsc;
         if ctx.encoding == Encoding::Utf8 {
             let StringOrBytesToDecode::String(s) = path else {
                 // Producer invariant (win_watcher::on_path_update_windows): when

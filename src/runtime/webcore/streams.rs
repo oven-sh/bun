@@ -242,7 +242,7 @@ impl Start {
                         }));
                     }
 
-                    use bun_sys_jsc::FdJsc as _;
+                    use crate::sys_jsc::FdJsc as _;
                     if let Some(fd) = Fd::from_js(fd_value) {
                         return Ok(Start::FileSink(FileSinkOptions {
                             chunk_size,

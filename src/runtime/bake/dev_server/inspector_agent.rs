@@ -9,8 +9,8 @@
 //! `next_inspector_connection_id`.
 
 use bun_core::String as BunString;
-use bun_jsc::debugger::{DebuggerId, ErasedAgentSlot};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::debugger::{DebuggerId, ErasedAgentSlot};
+use crate::vm::virtual_machine::VirtualMachine;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C++ `InspectorBunFrontendDevServerAgent` handle.

@@ -6,7 +6,7 @@ use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreR
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
 use bun_loop as aio;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
+use crate::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_core::paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
@@ -16,7 +16,7 @@ use bun_sys::Stat;
 use bun_sys::windows::libuv;
 use bun_sys::{self, Fd, FdExt, Mode, SystemError};
 #[cfg(windows)]
-use bun_sys_jsc::ErrorJsc as _;
+use crate::sys_jsc::ErrorJsc as _;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use core::ffi::c_int;
 use core::ffi::c_void;

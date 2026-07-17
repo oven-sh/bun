@@ -5,11 +5,11 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_core::collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
-use bun_jsc::StringJsc as _;
+use crate::StringJsc as _;
 use crate::timer::ElTimespec;
 
 pub use super::bun_test;
@@ -643,7 +643,7 @@ pub mod on_unhandled_rejection {
             buntest.add_result(current_state_data);
             // `report_unhandled` reports the uncaught exception, with a guard
             // for `Terminated` (which carries no pending exception to take).
-            use bun_jsc::JsResultExt as _;
+            use crate::JsResultExt as _;
             bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
             return;
         }

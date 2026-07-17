@@ -6,7 +6,7 @@ use bun_ast::Loc;
 use bun_core::collections::VecExt;
 use bun_core::collections::bit_set::DynamicBitSet;
 use bun_core::{self, ZigStringSlice, strings};
-use bun_jsc::{JSGlobalObject, JSValue, VM, bun_string_jsc};
+use crate::{JSGlobalObject, JSValue, VM, bun_string_jsc};
 use bun_sourcemap::{
     LineOffsetTable, LineOffsetTableColumns as _, Ordinal, ParsedSourceMap, internal_source_map,
     line_offset_table,
@@ -501,7 +501,7 @@ impl ByteRangeMapping {
         let parsed_mappings_: Option<std::sync::Arc<ParsedSourceMap>> =
             // SAFETY: `VirtualMachine::get()` returns the live singleton `*mut VirtualMachine`
             // with full write provenance; dereference to call the `&mut self` accessor.
-            bun_jsc::VirtualMachine::VirtualMachine::get().as_mut()
+            crate::vm::VirtualMachine::VirtualMachine::get().as_mut()
                 .source_mappings()
                 .get(source_url.slice());
         let mut line_hits: LinesHits;

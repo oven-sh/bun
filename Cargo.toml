@@ -24,32 +24,23 @@ members = [
   "src/cares_sys",
   "src/clap",
   "src/csrf",
-  "src/css_jsc",
   "src/dns",
   "src/dotenv",
   "src/highway",
-  "src/http_jsc",
   "src/http_types",
   "src/ini",
-  "src/install_jsc",
   "src/install_types",
   "src/js_parser",
-  "src/js_parser_jsc",
   "src/js_printer",
   "src/libdeflate_sys",
   "src/libuv_sys",
   "src/ast",
-  "src/ast_jsc",
   "src/picohttp",
-  "src/sql_jsc",
   "src/platform",
   "src/sha_hmac",
-  "src/sys_jsc",
   "src/zlib_sys",
-  "src/bundler_jsc",
   "src/perf",
   "src/resolve_builtins",
-  "src/sourcemap_jsc",
   "src/windows_sys",
   "src/jsc",
   "src/ptr",
@@ -57,7 +48,6 @@ members = [
   "src/brotli_sys",
   "src/bun_alloc",
   "src/mimalloc_sys",
-  "src/semver_jsc",
   "src/standalone_graph",
   "src/uws",
   "src/wyhash",
@@ -68,7 +58,6 @@ members = [
   "src/loop",
   "src/macros",
   "src/bun_output_tags",
-  "src/patch_jsc",
   "src/router",
   "src/shell_parser",
   "src/tcc_sys",
@@ -354,35 +343,26 @@ bun_valkey = { path = "src/valkey" }
 bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_csrf = { path = "src/csrf" }
-bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_exe_format = { path = "src/crypto", package = "bun_crypto" }
 bun_highway = { path = "src/highway" }
-bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }
-bun_install_jsc = { path = "src/install_jsc" }
 bun_install_types = { path = "src/install_types" }
 bun_js_parser = { path = "src/js_parser" }
-bun_js_parser_jsc = { path = "src/js_parser_jsc" }
 bun_js_printer = { path = "src/js_printer" }
 bun_libdeflate_sys = { path = "src/libdeflate_sys" }
 bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
-bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/crypto", package = "bun_crypto" }
-bun_sql_jsc = { path = "src/sql_jsc" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
-bun_sys_jsc = { path = "src/sys_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
 bun_macros = { path = "src/macros" }
-bun_bundler_jsc = { path = "src/bundler_jsc" }
 bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
-bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 bun_ptr = { path = "src/ptr" }
@@ -390,7 +370,6 @@ bun_boringssl = { path = "src/boringssl" }
 bun_brotli_sys = { path = "src/brotli_sys" }
 bun_alloc = { path = "src/bun_alloc" }
 bun_mimalloc_sys = { path = "src/mimalloc_sys" }
-bun_semver_jsc = { path = "src/semver_jsc" }
 bun_standalone_graph = { path = "src/standalone_graph" }
 bun_uws = { path = "src/uws" }
 bun_wyhash = { path = "src/wyhash" }
@@ -400,7 +379,6 @@ bun_core = { path = "src/bun_core" }
 bun_crypto = { path = "src/crypto" }
 bun_loop = { path = "src/loop" }
 bun_output_tags = { path = "src/bun_output_tags" }
-bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }
 bun_tcc_sys = { path = "src/tcc_sys" }

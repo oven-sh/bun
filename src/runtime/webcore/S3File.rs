@@ -7,7 +7,7 @@ use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
 use bun_core::strings;
 use bun_http::Method;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
 
 // Local front for `bun_core::pretty_fmt!` that accepts a runtime / const-
 // generic bool. The proc-macro only matches `true`/`false` literals, so
@@ -34,7 +34,7 @@ pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
     offset: u64,
 ) -> core::fmt::Result
 where
-    F: bun_jsc::ConsoleFormatter,
+    F: crate::vm::ConsoleFormatter,
 {
     writer.write_str(pfmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
     let credentials = s3.get_credentials();
@@ -110,7 +110,7 @@ where
 pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = crate::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -147,7 +147,7 @@ pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = crate::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -188,7 +188,7 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
 pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = crate::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -258,7 +258,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
 pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = crate::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -295,7 +295,7 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
 pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = crate::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -669,7 +669,7 @@ impl S3BlobStatTask {
 // JSC-free. Thin local alias for the `getPresignUrlFrom` body.
 #[inline]
 fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Method>> {
-    bun_http_jsc::method_jsc::from_js(global, value)
+    crate::http_jsc::method_jsc::from_js(global, value)
 }
 
 pub(crate) fn get_presign_url_from(
@@ -816,7 +816,7 @@ pub(crate) fn get_stat(
 pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live VM raw ptr.
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
+    let mut args = crate::ArgumentsSlice::init(global.bun_vm(), arguments.slice());
 
     // accept a path or a blob
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
@@ -875,7 +875,7 @@ pub(crate) fn construct_internal(
     // SAFETY: bun_vm() returns the live VM raw ptr.
     let vm = global.bun_vm();
     let arguments = callframe.arguments_old::<2>();
-    let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+    let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
 
     let Some(path) = PathLike::from_js(global, &mut args)? else {
         return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));

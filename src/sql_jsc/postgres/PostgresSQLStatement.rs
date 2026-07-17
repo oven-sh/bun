@@ -1,11 +1,11 @@
 use core::cell::Cell;
 
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::sql::jsc::{JSGlobalObject, JSValue, JsResult};
 
-use crate::postgres::error_jsc::postgres_error_to_js;
-use crate::postgres::signature::Signature;
-use crate::shared::cached_structure::CachedStructure as PostgresCachedStructure;
-use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
+use crate::sql::postgres::error_jsc::postgres_error_to_js;
+use crate::sql::postgres::signature::Signature;
+use crate::sql::shared::cached_structure::CachedStructure as PostgresCachedStructure;
+use crate::sql::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
 use bun_sql::postgres::postgres_protocol as protocol;
@@ -60,7 +60,7 @@ impl Error {
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         match self {
-            Error::Protocol(err) => Ok(crate::postgres::protocol::error_response_jsc::to_js(
+            Error::Protocol(err) => Ok(crate::sql::postgres::protocol::error_response_jsc::to_js(
                 err,
                 global_object,
             )),

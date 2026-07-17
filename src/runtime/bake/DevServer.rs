@@ -22,9 +22,9 @@ use bun_bundler::options_impl::TargetExt as _;
 use bun_core::collections::{ArrayHashMap, DynamicBitSet, HashMap, HiveArrayFallback, StringHashMap};
 use bun_core::{self as str, OwnedString, String as BunString, ZStr, strings};
 use bun_core::{Environment, Output};
-use bun_jsc::StringJsc as _;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::StringJsc as _;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 #[cfg(feature = "bake_debugging_features")]
 use bun_core::paths::MAX_PATH_BYTES;
 use bun_core::paths::{self as paths, PathBuffer};
@@ -71,7 +71,7 @@ impl LogToJsAggregateErrorExt for Log {
         global: &JSGlobalObject,
         msg: BunString,
     ) -> JsResult<JSValue> {
-        bun_ast_jsc::log_to_js_aggregate_error(self, global, msg)
+        crate::ast_jsc::log_to_js_aggregate_error(self, global, msg)
     }
 }
 pub(super) use crate::bake::dev_server::HotReloadEvent;
@@ -5522,7 +5522,7 @@ impl DevServer {
             DevResponse::Promise(mut r) => {
                 let global = r.global;
                 let mut any_blob = crate::webcore::blob::Any::from_array_list(buf);
-                let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+                let mut headers = crate::http_jsc::headers_jsc::from_fetch_headers(
                     None,
                     crate::webcore::headers_ref::any_blob_content_type(&any_blob),
                 );
@@ -5530,7 +5530,7 @@ impl DevServer {
                 if headers.get(b"etag").is_none() && !any_blob.slice().is_empty() {
                     bun_http::headers::append_etag(any_blob.slice(), &mut headers);
                 }
-                let fetch_headers = bun_http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
+                let fetch_headers = crate::http_jsc::headers_jsc::to_fetch_headers(&headers, global)?;
                 // SAFETY: `to_fetch_headers` returns a fresh +1 `FetchHeaders*`;
                 // ownership is transferred to `HeadersRef`.
                 let headers_ref =

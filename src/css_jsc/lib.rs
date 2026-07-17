@@ -8,4 +8,4 @@ pub mod error_jsc;
 
 pub use color_js::js_function_color;
 
-pub(crate) use bun_jsc::JsResult;
+pub(crate) use crate::JsResult;

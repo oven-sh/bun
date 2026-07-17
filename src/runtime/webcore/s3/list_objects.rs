@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
-use bun_jsc::bun_string_jsc::create_utf8_for_js;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::bun_string_jsc::create_utf8_for_js;
+use crate::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
 use bun_core::{ZigStringSlice as Utf8Slice, strings};

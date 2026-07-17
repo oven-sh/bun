@@ -75,7 +75,7 @@ pub trait ThrowSqlError {
 
 impl ThrowSqlError for bun_jsc::JSGlobalObject {
     fn throw_sql_error(&self, err: Error, fmt: &'static str) -> bun_jsc::JsError {
-        use bun_jsc::StringJsc;
+        use crate::StringJsc;
         if matches!(err, Error::Alloc(_)) {
             return self.throw_out_of_memory();
         }

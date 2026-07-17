@@ -1,7 +1,7 @@
 use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
-use bun_jsc::{
+use crate::{
     AnyTaskJob, AnyTaskJobCtx, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
     ZigStringSlice,
 };

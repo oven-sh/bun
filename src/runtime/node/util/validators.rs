@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_core::ZigString;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult};
 
 pub(crate) fn get_type_name(global_object: &JSGlobalObject, value: JSValue) -> ZigString {
     let js_type = value.js_type();

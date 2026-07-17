@@ -20,11 +20,11 @@ use bun_uws_sys::{CloseCode, us_bun_verify_error_t, us_socket_t};
 
 use crate::api;
 use crate::valkey_jsc::js_valkey;
-use bun_http_jsc::websocket_client;
-use bun_http_jsc::websocket_client::websocket_upgrade_client;
-use bun_jsc::ipc as IPC;
-use bun_sql_jsc::mysql;
-use bun_sql_jsc::postgres;
+use crate::http_jsc::websocket_client;
+use crate::http_jsc::websocket_client::websocket_upgrade_client;
+use crate::vm::ipc as IPC;
+use crate::sql::mysql;
+use crate::sql::postgres;
 
 /// Some consumer methods are `bun.JSError!void` (they can throw into JS),
 /// some are plain `void`. The old `configure()` trampolines hand-unrolled the

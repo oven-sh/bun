@@ -5,7 +5,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
+use crate::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as _};
 
 use bun_s3_signing::{
     ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,

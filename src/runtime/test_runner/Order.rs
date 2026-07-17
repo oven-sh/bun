@@ -2,7 +2,7 @@
 
 use core::ptr::NonNull;
 
-use bun_jsc::JsResult;
+use crate::JsResult;
 
 use super::bun_test::{AddedInPhase, DescribeScope, ExecutionEntry, Only, TestScheduleEntry};
 use super::execution::{ConcurrentGroup, ExecutionSequence};

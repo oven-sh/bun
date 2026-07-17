@@ -23,9 +23,9 @@ use bun_core::strings;
 #[cfg(unix)]
 use bun_core::tty;
 use bun_core::{Environment, Output, env_var, fmt};
-use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
+use crate::js_promise::Status as PromiseStatus;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{self as jsc, JSGlobalObject, JSValue, JsResult, ProtectedJSValue};
 use bun_core::paths::{self as path, PathBuffer};
 use bun_sys::{self as sys, Fd};
 

@@ -1,5 +1,5 @@
 use bun_boringssl_sys::X509;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 pub use bun_boringssl::x509::is_safe_alt_name;
 

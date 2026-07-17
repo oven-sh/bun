@@ -2,7 +2,7 @@
 #![warn(unused_must_use)]
 //! JSC bridge for `bun_semver`. Keeps `src/semver/` free of JSC types.
 
-pub use bun_jsc::JsResult;
+pub use crate::JsResult;
 
 #[path = "SemverObject.rs"]
 pub mod SemverObject;

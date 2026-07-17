@@ -15,7 +15,7 @@
 //!
 //! **Adding a variant** (do all three):
 //!   1. tag constant in `bun_loop::task_tag` (or `bun_loop::poll_tag`);
-//!   2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`;
+//!   2. `impl crate::vm::Taskable for YourType { const TAG = task_tag::YourType; }`;
 //!   3. a match arm here.
 
 // Flat re-export landing pad for `generated_js2native.rs` thunks. Kept in a
@@ -38,10 +38,10 @@ use bun_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
 };
 
-use bun_jsc::JSGlobalObject;
-use bun_jsc::event_loop::{EventLoop, JsTerminated};
-use bun_jsc::task::report_error_or_terminate;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::JSGlobalObject;
+use crate::vm::event_loop::{EventLoop, JsTerminated};
+use crate::vm::task::report_error_or_terminate;
+use crate::vm::virtual_machine::VirtualMachine;
 
 /// X-macro: the 42 `node:fs` async ops dispatched via `run_from_js_thread`.
 ///
@@ -123,11 +123,11 @@ use bun_loop::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
 
-use bun_jsc::PosixSignalTask;
-use bun_jsc::RuntimeTranspilerStore;
-use bun_jsc::cpp_task::CppTask;
-use bun_jsc::hot_reloader;
-use bun_jsc::jsc_scheduler::JSCDeferredWorkTask;
+use crate::vm::PosixSignalTask;
+use crate::vm::RuntimeTranspilerStore;
+use crate::vm::cpp_task::CppTask;
+use crate::vm::hot_reloader;
+use crate::vm::jsc_scheduler::JSCDeferredWorkTask;
 
 use crate::bake::dev_server::DevServer;
 use crate::bake::dev_server::HotReloadEvent as BakeHotReloadEvent;
@@ -158,13 +158,13 @@ use crate::socket::upgraded_duplex::UpgradedDuplex;
 use crate::socket::windows_named_pipe::WindowsNamedPipe;
 
 use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
-use bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
-use bun_sql_jsc::postgres::PostgresSQLConnection;
+use crate::sql::mysql::js_my_sql_connection::JSMySQLConnection as MySQLConnection;
+use crate::sql::postgres::PostgresSQLConnection;
 
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
-use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
-use bun_jsc::garbage_collection_controller::GarbageCollectionController;
+use crate::vm::abort_signal::Timeout as AbortSignalTimeout;
+use crate::vm::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
 use bun_loop::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -240,9 +240,9 @@ pub fn run_task(
         (work $ty:ty) => {{
             let t = cast_ptr!($ty);
             // SAFETY: tag identifies pointee; heap-allocated at schedule time.
-            let r = bun_jsc::work_task::WorkTask::run_from_js(unsafe { &mut *t });
+            let r = crate::vm::work_task::WorkTask::run_from_js(unsafe { &mut *t });
             // SAFETY: paired with `create_on_js_thread` heap::alloc.
-            unsafe { bun_jsc::work_task::WorkTask::destroy(t) };
+            unsafe { crate::vm::work_task::WorkTask::destroy(t) };
             r?;
         }};
     }
@@ -420,7 +420,7 @@ pub fn run_task(
         task_tag::PosixSignalTask => {
             // `ptr` here is *not* a pointer but a packed signal number.
             let _ = core::marker::PhantomData::<PosixSignalTask>;
-            bun_jsc::posix_signal_handle::PosixSignalTask::run_from_js_thread(
+            crate::vm::posix_signal_handle::PosixSignalTask::run_from_js_thread(
                 task.ptr as usize as u8,
                 global,
             );
@@ -827,7 +827,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_io_error(
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// `bun_jsc::event_loop` extern impls (link-time)
+// `crate::vm::event_loop` extern impls (link-time)
 // ════════════════════════════════════════════════════════════════════════════
 
 /// `__bun_run_immediate_task` body — cast the low-tier erased `*mut ()` to the
@@ -840,7 +840,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_io_error(
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_immediate_task(
     task: *mut (),
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+    vm: *mut crate::vm::virtual_machine::VirtualMachine,
 ) -> bool {
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
@@ -863,7 +863,7 @@ pub(crate) unsafe fn __bun_run_immediate_task(
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_cancel_pending_immediate(
     task: *mut (),
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+    vm: *mut crate::vm::virtual_machine::VirtualMachine,
 ) {
     // SAFETY: per fn contract — the only producer (`TimerObjectInternals::init`)
     // stores a `*mut crate::timer::ImmediateObject`, so the cast is the identity.
@@ -884,7 +884,7 @@ pub(crate) unsafe fn __bun_cancel_pending_immediate(
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_run_wtf_timer(
     timer: *mut (),
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+    vm: *mut crate::vm::virtual_machine::VirtualMachine,
 ) {
     // SAFETY: per fn contract — the only producer (`WTFTimer::update`) stores a
     // `*mut crate::timer::WTFTimer`, so the cast is the identity.
@@ -1126,7 +1126,7 @@ pub unsafe fn __bun_js_timer_epoch(
 }
 
 /// `__bun_tick_queue_with_count` body — declared `extern "Rust"` in
-/// `bun_jsc::event_loop`. `el` is the queue to drain; for
+/// `crate::vm::event_loop`. `el` is the queue to drain; for
 /// `SpawnSyncEventLoop.tickTasksOnly`
 /// this is the isolated loop, **not** `vm.event_loop()`.
 ///
@@ -1136,7 +1136,7 @@ pub unsafe fn __bun_js_timer_epoch(
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_tick_queue_with_count(
     el: *mut EventLoop,
-    vm: *mut bun_jsc::virtual_machine::VirtualMachine,
+    vm: *mut crate::vm::virtual_machine::VirtualMachine,
     counter: &mut u32,
 ) -> Result<(), JsTerminated> {
     // SAFETY: per fn contract.
@@ -1144,11 +1144,11 @@ pub(crate) unsafe fn __bun_tick_queue_with_count(
     tick_queue_with_count(el, vm_ref, counter)
 }
 
-// (former duplicate `__bun_run_tasks` removed r6 — `bun_jsc::task::run_tasks`
+// (former duplicate `__bun_run_tasks` removed r6 — `crate::vm::task::run_tasks`
 // had no callers; `__bun_tick_queue_with_count` above is the sole entry point.)
 
 /// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
-/// `bun_jsc::event_loop`. Called from `release_queued_tasks_for_shutdown` on
+/// `crate::vm::event_loop`. Called from `release_queued_tasks_for_shutdown` on
 /// the JS thread for every queued task that will never be dispatched (the JS
 /// thread is past `global_exit`'s `is_shutting_down` flip and the loop will
 /// not tick again), after the HTTP daemon has parked and before

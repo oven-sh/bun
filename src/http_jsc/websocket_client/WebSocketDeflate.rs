@@ -64,7 +64,7 @@ pub struct PerMessageDeflate {
     pub compress_stream: zlib::DeflateEncoder,
     pub decompress_stream: zlib::InflateDecoder,
     pub params: Params,
-    // VM `bun_jsc::RareData` would be the natural owner (pooled libdeflate
+    // VM `crate::vm::RareData` would be the natural owner (pooled libdeflate
     // handles, shared across connections), but the concrete type is *this*
     // `RareData`, which `bun_jsc` cannot name without a dep cycle, so each
     // connection owns a fresh instance instead: a per-connection libdeflate
@@ -105,7 +105,7 @@ pub enum CompressError {
 }
 
 impl PerMessageDeflate {
-    pub(crate) fn init(params: Params) -> crate::Result<Box<Self>> {
+    pub(crate) fn init(params: Params) -> crate::http_jsc::Result<Box<Self>> {
         // Initialize compressor (deflate)
         // We use negative window bits for raw DEFLATE, as required by RFC 7692.
         let compress_stream = zlib::DeflateEncoder::new(
@@ -114,12 +114,12 @@ impl PerMessageDeflate {
             Z_DEFAULT_MEM_LEVEL,
             Z_DEFAULT_STRATEGY,
         )
-        .map_err(|_| crate::Error::DeflateInitFailed)?;
+        .map_err(|_| crate::http_jsc::Error::DeflateInitFailed)?;
 
         // Initialize decompressor (inflate)
         let decompress_stream =
             zlib::InflateDecoder::new(-(params.server_max_window_bits as c_int))
-                .map_err(|_| crate::Error::InflateInitFailed)?;
+                .map_err(|_| crate::http_jsc::Error::InflateInitFailed)?;
 
         Ok(Box::new(Self {
             params,

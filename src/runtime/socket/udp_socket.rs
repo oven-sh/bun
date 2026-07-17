@@ -3,10 +3,10 @@ use core::ffi::{c_char, c_int, c_void};
 
 use bun_core::{String as BunString, ZigStringSlice};
 use bun_loop::KeepAlive;
-use bun_jsc::JsCell;
-use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::JsCell;
+use crate::array_buffer::BinaryType;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, Ref as JscRef,
     StringJsc, SysErrorJsc, SystemError,
 };

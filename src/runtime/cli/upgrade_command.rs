@@ -11,7 +11,7 @@ use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 #[allow(unused_imports)]
 use bun_core::paths::{self, PathBuffer, SEP_STR};

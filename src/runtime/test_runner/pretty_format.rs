@@ -4,7 +4,7 @@ use core::ffi::c_void;
 
 use bun_core::collections::HashMap;
 use bun_core::{fmt as bun_fmt, Output};
-use bun_jsc::{
+use crate::{
     self as jsc, ComptimeStringMapExt as _, JSGlobalObject, JSObject,
     JSPropertyIterator, JSType, JSValue, JsError, JsResult, VM,
 };
@@ -2694,13 +2694,13 @@ impl<'a> Formatter<'a> {
 }
 
 /// Bridge so the `Response`/`Request`/`Blob`/`BuildArtifact` `write_format`
-/// hooks (typed `F: bun_jsc::ConsoleFormatter`) can re-enter this formatter
+/// hooks (typed `F: crate::vm::ConsoleFormatter`) can re-enter this formatter
 /// for nested values. The trait is the layering seam — it lives in `bun_jsc`,
 /// the webcore types call through it generically, and this file supplies the
-/// test-runner-specific dispatch. Mirrors the `bun_jsc::console_object`
+/// test-runner-specific dispatch. Mirrors the `crate::vm::console_object`
 /// `Formatter` impl (`src/jsc/lib.rs`) one-for-one, mapping the
-/// `bun_jsc::FormatTag` enum onto this file's smaller `Tag` set.
-impl bun_jsc::ConsoleFormatter for Formatter<'_> {
+/// `crate::vm::FormatTag` enum onto this file's smaller `Tag` set.
+impl crate::vm::ConsoleFormatter for Formatter<'_> {
     #[inline]
     fn global_this(&self) -> &JSGlobalObject { self.global_this }
     #[inline]
@@ -2723,12 +2723,12 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     }
     fn print_as<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
-        tag: bun_jsc::FormatTag,
+        tag: crate::vm::FormatTag,
         writer: &mut W,
         value: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
-        use bun_jsc::FormatTag as Ft;
+        use crate::vm::FormatTag as Ft;
         // Map the wider `console_object::Tag` onto this file's `Tag`. Only the
         // variants the `write_format` hooks actually emit are reachable
         // (Boolean / Double / Object / Private / String); the rest collapse
@@ -2782,7 +2782,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
 /// Duck-type surface that [`JestPrettyFormat::print_asymmetric_matcher`] needs
 /// from a formatter. This trait is
 /// implemented for both [`Formatter`] (this module) and
-/// [`bun_jsc::console_object::Formatter`] so the same body serves the test
+/// [`crate::vm::console_object::Formatter`] so the same body serves the test
 /// runner *and* `console.log`'s `.Private` arm (via the
 /// `RuntimeHooks::console_print_runtime_object` hook).
 pub trait AsymmetricMatcherFormatter {
@@ -2793,7 +2793,7 @@ pub trait AsymmetricMatcherFormatter {
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
     fn amf_print_as<const C: bool>(
         &mut self,
-        tag: bun_jsc::FormatTag,
+        tag: crate::vm::FormatTag,
         w: &mut dyn bun_loop::Write,
         v: JSValue,
         cell: JSType,
@@ -2809,7 +2809,7 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
     fn amf_print_as<const C: bool>(
         &mut self,
-        tag: bun_jsc::FormatTag,
+        tag: crate::vm::FormatTag,
         w: &mut dyn bun_loop::Write,
         v: JSValue,
         cell: JSType,
@@ -2818,11 +2818,11 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
         // mapping + `format` dispatch). `AsFmt` adapts `dyn bun_loop::Write` →
         // `core::fmt::Write` for the trait method's signature.
         let mut bridge = AsFmt::new(w);
-        <Self as bun_jsc::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
+        <Self as crate::vm::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
     }
 }
 
-impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
+impl AsymmetricMatcherFormatter for crate::vm::console_object::Formatter<'_> {
     #[inline]
     fn amf_add_for_new_line(&mut self, n: usize) { self.add_for_new_line(n); }
     #[inline]
@@ -2831,14 +2831,14 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_quote_strings(&mut self) -> &mut bool { &mut self.quote_strings }
     fn amf_print_as<const C: bool>(
         &mut self,
-        tag: bun_jsc::FormatTag,
+        tag: crate::vm::FormatTag,
         w: &mut dyn bun_loop::Write,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
         let global = self.global_this;
         self.format::<C>(
-            bun_jsc::console_object::formatter::TagResult { tag: tag.into(), cell },
+            crate::vm::console_object::formatter::TagResult { tag: tag.into(), cell },
             w,
             v,
             global,
@@ -2968,7 +2968,7 @@ impl JestPrettyFormat {
                 writer.write_all(b"ObjectContaining ");
             }
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                bun_jsc::FormatTag::Object, &mut *writer.ctx, object_value, JSType::Object,
+                crate::vm::FormatTag::Object, &mut *writer.ctx, object_value, JSType::Object,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringContaining>() {
             let Some(substring_value) =
@@ -2987,7 +2987,7 @@ impl JestPrettyFormat {
                 writer.write_all(b"StringContaining ");
             }
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                bun_jsc::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
+                crate::vm::FormatTag::String, &mut *writer.ctx, substring_value, JSType::String,
             )?;
         } else if let Some(matcher) = value.as_class_ref::<expect::ExpectStringMatching>() {
             let Some(test_value) = expect_js::string_matching::test_value_get_cached(value)
@@ -3010,7 +3010,7 @@ impl JestPrettyFormat {
                 *this.amf_quote_strings() = false;
             }
             this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                bun_jsc::FormatTag::String, &mut *writer.ctx, test_value, JSType::String,
+                crate::vm::FormatTag::String, &mut *writer.ctx, test_value, JSType::String,
             )?;
             *this.amf_quote_strings() = original_quote_strings;
         } else if let Some(instance) = value.as_class_ref::<expect::ExpectCustomAsymmetricMatcher>() {
@@ -3042,7 +3042,7 @@ impl JestPrettyFormat {
                 writer.print(format_args!("{}", matcher_name));
                 writer.write_all(b" ");
                 this.amf_print_as::<ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
+                    crate::vm::FormatTag::Array, &mut *writer.ctx, args_value, JSType::Array,
                 )?;
             }
         } else {

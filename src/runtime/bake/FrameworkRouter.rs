@@ -11,7 +11,7 @@ use bun_core::alloc_impl::{AllocError, Arena, ArenaVec};
 use bun_core::collections::array_hash_map::ArrayHashContext;
 use bun_core::collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
-use bun_jsc::{
+use crate::{
     CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
 };
 use bun_core::paths::{self as paths, MAX_PATH_BYTES, PathBuffer};

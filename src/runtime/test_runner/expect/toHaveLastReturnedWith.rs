@@ -1,6 +1,6 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::FormatterTestExt;
-use bun_jsc::console_object::Formatter;
+use crate::vm::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::Expect;

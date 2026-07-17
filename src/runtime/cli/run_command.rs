@@ -14,9 +14,9 @@ use bun_core::collections::{ArrayHashMap, StringHashMap};
 use bun_core::{self as core, Environment, Global, Output, ZStr};
 use bun_core::{pretty, pretty_errorln, prettyln};
 use bun_dotenv as DotEnv;
-use bun_jsc::js_promise::Status as PromiseStatus;
-use bun_jsc::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::js_promise::Status as PromiseStatus;
+use crate::vm::virtual_machine::{InitOptions as VmInitOptions, VirtualMachine};
+use crate::{JSGlobalObject, JSValue};
 use bun_md::root as md;
 use bun_options_types::schema::api;
 #[cfg(windows)]
@@ -394,7 +394,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ipc: ipc_fd,
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
+                loop_: crate::vm::EventLoopHandle::init_mini(
                     bun_loop::MiniEventLoop::init_global(
                         // SAFETY: same lifetime erasure as the `!use_system_shell`
                         // branch above — `env` outlives the mini event loop.
@@ -1075,7 +1075,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
+        crate::vm::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         vm.env_loader().load_tracy();
 
@@ -1167,7 +1167,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
                 as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
         };
-        let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
+        let vm_ptr = VirtualMachine::init_with_module_graph(crate::vm::virtual_machine::Options {
             log: std::ptr::NonNull::new(ctx.log),
             args: ctx.args.clone(),
             graph: Some(graph_dyn),
@@ -1223,7 +1223,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         vm.load_extra_env_and_source_code_printer();
         vm.is_main_thread = true;
-        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
+        crate::vm::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
@@ -1475,7 +1475,7 @@ impl Run {
                 // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
-                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
+                    crate::vm::hot_reloader::HotReloader::enable_hot_module_reloading(
                         self.vm,
                         Some(entry),
                     )
@@ -1485,7 +1485,7 @@ impl Run {
                 // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM
                 // (process-lifetime); it outlives the leaked reloader.
                 unsafe {
-                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
+                    crate::vm::hot_reloader::WatchReloader::enable_hot_module_reloading(
                         self.vm,
                         Some(entry),
                     )
@@ -1617,10 +1617,10 @@ impl Run {
                 // SAFETY: `vals[..1]` is the single stack `to_print`; null
                 // `ctype` routes to the VM's stdout/stderr default.
                 unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
+                    crate::vm::ConsoleObject::message_with_type_and_level(
                         ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
+                        crate::vm::ConsoleObject::MessageType::Log,
+                        crate::vm::ConsoleObject::MessageLevel::Log,
                         vm.global(),
                         &raw const to_print,
                         1,
@@ -2166,7 +2166,7 @@ impl RunCommand {
             use_execve_on_macos: silent,
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
-                loop_: bun_jsc::EventLoopHandle::init_mini(
+                loop_: crate::vm::EventLoopHandle::init_mini(
                     bun_loop::MiniEventLoop::init_global(
                         Some(unsafe {
                             // SAFETY: env loader is process-lifetime; erase

@@ -13,7 +13,7 @@
 //!
 //! Note that we only check for potential updates ot this timer once per event loop tick.
 
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_uws::Loop;
 
 use crate::jsc_hooks::timer_all;

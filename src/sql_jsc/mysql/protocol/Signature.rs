@@ -1,8 +1,8 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::sql::jsc::{JSGlobalObject, JSValue};
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
 
-use crate::mysql::my_sql_statement::Param;
+use crate::sql::mysql::my_sql_statement::Param;
 
 #[derive(Default)]
 pub struct Signature {
@@ -22,15 +22,15 @@ impl Signature {
 
     // `deinit` deleted — body only freed owned slices; `Box<[T]>` fields drop automatically.
 
-    // Errors are collapsed into the crate-wide `crate::Error` currency.
+    // Errors are collapsed into the crate-wide `crate::sql::Error` currency.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
         array_value: JSValue,
         columns: JSValue,
-    ) -> crate::Result<Signature> {
-        use crate::jsc::js_error_to_mysql;
-        use crate::shared::query_binding_iterator::QueryBindingIterator;
+    ) -> crate::sql::Result<Signature> {
+        use crate::sql::jsc::js_error_to_mysql;
+        use crate::sql::shared::query_binding_iterator::QueryBindingIterator;
 
         let mut fields: Vec<Param> = Vec::new();
         let mut name: Vec<u8> = Vec::with_capacity(query.len());
@@ -54,7 +54,7 @@ impl Signature {
             }
             let mut unsigned = false;
             let tag =
-                crate::mysql::my_sql_value::field_type_from_js(global_object, value, &mut unsigned)
+                crate::sql::mysql::my_sql_value::field_type_from_js(global_object, value, &mut unsigned)
                     .map_err(js_error_to_mysql)?;
             if unsigned {
                 name.push(b'U');
@@ -74,7 +74,7 @@ impl Signature {
         }
 
         if iter.any_failed() {
-            return Err(crate::Error::InvalidQueryBinding);
+            return Err(crate::sql::Error::InvalidQueryBinding);
         }
 
         Ok(Signature {

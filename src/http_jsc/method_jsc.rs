@@ -2,7 +2,7 @@
 
 use bun_core::{OwnedString, String as BunString};
 use bun_core::http_types::Method::Method;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
+use crate::{JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 unsafe extern "C" {
     // SAFETY (safe fn): `Method` is a `#[repr(uN)]` scalar; `JSGlobalObject` is an

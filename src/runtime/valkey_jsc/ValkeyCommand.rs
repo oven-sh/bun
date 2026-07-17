@@ -1,5 +1,5 @@
 use bun_core::collections::linear_fifo::{DynamicBuffer, LinearFifo};
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
+use crate::{self as jsc, JSGlobalObject, JSValue, JsResult};
 use bun_core::valkey::valkey_protocol as protocol;
 
 use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};

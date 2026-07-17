@@ -1,7 +1,7 @@
 use bun_core::collections::HashMap;
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, wtf};
 use bun_parsers::toml::TOML;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {

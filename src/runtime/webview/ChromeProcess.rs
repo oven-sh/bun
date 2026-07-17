@@ -28,9 +28,9 @@ use bun_core::ZStr;
 use bun_core::{self, getenv_z, strings, zstr};
 #[cfg(not(windows))]
 use bun_core::{ZBox, env_var};
-use bun_jsc::JSGlobalObject;
+use crate::JSGlobalObject;
 #[cfg(not(windows))]
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_core::{declare_scope, scoped_log};
 #[allow(unused_imports)]
 use bun_core::paths::{self, path_buffer_pool, platform, resolve_path};

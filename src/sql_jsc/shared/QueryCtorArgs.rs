@@ -2,7 +2,7 @@
 //! simple?)` constructor-argument parsing/validation used by both the
 //! Postgres and MySQL query constructors.
 
-use crate::jsc::{JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult};
+use crate::sql::jsc::{JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsResult};
 
 pub(crate) struct QueryCtorArgs {
     pub query: JSValue,
@@ -16,7 +16,7 @@ pub(crate) struct QueryCtorArgs {
 impl QueryCtorArgs {
     pub(crate) fn parse(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<Self> {
         let mut args =
-            crate::jsc::call_frame::ArgumentsSlice::init(global_this.sql_vm(), arguments);
+            crate::sql::jsc::call_frame::ArgumentsSlice::init(global_this.sql_vm(), arguments);
         let Some(query) = args.next_eat() else {
             return Err(global_this.throw(format_args!("query must be a string")));
         };

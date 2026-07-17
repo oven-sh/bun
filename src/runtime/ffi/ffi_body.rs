@@ -12,7 +12,7 @@ use crate::napi;
 use bun_core::collections::StringArrayHashMap;
 use bun_core::{ZBox, env_var, fmt as bun_fmt, zstr};
 use bun_core::{ZStr, ZigString};
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsCell, JsClass,
     JsError, JsResult, SystemError, ZigStringJsc,
 };

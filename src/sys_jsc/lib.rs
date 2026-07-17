@@ -16,7 +16,7 @@ pub use error_jsc::ErrorJsc;
 pub use fd_jsc::FdJsc;
 
 // Re-export the JSC types this crate's API surface needs.
-pub use bun_jsc::{
+pub use crate::{
     CallFrame, FromJsEnum, JSGlobalObject, JSPromise, JSString, JSValue, JsError, JsResult,
     RangeErrorOptions, SystemError, VM,
 };

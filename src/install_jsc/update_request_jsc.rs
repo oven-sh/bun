@@ -1,6 +1,6 @@
 //! JSC bridge for `bun.install.PackageManager.UpdateRequest`.
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     use bun_ast::Log;
@@ -49,7 +49,7 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     ) {
         Ok(v) => v,
         Err(_) => {
-            return Err(global.throw_value(crate::dependency_jsc::log_to_js(
+            return Err(global.throw_value(crate::install_jsc::dependency_jsc::log_to_js(
                 &log,
                 global,
                 b"Failed to parse dependencies",
@@ -61,7 +61,7 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     }
 
     if !log.msgs.is_empty() {
-        return Err(global.throw_value(crate::dependency_jsc::log_to_js(
+        return Err(global.throw_value(crate::install_jsc::dependency_jsc::log_to_js(
             &log,
             global,
             b"Failed to parse dependencies",
@@ -81,7 +81,7 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     object.put(
         global,
         b"version",
-        crate::dependency_jsc::version_to_js(
+        crate::install_jsc::dependency_jsc::version_to_js(
             &update_requests[0].version,
             update_requests[0].version_buf(),
             global,

@@ -47,7 +47,7 @@ pub mod jsc {
     /// nominal type.
     pub(crate) use crate::api::js_bundler::Plugin;
     pub(crate) use crate::jsc::*;
-    pub(crate) use bun_jsc::debugger::DebuggerId;
+    pub(crate) use crate::vm::debugger::DebuggerId;
 }
 
 pub const API_NAME: &str = "app";

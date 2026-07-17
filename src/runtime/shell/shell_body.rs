@@ -6,16 +6,16 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_core::alloc_impl::Arena as Bump;
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
     MarkedArgumentBuffer, PlatformEventLoop,
 };
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
+use crate::{StringJsc as _, SysErrorJsc as _};
 // `VirtualMachine`/`MiniEventLoop` are re-exported as *modules* by bun_jsc; pull the inner types.
 use bun_core::strings;
 use bun_core::{OwnedString, String as BunString, ZStr};
-use bun_jsc::MiniEventLoop::MiniEventLoop;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::MiniEventLoop::MiniEventLoop;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_core::simdutf_sys::simdutf;
 use bun_sys::{self as sys, Fd, SystemError};
 
@@ -390,7 +390,7 @@ impl<'a> GlobalMini<'a> {
         // `AnyTaskWithExtraContext::from`).
         run_from_main_thread_mini: fn(*mut T, *mut ()),
     ) {
-        use bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+        use crate::vm::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
         let anytask = bun_core::heap::into_raw(Box::new(AnyTaskWithExtraContext::default()));
         // SAFETY: `anytask` was just heap-allocated and is exclusively owned here.
         unsafe { (*anytask).from(task, run_from_main_thread_mini) };

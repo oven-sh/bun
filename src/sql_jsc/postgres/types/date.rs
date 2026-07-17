@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::sql::jsc::{JSGlobalObject, JSValue, JsResult};
 
 // Postgres stores timestamp and timestampz as microseconds since 2000-01-01
 // This is a signed 64-bit integer.
@@ -22,7 +22,7 @@ pub fn from_binary(bytes: &[u8]) -> f64 {
 /// `Date.parse`. `timestamptz` and `date` already decode correctly via
 /// `Date.parse` and must NOT be routed here.
 pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
-    let parsed = crate::shared::datetime_text::parse_postgres_timestamp(bytes)?;
+    let parsed = crate::sql::shared::datetime_text::parse_postgres_timestamp(bytes)?;
     global_object
         .gregorian_date_time_to_ms_utc(
             i32::from(parsed.year),
@@ -46,7 +46,7 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
     } else if value.is_string() {
         let mut str =
             bun_core::OwnedString::new(value.to_bun_string(global_object).expect("unreachable"));
-        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
+        crate::sql::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
     } else {
         return Ok(0);
     };

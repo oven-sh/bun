@@ -1,16 +1,16 @@
-use crate::jsc::JSValue;
+use crate::sql::jsc::JSValue;
 use bun_core::collections::linear_fifo::{DynamicBuffer, LinearFifo};
-use bun_jsc::JsCell;
+use crate::JsCell;
 use bun_core::ptr::ParentRef;
 use bun_sql::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use crate::mysql::js_mysql_query::JSMySQLQuery;
+use crate::sql::mysql::js_mysql_query::JSMySQLQuery;
 // The queue's "connection" param is the JS-wrapper type (it calls
 // `reset_connection_timeout`/`on_error` which live on the wrapper, plus
 // `is_able_to_write` which forwards to the inner protocol struct).
-use crate::mysql::js_mysql_connection::JSMySQLConnection as MySQLConnection;
+use crate::sql::mysql::js_mysql_connection::JSMySQLConnection as MySQLConnection;
 
 bun_core::define_scoped_log!(debug, MySQLRequestQueue, visible);
 

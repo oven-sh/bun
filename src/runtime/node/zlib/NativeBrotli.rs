@@ -52,7 +52,7 @@ mod _impl {
     use core::cell::Cell;
     use core::ffi::c_uint;
 
-    use bun_jsc::{
+    use crate::{
         CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, RangeErrorOptions,
         StrongOptional, WorkPoolTask,
     };

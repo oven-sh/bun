@@ -3,12 +3,12 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_core::zig_string::Slice as ZigStringSlice;
-use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::generated::{
+use crate::array_buffer::BinaryType;
+use crate::generated::{
     SocketConfig as GeneratedSocketConfig, SocketConfigHandlers as GeneratedSocketConfigHandlers,
 };
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{GlobalRef, JSGlobalObject, JSValue, JsResult, Strong};
 use bun_sys::Fd;
 use bun_uws as uws;
 
@@ -451,7 +451,7 @@ impl Scope {
     }
 }
 
-use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
+use crate::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 pub struct SocketConfig {
     pub hostname_or_unix: ZigStringSlice,
@@ -588,4 +588,4 @@ impl SocketConfig {
     }
 }
 
-use bun_jsc::generated::SocketConfigTls as GeneratedTls;
+use crate::generated::SocketConfigTls as GeneratedTls;

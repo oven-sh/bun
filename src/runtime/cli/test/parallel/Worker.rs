@@ -15,7 +15,7 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use bun_core::{self, Output};
 use bun_loop as r#async;
 use bun_loop;
-use bun_jsc as jsc;
+use crate as jsc;
 use bun_sys;
 
 use super::channel::{Channel, ChannelOwner};

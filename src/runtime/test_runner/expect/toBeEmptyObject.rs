@@ -1,4 +1,4 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the

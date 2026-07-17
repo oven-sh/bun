@@ -10,13 +10,13 @@ use bun_core::{self, Output, ZBox};
 use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_sys::glob as glob;
 use bun_loop::KeepAlive;
-use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::vm::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult,
     WorkPool, WorkPoolTask,
 };
-use bun_jsc::{StringJsc as _, SysErrorJsc as _};
+use crate::{StringJsc as _, SysErrorJsc as _};
 use bun_sys::libarchive as libarchive;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
@@ -90,7 +90,7 @@ impl Archive {
         writer: &mut W,
     ) -> crate::Result<()>
     where
-        F: bun_jsc::ConsoleFormatter,
+        F: crate::vm::ConsoleFormatter,
         W: core::fmt::Write,
     {
         let data = self.store.shared_view();

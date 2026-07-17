@@ -1,11 +1,11 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
+use crate::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_core::ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};
 
-use crate::api::bun_loop::stdio::Stdio;
+use crate::api::bun_spawn::stdio::Stdio;
 use crate::node::types::FdJsc;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
@@ -183,7 +183,7 @@ impl<'a> Writable<'a> {
         let global = event_loop.global_ref();
 
         // `FileSink::create` / `StaticPipeWriter::create` take
-        // `bun_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
+        // `bun_loop::EventLoopHandle`, not `&crate::vm::EventLoop`; erase to
         // the vtable-backed handle once and reuse for all arms (both platforms).
         // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
         // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.

@@ -158,9 +158,9 @@ macro_rules! impl_timer_object {
                     );
                 }
                 if global.bun_vm().as_mut().is_inspector_enabled() {
-                    ::bun_jsc::Debugger::did_schedule_async_call(
+                    ::crate::vm::Debugger::did_schedule_async_call(
                         global,
-                        ::bun_jsc::Debugger::AsyncCallType::DOMTimer,
+                        ::crate::vm::Debugger::AsyncCallType::DOMTimer,
                         super::ID { id, kind: kind.big() }.async_id(),
                         kind != super::Kind::SetInterval,
                     );
@@ -394,7 +394,7 @@ impl DateHeaderTimer {
 
     /// Refresh the cached `Date:` header and
     /// reschedule for 1s later iff there are active connections.
-    pub(crate) fn run(&mut self, vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn run(&mut self, vm: &mut crate::vm::virtual_machine::VirtualMachine) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
         // `uws_loop_mut` is the audited safe accessor (loop owned by the VM,
         // separate allocation from `RuntimeState.timer` so no aliasing with
@@ -455,7 +455,7 @@ impl EventLoopDelayMonitor {
 
     pub(crate) fn enable(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        _vm: &mut crate::vm::virtual_machine::VirtualMachine,
         histogram: JSValue,
         resolution_ms: i32,
     ) {
@@ -479,7 +479,7 @@ impl EventLoopDelayMonitor {
         unsafe { (*Self::timer_all()).insert(elt) };
     }
 
-    pub(crate) fn disable(&mut self, _vm: &mut bun_jsc::virtual_machine::VirtualMachine) {
+    pub(crate) fn disable(&mut self, _vm: &mut crate::vm::virtual_machine::VirtualMachine) {
         if !self.enabled {
             return;
         }
@@ -495,7 +495,7 @@ impl EventLoopDelayMonitor {
     /// into the JS histogram and reschedule.
     pub(crate) fn on_fire(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
+        _vm: &mut crate::vm::virtual_machine::VirtualMachine,
         now: &bun_loop::EventLoopTimer::Timespec,
     ) {
         if !self.enabled || self.js_histogram.is_empty() {
@@ -549,7 +549,7 @@ pub use timer_object_internals::{Flags as TimerFlags, TimerObjectInternals};
 /// this crate depends on). Re-exported here so `All::update`'s
 /// field-parent-pointer epoch-bump and `dispatch::fire_timer` resolve the same
 /// `event_loop_timer`/`flags` offsets the low tier wrote.
-pub use crate::jsc::abort_signal::Timeout as AbortSignalTimeout;
+pub use crate::vm::abort_signal::Timeout as AbortSignalTimeout;
 
 pub use self::immediate_object::ImmediateObject;
 pub use self::timeout_object::TimeoutObject;
@@ -701,7 +701,7 @@ impl All {
         if self.uv_timer.data.is_null() {
             self.uv_timer.init(uv::Loop::get());
             self.uv_timer.data =
-                bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
+                crate::vm::virtual_machine::VirtualMachine::get_mut_ptr().cast::<core::ffi::c_void>();
             self.uv_timer.unref();
         }
 
@@ -930,7 +930,7 @@ impl All {
     /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
     ///
     /// Note (b2): `vm` is erased per §Dispatch (the caller is in
-    /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
+    /// `crate::vm::event_loop` which can't name `bun_runtime`). The two reads
     /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
     /// passed in pre-computed until the cycle is broken.
     ///
@@ -1108,7 +1108,7 @@ impl All {
                     self.uv_idle.init(uv::Loop::get());
                     // Note: `data` is only used as a
                     // non-null "initialized" sentinel — never dereferenced.
-                    self.uv_idle.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()
+                    self.uv_idle.data = crate::vm::virtual_machine::VirtualMachine::get_mut_ptr()
                         .cast::<core::ffi::c_void>();
                 }
                 self.uv_idle.start(Some(Self::on_uv_idle_noop));
@@ -1181,7 +1181,7 @@ impl All {
     /// alias.
     pub unsafe fn cancel_all_timeout_objects(
         this: *mut Self,
-        vm: *mut crate::jsc::virtual_machine::VirtualMachine,
+        vm: *mut crate::vm::virtual_machine::VirtualMachine,
     ) {
         let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
@@ -1258,7 +1258,7 @@ impl All {
                 let signal = (*t).signal;
                 (*t).signal = core::ptr::null_mut();
                 if !signal.is_null() {
-                    crate::jsc::abort_signal::AbortSignal::opaque_ref(signal).unref();
+                    crate::vm::abort_signal::AbortSignal::opaque_ref(signal).unref();
                 }
             }
         }
@@ -1285,7 +1285,7 @@ pub(crate) enum CountdownOverflowBehavior {
 
 // LAYERING: `Kind`/`KindBig` moved DOWN to `bun_event_loop` so `TimerFlags`
 // (also moved down) can name them without a `bun_runtime` dep — needed by
-// `bun_jsc::abort_signal::Timeout.flags`. `Kind::big()` lives next to the
+// `crate::vm::abort_signal::Timeout.flags`. `Kind::big()` lives next to the
 // type so `TimeoutObject`/`TimerObjectInternals` can call it as a method.
 pub use bun_loop::EventLoopTimer::{Kind, KindBig};
 

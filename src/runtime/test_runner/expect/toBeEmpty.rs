@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
+use crate::{CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsResult, VM};
 
 use super::Expect;
 

@@ -5,8 +5,8 @@ use std::io::Write as _;
 use bun_core::collections::{ByteVecExt, VecExt};
 use bun_core::MutableString;
 use bun_http::HeadersExt as _;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 // Re-exports (thin aliases)
 pub use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
@@ -442,7 +442,7 @@ pub(crate) fn writable_stream(
             let event_loop = global.bun_vm().as_mut().event_loop();
             // SAFETY: event_loop is initialised for the lifetime of the VM.
             // RAII: `enter()` now, `exit()` on drop.
-            let _exit_guard = unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+            let _exit_guard = unsafe { crate::vm::event_loop::EventLoop::enter_scope(event_loop) };
             match result {
                 S3UploadResult::Success => {
                     if sink.flush_promise.has_value() {

@@ -1,7 +1,7 @@
 //! JS testing bindings for `bun.patch`. Keeps `src/patch/` free of JSC types.
 
 use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{
+use crate::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc,
 };
 use bun_loop::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
@@ -36,7 +36,7 @@ impl TestingAPIs {
         // `git_diff_internal` routes through `bun_loop::sync`, which on
         // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
         // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-        let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
+        let mut loop_ = crate::vm::AnyEventLoop::js(global.bun_vm().event_loop().cast());
         let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {
             Ok(d) => d,
             Err(e) => return Err(global.throw_error(e, "failed to make diff")),

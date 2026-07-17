@@ -18,10 +18,10 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::{
+use crate::ZigStringJsc as _;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::zig_string::ZigString as JscZigString;
+use crate::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
     StringJsc,
@@ -115,14 +115,14 @@ impl Default for Config {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `from_js` enum lookups for `Loader`/`Target`. The canonical implementation
-// lives in `bun_bundler_jsc::options_jsc` and
+// lives in `crate::bundler_jsc::options_jsc` and
 // carries the spec'd error semantics (throw `TypeError` on non-string / unknown
 // loader). The earlier local shims here only did a bare `phf` lookup and
 // silently returned `None` for unknown loaders, breaking
 // `transpiler-utf16-loader.test.ts`.
 // ──────────────────────────────────────────────────────────────────────────
 
-use bun_bundler_jsc::options_jsc::{loader_from_js, target_from_js};
+use crate::bundler_jsc::options_jsc::{loader_from_js, target_from_js};
 
 fn source_map_option_from_js(
     global: &JSGlobalObject,
@@ -1107,7 +1107,7 @@ impl Drop for JSTranspiler {
     fn drop(&mut self) {
         // `scan()` / `scanImports()` lazily create a `MacroContext` on
         // `self.transpiler` and (unlike `transformSync`) leave it in place
-        // for reuse across calls. The boxed `bun_js_parser_jsc::MacroContext`
+        // for reuse across calls. The boxed `crate::js_parser_jsc::MacroContext`
         // behind `.data` has no `Drop` glue — release it explicitly.
         // `with_mut` borrow is closure-scoped; no JS re-entry inside.
         self.transpiler.with_mut(|t| {

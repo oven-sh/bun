@@ -1,4 +1,4 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 
 // Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's

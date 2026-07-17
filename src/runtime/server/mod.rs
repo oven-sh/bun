@@ -32,7 +32,7 @@ use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 // ─── httplog ─────────────────────────────────────────────────────────────────
 // Output.scoped(.Server, .visible) — debug-build no-op until bun_output wires.
@@ -45,11 +45,11 @@ macro_rules! httplog {
 
 // ─── server-local jsc re-export ──────────────────────────────────────────────
 // `bun_jsc` is now a dep; forward to it. `AsyncTaskTracker` lives under
-// `bun_jsc::debugger`, surfaced flat here for the server drafts that import it.
+// `crate::vm::debugger`, surfaced flat here for the server drafts that import it.
 pub mod jsc {
     pub use crate::jsc::*;
-    pub use bun_jsc::debugger::{AsyncTaskTracker, DebuggerId};
-    pub use bun_jsc::virtual_machine::{ExceptionList, VirtualMachine};
+    pub use crate::vm::debugger::{AsyncTaskTracker, DebuggerId};
+    pub use crate::vm::virtual_machine::{ExceptionList, VirtualMachine};
 }
 
 // ─── compiling submodules ────────────────────────────────────────────────────
@@ -1149,7 +1149,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         resp: &mut uws_sys::NewAppResponse<SSL>,
         upgrade_ctx: *mut uws_sys::WebSocketUpgradeContext,
     ) {
-        use bun_http_jsc::method_jsc::MethodJsc as _;
+        use crate::http_jsc::method_jsc::MethodJsc as _;
         use node_http_response::Flags as NhrFlags;
 
         // SAFETY: `this` is the live server backref registered as the uws
@@ -3671,14 +3671,14 @@ impl AnyServer {
 // ─── http_server_agent ───────────────────────────────────────────────────────
 /// `jsc.Debugger.HTTPServerAgent.{notifyServerStarted, notifyServerStopped,
 /// notifyServerRoutesUpdated}` — the FFI plumbing lives in
-/// `bun_jsc::http_server_agent`; the bodies live here because they reach into
+/// `crate::vm::http_server_agent`; the bodies live here because they reach into
 /// `AnyServer`/`ServerConfig` (forward dep from `bun_jsc`'s point of view).
 pub mod http_server_agent {
     use super::{AnyRoute, AnyServer, AnyServerTag};
 
     use bun_core::String as BunString;
-    use bun_jsc::debugger::DebuggerId;
-    use bun_jsc::http_server_agent::{HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType};
+    use crate::vm::debugger::DebuggerId;
+    use crate::vm::http_server_agent::{HTTPServerAgent, InspectorHTTPServerAgent, Route, RouteType};
 
     /// Assign the server a fresh inspector id and tell the C++ inspector
     /// agent (if attached) that it started, passing its URL and start time.

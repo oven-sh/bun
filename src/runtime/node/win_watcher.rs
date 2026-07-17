@@ -7,7 +7,7 @@ use core::ptr;
 
 use bun_core::collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{String as BunString, ZStr};
-use bun_jsc as jsc;
+use crate as jsc;
 use bun_core::paths::PathBuffer;
 use bun_sys as sys;
 use bun_sys::ReturnCodeExt as _;

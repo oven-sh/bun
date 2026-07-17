@@ -10,8 +10,8 @@ use bun_boringssl_sys as boringssl;
 use bun_core::ZStr;
 use bun_loop::AnyTask::AnyTask;
 use bun_loop::Task;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, SysErrorJsc};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{GlobalRef, JSGlobalObject, SysErrorJsc};
 use bun_core::paths::PathBuffer;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;

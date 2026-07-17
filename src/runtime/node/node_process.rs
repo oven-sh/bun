@@ -4,8 +4,8 @@ use core::ffi::c_char;
 
 use bun_core::env_var::feature_flag;
 use bun_core::{self, Environment, Global};
-use bun_jsc::zig_string::ZigString;
-use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
+use crate::zig_string::ZigString;
+use crate::{JSGlobalObject, JSValue, ZigStringJsc as _};
 
 unsafe extern "C" {
     safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
@@ -124,9 +124,9 @@ pub(crate) static Bun__version_sha: CStrPtr = CStrPtr(
 mod _impl {
     use bun_core::env_var;
     use bun_core::{String as BunString, strings};
-    use bun_jsc::bun_string_jsc;
-    use bun_jsc::zig_string::ZigString;
-    use bun_jsc::{
+    use crate::bun_string_jsc;
+    use crate::zig_string::ZigString;
+    use crate::{
         JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc, WebWorker, ZigStringJsc as _,
     };
     use bun_core::paths::{PathBuffer, SEP};

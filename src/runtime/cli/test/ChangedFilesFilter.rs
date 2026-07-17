@@ -25,10 +25,10 @@ use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
 #[cfg(not(windows))]
 use bun_core::{ZBox, ZStr, getenv_z};
 #[cfg(not(windows))]
-use bun_jsc as jsc;
+use crate as jsc;
 #[cfg(windows)]
-use bun_jsc::EventLoopHandle;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::EventLoopHandle;
+use crate::vm::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_core::paths::SEP;
 #[allow(unused_imports)]

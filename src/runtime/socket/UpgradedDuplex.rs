@@ -15,8 +15,8 @@
 use core::ffi::{CStr, c_uint, c_void};
 use core::ptr::NonNull;
 
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional, host_fn};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, StrongOptional, host_fn};
 use bun_uws::{us_bun_verify_error_t, uws_callback};
 
 use super::ssl_wrapper::SSLWrapper;

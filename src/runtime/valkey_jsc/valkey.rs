@@ -4,8 +4,8 @@ use bun_core::collections::VecExt;
 // This file contains the core Valkey client implementation with protocol handling
 
 use bun_core::collections::OffsetByteList;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
 use bun_core::valkey::valkey_protocol as protocol;
 use bun_core::valkey::valkey_protocol::{RESPValue, RedisError};
@@ -328,7 +328,7 @@ impl DeferredFailure {
             DeferredFailure::run(*this).map_err(Into::into)
         }
         let managed_task =
-            bun_jsc::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
+            crate::vm::ManagedTask::ManagedTask::new(bun_core::heap::into_raw(self), run_raw);
         VirtualMachine::get()
             .event_loop_mut()
             .enqueue_task(managed_task);

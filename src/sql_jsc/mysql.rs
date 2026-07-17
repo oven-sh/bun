@@ -1,11 +1,11 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::sql::jsc::{JSGlobalObject, JSValue};
 
 pub fn create_binding(global_object: &JSGlobalObject) -> JSValue {
     let binding = JSValue::create_empty_object_with_null_prototype(global_object);
     binding.put(
         global_object,
         b"MySQLConnection",
-        crate::jsc::codegen::JSMySQLConnection::get_constructor(global_object),
+        crate::sql::jsc::codegen::JSMySQLConnection::get_constructor(global_object),
     );
     crate::put_host_functions!(
         binding,
@@ -59,7 +59,7 @@ pub mod my_sql_connection;
 //
 // Downstream consumers (`MySQLConnection.rs`, `MySQLRequestQueue.rs`,
 // `MySQLQuery.rs`, `JSMySQLConnection.rs`, `JSMySQLQuery.rs`) import via the
-// `js_mysql_{connection,query}` spelling (matching `crate::jsc::codegen`).
+// `js_mysql_{connection,query}` spelling (matching `crate::sql::jsc::codegen`).
 // Re-export the file-backed modules under those names so there is exactly one
 // type hierarchy — previously a parallel inline stub pair shadowed the real
 // implementations and every method body panicked.

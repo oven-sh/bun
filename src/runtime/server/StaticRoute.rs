@@ -11,7 +11,7 @@ use bun_http::{Headers, Method};
 use bun_core::http_types::ETag;
 
 use bun_core::http_types::MimeType::MimeType;
-use bun_jsc::HTTPHeaderName;
+use crate::HTTPHeaderName;
 use bun_uws::{AnyRequest, AnyResponse};
 
 use crate::server::jsc::{JSGlobalObject, JSValue, JsResult};
@@ -82,7 +82,7 @@ impl StaticRoute {
         blob: AnyBlob,
         options: InitFromBytesOptions<'_>,
     ) -> *mut StaticRoute {
-        let mut headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+        let mut headers = crate::http_jsc::headers_jsc::from_fetch_headers(
             options.headers,
             any_blob_content_type(&blob),
         );
@@ -233,7 +233,7 @@ impl StaticRoute {
                 )?;
             }
 
-            let mut headers: Headers = bun_http_jsc::headers_jsc::from_fetch_headers(
+            let mut headers: Headers = crate::http_jsc::headers_jsc::from_fetch_headers(
                 response.get_init_headers(),
                 any_blob_content_type(&blob),
             );

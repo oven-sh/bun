@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::JsCell;
+use crate::JsCell;
 
 use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
@@ -141,7 +141,7 @@ impl Drop for HeadersRef {
 // `JSValue::default()` and whose `from_js*` return `None`. Importing it
 // silently shadows the real C++ shims.
 pub mod js {
-    pub use bun_jsc::generated::JSResponse::*;
+    pub use crate::generated::JSResponse::*;
 }
 // NOTE: toJS is overridden below.
 // Typed re-exports. The `js::` module erases the payload to `*mut ()`
@@ -675,7 +675,7 @@ impl Response {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: bun_jsc::ConsoleFormatter,
+        F: crate::vm::ConsoleFormatter,
         W: core::fmt::Write,
     {
         // return type narrowed to `core::fmt::Result`. The trait
@@ -701,7 +701,7 @@ impl Response {
             )?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Boolean,
+                    crate::vm::FormatAs::Boolean,
                     writer,
                     JSValue::from(self.is_ok()),
                     bun_jsc::JSType::BooleanObject,
@@ -729,7 +729,7 @@ impl Response {
             )?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Double,
+                    crate::vm::FormatAs::Double,
                     writer,
                     JSValue::js_number(self.init.get().status_code as f64),
                     bun_jsc::JSType::NumberObject,
@@ -762,7 +762,7 @@ impl Response {
             let headers_js = Self::get_headers(self, formatter.global_this()).map_err(js_err)?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Private,
+                    crate::vm::FormatAs::Private,
                     writer,
                     headers_js,
                     bun_jsc::JSType::DOMWrapper,
@@ -779,7 +779,7 @@ impl Response {
             )?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    bun_jsc::FormatAs::Boolean,
+                    crate::vm::FormatAs::Boolean,
                     writer,
                     JSValue::from(self.redirected.get()),
                     bun_jsc::JSType::BooleanObject,
@@ -931,7 +931,7 @@ impl Response {
         // SAFETY: `bun_vm()` returns a raw `*mut VirtualMachine` (PORTING.md
         // §raw-ptr) — borrow it for the duration of args parsing.
         let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+            crate::vm::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
         // `Init`'s field drop glue (HeadersRef + OwnedString)
         // releases its refs on `?`. `Body` has NO `Drop` and its
@@ -1076,7 +1076,7 @@ impl Response {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         // SAFETY: see `construct_json`.
         let mut args =
-            bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
+            crate::vm::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
         // url_string drops (derefs the WTF string) at scope exit
         let url_string: OwnedString;
@@ -1446,7 +1446,7 @@ impl Init {
         if let Some(method_value) =
             response_init.fast_get_truthy(global_this, BuiltinName::method)?
         {
-            if let Some(method) = bun_http_jsc::method_jsc::from_js(global_this, method_value)? {
+            if let Some(method) = crate::http_jsc::method_jsc::from_js(global_this, method_value)? {
                 result.method = method;
             }
         }

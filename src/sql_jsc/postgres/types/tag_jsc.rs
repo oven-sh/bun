@@ -2,7 +2,7 @@
 //! pure helpers stay in `sql/`; only the `JSValue`/`JSGlobalObject`-touching
 //! conversion paths live here.
 
-use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
+use crate::sql::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sql::postgres::types::tag::Tag;
 
 // `Tag` is a runtime arg rather than a const generic: it is a
@@ -11,14 +11,14 @@ use bun_sql::postgres::types::tag::Tag;
 // is a plain match and the only caller (DataCell) computes the tag at runtime
 // anyway.
 // `UnsupportedArrayType` is reported via the crate-wide
-// `crate::Error`.
-pub(crate) fn to_js_typed_array_type(t: Tag) -> crate::Result<JSType> {
+// `crate::sql::Error`.
+pub(crate) fn to_js_typed_array_type(t: Tag) -> crate::sql::Result<JSType> {
     match t {
         Tag::int4_array => Ok(JSType::Int32Array),
         // Tag::int2_array => Ok(JSType::Uint2Array),
         Tag::float4_array => Ok(JSType::Float32Array),
         // Tag::float8_array => Ok(JSType::Float64Array),
-        _ => Err(crate::Error::UnsupportedArrayType),
+        _ => Err(crate::sql::Error::UnsupportedArrayType),
     }
 }
 

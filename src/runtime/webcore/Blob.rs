@@ -8,7 +8,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
 
-use bun_jsc::JsCell;
+use crate::JsCell;
 
 use crate::webcore::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, VirtualMachine,
@@ -20,7 +20,7 @@ use bun_core::{
     OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings,
 };
 use bun_core::http_types::MimeType::MimeType;
-use bun_jsc::StringJsc as _;
+use crate::StringJsc as _;
 use bun_sys::{self, Fd};
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
@@ -104,7 +104,7 @@ pub trait ReadBytesHandler {
 // This crate layers behaviour via the `BlobExt` extension trait below.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::{
+pub use crate::webcore_types::{
     Blob, Blob__deref, Blob__ref, BlobContentType, ClosingState, MAX_SIZE, SizeType,
 };
 
@@ -118,7 +118,7 @@ pub type Ref = bun_core::ptr::ExternalShared<Blob>;
 ///    keeps its window's end across structuredClone/postMessage
 const SERIALIZATION_VERSION: u8 = 4;
 
-pub use bun_jsc::generated::JSBlob as js;
+pub use crate::generated::JSBlob as js;
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -3851,9 +3851,9 @@ impl BlobExt for Blob {
 use crate::image::Image;
 use crate::node;
 use bun_core::string_joiner::StringJoiner;
-use bun_jsc::SysErrorJsc as _;
+use crate::SysErrorJsc as _;
 // `crate::webcore::jsc` glob-reexports `bun_jsc::*` but the double-glob loses
-// `JsTerminatedResult`; alias it locally (same shape as bun_jsc::event_loop).
+// `JsTerminatedResult`; alias it locally (same shape as crate::vm::event_loop).
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 use crate::api::archive::Archive;
 use crate::webcore::s3::client as s3_client;
@@ -3864,8 +3864,8 @@ use crate::webcore::s3_file as S3File;
 use self::write_file as write_file_mod;
 use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_bundler::options_impl::LoaderExt as _;
-use bun_jsc::JsClass as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
+use crate::JsClass as _;
+use crate::zig_string::ZigString as JscZigString;
 
 /// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
 /// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
@@ -5639,7 +5639,7 @@ pub fn jsdom_file_construct_(
         )));
     }
     {
-        use bun_jsc::StringJsc as _;
+        use crate::StringJsc as _;
         // +1 WTF ref; `OwnedString` releases it at scope exit.
         // Every consumer below either
         // copies bytes (`to_owned_slice`) or takes its own ref (`dupe_ref`).
@@ -6313,7 +6313,7 @@ mod zigstring_blob_ext {
         }
     }
 }
-use bun_jsc::zig_string_to_external_u16;
+use crate::zig_string_to_external_u16;
 use zigstring_blob_ext::ZigStringSliceBlobExt as _;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -6851,7 +6851,7 @@ impl Any {
 // `external` on `bun_core::ZigString` are provided by `bun_jsc::ZigStringJsc`
 // (imported above). The legacy `ZigStringBlobExt` name is re-exported for
 // sibling modules (`Request.rs`) that still import it under that name.
-pub(crate) use bun_jsc::ZigStringJsc as ZigStringBlobExt;
+pub(crate) use crate::ZigStringJsc as ZigStringBlobExt;
 
 /// A single-use Blob backed by an allocation of memory.
 #[derive(Default)]
@@ -7271,7 +7271,7 @@ pub trait FileCloser: Sized {
     fn state(&self) -> &core::sync::atomic::AtomicU8;
     fn io_request(&mut self) -> Option<&mut bun_loop::Request>;
     fn io_poll(&mut self) -> &mut bun_loop::Poll;
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
+    fn task(&mut self) -> &mut crate::vm::WorkPoolTask;
     fn update(&mut self);
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_core::libuv_sys::uv_loop_t;
@@ -7285,11 +7285,11 @@ pub trait FileCloser: Sized {
         this.io_poll()
             .flags
             .remove(bun_loop::Flags::WasEverRegistered);
-        *this.task() = bun_jsc::WorkPoolTask {
+        *this.task() = crate::vm::WorkPoolTask {
             node: Default::default(),
             callback: Self::on_close_io_request,
         };
-        bun_jsc::WorkPool::schedule(this.task());
+        crate::vm::WorkPool::schedule(this.task());
     }
 
     /// Intrusive backref: concrete impl supplies its own
@@ -7298,7 +7298,7 @@ pub trait FileCloser: Sized {
     /// Stored in `WorkPoolTask::callback` (raw fn-pointer slot — safe `fn`
     /// coerces). Never called directly; the impl guards its single
     /// `container_of` deref locally, so a fn-level qualifier is redundant.
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
+    fn on_close_io_request(task: *mut crate::vm::WorkPoolTask);
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
         // Check `close_after_io()` before `io_request()` so the immutable
@@ -7345,11 +7345,11 @@ pub trait FileCloser: Sized {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub mod external_shared_descriptor {
-    pub use bun_jsc::webcore_types::Blob__deref as deref;
-    pub use bun_jsc::webcore_types::Blob__ref as ref_;
+    pub use crate::webcore_types::Blob__deref as deref;
+    pub use crate::webcore_types::Blob__ref as ref_;
 }
 
 /// Bindgen adapter for `Blob`. The cycle was broken by hoisting the `Blob`
 /// struct into `bun_jsc::webcore_types`, so the canonical alias lives in
 /// `bun_jsc::bindgen`; re-export it here for `bun_runtime` callers.
-pub use bun_jsc::bindgen::BindgenBlob;
+pub use crate::bindgen::BindgenBlob;

@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_jsc::{JSGlobalObject, JsResult};
+use crate::{JSGlobalObject, JsResult};
 use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {

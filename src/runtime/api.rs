@@ -35,8 +35,8 @@ pub use crate::node;
 // the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
 // depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
 // Exactly one Rust type backs each C++ `m_ctx` pointer.
-pub use bun_jsc::BuildMessage;
-pub use bun_jsc::ResolveMessage;
+pub use crate::BuildMessage;
+pub use crate::ResolveMessage;
 
 // ─── compiling submodules (api/ dir) ─────────────────────────────────────────
 #[path = "api/Archive.rs"]
@@ -203,8 +203,8 @@ pub use crate::node::zlib::native_brotli as NativeBrotli;
 pub use crate::node::zlib::native_zlib as NativeZlib;
 pub use crate::node::zlib::native_zstd as NativeZstd;
 pub use crate::valkey_jsc::js_valkey::JSValkeyClient as Valkey;
-pub use bun_sql_jsc::mysql as MySQL;
-pub use bun_sql_jsc::postgres as Postgres;
+pub use crate::sql::mysql as MySQL;
+pub use crate::sql::postgres as Postgres;
 
 pub use crate::webview::chrome_process as ChromeProcess;
 pub use crate::webview::host_process as WebViewHostProcess;
@@ -284,7 +284,7 @@ fn estring_to_js(
     str: &bun_ast::E::EString,
     global: &bun_jsc::JSGlobalObject,
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-    use bun_jsc::StringJsc as _;
+    use crate::StringJsc as _;
     // NOTE: the text-format parsers never build ropes, so the simple
     // slice → JS path is sufficient.
     if str.is_utf16 {
@@ -310,7 +310,7 @@ fn expr_to_js_with_check(
 ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
     use bun_ast::expr::Data as ExprData;
     use bun_core::collections::VecExt as _;
-    use bun_jsc::JSValue;
+    use crate::JSValue;
 
     if !stack_check.is_safe_to_recurse() {
         return Err(global.throw_stack_overflow());

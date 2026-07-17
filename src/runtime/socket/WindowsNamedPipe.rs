@@ -30,7 +30,7 @@ use bun_loop::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_loop::{StreamingWriter, WriteStatus};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_core::libuv_sys::{UvHandle as _, UvStream as _};
 #[cfg(windows)]
@@ -70,7 +70,7 @@ pub struct WindowsNamedPipe {
     pub vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
+    pub event_loop_handle: crate::vm::EventLoopHandle,
 
     pub writer: StreamingWriter<WindowsNamedPipe>,
 
@@ -618,7 +618,7 @@ impl WindowsNamedPipe {
         // `uv::Pipe`.
         WindowsNamedPipe {
             vm,
-            event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
+            event_loop_handle: crate::vm::EventLoopHandle::init(vm.event_loop().cast::<()>()),
             // Leak the `Box` and keep only a non-owning `NonNull` alias.
             // Ownership of the allocation is later transferred to
             // `self.writer.source` via `start_with_pipe` in `start()`, which

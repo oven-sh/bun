@@ -1,7 +1,7 @@
 //! `WTFTimer` — a timer created by WTF (WebKit) code and invoked by Bun's
 //! event loop. Backs `WTF::RunLoop::TimerBase` on the Bun runloop.
 //!
-//! jsc/runtime crate cycle: the low-tier `bun_jsc::VirtualMachine.timer` is a
+//! jsc/runtime crate cycle: the low-tier `crate::vm::VirtualMachine.timer` is a
 //! `()` placeholder, so this module resolves the timer heap through
 //! [`crate::jsc_hooks::runtime_state`] instead — the same pattern
 //! `TimerObjectInternals` uses.
@@ -12,7 +12,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
 
-use crate::jsc::virtual_machine::{IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE, VirtualMachine};
+use crate::vm::virtual_machine::{IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE, VirtualMachine};
 use crate::webcore::script_execution_context::Identifier as ScriptExecutionContextIdentifier;
 
 use super::{
@@ -70,7 +70,7 @@ pub(crate) unsafe extern "C" fn WTFTimer__runIfImminent(vm: *mut VirtualMachine)
 impl WTFTimer {
     /// Fire the underlying `RunLoop::TimerBase`,
     /// removing `self` from the timer heap first if it's currently scheduled.
-    /// Reached from `bun_jsc::event_loop` via `__bun_run_wtf_timer`
+    /// Reached from `crate::vm::event_loop` via `__bun_run_wtf_timer`
     /// (definer in [`crate::dispatch`]).
     ///
     /// # Safety

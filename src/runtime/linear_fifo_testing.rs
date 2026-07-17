@@ -16,7 +16,7 @@
 //! the implementation is this Rust function (see `dispatch_js2native.rs`).
 
 use bun_core::collections::linear_fifo::{LinearFifo, StaticBuffer};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 /// A 16-slot static buffer matches the real `weak_refs` FIFO in the dev
 /// server's source-map store and makes `POWERS_OF_TWO` true.

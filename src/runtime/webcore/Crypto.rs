@@ -1,6 +1,6 @@
 use bun_core::String as BunString;
-use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResult, StringJsc};
+use crate::uuid::{self, UUID, UUID5, UUID7};
+use crate::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsClass, JsResult, StringJsc};
 
 use crate::node::Encoding;
 
@@ -151,7 +151,7 @@ impl Crypto {
 }
 
 fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
-    const ENTROPY_CACHE_FAST_PATH_MAX: usize = bun_jsc::RareData::EntropyCache::SIZE / 8;
+    const ENTROPY_CACHE_FAST_PATH_MAX: usize = crate::vm::RareData::EntropyCache::SIZE / 8;
     match slice.len() {
         0 => {}
         // 512 bytes or less we reuse from the same cache as UUID generation.

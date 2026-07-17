@@ -66,7 +66,7 @@ impl SASL {
         salt_bytes: &[u8],
         iteration_count: u32,
         password: &[u8],
-    ) -> crate::Result<()> {
+    ) -> crate::sql::Result<()> {
         // Note: `bun_runtime::crypto::EVP::pbkdf2` is a thin wrapper over
         // BoringSSL's `PKCS5_PBKDF2_HMAC` with `EVP_sha256`. Inlined here to
         // avoid the `bun_runtime` dep (which would create a cycle through
@@ -97,7 +97,7 @@ impl SASL {
             )
         };
         if rc <= 0 {
-            return Err(crate::Error::PBKDFD2);
+            return Err(crate::sql::Error::PBKDFD2);
         }
         Ok(())
     }
@@ -112,13 +112,13 @@ impl SASL {
         &self.server_signature_base64_bytes[0..self.server_signature_len as usize]
     }
 
-    pub fn compute_server_signature(&mut self, auth_string: &[u8]) -> crate::Result<()> {
+    pub fn compute_server_signature(&mut self, auth_string: &[u8]) -> crate::sql::Result<()> {
         debug_assert!(self.server_signature_len == 0);
 
         let server_key =
-            hmac(self.salted_password(), b"Server Key").ok_or(crate::Error::InvalidServerKey)?;
+            hmac(self.salted_password(), b"Server Key").ok_or(crate::sql::Error::InvalidServerKey)?;
         let server_signature_bytes =
-            hmac(&server_key, auth_string).ok_or(crate::Error::InvalidServerSignature)?;
+            hmac(&server_key, auth_string).ok_or(crate::sql::Error::InvalidServerSignature)?;
         self.server_signature_len = u8::try_from(bun_core::base64::encode(
             &mut self.server_signature_base64_bytes,
             &server_signature_bytes,

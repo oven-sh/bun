@@ -9,7 +9,7 @@
 //! resume the parent state via NodeId).
 
 use crate::shell::interpreter::{Interpreter, NodeId, ShellTask};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
+use crate::vm::ConcurrentTask::ConcurrentTask;
 
 /// Task payload for [`ShellAsync`](crate::shell::states::r#async::Async)'s
 /// bounce back to the main thread. The state lives in `interp.nodes`, so

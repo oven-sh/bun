@@ -9,10 +9,10 @@ use bun_core::collections::linear_fifo::DynamicBuffer;
 use bun_loop::ConcurrentTask::AutoDeinit;
 use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_loop::KeepAlive;
-use bun_jsc::StringJsc;
-use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::StringJsc;
+use crate::vm::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
     JsResult, StrongOptional, Task,
 };

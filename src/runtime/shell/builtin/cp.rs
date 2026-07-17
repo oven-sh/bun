@@ -708,7 +708,7 @@ impl ShellCpTask {
                     .task
                     .event_loop
                     .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
+                    .cast::<crate::vm::virtual_machine::VirtualMachine>();
                 // SAFETY: `Js` arm always has a live VM (set at interpreter
                 // construction); accessed read-only here for the
                 // global-object handle and event-loop pointer.

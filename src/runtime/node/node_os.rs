@@ -4,7 +4,7 @@ use core::ffi::{c_char, c_uint, c_void};
 
 use bun_core;
 use bun_core::String as BunString;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 unsafe extern "C" {
     safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
@@ -42,7 +42,7 @@ mod _impl {
     #[cfg(not(windows))]
     use bun_core::strings;
     use bun_core::{env_var, fmt as bun_fmt};
-    use bun_jsc::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
+    use crate::{CallFrame, JSArray, StringJsc as _, SysErrorJsc as _, SystemError};
     #[cfg(windows)]
     use bun_core::paths::PathBuffer;
     #[cfg(windows)]
@@ -134,7 +134,7 @@ mod _impl {
     // + the `UserInfoOptions` dictionary.
     pub mod gen_ {
         use super::{BunString, CallFrame, JSGlobalObject, JSValue, ZigString};
-        use bun_jsc::host_fn;
+        use crate::host_fn;
 
         // C++-side host fns (GeneratedBindings.cpp). `bindgen.ts` emits these as
         // `extern "C" SYSV_ABI` (the `JSHostFunctionType` shape) — `jsc.conv` is

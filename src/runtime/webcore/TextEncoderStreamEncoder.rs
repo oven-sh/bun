@@ -2,7 +2,7 @@ use core::cell::Cell;
 
 use bun_core::collections::VecExt as _;
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult};
 use bun_core::simdutf_sys::simdutf;
 
 bun_core::declare_scope!(TextEncoderStreamEncoder, visible);

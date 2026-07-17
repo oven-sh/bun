@@ -4,7 +4,7 @@ use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
 use bun_core::collections::{TaggedPtrUnion, VecExt};
 use bun_core::strings;
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
 
 // Re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
@@ -692,7 +692,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             // `call_check_slow` satisfies the C++ ThrowScope's
             // `simulateThrow()`.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
+            let global = ::crate::vm::virtual_machine::VirtualMachine::get().global();
             let _ =
                 ::bun_jsc::call_check_slow(global, || T::on_close_extern(cpp, JSValue::UNDEFINED));
         }
@@ -706,7 +706,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             // `AsyncContextFrame::call` overload (no TopExceptionScope of its
             // own); see `close` above. Same wrapper.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
+            let global = ::crate::vm::virtual_machine::VirtualMachine::get().global();
             let _ = ::bun_jsc::call_check_slow(global, || {
                 T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
             });
@@ -937,7 +937,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
         use crate::webcore::jsc::JSValue;
-        use bun_sys_jsc::ErrorJsc;
+        use crate::sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
         let this = Self::get_this(global, frame)?;
@@ -968,7 +968,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
         use crate::webcore::jsc::JSValue;
-        use bun_sys_jsc::ErrorJsc;
+        use crate::sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
         // SAFETY: get_this returns a live ThisSink* on Ok.
@@ -1000,7 +1000,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
     ) -> crate::webcore::jsc::JsResult<crate::webcore::jsc::JSValue> {
-        use bun_sys_jsc::ErrorJsc;
+        use crate::sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
         // SAFETY: get_this returns a live ThisSink* on Ok.
@@ -1062,7 +1062,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         this: &mut T,
     ) -> crate::webcore::jsc::JSValue {
         use crate::webcore::jsc::JSValue;
-        use bun_sys_jsc::ErrorJsc;
+        use crate::sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
         if let Some(err) = this.get_pending_error() {
@@ -1093,7 +1093,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         global: &crate::webcore::jsc::JSGlobalObject,
     ) -> crate::webcore::jsc::JSValue {
         use crate::webcore::jsc::JSValue;
-        use bun_sys_jsc::ErrorJsc;
+        use crate::sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
         if let Some(err) = this.get_pending_error() {

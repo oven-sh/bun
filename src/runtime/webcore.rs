@@ -31,8 +31,8 @@ pub mod text_encoder;
 pub mod text_encoder_stream_encoder;
 
 // ─── flat re-exports ─────────────────────────────────────────────────────────
-pub use bun_jsc::js_error_code::DOMExceptionCode;
-pub use bun_jsc::web_worker;
+pub use crate::js_error_code::DOMExceptionCode;
+pub use crate::vm::web_worker;
 pub use s3_stat::S3Stat;
 // `ResumableSink` is the `m_ctx` payload of a JS wrapper; it stores its
 // `JSGlobalObject` as a raw pointer (the FFI boundary cannot carry a Rust
@@ -57,7 +57,7 @@ pub use object_url_registry::ObjectURLRegistry;
 // (`bun_jsc::generated::JS{Blob,Request,Response,…}`).
 pub mod jsc {
     pub use crate::jsc::*;
-    pub use bun_jsc::virtual_machine::VirtualMachine;
+    pub use crate::vm::virtual_machine::VirtualMachine;
 
     /// `jsc.Codegen.JS*` — forward the real `js_class_module!`-emitted modules
     /// so any webcore call site that still spells the path
@@ -65,7 +65,7 @@ pub mod jsc {
     /// instead of a no-op stub.
     pub mod codegen {
         pub use crate::jsc::codegen::*;
-        pub use bun_jsc::generated::{JSBlob, JSRequest, JSResponse};
+        pub use crate::generated::{JSBlob, JSRequest, JSResponse};
         // `JSFileSink` / `JSFileReader` are NOT `.classes.ts`-generated —
         // FileSink uses the JSSink codegen (`FileSink__createObject` /
         // `FileSink__fromJS` in JSSink.cpp) and FileReader uses
@@ -106,7 +106,7 @@ pub mod node_types {
     pub use crate::node::types::{PathLike, PathOrBlob, PathOrFileDescriptor};
 }
 
-pub use crate::jsc::AbortSignal;
+pub use crate::vm::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
 // The lower-tier `bun_loop::auto_flusher` takes a `&mut DeferredTaskQueue`

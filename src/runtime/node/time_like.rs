@@ -1,4 +1,4 @@
-use bun_jsc::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
+use crate::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
 
 /// On windows, this is what libuv expects
 /// On unix it is what the utimens api expects

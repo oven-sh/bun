@@ -5,15 +5,15 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use bun_core::String as BunString;
-use bun_jsc::ipc::{Handle, IsInternal, SerializeAndSendResult};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
+use crate::vm::ipc::{Handle, IsInternal, SerializeAndSendResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
 
-// Struct moved to `bun_jsc::ipc` (cycle-break per docs/PORTING.md) —
+// Struct moved to `crate::vm::ipc` (cycle-break per docs/PORTING.md) —
 // `SendQueue` stores one inline so it must live at that tier. Re-exported here so
 // existing `bun_runtime` paths (`node_cluster_binding::InternalMsgHolder`) keep working.
-pub use bun_jsc::ipc::InternalMsgHolder;
+pub use crate::vm::ipc::InternalMsgHolder;
 
 bun_core::declare_scope!(IPC, visible);
 
@@ -89,11 +89,11 @@ pub(crate) fn send_helper_child(global: &JSGlobalObject, frame: &CallFrame) -> J
     // similar code as Bun__Process__send
     #[cfg(debug_assertions)]
     {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        let mut formatter = crate::vm::console_object::Formatter::new(global);
         bun_core::scoped_log!(
             IPC,
             "child: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+            crate::vm::console_object::formatter::ZigFormatter::new(&mut formatter, message)
         );
     }
 
@@ -250,11 +250,11 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     // similar code as bun.jsc.Subprocess.doSend
     #[cfg(debug_assertions)]
     {
-        let mut formatter = bun_jsc::console_object::Formatter::new(global);
+        let mut formatter = crate::vm::console_object::Formatter::new(global);
         bun_core::scoped_log!(
             IPC,
             "primary: {}",
-            bun_jsc::console_object::formatter::ZigFormatter::new(&mut formatter, message)
+            crate::vm::console_object::formatter::ZigFormatter::new(&mut formatter, message)
         );
     }
 

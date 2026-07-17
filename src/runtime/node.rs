@@ -25,7 +25,7 @@ pub use types::{
     mode_from_js,
 };
 
-pub use bun_jsc::MarkedArrayBuffer as Buffer;
+pub use crate::MarkedArrayBuffer as Buffer;
 
 #[path = "node/path.rs"]
 pub mod path;
@@ -377,7 +377,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
     where
         R: Into<Vec<u8>>,
     {
-        use bun_jsc::SysErrorJsc as _;
+        use crate::SysErrorJsc as _;
         match self {
             Ok(r) => {
                 // Ownership of the result slice transfers to JSC — the
@@ -640,7 +640,7 @@ impl MaybeToJs for &[u8] {
         self,
         global_object: &bun_jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-        use bun_jsc::ZigStringJsc as _;
+        use crate::ZigStringJsc as _;
         Ok(bun_core::ZigString::init(self)
             .with_encoding()
             .to_js(global_object))
@@ -653,7 +653,7 @@ impl MaybeToJs for bun_sys::Error {
         self,
         global_object: &bun_jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-        use bun_jsc::SysErrorJsc as _;
+        use crate::SysErrorJsc as _;
         Ok(self.to_js(global_object))
     }
 }

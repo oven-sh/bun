@@ -26,9 +26,9 @@
 //! are wired. The watcher does not keep the event loop alive.
 
 use bun_loop::ConcurrentTask::{Task, task_tag};
-use bun_jsc::JSGlobalObject;
+use crate::JSGlobalObject;
 #[cfg(not(windows))]
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use core::ptr::NonNull;
 
@@ -76,8 +76,8 @@ mod posix {
     use bun_loop::posix_event_loop::FilePoll;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     use bun_loop::posix_event_loop::{Flags, Owner, poll_tag};
-    use bun_jsc::JSGlobalObject;
-    use bun_jsc::virtual_machine::VirtualMachine;
+    use crate::JSGlobalObject;
+    use crate::vm::virtual_machine::VirtualMachine;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
     use bun_sys::Fd;
 
@@ -256,8 +256,8 @@ mod windows {
     use core::ptr::{self, NonNull};
 
     use bun_loop::ConcurrentTask::ConcurrentTask;
-    use bun_jsc::JSGlobalObject;
-    use bun_jsc::virtual_machine::VirtualMachine;
+    use crate::JSGlobalObject;
+    use crate::vm::virtual_machine::VirtualMachine;
 
     type HANDLE = *mut c_void;
     type BOOL = i32;

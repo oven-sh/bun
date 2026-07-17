@@ -2,7 +2,7 @@ use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_ast::Log;
 use bun_core::{OwnedString, String as BunString};
 use bun_css::targets::{Browsers, Targets};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use crate::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
@@ -64,7 +64,7 @@ pub fn _test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 /// otherwise returns the +1-ref BunString wrapped in `OwnedString` for RAII deref.
 /// Caller does `.to_utf8()` (borrows the OwnedString, so can't be returned here).
 fn eat_string_arg(
-    arguments: &mut bun_jsc::ArgumentsSlice<'_>,
+    arguments: &mut crate::vm::ArgumentsSlice<'_>,
     global: &JSGlobalObject,
     fn_name: &str,
     expected_n: u32,
@@ -95,7 +95,7 @@ pub(crate) fn testing_impl(
         DefaultAtRule, ImportRecordHandler, LocalsResultsMap, MinifyOptions, ParserOptions,
         PrinterOptions, StyleSheet,
     };
-    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use crate::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
     // The CSS parser allocates into this bump arena; freed when it drops.
@@ -109,7 +109,7 @@ pub(crate) fn testing_impl(
     let arguments_ = frame.arguments_old::<3>();
     // SAFETY: bunVM() never returns null for a Bun-owned global; reborrow the
     // raw `*mut VirtualMachine` as a shared ref for the slice's lifetime.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = crate::vm::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
     let source_bunstr = eat_string_arg(
         &mut arguments,
         global,
@@ -183,7 +183,7 @@ pub(crate) fn testing_impl(
                 Ok(_) => {}
                 Err(err) => {
                     return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
+                        global.throw_value(crate::css_jsc::error_jsc::to_error_instance(&err, global)?)
                     );
                 }
             }
@@ -213,7 +213,7 @@ pub(crate) fn testing_impl(
                 Ok(result) => result,
                 Err(err) => {
                     return Err(
-                        global.throw_value(crate::error_jsc::to_error_instance(&err, global)?)
+                        global.throw_value(crate::css_jsc::error_jsc::to_error_instance(&err, global)?)
                     );
                 }
             };
@@ -304,7 +304,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_css::{
         ImportRecordHandler, MinifyOptions, ParserOptions, PrinterOptions, StyleAttribute,
     };
-    use bun_jsc::{LogJsc as _, StringJsc as _};
+    use crate::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
     // StyleAttribute::parse allocates its
@@ -318,7 +318,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
 
     let arguments_ = frame.arguments_old::<4>();
     // SAFETY: bunVM() never returns null for a Bun-owned global.
-    let mut arguments = bun_jsc::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
+    let mut arguments = crate::vm::ArgumentsSlice::init(global.bun_vm(), arguments_.slice());
     let source_bunstr = eat_string_arg(&mut arguments, global, "attrTest", 3, 0, "source")?;
     let source = source_bunstr.to_utf8();
 

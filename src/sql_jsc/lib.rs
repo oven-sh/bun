@@ -8,7 +8,7 @@
 
 // Local signature-compatible stubs for the JSC surface this crate names.
 // Method signatures mirror `bun_jsc` exactly so once `bun_jsc` is taken on
-// directly this whole module becomes `pub use bun_jsc as jsc;` with no
+// directly this whole module becomes `pub use crate as jsc;` with no
 // callsite churn.
 pub mod error;
 pub use error::{Error, Result, ThrowSqlError};

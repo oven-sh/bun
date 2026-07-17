@@ -14,7 +14,7 @@
 //!   - Nicknames: @yearly, @annually, @monthly, @weekly, @daily, @midnight, @hourly
 
 use bun_core::strings;
-use bun_jsc::{JSGlobalObject, JsResult};
+use crate::{JSGlobalObject, JsResult};
 
 #[derive(Clone, Copy)]
 pub struct CronExpression {

@@ -5,7 +5,7 @@ use bun_core::collections::VecExt;
 #[cfg(unix)]
 use bun_loop as aio;
 use bun_loop::{BufferedReader, FileType, ReadState};
-use bun_jsc::JsCell;
+use crate::JsCell;
 use bun_core::ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 

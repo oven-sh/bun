@@ -22,7 +22,7 @@ use bun_core::collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
 use bun_loop::Write as _;
-use bun_jsc::{
+use crate::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
     ZigStackFramePosition, ZigStackTrace,
 };

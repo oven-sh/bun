@@ -1,5 +1,5 @@
-use crate::jsc::{JSGlobalObject, JSValue};
-use crate::mysql::my_sql_value::DateTime;
+use crate::sql::jsc::{JSGlobalObject, JSValue};
+use crate::sql::mysql::my_sql_value::DateTime;
 use bun_core::parse_int;
 
 use bun_sql::mysql::protocol::ColumnDefinition41;
@@ -11,8 +11,8 @@ use bun_sql::shared::ColumnIdentifier as NameOrIndex;
 use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
-use crate::shared::CachedStructure;
-use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
+use crate::sql::shared::CachedStructure;
+use crate::sql::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
 
 use super::decode_binary_value::{self, decode_binary_value};
 
@@ -40,7 +40,7 @@ impl<'a> Row<'a> {
         result_mode: SQLQueryResultMode,
         // Passed by ref because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
-    ) -> crate::jsc::JsResult<JSValue> {
+    ) -> crate::sql::jsc::JsResult<JSValue> {
         SQLDataCell::to_js_object(
             global_object,
             array,
@@ -284,7 +284,7 @@ impl<'a> Row<'a> {
                     reader,
                 )
                 .map_err(|e| match e {
-                    crate::Error::MySqlProtocol(e) => e,
+                    crate::sql::Error::MySqlProtocol(e) => e,
                     other => other
                         .name()
                         .parse()

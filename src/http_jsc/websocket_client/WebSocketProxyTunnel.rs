@@ -43,7 +43,7 @@ use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 use super::websocket_upgrade_client::{
     HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient,
 };
-use crate::websocket_client::ErrorCode;
+use crate::http_jsc::websocket_client::ErrorCode;
 
 use bun_http::ssl_config::SslConfig;
 
@@ -109,7 +109,7 @@ impl UpgradeClientUnion {
     }
 }
 
-type WebSocketClient = crate::websocket_client::WebSocket<false>;
+type WebSocketClient = crate::http_jsc::websocket_client::WebSocket<false>;
 
 #[derive(bun_core::ptr::CellRefCounted)]
 pub struct WebSocketProxyTunnel {
@@ -194,7 +194,7 @@ impl WebSocketProxyTunnel {
         this: *mut Self,
         ssl_options: &SslConfig,
         initial_data: &[u8],
-    ) -> crate::Result<()> {
+    ) -> crate::http_jsc::Result<()> {
         // Allow handshake to complete so we can access peer certificate for manual
         // hostname verification in onHandshake(). The actual reject_unauthorized
         // check uses self.reject_unauthorized field.
@@ -221,7 +221,7 @@ impl WebSocketProxyTunnel {
                 on_keylog: None,
             },
         )
-        .map_err(|_| crate::Error::InvalidOptions)?;
+        .map_err(|_| crate::http_jsc::Error::InvalidOptions)?;
 
         // Snapshot the `*mut SSL` *before* moving `wrapper` into `*this` and before
         // forming any `&mut SslWrapper`, so callbacks can read it from a tunnel
@@ -571,16 +571,16 @@ impl WebSocketProxyTunnel {
     /// `this` must point to a live tunnel. `write_data()` fires `write_encrypted(ctx)`
     /// which forms `&mut *ctx`; this function therefore accesses `wrapper` via raw
     /// projection and never holds a `&mut Self` across the call.
-    pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> crate::Result<usize> {
+    pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> crate::http_jsc::Result<usize> {
         // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
         if let Some(w) = unsafe { (*wrapper_ptr).as_mut() } {
             return w
                 .write_data(data)
-                .map_err(|_| crate::Error::ConnectionClosed);
+                .map_err(|_| crate::http_jsc::Error::ConnectionClosed);
         }
-        Err(crate::Error::ConnectionClosed)
+        Err(crate::http_jsc::Error::ConnectionClosed)
     }
 
     /// Gracefully shutdown the TLS connection

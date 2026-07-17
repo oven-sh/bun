@@ -4,7 +4,7 @@
 //! out of `bun_runtime` so that `bun_loop::process` (which `bun_install` /
 //! `bun_jsc` depend on) can call them without a `bun_runtime` dependency.
 //!
-//! This file re-exports them for existing `crate::api::bun_loop::*` paths and
+//! This file re-exports them for existing `crate::api::bun_spawn::*` paths and
 //! keeps the `stdio` submodule (which depends on the JSC-tier `Subprocess`
 //! type and so must stay in `bun_runtime`).
 

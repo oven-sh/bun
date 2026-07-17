@@ -5,9 +5,9 @@ use std::rc::{Rc, Weak};
 
 use bun_core::collections::LinearFifo;
 use bun_core::{Output, Timespec};
-use bun_jsc::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::js_promise::Status as PromiseStatus;
+use crate::{self as jsc, CallFrame, GlobalRef, JSGlobalObject, JSValue, JsResult, Strong, JsClass as _};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::js_promise::Status as PromiseStatus;
 use super::jest::{Jest, FileId, FileColumns as _};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, ElTimespec};
 use crate::cli::test_command::CommandLineReporter;

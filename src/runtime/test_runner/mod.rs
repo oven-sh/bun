@@ -141,9 +141,9 @@ pub mod expect {
     // traits / aliases here that forward to the now-landed inherents — no
     // local FFI re-decls, no semantic divergence.
 
-    use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult};
-    use bun_jsc::console_object::Formatter;
-    use bun_jsc::console_object::formatter::ZigFormatter;
+    use crate::{JSGlobalObject, JSValue, JsError, JsResult};
+    use crate::vm::console_object::Formatter;
+    use crate::vm::console_object::formatter::ZigFormatter;
 
     /// `value.to_fmt(&mut formatter)` → `Display` adapter. Returns the
     /// `ZigFormatter` wrapper.
@@ -230,7 +230,7 @@ pub mod expect {
             // Trait keeps the matcher modules' `(other, global)` ordering; the upstream
             // inherent is `(global, other)` — adapt here so 75 matcher
             // call-sites stay untouched.
-            use bun_jsc::ComparisonResult as R;
+            use crate::ComparisonResult as R;
             match JSValue::as_big_int_compare(self, global, other) {
                 R::Equal => BigIntCompare::Equal,
                 R::Undefined => BigIntCompare::Undefined,
@@ -481,7 +481,7 @@ pub mod expect {
         }
     }
 
-    /// Builder-style `.with_quote_strings(bool)` shim — `bun_jsc::Formatter`
+    /// Builder-style `.with_quote_strings(bool)` shim — `crate::vm::Formatter`
     /// exposes `quote_strings` as a public field, not a chained setter. A
     /// handful of matcher modules write
     /// `Formatter::new(g).with_quote_strings(true)`.

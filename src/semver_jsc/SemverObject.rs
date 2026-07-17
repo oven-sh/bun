@@ -3,7 +3,7 @@
 use core::cmp::Ordering;
 
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::semver::{SlicedString, Version, query};
 
 pub fn create(global: &JSGlobalObject) -> JSValue {

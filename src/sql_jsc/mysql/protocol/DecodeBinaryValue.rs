@@ -1,6 +1,6 @@
-use crate::jsc::JSGlobalObject;
-use crate::mysql::my_sql_value::{DateTime, Time};
-use crate::shared::sql_data_cell::SQLDataCell;
+use crate::sql::jsc::JSGlobalObject;
+use crate::sql::mysql::my_sql_value::{DateTime, Time};
+use crate::sql::shared::sql_data_cell::SQLDataCell;
 use bun_sql::mysql::mysql_types as types;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::new_reader::{NewReader, ReaderContext};
@@ -22,7 +22,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
     binary: bool,
     character_set: u16,
     reader: NewReader<Context>,
-) -> crate::Result<SQLDataCell> {
+) -> crate::sql::Result<SQLDataCell> {
     bun_core::scoped_log!(
         MySQLDecodeBinaryValue,
         "decodeBinaryValue: {}",
@@ -148,7 +148,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                             )
                             .is_err()
                             {
-                                return Err(crate::Error::InvalidBinaryValue);
+                                return Err(crate::sql::Error::InvalidBinaryValue);
                             }
                         } else {
                             if write!(
@@ -158,7 +158,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                             )
                             .is_err()
                             {
-                                return Err(crate::Error::InvalidBinaryValue);
+                                return Err(crate::sql::Error::InvalidBinaryValue);
                             }
                         }
                         let remaining = w.len();
@@ -167,7 +167,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     // reshaped for borrowck — compute remaining before re-borrowing buffer
                     Ok(SQLDataCell::string(slice))
                 }
-                _ => Err(crate::Error::InvalidBinaryValue),
+                _ => Err(crate::sql::Error::InvalidBinaryValue),
             }
         }
         FieldType::MYSQL_TYPE_DATE
@@ -181,15 +181,15 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 let data = reader.read(l as usize)?;
                 let time = DateTime::from_data(&data)?;
                 // Map JsError variants to their
-                // interned crate::Error names so `?` can widen here.
+                // interned crate::sql::Error names so `?` can widen here.
                 let ts = time.to_js_timestamp(global_object).map_err(|e| match e {
-                    bun_jsc::JsError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
-                    bun_jsc::JsError::Terminated => crate::Error::Terminated,
-                    bun_jsc::JsError::Thrown => crate::Error::Thrown,
+                    bun_jsc::JsError::OutOfMemory => crate::sql::Error::Alloc(bun_core::alloc_impl::AllocError),
+                    bun_jsc::JsError::Terminated => crate::sql::Error::Terminated,
+                    bun_jsc::JsError::Thrown => crate::sql::Error::Thrown,
                 })?;
                 Ok(SQLDataCell::date(ts))
             }
-            _ => Err(crate::Error::InvalidBinaryValue),
+            _ => Err(crate::sql::Error::InvalidBinaryValue),
         },
 
         // NEWDECIMAL is always sent as an ASCII decimal string regardless of the

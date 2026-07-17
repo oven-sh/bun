@@ -5,7 +5,7 @@ use crate::jsc::{self, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{WStr, ZStr, ZigString};
-use bun_jsc::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
+use crate::{SliceWithUnderlyingStringJsc as _, StringJsc as _, ZigStringJsc as _};
 use bun_core::paths::{MAX_PATH_BYTES, OSPathBuffer, OSPathSliceZ, PathBuffer, WPathBuffer};
 use bun_sys::{self, Fd, Mode, O};
 
@@ -20,10 +20,10 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 pub use jsc::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
-// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
+// canonical `crate::sys_jsc::FdJsc` extension trait (full range/type
 // validation). Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
-pub use bun_sys_jsc::FdJsc;
+pub use crate::sys_jsc::FdJsc;
 
 /// `bun_runtime`-tier required-argument helper layered on `FdJsc`. Collapses
 /// the `next_eat → from_js_validated → ok_or_else(throw_invalid_fd_error)`
@@ -53,7 +53,7 @@ impl FdArgExt for Fd {}
 // LAYERING: `bun_sys::SystemError → JSValue` bridge (reshapes the T1 data
 // struct into the `#[repr(C)]` FFI layout and forwards to C++). Re-exported so
 // `system_error.to_error_instance(ctx)` resolves via the canonical impl.
-pub use bun_sys_jsc::SystemErrorJsc;
+pub use crate::sys_jsc::SystemErrorJsc;
 
 pub use bun_sys::PlatformIoVec;
 
@@ -898,7 +898,7 @@ impl PathOrBuffer {
 // and the `Store`/`Blob` constructors here share one type. This module
 // re-exports them and layers the JS-argument-parsing helpers via the
 // `PathLikeExt` / `PathOrFdExt` extension traits.
-pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
+pub use crate::node_path::{PathLike, PathOrFileDescriptor};
 
 /// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
 /// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
@@ -1627,7 +1627,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // live alongside the type in `bun_jsc::node_path` (orphan rules forbid the
 // foreign-type impl here). Re-export the tag so downstream
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
-pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
+pub use crate::node_path::PathOrFileDescriptorSerializeTag;
 
 // The path-owning variants have
 // `Drop`, so an explicit `dupe()` is provided for

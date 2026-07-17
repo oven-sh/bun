@@ -12,7 +12,7 @@ use std::io::Write as _;
 
 use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_core::ptr::Interned;
 use bun_sys::FdExt as _;
 
@@ -29,7 +29,7 @@ pub struct Coordinator<'a> {
     pub vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
+    pub event_loop_handle: crate::vm::EventLoopHandle,
     pub reporter: &'a mut CommandLineReporter,
     pub files: Vec<Interned>,
     pub cwd: &'a [u8],

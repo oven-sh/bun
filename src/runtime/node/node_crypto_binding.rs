@@ -5,7 +5,7 @@ use core::ffi::{c_char, c_void};
 
 use bun_boringssl as boringssl;
 use bun_core::collections::CaseInsensitiveAsciiStringArrayHashMap;
-use bun_jsc::{
+use crate::{
     self as jsc, AnyTaskJob, AnyTaskJobCtx, ArrayBuffer, CallFrame, JSGlobalObject, JSValue,
     JsResult, StrongOptional,
 };
@@ -312,7 +312,7 @@ pub mod random {
         use super::*;
         use crate::node::util::validators;
         use bun_core::String as BunString;
-        use bun_jsc::{JSType, StringJsc as _, UUID, UUID7};
+        use crate::{JSType, StringJsc as _, UUID, UUID7};
 
         #[bun_jsc::host_fn]
         pub(crate) fn random_int(
@@ -796,7 +796,7 @@ pub(crate) struct Scrypt {
 mod _impl {
     use super::*;
     use crate::node::util::validators;
-    use bun_jsc::{ErrorCode, JSFunction, JSType};
+    use crate::{ErrorCode, JSFunction, JSType};
 
     use crate::crypto::pbkdf2::{self, PBKDF2};
 

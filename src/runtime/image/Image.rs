@@ -21,8 +21,8 @@ use bun_core::ZBox;
 use bun_core::util::base64;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
-use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
-use bun_jsc::{
+use crate::vm::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
+use crate::{
     self as jsc, ArrayBuffer, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsClass as _,
     JsRef, JsResult, StringJsc as _, Strong, SysErrorJsc as _,
 };

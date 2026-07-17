@@ -23,13 +23,13 @@ use bun_core::collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback
 use bun_core::MutableString;
 use bun_core::String as BunString;
 use bun_http::lshpack;
-use bun_jsc::AbortSignal;
-use bun_jsc::ErrorCode as JscErrorCode;
-use bun_jsc::StringJsc as _;
-use bun_jsc::abort_signal::AbortListener;
-use bun_jsc::array_buffer::BinaryType;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::vm::AbortSignal;
+use crate::ErrorCode as JscErrorCode;
+use crate::StringJsc as _;
+use crate::vm::abort_signal::AbortListener;
+use crate::array_buffer::BinaryType;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
 };
 use bun_core::ptr::IntrusiveRc;
@@ -2324,7 +2324,7 @@ impl Stream {
 }
 
 // Route AbortSignal callbacks through the trait —
-// `bun_jsc::abort_signal::listen` expects `*mut C: AbortListener`.
+// `crate::vm::abort_signal::listen` expects `*mut C: AbortListener`.
 impl AbortListener for SignalRef {
     fn on_abort(&mut self, reason: JSValue) {
         SignalRef::abort_listener(self, reason);

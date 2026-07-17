@@ -1,14 +1,14 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use crate::jsc::{
+use crate::sql::jsc::{
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
     VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js,
     webcore::AutoFlusher,
 };
-use crate::shared::CachedStructure;
-use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
+use crate::sql::shared::CachedStructure;
+use crate::sql::shared::connection_ctor_args::{self, ConnectionCtorArgs};
 use bun_core::strings;
 use bun_core::{TimespecMockMode, timespec};
 use bun_core::ptr::{AsCtxPtr, BackRef, ParentRef};
@@ -21,8 +21,8 @@ use bun_sql::mysql::ssl_mode::SSLMode;
 use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 
 use super::js_mysql_query::JSMySQLQuery;
-use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
-use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
+use crate::sql::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::sql::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
 // `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's
 // value namespace by the `declare_scope!` static and in the type namespace by
@@ -34,9 +34,9 @@ use super::protocol::result_set::{self as ResultSet};
 bun_core::declare_scope!(MySQLConnection, visible);
 
 // The #[bun_jsc::JsClass] proc-macro is not applied because this type
-// already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
+// already has its `to_js`/`from_js` wired through `crate::sql::jsc::codegen::
 // js_mysql_connection` (which owns the extern symbols) — the hand-rolled
-// `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
+// `impl crate::sql::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
 // `bun_jsc::{JSGlobalObject, CallFrame, JSValue}`, so the types are identical;
 // switching to the derive is a mechanical follow-up, not a layering blocker.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -89,7 +89,7 @@ bun_loop::impl_timer_owner!(JSMySQLConnection;
     from_max_lifetime_timer_ptr => max_lifetime_timer,
 );
 
-bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::jsc::codegen::js_mysql_connection);
+bun_jsc::impl_js_class_via_generated!(JSMySQLConnection => crate::sql::jsc::codegen::js_mysql_connection);
 
 /// RAII owner for one intrusive refcount on a `JSMySQLConnection`. Dropping
 /// calls [`JSMySQLConnection::deref`], which may free `*self.0` — so callers
@@ -136,7 +136,7 @@ impl JSMySQLConnection {
     /// the loop is a disjoint heap allocation owned by the JS-thread VM
     /// singleton; single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
+    fn event_loop(&self) -> &'static mut crate::sql::jsc::EventLoop {
         // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
         // the owned event loop lives for the VM's lifetime. Single-JS-thread
         // invariant ⇒ callers never overlap `&mut`.
@@ -610,7 +610,7 @@ impl JSMySQLConnection {
     }
 
     bun_jsc::cached_prop_hostfns! {
-        crate::jsc::codegen::js_mysql_connection;
+        crate::sql::jsc::codegen::js_mysql_connection;
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
         (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
@@ -987,7 +987,7 @@ impl<const SSL: bool> SocketHandler<SSL> {
             }
         };
         if !handshake_was_successful {
-            let Ok(v) = crate::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
+            let Ok(v) = crate::sql::jsc::verify_error_to_js(&ssl_error, &this.global_object) else {
                 return;
             };
             this.fail_with_js_value(v);

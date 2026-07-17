@@ -4,7 +4,7 @@ use bun_sys::threading::RwLock;
 
 use bun_core::Environment;
 use bun_core::Timespec;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
+use crate::{CallFrame, JSFunction, JSGlobalObject, JSHostFn, JSValue, JsResult};
 use crate::timer::{
     ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag, InHeap,
     TimerObjectInternals, TimeoutObject, TimerHeap,
@@ -185,7 +185,7 @@ impl FakeTimers {
         CURRENT_TIME.set(global, &now, None);
         // SAFETY: `next` is live; `fire` takes `*mut Self` (noalias re-entrancy)
         // and an erased `*mut ()` for the VM.
-        unsafe { EventLoopTimer::fire(next, &now_el, bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
+        unsafe { EventLoopTimer::fire(next, &now_el, crate::vm::virtual_machine::VirtualMachine::get_mut_ptr().cast()) };
     }
 
     fn execute_until(global: &JSGlobalObject, until: Timespec) {

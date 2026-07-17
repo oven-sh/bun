@@ -12,23 +12,23 @@ use bun_core::Output;
 use bun_core::strings;
 use bun_dotenv::Loader as DotEnvLoader;
 
-use crate::Error;
+use crate::js_parser_jsc::Error;
 use bun_js_parser as js_parser;
 use bun_resolver::Resolver;
 use bun_resolver::package_json::{
     MacroImportReplacementMap as MacroRemapEntry, MacroMap as MacroRemap,
 };
 
-use crate::expr_jsc::ExprJsc;
-use bun_jsc::js_property_iterator::JSPropertyIteratorOptions;
-use bun_jsc::virtual_machine::{
+use crate::js_parser_jsc::expr_jsc::ExprJsc;
+use crate::js_property_iterator::JSPropertyIteratorOptions;
+use crate::vm::virtual_machine::{
     InitOptions as VirtualMachineInitOptions, MacroModeGuard, VirtualMachine, runtime_hooks,
 };
-use bun_jsc::{
+use crate::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
     JsError, ModuleLoader, WebCore,
 };
-use bun_jsc::{BuildMessage, ResolveMessage};
+use crate::{BuildMessage, ResolveMessage};
 
 use bun_resolver::Result as ResolveResult;
 
@@ -107,7 +107,7 @@ impl MacroContext {
         import_range: Range,
         caller: Expr,
         function_name: &[u8],
-    ) -> crate::Result<Expr> {
+    ) -> crate::js_parser_jsc::Result<Expr> {
         let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
@@ -149,7 +149,7 @@ impl MacroContext {
                         bun_ast::ImportKind::Stmt,
                         bun_ast::Error::ModuleNotFound,
                     );
-                    return Err(crate::Error::MacroNotFound);
+                    return Err(crate::js_parser_jsc::Error::MacroNotFound);
                 }
                 Err(e) => {
                     log.add_range_error_fmt(
@@ -288,17 +288,17 @@ pub(crate) fn __bun_macro_context_deinit(data: *mut core::ffi::c_void) {
     // `MacroMap` and, if a macro was invoked, runs `MimallocArena::drop`
     // (→ `mi_heap_destroy`) on the lazily-created `bump`.
     drop(unsafe { Box::<MacroContext>::from_raw(data.cast::<MacroContext>()) });
-    bun_jsc::virtual_machine::drop_source_code_printer_if_macro_owned();
+    crate::vm::virtual_machine::drop_source_code_printer_if_macro_owned();
 }
 
 /// Exposed for `bun_bundler::ThreadPool::Worker::deinit` (which has no
 /// `bun_jsc` dependency) to sweep the per-worker macro VM after the worker's
 /// `MacroContext` boxes are freed. See [`collect_macro_vm_garbage`].
 ///
-/// [`collect_macro_vm_garbage`]: bun_jsc::virtual_machine::collect_macro_vm_garbage
+/// [`collect_macro_vm_garbage`]: crate::vm::virtual_machine::collect_macro_vm_garbage
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_macro_collect_vm_garbage() {
-    bun_jsc::virtual_machine::collect_macro_vm_garbage();
+    crate::vm::virtual_machine::collect_macro_vm_garbage();
 }
 
 #[unsafe(no_mangle)]
@@ -428,7 +428,7 @@ impl Macro {
         function_name: &[u8],
         specifier: &[u8],
         hash: i32,
-    ) -> crate::Result<Macro> {
+    ) -> crate::js_parser_jsc::Result<Macro> {
         let (vm, is_new_vm): (*mut VirtualMachine, bool) = if VirtualMachine::is_loaded() {
             (VirtualMachine::get_mut_ptr(), false)
         } else {
@@ -483,7 +483,7 @@ impl Macro {
             unsafe {
                 (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
             }
-            return Err(crate::Error::MacroLoadError);
+            return Err(crate::js_parser_jsc::Error::MacroLoadError);
         }
 
         Ok(Macro {
@@ -533,12 +533,12 @@ bun_core::oom_from_alloc!(MacroError);
 impl From<MacroError> for Error {
     fn from(e: MacroError) -> Self {
         match e {
-            MacroError::MacroFailed => crate::Error::MacroFailed,
-            MacroError::OutOfMemory => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
+            MacroError::MacroFailed => crate::js_parser_jsc::Error::MacroFailed,
+            MacroError::OutOfMemory => crate::js_parser_jsc::Error::Alloc(bun_core::alloc_impl::AllocError),
             MacroError::ToJs(e) => e.into(),
-            MacroError::Js(JsError::OutOfMemory) => crate::Error::Alloc(bun_core::alloc_impl::AllocError),
-            MacroError::Js(JsError::Terminated) => crate::Error::JSTerminated,
-            MacroError::Js(JsError::Thrown) => crate::Error::JSError,
+            MacroError::Js(JsError::OutOfMemory) => crate::js_parser_jsc::Error::Alloc(bun_core::alloc_impl::AllocError),
+            MacroError::Js(JsError::Terminated) => crate::js_parser_jsc::Error::JSTerminated,
+            MacroError::Js(JsError::Thrown) => crate::js_parser_jsc::Error::JSError,
         }
     }
 }
@@ -1084,7 +1084,7 @@ fn expr_from_blob(
     mime_type: &[u8],
     log: &mut Log,
     loc: bun_ast::Loc,
-) -> crate::Result<Expr> {
+) -> crate::js_parser_jsc::Result<Expr> {
     use bun_ast::{E, ExprData, StoreStr as Str};
 
     // MimeType::Category::Json — `application/json` or `+json`/`/json` suffix.
@@ -1096,7 +1096,7 @@ fn expr_from_blob(
         let source = &Source::init_path_string(b"fetch.json", bytes);
         let mut out_expr: Expr = match bun_parsers::json::parse_for_macro(source, log, bump) {
             Ok(e) => e,
-            Err(_) => return Err(crate::Error::MacroFailed),
+            Err(_) => return Err(crate::js_parser_jsc::Error::MacroFailed),
         };
         out_expr.loc = loc;
         match &mut out_expr.data {

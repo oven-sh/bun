@@ -10,7 +10,7 @@ use bun_http::{
     Method,
 };
 use bun_loop::KeepAlive;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_core::picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
@@ -172,7 +172,7 @@ impl Default for S3HttpSimpleTask {
 }
 
 // Re-export the canonical alias so sibling modules that imported it from here keep compiling.
-pub use bun_jsc::JsTerminatedResult;
+pub use crate::JsTerminatedResult;
 
 pub enum Callback {
     Stat(fn(S3StatResult<'_>, *mut c_void) -> JsTerminatedResult<()>),

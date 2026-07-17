@@ -18,8 +18,8 @@ use bun_sys::dns::{
     Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
 };
 use bun_loop::{self as Async, FilePoll, KeepAlive};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
     SystemError, host_fn,
 };

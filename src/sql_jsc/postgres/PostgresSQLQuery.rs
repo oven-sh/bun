@@ -1,13 +1,13 @@
 use core::cell::Cell;
 use core::mem;
 
-use crate::error::ThrowSqlError;
-use crate::jsc::{
+use crate::sql::error::ThrowSqlError;
+use crate::sql::jsc::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsRef, JsResult, VirtualMachineSqlExt as _,
 };
-use crate::shared::query_ctor_args::QueryCtorArgs;
+use crate::sql::shared::query_ctor_args::QueryCtorArgs;
 use bun_core::String as BunString;
-use bun_jsc::JsCell;
+use crate::JsCell;
 use bun_core::ptr::AsCtxPtr;
 
 use super::PostgresSQLConnection;
@@ -26,7 +26,7 @@ use bun_sql::shared::SQLQueryResultMode as PostgresSQLQueryResultMode;
 
 bun_core::declare_scope!(Postgres, visible);
 
-pub use crate::jsc::codegen::JSPostgresSQLQuery as js;
+pub use crate::sql::jsc::codegen::JSPostgresSQLQuery as js;
 pub use js::to_js;
 
 //
@@ -208,7 +208,7 @@ impl PostgresSQLQuery {
         };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
+        let vm = crate::sql::jsc::VirtualMachine::get().as_mut();
         let function = vm
             .sql_state()
             .postgresql_context
@@ -242,7 +242,7 @@ impl PostgresSQLQuery {
         };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
+        let vm = crate::sql::jsc::VirtualMachine::get().as_mut();
         let function = vm
             .sql_state()
             .postgresql_context
@@ -315,7 +315,7 @@ impl PostgresSQLQuery {
         };
 
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM, no other live borrow.
-        let vm = crate::jsc::VirtualMachine::get().as_mut();
+        let vm = crate::sql::jsc::VirtualMachine::get().as_mut();
         let function = vm
             .sql_state()
             .postgresql_context
@@ -702,7 +702,7 @@ impl PostgresSQLQuery {
                         drop(signature);
                         release_query_ref();
                         return Err(global_object
-                            .throw_error(crate::Error::from(err), "failed to allocate statement"));
+                            .throw_error(crate::sql::Error::from(err), "failed to allocate statement"));
                     }
                 };
                 connection_entry_value = Some(entry_value_ptr);

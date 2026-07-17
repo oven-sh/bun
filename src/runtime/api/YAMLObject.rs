@@ -5,7 +5,7 @@ use bun_ast::{Expr, expr::Data as ExprData};
 use bun_core::collections::{HashMap, StringHashMap};
 use bun_core::StackCheck;
 use bun_core::{OwnedString, String as BunString};
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
@@ -1157,7 +1157,7 @@ impl<'a> ParserCtx<'a> {
             ExprData::ENull(_) => Ok(JSValue::NULL),
             ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
             ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
-            ExprData::EString(str) => Ok(bun_js_parser_jsc::value_string_to_js(
+            ExprData::EString(str) => Ok(crate::js_parser_jsc::value_string_to_js(
                 str.get(),
                 self.global,
             )?),

@@ -1,7 +1,7 @@
 //! `Bun.markdown` — html/ansi/react/render host fns over `bun_md`.
 
 use bun_core::StackCheck;
-use bun_jsc::{
+use crate::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer,
     RangeErrorOptions,
 };

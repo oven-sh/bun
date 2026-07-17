@@ -12,15 +12,15 @@ use bun_core::collections::{StringMap, StringSet};
 use bun_core::MutableString;
 use bun_core::Output;
 use bun_core::{String as BunString, ZigString};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::vm::ConcurrentTask::ConcurrentTask;
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::schema::api; // bun.schema.api
 use bun_standalone_graph::StandaloneModuleGraph;
 
 // `CompileTarget.fromJS` / `.fromSlice` are JSC-aware option parsers shared
-// with the CLI build path; live in `bun_bundler_jsc::options_jsc`.
-use bun_bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
+// with the CLI build path; live in `crate::bundler_jsc::options_jsc`.
+use crate::bundler_jsc::options_jsc::{compile_target_from_js, compile_target_from_slice};
 
 pub mod js_bundler {
     use super::*;
@@ -1791,7 +1791,7 @@ pub mod js_bundler {
     /// bundler arena is owned by another thread.
     fn plugin_msg_from_js(plugin: &mut Plugin, file: &[u8], exception: JSValue) -> bun_ast::Msg {
         let global = plugin.global_object();
-        match bun_ast_jsc::msg_from_js(global, file.to_vec(), exception) {
+        match crate::ast_jsc::msg_from_js(global, file.to_vec(), exception) {
             Ok(msg) => msg,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
             Err(_) => {
@@ -2010,7 +2010,7 @@ impl BuildArtifact {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: bun_jsc::ConsoleFormatter,
+        F: crate::vm::ConsoleFormatter,
         W: core::fmt::Write,
     {
         write!(

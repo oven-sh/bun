@@ -16,14 +16,14 @@
 
 use core::ptr::{self, NonNull};
 
-use bun_jsc::JSGlobalObject;
+use crate::JSGlobalObject;
 use bun_core::{declare_scope, scoped_log};
 use bun_loop::{self, Process};
 
 #[cfg(target_os = "macos")]
 use {
     crate::Error,
-    bun_jsc::virtual_machine::VirtualMachine,
+    crate::vm::virtual_machine::VirtualMachine,
     bun_loop::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
     },

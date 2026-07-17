@@ -1,8 +1,8 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
-use crate::error::ThrowSqlError;
-use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
+use crate::sql::error::ThrowSqlError;
+use crate::sql::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
 
 use super::my_sql_value::Value;
@@ -16,11 +16,11 @@ use bun_sql::mysql::protocol::prepared_statement::{self as prepared_statement, E
 use bun_sql::mysql::query_status::Status;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
-use crate::jsc::js_error_to_mysql;
-use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
-use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
-use crate::mysql::protocol::signature::Signature;
-use crate::shared::query_binding_iterator::QueryBindingIterator;
+use crate::sql::jsc::js_error_to_mysql;
+use crate::sql::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::sql::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
+use crate::sql::mysql::protocol::signature::Signature;
+use crate::sql::shared::query_binding_iterator::QueryBindingIterator;
 
 use super::js_mysql_connection::MySQLConnection;
 use super::my_sql_statement::{self as my_sql_statement, ExecutionFlags, MySQLStatement};
@@ -273,7 +273,7 @@ impl MySQLQuery {
         Ok(())
     }
 
-    fn run_simple_query(&mut self, connection: &MySQLConnection) -> crate::Result<()> {
+    fn run_simple_query(&mut self, connection: &MySQLConnection) -> crate::sql::Result<()> {
         if self.status != Status::Pending || !connection.can_execute_query() {
             debug!("cannot execute query");
             // cannot execute query
@@ -301,7 +301,7 @@ impl MySQLQuery {
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
-    ) -> crate::Result<()> {
+    ) -> crate::sql::Result<()> {
         let mut query_str: Option<bun_core::zig_string::Slice> = None;
         // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
 
@@ -318,7 +318,7 @@ impl MySQLQuery {
                     if !global_object.has_exception() {
                         let _ = global_object.throw_sql_error(err, "failed to generate signature");
                     }
-                    return Err(crate::Error::JSError);
+                    return Err(crate::sql::Error::JSError);
                 }
             };
             query_str = Some(query);
@@ -328,10 +328,10 @@ impl MySQLQuery {
                 Ok(e) => e,
                 Err(err) => {
                     // `err` is `bun_core::AllocError`; `throw_error` takes
-                    // `crate::Error` (`From<AllocError>` → OutOfMemory).
+                    // `crate::sql::Error` (`From<AllocError>` → OutOfMemory).
                     let _ = global_object
-                        .throw_error(crate::Error::from(err), "failed to allocate statement");
-                    return Err(crate::Error::JSError);
+                        .throw_error(crate::sql::Error::from(err), "failed to allocate statement");
+                    return Err(crate::sql::Error::JSError);
                 }
             };
 
@@ -350,7 +350,7 @@ impl MySQLQuery {
                     let error_response = stmt_ref.error_response.to_js(global_object);
                     // If the statement failed, we need to throw the error
                     let _ = global_object.throw_value(error_response);
-                    return Err(crate::Error::JSError);
+                    return Err(crate::sql::Error::JSError);
                 }
                 self.statement = stmt;
                 stmt_ref.ref_();
@@ -385,7 +385,7 @@ impl MySQLQuery {
                 let error_response = stmt_ref.error_response.to_js(global_object);
                 // If the statement failed, we need to throw the error
                 let _ = global_object.throw_value(error_response);
-                return Err(crate::Error::JSError);
+                return Err(crate::sql::Error::JSError);
             }
             my_sql_statement::Status::Prepared => {
                 if connection.can_pipeline() {
@@ -406,7 +406,7 @@ impl MySQLQuery {
                                 err,
                             ));
                         }
-                        return Err(crate::Error::JSError);
+                        return Err(crate::sql::Error::JSError);
                     }
                     self.flags.set_pipelined(true);
                 }
@@ -425,7 +425,7 @@ impl MySQLQuery {
                     if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
                         let _ =
                             global_object.throw_sql_error(err.into(), "failed to prepare query");
-                        return Err(crate::Error::JSError);
+                        return Err(crate::sql::Error::JSError);
                     }
                     // `self.statement` was set in both branches above; route
                     // through the single-unsafe accessor instead of a raw
@@ -457,7 +457,7 @@ impl MySQLQuery {
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
-    ) -> crate::Result<()> {
+    ) -> crate::sql::Result<()> {
         if self.flags.simple() {
             debug!("runSimpleQuery");
             return self.run_simple_query(connection);

@@ -1,5 +1,5 @@
 use bun_core::collections::VecExt;
-use bun_jsc::{JSGlobalObject, JSValue, JsResult};
+use crate::{JSGlobalObject, JSValue, JsResult};
 
 use crate::webcore::blob::store::StoreExt as _;
 use crate::webcore::blob::{self, Blob, BlobExt as _, StoreRef};

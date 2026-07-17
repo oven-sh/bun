@@ -7,7 +7,7 @@ use core::sync::atomic::Ordering;
 use bun_core::{StringPointer, ZigString};
 use bun_http::Headers;
 use bun_http::headers::{EntryList, api};
-use bun_jsc::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, FetchHeaders, HTTPHeaderName, JSGlobalObject, JSValue, JsResult};
 
 /// Moved up from `bun_http` so it can
 /// name `FetchHeaders` directly instead of dispatching through a vtable.
@@ -123,7 +123,7 @@ pub fn to_fetch_headers(
     global: &JSGlobalObject,
 ) -> JsResult<NonNull<FetchHeaders>> {
     use bun_core::http_types::ETag::HeaderEntryColumns;
-    use bun_jsc::JsError;
+    use crate::JsError;
     if this.entries.len() == 0 {
         return Ok(FetchHeaders::create_empty());
     }

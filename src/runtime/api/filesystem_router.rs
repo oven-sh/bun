@@ -25,10 +25,10 @@ use core::cell::UnsafeCell;
 use bun_core::alloc_impl::Arena as ArenaAllocator;
 use bun_ast as Log;
 use bun_core::{ZigString, ZigStringSlice};
-use bun_jsc::js_object::ObjectInitializer;
-use bun_jsc::ref_string::RefString;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::js_object::ObjectInitializer;
+use crate::ref_string::RefString;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSObject, JSValue, JsCell, JsResult, LogJsc, StringJsc,
 };
 use bun_core::paths::{self as path, MAX_PATH_BYTES, PathBuffer};
@@ -56,7 +56,7 @@ pub(crate) const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs",
 // ── local shims ───────────────────────────────────────────────────────────
 // `to_js` lives on the `bun_jsc::ZigStringJsc` extension trait; `from_bytes`
 // auto-detects UTF-8.
-use bun_jsc::ZigStringJsc as _;
+use crate::ZigStringJsc as _;
 #[inline]
 fn zs_to_js(bytes: &[u8], global: &JSGlobalObject) -> JSValue {
     jsc::zig_string::ZigString::from_bytes(bytes).to_js(global)

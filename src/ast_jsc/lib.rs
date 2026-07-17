@@ -7,7 +7,7 @@ use std::borrow::Cow;
 use bun_ast::{Data, Location, Log, Metadata, Msg};
 use bun_core::ZigString;
 
-use bun_jsc::{self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage};
+use crate::{self as jsc, BuildMessage, JSGlobalObject, JSValue, JsResult, ResolveMessage};
 
 pub fn msg_from_js(global_object: &JSGlobalObject, file: Vec<u8>, err: JSValue) -> JsResult<Msg> {
     let mut zig_exception_holder = jsc::zig_exception::Holder::init();

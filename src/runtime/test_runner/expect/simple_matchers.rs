@@ -5,7 +5,7 @@
 
 use super::{Expect, OrderingRelation};
 use bun_core::strings;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 // ── unary predicates: expect(x).toBe<Kind>() ───────────────────────────────
 crate::unary_predicate_matcher!(to_be_array, "toBeArray", |v| v.js_type().is_array());

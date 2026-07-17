@@ -2,7 +2,7 @@
 //! `us_socket_context_t` that used to live here is gone — connections link
 //! into `RareData.postgres_group`/`postgres_tls_group` instead.
 
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
+use crate::sql::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMachineSqlExt as _};
 
 #[repr(C)]
 #[derive(Default)]

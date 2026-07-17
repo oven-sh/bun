@@ -2,7 +2,7 @@
 
 use bun_core::semver::String as SemverString;
 
-use bun_jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use crate::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 
 pub trait SemverStringJsc {
     fn to_js(&self, buffer: &[u8], global: &JSGlobalObject) -> JsResult<JSValue>;

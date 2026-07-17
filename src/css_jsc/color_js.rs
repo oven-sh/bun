@@ -4,7 +4,7 @@ use bun_core::alloc_impl::Arena;
 use bun_ast::Log;
 use bun_core::String as BunString;
 use bun_core::output::{ColorDepth, Source as OutputSource};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
+use crate::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
@@ -34,7 +34,7 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
         global: &JSGlobalObject,
         property_name: &'static str,
     ) -> JsResult<Self> {
-        use bun_jsc::ComptimeStringMapExt as _;
+        use crate::ComptimeStringMapExt as _;
         match OUTPUT_COLOR_FORMAT_MAP.from_js(global, v)? {
             Some(e) => Ok(e),
             None => Err(global.throw_invalid_argument_type(
@@ -202,7 +202,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     use bun_css as css;
     use bun_css::CssColor;
     use bun_css::values::color::{HSL, LAB, RGBA, SRGB};
-    use bun_jsc::StringJsc as _;
+    use crate::StringJsc as _;
 
     let args = frame.arguments_as_array::<2>();
     if args[0].is_undefined() {

@@ -16,9 +16,9 @@ use crate::jsc::{
     generated::{JSImmediate, JSTimeout},
 };
 use core::cell::Cell;
-// Note: `bun_jsc::VirtualMachine` is a *module* alias; the struct lives at
+// Note: `crate::vm::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.
-use crate::jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 
 use super::{
     ElTimespec, EventLoopTimer, EventLoopTimerState, ID, ImmediateObject, Kind, KindBig,
@@ -62,7 +62,7 @@ impl Default for TimerObjectInternals {
 }
 
 // LAYERING: `Flags` (the packed-u32 state machine) was MOVED DOWN to
-// `bun_loop::EventLoopTimer::TimerFlags` so `bun_jsc::abort_signal::Timeout`
+// `bun_loop::EventLoopTimer::TimerFlags` so `crate::vm::abort_signal::Timeout`
 // can name it without a forward dep on this crate. Re-exported here so existing
 // `TimerObjectInternals`/`All::update` callers see the same nominal type.
 pub use bun_loop::EventLoopTimer::TimerFlags as Flags;
@@ -178,7 +178,7 @@ impl TimerObjectInternals {
     }
 
     /// Note (jsc/runtime crate cycle): the low-tier
-    /// `bun_jsc::VirtualMachine.timer` is `()`,
+    /// `crate::vm::VirtualMachine.timer` is `()`,
     /// so resolve `Timer::All` via the per-thread `RuntimeState` instead.
     fn set_enable_keeping_event_loop_alive(&self, vm: *mut VirtualMachine, enable: bool) {
         if self.flags.get().is_keeping_event_loop_alive() == enable {

@@ -1,7 +1,7 @@
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::virtual_machine::GCLevel;
-use bun_jsc::zig_string::ZigString;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
+use crate::ZigStringJsc as _;
+use crate::vm::virtual_machine::GCLevel;
+use crate::zig_string::ZigString;
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSType, JSValue, JsResult};
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
     // NB: helper sizes inline capacity from `fns.len()`, fixing the prior

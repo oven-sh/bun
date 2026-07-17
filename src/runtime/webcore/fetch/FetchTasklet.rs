@@ -16,9 +16,9 @@ use bun_http::{
     Signals, ThreadSafeStreamBuffer,
 };
 use bun_loop::KeepAlive;
-use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::vm::debugger::AsyncTaskTracker;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
 };
 use bun_sys::FdExt;
@@ -36,7 +36,7 @@ use crate::webcore::{
     AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, ResumableSinkBackpressure,
 };
 
-use bun_jsc::JsTerminatedResult;
+use crate::JsTerminatedResult;
 // `bun_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask/AnyTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_loop::JsResult<T>;
@@ -101,7 +101,7 @@ pub struct FetchTasklet {
     pub url_proxy_buffer: Box<[u8]>,
 
     // WebCore::AbortSignal is C++-refcounted (intrusive). Model as
-    // raw ptr; ref/unref via `bun_jsc::AbortSignal`
+    // raw ptr; ref/unref via `crate::vm::AbortSignal`
     // methods (see clear_abort_signal / queue).
     pub signal: Option<*mut AbortSignal>,
     pub signals: Signals,

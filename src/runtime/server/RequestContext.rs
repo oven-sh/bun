@@ -277,7 +277,7 @@ use crate::server::jsc::CallFrame;
 use crate::server::{AnyRequestContext, FileResponseStream, HTTPStatusText, file_response_stream};
 use crate::webcore::blob::BlobExt as _;
 use crate::webcore::{Blob, ReadableStream, body as Body, s3 as S3};
-use bun_jsc::SysErrorJsc as _;
+use crate::SysErrorJsc as _;
 
 /// RAII: releases one intrusive ref on a [`RequestContext`] at scope exit.
 ///

@@ -1,7 +1,7 @@
 use core::ptr;
 use core::slice;
 
-use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
+use crate::sql::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
 use bun_core::collections::StringHashMap;
 use bun_core::UnwrapOrOom as _;
 use bun_core::wtf::WTFStringImpl;
@@ -415,7 +415,7 @@ impl SQLDataCell {
         cells: &mut [SQLDataCell],
         flags: Flags,
         result_mode: u8,
-        cached_structure: Option<&crate::shared::CachedStructure>,
+        cached_structure: Option<&crate::sql::shared::CachedStructure>,
     ) -> JsResult<JSValue> {
         let (names, names_count) = match cached_structure.and_then(|c| c.fields.as_deref()) {
             Some(f) => (f.as_ptr().cast_mut(), f.len() as u32),

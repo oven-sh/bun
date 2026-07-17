@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 use bun_core::strings;
 
 use super::{get_signature, Expect};

@@ -8,7 +8,7 @@ use bun_core::collections::VecExt;
 use core::cell::Cell;
 
 use bun_core::String as BunString;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 use bun_core::{declare_scope, scoped_log};
 
 use crate::node::{ErrorCode, StringOrBuffer};

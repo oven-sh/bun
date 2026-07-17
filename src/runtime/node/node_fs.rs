@@ -14,11 +14,11 @@ use bun_core::{String as BunString, ZStr, ZigString};
 use bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_loop::MiniEventLoop::MiniEventLoop;
 use bun_loop::KeepAlive;
-use bun_jsc::AbortSignal;
-use bun_jsc::EventLoopTaskPtr;
-use bun_jsc::debugger::AsyncTaskTracker;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
+use crate::vm::AbortSignal;
+use crate::vm::EventLoopTaskPtr;
+use crate::vm::debugger::AsyncTaskTracker;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSafe, Unprotect};
 use bun_core::paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
@@ -151,7 +151,7 @@ mod ConcurrentTask {
     pub(super) use bun_loop::ConcurrentTask::ConcurrentTask;
     use core::ptr::NonNull;
     #[inline]
-    pub(super) fn create(task: bun_jsc::Task) -> NonNull<ConcurrentTask> {
+    pub(super) fn create(task: crate::vm::Task) -> NonNull<ConcurrentTask> {
         ConcurrentTask::create(task)
     }
     #[inline]
@@ -181,7 +181,7 @@ const BLOB_SIZE_MAX: u64 = (1u64 << 52) - 1;
 /// `webcore.RefPtr<AbortSignal>` — JSC's intrusive ref-counted pointer.
 /// Backed by `bun_core::ptr::ExternalShared<AbortSignal>` (alias re-exported
 /// from `bun_jsc`): `Clone` → `ref()`, `Drop` → `unref()`, `Deref` → `&AbortSignal`.
-use bun_jsc::AbortSignalRef;
+use crate::vm::AbortSignalRef;
 
 // Wired to the real sibling modules under `super::` (rather than a
 // `bun_jsc::node` re-export shim) so this file compiles standalone.
@@ -221,8 +221,8 @@ use super::util::validators;
 
 // Trait imports for inherent-looking method calls on upstream types:
 //   - `bun_sys::FdExt`       → `Fd::close()`
-//   - `bun_sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
-use bun_sys_jsc::ErrorJsc as _;
+//   - `crate::sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
+use crate::sys_jsc::ErrorJsc as _;
 
 /// `WorkPoolTask` (aka `bun_sys::threading::thread_pool::Task`) does not derive
 /// `Default` (its `callback` field has no sensible default). Build one with
@@ -249,7 +249,7 @@ pub use super::node_fs_binding::Binding;
 
 /// `jsc.JSPromise.Strong` — re-exported under its Rust crate name:
 /// `bun_jsc::js_promise::Strong` / the `JSPromiseStrong` alias.
-use bun_jsc::JSPromiseStrong;
+use crate::JSPromiseStrong;
 
 use super::dir_iterator as DirIterator;
 #[cfg(not(windows))]
@@ -7019,7 +7019,7 @@ impl NodeFS {
             Encoding::Base64 | Encoding::Base64url => (size / 3).saturating_sub(1),
             Encoding::Ascii | Encoding::Latin1 | Encoding::Buffer => size,
         };
-        if adjusted_size > bun_jsc::virtual_machine::synthetic_allocation_limit()
+        if adjusted_size > crate::vm::virtual_machine::synthetic_allocation_limit()
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
             || (cfg!(any(target_os = "linux", target_os = "android")) && size as u64 >= bun_core::get_total_memory_size() as u64)
         {

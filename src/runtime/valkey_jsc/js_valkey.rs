@@ -7,8 +7,8 @@ use bun_boringssl as boringssl;
 use bun_core::{String as BunString, strings};
 use bun_loop::EventLoopTimer as Timer;
 use bun_loop::KeepAlive;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
     JsRef, JsResult,
 };
@@ -19,13 +19,13 @@ use super::protocol_jsc;
 use super::valkey;
 use super::valkey_command_body as command;
 use super::valkey_command_body::Command;
-use bun_jsc::url::URL;
+use crate::url::URL;
 use bun_core::valkey::valkey_protocol as protocol;
 
 /// `bun.JSTerminated!T`
 // Widened to `JsResult<T>` to match `valkey.rs`; can be narrowed once
 // `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
-// `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`.
+// `jsc::JsTerminatedResult` alias from `crate::vm::event_loop`.
 type JsTerminatedResult<T> = jsc::JsResult<T>;
 
 /// Narrow `valkey::ValkeyClient`'s `JsResult<()>` (its local `JsTerminated<T>`

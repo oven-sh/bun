@@ -12,8 +12,8 @@
 use core::ffi::c_void;
 
 use bun_core::String as BunString;
-use bun_jsc::JSGlobalObject;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::JSGlobalObject;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{SourceContentPtr, SourceProvider};
 

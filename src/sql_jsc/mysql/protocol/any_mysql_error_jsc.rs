@@ -1,11 +1,11 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsError};
+use crate::sql::jsc::{JSGlobalObject, JSValue, JsError};
 use bun_sql::mysql::protocol::any_mysql_error::Error;
 use bun_sql::mysql::protocol::error_packet::MySQLErrorOptions;
 
 use super::error_packet_jsc::create_mysql_error;
 
 /// Coerces the assorted error types callers thread through (`AnyMySQLError`
-/// enum or the interned `crate::Error`) into the error *name*
+/// enum or the interned `crate::sql::Error`) into the error *name*
 /// that the match below keys on.
 pub(crate) trait IntoAnyMySQLError: Copy {
     fn mysql_error_name(self) -> &'static str;
@@ -18,7 +18,7 @@ impl IntoAnyMySQLError for Error {
     }
 }
 
-impl IntoAnyMySQLError for crate::Error {
+impl IntoAnyMySQLError for crate::sql::Error {
     #[inline]
     fn mysql_error_name(self) -> &'static str {
         self.name()
@@ -129,7 +129,7 @@ pub(crate) fn mysql_error_to_js(
             unreachable!("Assertion failed: ShortRead should be handled by the caller in mysql");
         }
         // "UnknownError" + any name not in the AnyMySQLError set (possible when
-        // the caller hands us a raw `crate::Error`).
+        // the caller hands us a raw `crate::sql::Error`).
         _ => b"ERR_MYSQL_UNKNOWN_ERROR",
     };
 

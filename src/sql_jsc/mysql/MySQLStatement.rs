@@ -1,10 +1,10 @@
 use core::cell::Cell;
 
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::sql::jsc::{JSGlobalObject, JSValue};
 
-use crate::mysql::protocol::Signature;
-use crate::shared::CachedStructure;
-use crate::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
+use crate::sql::mysql::protocol::Signature;
+use crate::sql::shared::CachedStructure;
+use crate::sql::shared::sql_data_cell::{Flags as DataCellFlags, dedupe_columns};
 
 use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::error_packet::ErrorPacket;

@@ -25,7 +25,7 @@ use bun_loop::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_loop::pipe_reader::PosixFlags;
 use bun_loop::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
 };
@@ -50,7 +50,7 @@ pub mod js {
 
     /// Typed accessor for the `values:` slots.
     pub mod gc {
-        use bun_jsc::{JSGlobalObject, JSValue};
+        use crate::{JSGlobalObject, JSValue};
 
         #[derive(Clone, Copy)]
         pub enum GcValue {

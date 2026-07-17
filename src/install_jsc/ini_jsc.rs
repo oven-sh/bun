@@ -1,7 +1,7 @@
 //! Test-only host fns for `bun.ini` (used by `internal-for-testing.ts`).
 //! Kept out of `ini/` so that directory has no JSC references.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Free-fn aliases of the [`IniTestingAPIs`] associated fns so
 /// `bun_runtime::dispatch::js2native` can `pub use` them (associated fns
@@ -108,7 +108,7 @@ impl IniTestingAPIs {
         )
         .is_err()
         {
-            return bun_ast_jsc::log_to_js(&log, global, b"error");
+            return crate::ast_jsc::log_to_js(&log, global, b"error");
         }
 
         let (
@@ -192,7 +192,7 @@ impl IniTestingAPIs {
     pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         use bun_ast::ToJSError;
         use bun_ini::Parser;
-        use bun_jsc::JsError;
+        use crate::JsError;
 
         let arguments_ = frame.arguments_old::<1>();
         let arguments = arguments_.slice();
@@ -217,7 +217,7 @@ impl IniTestingAPIs {
         let bump: &bun_core::alloc_impl::Arena = unsafe { &*arena_ptr };
         parser.parse(bump)?;
 
-        match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
+        match crate::js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),
             Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
             Err(ToJSError::JSError) => Err(JsError::Thrown),

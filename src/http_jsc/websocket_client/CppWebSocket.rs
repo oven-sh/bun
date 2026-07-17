@@ -11,7 +11,7 @@
 use core::ffi::c_void;
 
 use bun_core::{String as BunString, ZigString};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_uws_sys::{Socket, SslCtx};
 
 use super::ErrorCode;

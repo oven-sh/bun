@@ -3,14 +3,14 @@ use core::cell::Cell;
 use core::fmt;
 
 use bun_core::Output;
-use bun_jsc::{
+use crate::{
     CallFrame, JSGlobalObject, JSValue, JsError, JsResult,
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
-use bun_jsc::{JsClass as _, StringJsc as _};
+use crate::{JsClass as _, StringJsc as _};
 use bun_core::ZigString;
-use bun_jsc::js_promise;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::js_promise;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_core::strings;
 
 use super::bun_test::{self};
@@ -19,7 +19,7 @@ use super::execution::ExpectAssertions;
 use super::jest::Jest;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 
-use bun_jsc::js_error_to_write_error;
+use crate::js_error_to_write_error;
 
 // Matcher submodules are declared in `super::expect` (mod.rs); this file
 // provides only the `Expect` payload + helpers they extend.
@@ -2987,7 +2987,7 @@ impl ExpectTypeOf {
 
 pub mod mock {
     use super::*;
-    use bun_jsc::ComptimeStringMapExt as _;
+    use crate::ComptimeStringMapExt as _;
 
     // C++: `JSC::EncodedJSValue JSMockFunction__get{Calls,Returns}(
     //         JSC::JSGlobalObject*, EncodedJSValue)` — `[[ZIG_EXPORT(zero_is_throw)]]`.

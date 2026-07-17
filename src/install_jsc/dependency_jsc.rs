@@ -1,10 +1,10 @@
 //! JSC bridges for `bun_install::Dependency`. The `to_js`/`from_js` surface
 //! lives here as extension-trait methods on the base type.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 /// Local helper: `bun_core::semver::String` → JS string. Mirrors
-/// `bun_semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
+/// `crate::semver_jsc::SemverStringJsc::to_js`, but that crate stubs its own JSC
 /// types, so its `JSGlobalObject`/`JSValue` are not the
 /// `bun_jsc` ones. Inline the body here against the real `bun_jsc` types.
 #[inline]
@@ -128,7 +128,7 @@ pub(crate) fn log_to_js(
     global: &JSGlobalObject,
     msg: &[u8],
 ) -> JsResult<JSValue> {
-    bun_ast_jsc::log_to_js(log, global, msg)
+    crate::ast_jsc::log_to_js(log, global, msg)
 }
 
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -139,7 +139,7 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     let arguments = frame.arguments_old::<2>();
     let arguments = arguments.slice();
     if arguments.len() == 1 {
-        return crate::update_request_jsc::from_js(global, arguments[0]);
+        return crate::install_jsc::update_request_jsc::from_js(global, arguments[0]);
     }
 
     let alias_value: JSValue = if !arguments.is_empty() {

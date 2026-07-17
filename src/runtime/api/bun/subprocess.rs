@@ -7,11 +7,11 @@ use core::ptr::NonNull;
 
 use bun_core::ptr::{RefCount, RefPtr};
 
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
     VirtualMachine,
 };
-use bun_jsc::{JsClass, SysErrorJsc};
+use crate::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
 use bun_sys::{self, SignalCode};
@@ -27,7 +27,7 @@ use crate::api::bun_process as spawn_process;
 use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::{Process, Rusage, Status};
 use crate::api::js_bun_spawn_bindings;
-use crate::jsc::ipc as IPC;
+use crate::vm::ipc as IPC;
 use crate::node::node_cluster_binding;
 use crate::timer::{EventLoopTimer, EventLoopTimerState};
 use crate::webcore::{self, AbortSignal, FileSink};
@@ -705,7 +705,7 @@ impl Subprocess<'_> {
         let arguments = callframe.arguments_old::<1>();
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(arguments.ptr[0], global_this)?;
+        let sig: SignalCode = crate::sys_jsc::signal_code_jsc::from_js(arguments.ptr[0], global_this)?;
 
         if global_this.has_exception() {
             return Ok(JSValue::ZERO);
@@ -1058,7 +1058,7 @@ impl Subprocess<'_> {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
                     // SAFETY: event_loop points into the live VM and outlives this scope.
                     let _exit_guard =
-                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+                        unsafe { crate::vm::event_loop::EventLoop::enter_scope(event_loop) };
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1355,7 +1355,7 @@ impl Subprocess<'_> {
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
+                use crate::ZigStringJsc as _;
                 return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);

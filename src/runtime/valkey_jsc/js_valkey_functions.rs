@@ -1,7 +1,7 @@
 use crate::node::BlobOrStringOrBuffer as JSArgument;
 use bun_core::collections::VecExt as _;
 use bun_core::OwnedString;
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSPromise, JSPropertyIterator, JSValue,
     JsRef, JsResult,
 };

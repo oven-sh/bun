@@ -1,8 +1,8 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::JSValueTestExt;
 use super::FormatterTestExt;
-use bun_jsc::console_object::Formatter;
-use bun_jsc::JsClass;
+use crate::vm::console_object::Formatter;
+use crate::JsClass;
 use bun_core::{strings, ZigString};
 
 use super::Expect;

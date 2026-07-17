@@ -12,7 +12,7 @@ use bun_core::{self, Output, ZBox};
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
 #[allow(unused_imports)]
 use bun_core::paths::{self, PathBuffer};
-use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
+use crate::sourcemap_jsc::code_coverage::text as CoverageReportText;
 use bun_sys::{self, Fd, File, O};
 
 use crate::cli::test::parallel::coordinator::Coordinator;

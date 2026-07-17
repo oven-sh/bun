@@ -9,7 +9,7 @@ use bun_core;
 use crate::Error;
 use bun_core::{ZStr, strings};
 use bun_js_parser::{self as js_parser, lexer as js_lexer};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 #[allow(unused_imports)]
 use bun_core::paths::{self, PathBuffer};
 use bun_sys::{self};

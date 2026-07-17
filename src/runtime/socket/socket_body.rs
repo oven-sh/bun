@@ -5,9 +5,9 @@ use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
 use bun_loop::KeepAlive;
-use bun_jsc::JsCell;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use crate::JsCell;
+use crate::ZigStringJsc as _;
+use crate::zig_string::ZigString;
 use bun_core::ptr::IntrusiveRc;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
@@ -15,12 +15,12 @@ use bun_core::ptr::IntrusiveRc;
 use bun_boringssl_sys::SSL_CTX;
 use bun_core::collections::VecExt;
 use bun_core::{self, fmt as bun_fmt};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `err.to_js(global)` on `sys::Error` (the `SysErrorJsc` trait method) is only
 // reached from `#[cfg(not(windows))]` / `#[cfg(unix)]` blocks below.
 #[cfg(not(windows))]
-use bun_jsc::SysErrorJsc;
-// `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
+use crate::SysErrorJsc;
+// `crate::vm::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
@@ -30,7 +30,7 @@ use bun_boringssl_sys as boringssl_sys;
 use bun_sys::cares::c_ares_draft as c_ares;
 use bun_core::String as BunString;
 use bun_loop::AnyTask::AnyTask;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_sys as sys;
 use bun_uws as uws;
 
@@ -737,7 +737,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             u32::try_from(global.validate_integer_range(
                 args.ptr[1],
                 0i32,
-                bun_sql_jsc::jsc::IntegerRange {
+                crate::sql::jsc::IntegerRange {
                     min: 0,
                     field_name: b"initialDelay",
                     ..Default::default()
@@ -794,7 +794,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             global.validate_integer_range(
                 arg,
                 0i32,
-                bun_sql_jsc::jsc::IntegerRange {
+                crate::sql::jsc::IntegerRange {
                     min: 0,
                     max: 255,
                     field_name: b"tos",
@@ -3268,7 +3268,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // On Windows the fd is a system-kind SOCKET handle; routing it through
         // `.uv()` panics for anything but stdio. The sys_jsc helper branches on
         // kind (system→u64, uv→i32, posix→i32).
-        use bun_sys_jsc::FdJsc as _;
+        use crate::sys_jsc::FdJsc as _;
         this.socket.get().fd().to_js_without_making_lib_uv_owned()
     }
 
@@ -3430,7 +3430,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            // `bun_jsc::rare_data::RareData::ssl_ctx_cache()` returns
+            // `crate::vm::rare_data::RareData::ssl_ctx_cache()` returns
             // the high-tier opaque ZST stub (cycle-break); the concrete
             // `SSLContextCache` lives on this thread's `RuntimeState`.
             let cache = {

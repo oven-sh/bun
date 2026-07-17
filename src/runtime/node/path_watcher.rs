@@ -55,7 +55,7 @@ use bun_sys::threading::Mutex;
 #[cfg(not(windows))]
 use bun_core::wyhash::hash;
 
-use bun_jsc::VirtualMachineRef as VirtualMachine;
+use crate::vm::VirtualMachineRef as VirtualMachine;
 
 use crate::node::node_fs_watcher::{Event, FSWatcher, WatchEventKind};
 

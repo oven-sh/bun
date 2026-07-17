@@ -3,7 +3,7 @@ use core::ffi::c_void;
 use core::mem;
 use core::ptr::NonNull;
 
-use bun_jsc::JsCell;
+use crate::JsCell;
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
 use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
 use bun_uws_sys::{Opcode, SendStatus};

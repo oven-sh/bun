@@ -1,6 +1,6 @@
 use bun_core::strings::EncodingNonAscii;
 use bun_core::{self as bstr, OwnedString, String as BunString, ZigString, strings};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sys::UV_E;
 
 use crate::node::types::Encoding;

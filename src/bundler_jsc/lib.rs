@@ -5,7 +5,7 @@
 // ──────────────────────────────────────────────────────────────────────────
 // Bridge types — re-exported from `bun_jsc` now that it `cargo check`s.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_jsc::{ErrorableString, JSGlobalObject, JSValue, JsError, JsResult, VM};
+pub use crate::{ErrorableString, JSGlobalObject, JSValue, JsError, JsResult, VM};
 
 #[path = "source_map_mode_jsc.rs"]
 pub mod source_map_mode_jsc;
@@ -21,7 +21,7 @@ pub mod PluginRunner;
 // `node::PathOrFileDescriptor`. Those types live in `bun_runtime`, which is
 // not a dependency of this crate. The module has been moved to
 // `bun_runtime::api::output_file_jsc`; nothing depends on
-// `bun_bundler_jsc::output_file_jsc`, so no re-export is needed.
+// `crate::bundler_jsc::output_file_jsc`, so no re-export is needed.
 
 #[path = "analyze_jsc.rs"]
 pub mod analyze_jsc;

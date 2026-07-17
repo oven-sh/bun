@@ -2,7 +2,7 @@
 //! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
 //! `JSValue` references.
 
-use crate::jsc::{
+use crate::sql::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
     MarkedArgumentBuffer, StringJsc as _, js_error_to_mysql,
 };
@@ -13,7 +13,7 @@ use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error;
 use bun_sql::shared::Data;
 
-use crate::jsc::webcore::Blob;
+use crate::sql::jsc::webcore::Blob;
 
 pub(crate) fn field_type_from_js(
     global_object: &JSGlobalObject,
@@ -448,7 +448,7 @@ pub struct DateTime {
 }
 
 impl DateTime {
-    pub fn from_data(data: &Data) -> Result<DateTime, crate::Error> {
+    pub fn from_data(data: &Data) -> Result<DateTime, crate::sql::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -523,7 +523,7 @@ impl DateTime {
     /// malformed input, so the caller surfaces `Invalid Date` — matching what
     /// the previous `Date.parse` path produced for those.
     pub fn from_text(text: &[u8]) -> Option<DateTime> {
-        let parsed = crate::shared::datetime_text::parse_mysql(text)?;
+        let parsed = crate::sql::shared::datetime_text::parse_mysql(text)?;
         if parsed.month < 1
             || parsed.month > 12
             || parsed.day < 1
@@ -747,7 +747,7 @@ impl Time {
         }
     }
 
-    pub fn from_data(data: &Data) -> Result<Time, crate::Error> {
+    pub fn from_data(data: &Data) -> Result<Time, crate::sql::Error> {
         Ok(Self::from_binary(data.slice()))
     }
 

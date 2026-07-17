@@ -3,7 +3,7 @@
 use core::ptr::NonNull;
 use crate::test_runner::expect::make_formatter;
 
-use bun_jsc::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
+use crate::{DeprecatedStrong, JSGlobalObject, JSValue, JsResult};
 use bun_core::Timespec;
 
 use crate::test_runner::bun_test::{

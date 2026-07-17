@@ -23,10 +23,10 @@ use bun_bundler::transpiler::Transpiler;
 use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
 use bun_loop::KeepAlive;
-use bun_jsc::AnyTask::AnyTask;
-use bun_jsc::WorkPool;
-use bun_jsc::event_loop::EventLoop;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
+use crate::vm::AnyTask::AnyTask;
+use crate::vm::WorkPool;
+use crate::vm::event_loop::EventLoop;
+use crate::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_options_types::WindowsOptions;
 use bun_options_types::schema::api;
 use bun_core::paths::resolve_path::{join_abs_string, join_abs_string_buf, platform};
@@ -234,7 +234,7 @@ impl JSBundleCompletionTask {
             Err(e) => return promise.reject(global_this, Err(e)),
         };
         build_result.put(global_this, b"success", JSValue::FALSE);
-        match bun_ast_jsc::log_to_js_array(&self.log, global_this) {
+        match crate::ast_jsc::log_to_js_array(&self.log, global_this) {
             Ok(v) => build_result.put(global_this, b"logs", v),
             Err(e) => return promise.reject(global_this, Err(e)),
         };
@@ -243,7 +243,7 @@ impl JSBundleCompletionTask {
             // Compute `rejection` before borrowing the plugin so `&self.log`
             // does not overlap the `&mut self` taken by `plugins_mut()`.
             let rejection = if throw_on_error {
-                bun_ast_jsc::log_to_js_aggregate_error(
+                crate::ast_jsc::log_to_js_aggregate_error(
                     &self.log,
                     global_this,
                     BunString::static_(b"Bundle failed"),
@@ -264,7 +264,7 @@ impl JSBundleCompletionTask {
 
         if !did_handle_callbacks {
             if throw_on_error {
-                let aggregate_error = bun_ast_jsc::log_to_js_aggregate_error(
+                let aggregate_error = crate::ast_jsc::log_to_js_aggregate_error(
                     &self.log,
                     global_this,
                     BunString::static_(b"Bundle failed"),
@@ -689,7 +689,7 @@ impl JSBundleCompletionTask {
                 let build_output = JSValue::create_empty_object(global_this, 4);
                 build_output.put(global_this, b"outputs", output_files_js);
                 build_output.put(global_this, b"success", JSValue::TRUE);
-                match bun_ast_jsc::log_to_js_array(&this.log, global_this) {
+                match crate::ast_jsc::log_to_js_array(&this.log, global_this) {
                     Ok(v) => build_output.put(global_this, b"logs", v),
                     Err(e) => return Ok(promise.reject(global_this, Err(e))?),
                 };

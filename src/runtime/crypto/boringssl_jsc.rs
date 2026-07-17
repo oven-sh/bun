@@ -2,7 +2,7 @@
 
 use bun_boringssl_sys as boring;
 use bun_core::{String as BunString, ZigString};
-use bun_jsc::{JSGlobalObject, JSValue, StringJsc as _, ZigStringJsc as _};
+use crate::{JSGlobalObject, JSValue, StringJsc as _, ZigStringJsc as _};
 
 /// Node's `ERR_LIB_*` → macro-prefix map from `crypto_util.cc`
 /// (`OSSL_ERROR_CODES_MAP`). Libraries Node does not map get an empty prefix

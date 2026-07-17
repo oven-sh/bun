@@ -8,11 +8,11 @@ use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
 use bun_loop::KeepAlive;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::strong::Optional as Strong;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString;
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
+use crate::ZigStringJsc as _;
+use crate::strong::Optional as Strong;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::zig_string::ZigString;
+use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
@@ -33,7 +33,7 @@ use bun_boringssl as boringssl;
 #[cfg(windows)]
 use bun_core::strings;
 #[cfg(windows)]
-use bun_jsc::GlobalRef;
+use crate::GlobalRef;
 #[cfg(windows)]
 use bun_core::libuv_sys::UvHandle as _;
 #[cfg(windows)]
@@ -903,7 +903,7 @@ impl Listener {
                 // handle; routing it through `.uv()` panics for anything but
                 // stdio. The sys_jsc helper branches on kind
                 // (system→u64, uv→i32, posix→i32).
-                use bun_sys_jsc::FdJsc as _;
+                use crate::sys_jsc::FdJsc as _;
                 socket.fd().to_js_without_making_lib_uv_owned()
             }
             _ => JSValue::js_number(-1.0),

@@ -7,7 +7,7 @@ use bun_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_loop::KeepAlive;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::s3_signing::error::S3Error;
 use bun_sys::threading::Mutex;

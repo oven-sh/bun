@@ -16,8 +16,8 @@ use crate::dns_jsc::Order as DnsOrder;
 use bun_core::alloc_impl::Arena;
 use bun_core::ZigString;
 use bun_core::{Global, Output};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{self as jsc, JSGlobalObject};
 
 // `repl.rs` is a sibling file with no other consumers; declare it as a child
 // module here so `Repl` resolves without touching `cli/mod.rs`.
@@ -135,7 +135,7 @@ impl ReplCommand {
             .load_extra_env_and_source_code_printer();
 
         VirtualMachine::get().as_mut().is_main_thread = true;
-        bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
+        crate::vm::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         // Store VM reference in REPL (safe - no JS allocation)
         repl.vm = Some(VirtualMachine::get());

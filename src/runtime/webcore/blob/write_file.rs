@@ -7,9 +7,9 @@ use core::sync::atomic::Ordering;
 use crate::Error;
 use bun_core::ZigString;
 use bun_loop::{self as io, IntrusiveIoRequest as _};
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::node_path::PathOrFileDescriptor;
-use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
+use crate::ZigStringJsc as _;
+use crate::node_path::PathOrFileDescriptor;
+use crate::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
 use bun_sys::threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
@@ -33,16 +33,16 @@ pub enum WriteFileResultType {
 pub type WriteFileOnWriteFileCallback =
     fn(ctx: *mut c_void, count: WriteFileResultType) -> Result<(), JsTerminated>;
 
-pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
+pub type WriteFileTask = crate::vm::work_task::WorkTask<WriteFile>;
 
 // `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
 // cannot be marked `unsafe fn` and the parameter type cannot change, so the
 // lint is unsatisfiable here. The pointers come from the work-pool hand-off
 // and are guaranteed live (see SAFETY notes below).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl bun_jsc::work_task::WorkTaskContext for WriteFile {
+impl crate::vm::work_task::WorkTaskContext for WriteFile {
     const TASK_TAG: bun_loop::TaskTag = bun_loop::task_tag::WriteFileTask;
-    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
+    fn run(this: *mut Self, task: *mut crate::vm::work_task::WorkTask<Self>) {
         // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
         unsafe { (*this).run(task) }
     }
@@ -175,7 +175,7 @@ impl FileCloser for WriteFile {
     fn io_poll(&mut self) -> &mut io::Poll {
         &mut self.io_poll
     }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
+    fn task(&mut self) -> &mut crate::vm::WorkPoolTask {
         &mut self.task
     }
     fn update(&mut self) {
@@ -212,7 +212,7 @@ impl FileCloser for WriteFile {
     // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
     // in `on_io_request_closed` and is guaranteed live.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
+    fn on_close_io_request(task: *mut crate::vm::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
         // recover parent.
@@ -442,7 +442,7 @@ impl WriteFile {
         if !close_after_io {
             if let Some(io_task) = self.io_task.take() {
                 // SAFETY: io_task is a backref set in run(); WorkTask owns lifetime.
-                bun_jsc::work_task::WorkTask::on_finish(unsafe { &mut *io_task });
+                crate::vm::work_task::WorkTask::on_finish(unsafe { &mut *io_task });
             }
         }
     }
@@ -608,9 +608,9 @@ mod windows_impl {
     use core::ptr::null_mut;
 
     use bun_loop::{self as aio, IntrusiveUvFs as _, KeepAlive};
-    // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
+    // `crate::vm::EventLoop`/`ManagedTask` are *modules* (namespace
     // re-exports); the structs live one level deeper.
-    use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
+    use crate::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
     use bun_sys::ReturnCodeExt as _;
     use bun_sys::windows::libuv as uv;
 

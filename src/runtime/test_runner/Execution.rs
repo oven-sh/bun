@@ -38,9 +38,9 @@
 use core::ptr::NonNull;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_jsc::{JSGlobalObject, JsResult};
-// `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, JsResult};
+// `crate::vm::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_core::scoped_log;
 
 use super::debug::group as group_log; // bun_test.debug.group
@@ -702,7 +702,7 @@ impl Execution {
                 // SAFETY: VirtualMachine::get() returns the live singleton.
                 if let Some(debugger) = VirtualMachine::get().as_mut().debugger.as_mut() {
                     if debugger.test_reporter_agent.is_enabled() {
-                        use bun_jsc::Debugger::TestStatus as S;
+                        use crate::vm::Debugger::TestStatus as S;
                         debugger.test_reporter_agent.report_test_end(
                             entry.base.test_id_for_debugger,
                             match sequence.result {

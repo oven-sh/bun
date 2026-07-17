@@ -1,8 +1,8 @@
 //! `Bun.JSONC` — `parse()` host function.
 
 use bun_ast::ToJSError;
-use bun_js_parser_jsc::ExprJsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
+use crate::js_parser_jsc::ExprJsc;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
 use bun_parsers::json;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {

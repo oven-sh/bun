@@ -4,7 +4,7 @@
 // `bun_bundler::options` re-exports `Target`/`Loader` but not `Format`; pull it
 // from the lower-tier source crate directly.
 use bun_core::ZigString;
-use bun_jsc::ComptimeStringMapExt as _;
+use crate::ComptimeStringMapExt as _;
 use bun_options_types::compile_target::CompileTarget;
 
 use crate::{JSGlobalObject, JSValue, JsResult};

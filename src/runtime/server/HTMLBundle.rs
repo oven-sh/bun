@@ -13,7 +13,7 @@ use bun_bundler::options::{self as bundler_options, LoaderExt as _};
 use bun_core::strings;
 use bun_http::Headers;
 use bun_core::http_types::Method::Method;
-use bun_jsc::JsCell;
+use crate::JsCell;
 use bun_core::ptr::{AsCtxPtr, IntrusiveRc, RefCount};
 use bun_uws::{AnyRequest, AnyResponse};
 

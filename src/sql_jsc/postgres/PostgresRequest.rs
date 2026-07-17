@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue, StringJsc as _};
+use crate::sql::jsc::{JSGlobalObject, JSValue, StringJsc as _};
 use bun_core::String as BunString;
 use bun_core::fmt as bun_fmt;
 
@@ -8,12 +8,12 @@ use bun_sql::postgres::PostgresTypes::{AnyPostgresError, Int4, Short};
 use bun_sql::postgres::Status;
 use bun_sql::postgres::protocol::{ReaderContext, WriterContext};
 
-use crate::jsc::js_error_to_postgres;
-use crate::postgres::PostgresSQLConnection;
-use crate::postgres::PostgresSQLQuery;
-use crate::postgres::PostgresSQLStatement;
-use crate::postgres::Signature;
-use crate::shared::QueryBindingIterator;
+use crate::sql::jsc::js_error_to_postgres;
+use crate::sql::postgres::PostgresSQLConnection;
+use crate::sql::postgres::PostgresSQLQuery;
+use crate::sql::postgres::PostgresSQLStatement;
+use crate::sql::postgres::Signature;
+use crate::sql::shared::QueryBindingIterator;
 
 bun_core::declare_scope!(Postgres, visible);
 
@@ -185,7 +185,7 @@ pub fn write_bind<Context: WriterContext>(
             types::Tag::timestamp | types::Tag::timestamptz => {
                 let l = writer.length()?;
                 writer.int8(
-                    crate::postgres::types::date::from_js(global, value)
+                    crate::sql::postgres::types::date::from_js(global, value)
                         .map_err(js_error_to_postgres)?,
                 )?;
                 l.write_excluding_self()?;
@@ -522,4 +522,4 @@ pub(crate) type Queue = bun_core::collections::linear_fifo::LinearFifo<
     bun_core::collections::linear_fifo::DynamicBuffer<*mut PostgresSQLQuery>,
 >;
 
-use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
+use crate::sql::postgres::postgres_sql_connection::{SslMode, TlsStatus};

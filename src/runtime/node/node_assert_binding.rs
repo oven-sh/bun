@@ -1,5 +1,5 @@
 use bun_core as bstring;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 use super::node_assert;
 

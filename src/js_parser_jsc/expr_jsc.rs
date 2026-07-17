@@ -5,7 +5,7 @@
 use bun_ast::{E, Expr, ExprData, G, ToJSError};
 use bun_core::collections::VecExt;
 use bun_core::{StackCheck, String as BunString, strings};
-use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
+use crate::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 
 /// Map a `bun_jsc::JsError` into the AST-layer `ToJSError`. Orphan rules forbid
 /// `impl From<JsError> for ToJSError` here (both foreign), so callers use
@@ -26,7 +26,7 @@ pub fn expr_to_js(this: &Expr, global: &JSGlobalObject) -> Result<JSValue, ToJSE
 /// Extension trait providing `Expr.toJS` / `Expr::Data.toJS` as method syntax.
 /// `Expr` lives in `bun_js_parser` (lower tier, no JSC dep), so an inherent
 /// `impl Expr { fn to_js }` is forbidden by orphan rules. Mirrors the
-/// `StringJsc` pattern in `bun_jsc` — callers `use bun_js_parser_jsc::ExprJsc`
+/// `StringJsc` pattern in `bun_jsc` — callers `use crate::js_parser_jsc::ExprJsc`
 /// (or the crate prelude) and write `expr.to_js(global)`.
 pub trait ExprJsc {
     fn to_js(&self, global: &JSGlobalObject) -> Result<JSValue, ToJSError>;

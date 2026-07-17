@@ -3,7 +3,7 @@ use core::ffi::{c_int, c_void};
 use crate::webcore::Response;
 use crate::webcore::response::{HeadersRef, Init};
 use bun_core::String as BunString;
-use bun_jsc::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{CallFrame, HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsResult};
 
 pub fn fix_dead_code_elimination() {
     bun_core::keep_symbols!(

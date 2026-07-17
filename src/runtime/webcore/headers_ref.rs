@@ -1,5 +1,5 @@
 //! Helpers for extracting the body content-type byte slice that
-//! `bun_http_jsc::headers_jsc::from_fetch_headers` consumes. Shared by
+//! `crate::http_jsc::headers_jsc::from_fetch_headers` consumes. Shared by
 //! `webcore::fetch`, `server::StaticRoute`, `server::FileRoute`, and
 //! `bake::DevServer`.
 

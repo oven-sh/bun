@@ -9,7 +9,7 @@ use std::io::Write as _;
 
 use bun_core::ZBox;
 use bun_core::{Global, Output};
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
 use bun_core::ptr::Interned;
 use bun_resolver::fs::{FileSystem, RealFS};
@@ -202,7 +202,7 @@ pub fn run_as_coordinator(
         vm: unsafe { &*vm_ptr },
         // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
         event_loop_handle: unsafe {
-            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
+            crate::vm::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
         },
         reporter,
         files: sorted,

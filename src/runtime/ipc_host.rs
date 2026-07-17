@@ -1,7 +1,7 @@
 //! JS host entry points for the IPC module that need to name `bun_runtime`
 //! types (`Subprocess`, `Listener`).
 //!
-//! LAYERING: `bun_jsc::ipc` defines the protocol/queue (mode-agnostic) and the
+//! LAYERING: `crate::vm::ipc` defines the protocol/queue (mode-agnostic) and the
 //! `SendQueueOwner` trait. The host fns here close over the concrete
 //! `Subprocess` / `Listener` / `IPCInstance` types so `bun_jsc` keeps zero
 //! upward references into `bun_runtime`. The C-ABI exports (`Bun__Process__send`,
@@ -9,10 +9,10 @@
 //! crate defines them is irrelevant to the C++ side.
 
 use bun_core::String as BunString;
-use bun_jsc::ipc::{
+use crate::vm::ipc::{
     self as IPC, DecodedIPCMessage, Handle, IsInternal, SendQueue, SerializeAndSendResult,
 };
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 
 use crate::api::bun::subprocess::Subprocess;
 use crate::socket::Listener;
@@ -234,7 +234,7 @@ pub fn emit_handle_ipc_message(
 // The #[bun_jsc::host_fn] attribute emits the jsc-callconv shim and the
 // `Bun__Process__send` export.
 //
-// LAYERING: lives here (not in `bun_jsc::virtual_machine_exports`) because the
+// LAYERING: lives here (not in `crate::vm::virtual_machine_exports`) because the
 // body — via `do_send` — names `Listener` (`bun_runtime`). The export is a
 // link-time `#[no_mangle]` symbol, so the defining crate does not matter to
 // the C++ caller.

@@ -1,5 +1,5 @@
 //! phase-d: handwritten C-ABI export symbols whose bodies
-//! live in `bun_jsc::VirtualMachine` but whose link names must be emitted from
+//! live in `crate::vm::VirtualMachine` but whose link names must be emitted from
 //! a crate that *depends on* `bun_jsc` (so the bodies can call back into the
 //! real `VirtualMachine` struct without inverting the crate DAG).
 //!
@@ -18,12 +18,12 @@
 //!   - `Bun__JSSourceMap__find`
 //!       → `src/sourcemap_jsc/JSSourceMap.rs`
 //!   - `Bun__Process__send`
-//!       → `bun_jsc::virtual_machine_exports`
+//!       → `crate::vm::virtual_machine_exports`
 
 use core::ffi::c_void;
 
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -157,12 +157,12 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
     }
 }
 
-// ─── sql_jsc bridge — `bun_sql_jsc::jsc::SqlRuntimeHooks` vtable ─────────────
+// ─── sql_jsc bridge — `crate::sql::jsc::SqlRuntimeHooks` vtable ─────────────
 //
 // `bun_sql_jsc` cannot name `RuntimeState` / `socket::SSLConfig` /
 // `webcore::Blob` (this crate depends on it). Instead of Rust→Rust
 // `extern "C"` re-decls (which let the two sides silently disagree on pointee
-// layout), the low tier defines [`bun_sql_jsc::jsc::SqlRuntimeHooks`] and this
+// layout), the low tier defines [`crate::sql::jsc::SqlRuntimeHooks`] and this
 // crate registers a `&'static` instance from [`crate::jsc_hooks::
 // `__BUN_SQL_RUNTIME_HOOKS`. Every fn-pointer signature is type-checked at the
 // struct-literal below.
@@ -174,7 +174,7 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
 pub(crate) mod sql_hooks {
     use super::*;
     use bun_loop::EventLoopTimer::EventLoopTimer;
-    use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
+    use crate::sql::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
 
     unsafe fn sql_rare(_vm: *mut VirtualMachine) -> *mut SqlRareData {
         let state = crate::jsc_hooks::runtime_state();
@@ -264,7 +264,7 @@ pub(crate) mod sql_hooks {
         }
     }
 
-    /// Declared `extern "Rust"` in `bun_sql_jsc::jsc`; link-time resolved.
+    /// Declared `extern "Rust"` in `crate::sql::jsc`; link-time resolved.
     #[unsafe(no_mangle)]
     pub(crate) static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare,
@@ -295,10 +295,10 @@ pub fn on_resolve_entry_point_result(
     // `message_with_type_and_level` (it always resolves the per-VM console via
     // `vm_console(global)`), so null is fine.
     unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
+        crate::vm::ConsoleObject::message_with_type_and_level(
             core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
+            crate::vm::ConsoleObject::MessageType::Log,
+            crate::vm::ConsoleObject::MessageLevel::Log,
             global,
             &raw const result,
             1,
@@ -318,10 +318,10 @@ pub fn on_reject_entry_point_result(
     // `message_with_type_and_level` (it always resolves the per-VM console via
     // `vm_console(global)`), so null is fine.
     unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
+        crate::vm::ConsoleObject::message_with_type_and_level(
             core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
+            crate::vm::ConsoleObject::MessageType::Log,
+            crate::vm::ConsoleObject::MessageLevel::Log,
             global,
             &raw const result,
             1,
@@ -351,7 +351,7 @@ pub(crate) unsafe extern "C" fn bindgen_NodeModuleModule_dispatch_stat1(
     // valid out-param.
     let s = unsafe { (*arg_str).to_utf8() };
     // SAFETY: `out` is a valid C++ stack out-param.
-    unsafe { *out = bun_jsc::node_module_module::_stat(s.slice()) };
+    unsafe { *out = crate::vm::node_module_module::_stat(s.slice()) };
     true
 }
 
@@ -739,5 +739,5 @@ pub fn js2native_bindgen_dev_server_get_deinit_count(global: &JSGlobalObject) ->
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from
 // `crate::webview::chrome_process` (mod webview is declared in lib.rs).
 //
-// `Bun__JSSourceMap__find` — exported from `bun_sourcemap_jsc::js_source_map`
+// `Bun__JSSourceMap__find` — exported from `crate::sourcemap_jsc::js_source_map`
 // via `#[bun_jsc::host_fn(export = ...)]`.

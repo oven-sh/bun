@@ -1,10 +1,10 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::sql::jsc::{JSGlobalObject, JSValue};
 use bun_core::String;
 use bun_core::StringBuilder;
 use bun_sql::postgres::protocol::error_response::ErrorResponse;
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 
-use crate::postgres::error_jsc::create_postgres_error;
+use crate::sql::postgres::error_jsc::create_postgres_error;
 use bun_sql::postgres::any_postgres_error::PostgresErrorOptions;
 
 pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSValue {

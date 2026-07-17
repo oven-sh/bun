@@ -9,7 +9,7 @@
 use core::ffi::c_void;
 
 use bun_core::strings;
-use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, Blob, BlobExt};
 use crate::webcore::body::{BodyMixin as _, Value as BodyValue};

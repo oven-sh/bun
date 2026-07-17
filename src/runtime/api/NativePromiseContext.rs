@@ -21,8 +21,8 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use bun_loop::{Task, TaskTag, Taskable, task_tag};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, JSValue};
 
 use crate::api::html_rewriter;
 use crate::api::server;

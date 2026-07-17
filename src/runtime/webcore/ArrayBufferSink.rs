@@ -1,7 +1,7 @@
 use crate::webcore::sink::{self, Sink};
 use crate::webcore::streams::{self, Signal};
 use bun_core::collections::{ByteVecExt, VecExt};
-use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
+use crate::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 
 pub type JSSink = sink::JSSink<ArrayBufferSink>;

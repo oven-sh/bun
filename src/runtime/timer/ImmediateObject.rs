@@ -1,5 +1,5 @@
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{JSGlobalObject, JSValue};
 
 use super::{Kind, TimerObjectInternals};
 
@@ -21,7 +21,7 @@ impl ImmediateObject {
     }
 
     /// Thin forwarder to
-    /// `internals.run_immediate_task`. Reached from `bun_jsc::event_loop`
+    /// `internals.run_immediate_task`. Reached from `crate::vm::event_loop`
     /// via `__bun_run_immediate_task` (definer in [`crate::dispatch`]).
     ///
     /// Returns `true` if an exception was thrown.

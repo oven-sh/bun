@@ -20,7 +20,7 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use bun_core::collections::VecExt;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
 #[cfg(not(windows))]
 use bun_sys::FdExt as _;
@@ -118,7 +118,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // the group accessor needs `vm` again for `uws_loop()`. The two touch
         // disjoint storage (the `Box<RareData>` payload vs the loop pointer
         // field), so a raw-pointer reborrow is sound here.
-        let rd: *mut bun_jsc::rare_data::RareData = vm.rare_data();
+        let rd: *mut crate::vm::rare_data::RareData = vm.rare_data();
         // SAFETY: `rd` points into `vm`'s boxed RareData, which outlives this
         // call; the accessor only reads `vm.uws_loop()` (a separate field).
         let g = unsafe { (*rd).test_parallel_ipc_group(vm) };

@@ -10,10 +10,10 @@ use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
 use bun_loop::AnyTask::AnyTask;
 use bun_loop::ConcurrentTask::{ConcurrentTask, Task};
 use bun_loop::KeepAlive;
-use bun_jsc::call_frame::ArgumentsSlice;
-use bun_jsc::node::PathLike;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::call_frame::ArgumentsSlice;
+use crate::node::PathLike;
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPool,
     WorkPoolTask,
 };
@@ -636,7 +636,7 @@ impl StatWatcher {
     }
 
     /// Spec `RareData.nodeFSStatWatcherScheduler`. Body lives here (high tier)
-    /// because `StatWatcherScheduler` cannot be named from `bun_jsc::rare_data`
+    /// because `StatWatcherScheduler` cannot be named from `crate::vm::rare_data`
     /// without a crate cycle; the slot in `RareData` is an erased
     /// `Option<NonNull<c_void>>` (§Dispatch).
     fn lazy_scheduler(vm: *mut VirtualMachine) -> RefPtr<StatWatcherScheduler> {

@@ -4,19 +4,19 @@ use std::io::Write as _;
 
 use bun_core::ZigString;
 use bun_loop::KeepAlive;
-use bun_jsc::{
+use crate::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
+use crate::vm::event_loop::EventLoop;
 // JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
 // lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
-use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
-use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
-use bun_jsc::{JSPromise, JSPromiseStrong};
+use crate::vm::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
+use crate::vm::ConcurrentTask::ConcurrentTask;
+use crate::ZigStringJsc as _;
+use crate::zig_string::ZigString as JscZigString;
+use crate::{JSPromise, JSPromiseStrong};
 use bun_sys::threading::work_pool::WorkPool;
 
 use crate::node::StringOrBuffer;

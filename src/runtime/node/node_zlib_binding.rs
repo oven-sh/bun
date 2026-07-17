@@ -8,9 +8,9 @@ use bun_core::ptr::ParentRef;
 use bun_core::{String as BunString, ZigStringSlice};
 use bun_loop::Taskable;
 use bun_loop::KeepAlive;
-use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{
+use crate::vm::ConcurrentTask::{ConcurrentTask, Task};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
     StrongOptional, WorkPoolTask,
 };
@@ -1001,14 +1001,14 @@ macro_rules! __impl_compression_stream {
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
-            #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
+            #[inline] fn task(&self) -> &::bun_jsc::JsCell<::crate::vm::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn pending_reset(&self) -> &::core::cell::Cell<bool> { &self.pending_reset }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 
             #[inline]
-            unsafe fn from_task(task: *mut ::bun_jsc::WorkPoolTask) -> *mut Self {
+            unsafe fn from_task(task: *mut ::crate::vm::WorkPoolTask) -> *mut Self {
                 // SAFETY: `task` points at the `task` field of a live `Self`;
                 // `from_field_ptr!`
                 // computes the byte offset via `offset_of!(Self, task)`.

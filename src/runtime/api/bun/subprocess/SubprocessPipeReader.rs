@@ -8,8 +8,8 @@ use bun_loop::Loop as AsyncLoop;
 use bun_loop::max_buf::MaxBuf;
 #[cfg(unix)]
 use bun_loop::pipe_reader::PosixFlags;
-use bun_jsc::event_loop::EventLoop;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
+use crate::vm::event_loop::EventLoop;
+use crate::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 #[cfg(not(windows))]
 use bun_core::ptr::ScopedRef;
 use bun_core::ptr::{IntrusiveRc, ParentRef, RefCount};
@@ -45,7 +45,7 @@ pub struct PipeReader {
     pub event_loop: bun_core::ptr::BackRef<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    pub event_loop_handle: bun_jsc::EventLoopHandle,
+    pub event_loop_handle: crate::vm::EventLoopHandle,
     /// Intrusive refcount field for `bun_core::ptr::IntrusiveRc<PipeReader>`.
     pub ref_count: RefCount<PipeReader>,
     pub state: State,
@@ -114,7 +114,7 @@ impl PipeReader {
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
             event_loop: event_loop.into(),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            event_loop_handle: crate::vm::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
             stdio_result: result,
             state: State::Pending,
         });
@@ -151,7 +151,7 @@ impl PipeReader {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
         self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.event_loop_handle = crate::vm::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
         #[cfg(windows)]
         {
             return self.reader.start_with_current_pipe();

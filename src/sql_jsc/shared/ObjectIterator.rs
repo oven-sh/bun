@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
+use crate::sql::jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 
 // Note: this iterator holds bare `JSValue` fields and a borrowed
 // `&JSGlobalObject`; it is only sound when constructed on the stack for the

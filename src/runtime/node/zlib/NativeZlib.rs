@@ -15,7 +15,7 @@ mod _impl {
     use super::*;
     use core::cell::Cell;
 
-    use bun_jsc::{
+    use crate::{
         CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional, WorkPoolTask,
     };
 

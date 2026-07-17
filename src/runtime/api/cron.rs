@@ -19,8 +19,8 @@ use std::cell::Cell;
 use bun_core::env_var;
 use bun_loop::BufferedReader as OutputReader;
 use bun_loop::{KeepAlive, Loop as AsyncLoop};
-use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
-use bun_jsc::{
+use crate::vm::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
+use crate::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
     JSValue, JsCell, JsRef, JsResult,
 };

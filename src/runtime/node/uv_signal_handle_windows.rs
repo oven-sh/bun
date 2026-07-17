@@ -6,7 +6,7 @@
 use core::ffi::c_int;
 
 #[cfg(windows)]
-use bun_jsc::JSGlobalObject;
+use crate::JSGlobalObject;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 

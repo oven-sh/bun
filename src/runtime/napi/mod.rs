@@ -19,7 +19,7 @@ bun_opaque::opaque_ffi! {
 }
 
 // ─── opaque type surface ─────────────────────────────────────────────────────
-// TODO(blocked): bun_jsc::EventLoop (method surface)
+// TODO(blocked): crate::vm::EventLoop (method surface)
 // TODO(blocked): bun_core::collections::LinearFifo
 // TODO(blocked): bun_sys::threading::Condvar
 pub struct ThreadsafeFunction(());

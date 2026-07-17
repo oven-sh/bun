@@ -111,9 +111,9 @@ pub mod Classes {
     pub use Transpiler as JSTranspiler;
     pub use bun_jsc::BuildMessage;
     pub use bun_jsc::ResolveMessage;
-    pub use bun_sourcemap_jsc::JSSourceMap as SourceMap;
-    pub use bun_sql_jsc::mysql::MySQLConnection;
-    pub use bun_sql_jsc::mysql::MySQLQuery;
-    pub use bun_sql_jsc::postgres::PostgresSQLConnection;
-    pub use bun_sql_jsc::postgres::PostgresSQLQuery;
+    pub use crate::sourcemap_jsc::JSSourceMap as SourceMap;
+    pub use crate::sql::mysql::MySQLConnection;
+    pub use crate::sql::mysql::MySQLQuery;
+    pub use crate::sql::postgres::PostgresSQLConnection;
+    pub use crate::sql::postgres::PostgresSQLQuery;
 }

@@ -1,4 +1,4 @@
-use crate::jsc::rare_data::PathBuf as RarePathBuf;
+use crate::vm::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{
     JSGlobalObject, JSValue, JsResult, SysErrorJsc as _, bun_string_jsc as BunString,
 };

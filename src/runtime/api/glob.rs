@@ -3,9 +3,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use bun_core::alloc_impl::Arena;
 use bun_core::String as BunString;
 use bun_sys::glob::BunGlobWalker as GlobWalker;
-use bun_jsc::bun_string_jsc;
-use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
-use bun_jsc::{
+use crate::bun_string_jsc;
+use crate::vm::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
+use crate::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSPromise, JSValue, JsResult, JsTerminated,
     StringJsc as _, SysErrorJsc as _,
 };

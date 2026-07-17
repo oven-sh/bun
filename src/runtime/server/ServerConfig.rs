@@ -703,7 +703,7 @@ fn convert_file_system_router_type(
 impl ServerConfig {
     pub fn from_js(
         global: &JSGlobalObject,
-        arguments: &mut bun_jsc::call_frame::ArgumentsSlice,
+        arguments: &mut crate::ArgumentsSlice,
         opts: FromJSOptions,
     ) -> JsResult<ServerConfig> {
         let vm = arguments.vm;

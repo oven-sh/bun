@@ -6,7 +6,7 @@ use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
-use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
 
@@ -108,7 +108,7 @@ where
         // `?` early-return below still leaves the formatter at its original
         // depth (observable when `print_as` throws and the caller continues
         // formatting).
-        let mut formatter = bun_jsc::IndentScope::new(&mut *formatter);
+        let mut formatter = crate::vm::IndentScope::new(&mut *formatter);
 
         let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
             &credentials.endpoint
@@ -266,7 +266,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<1>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
         // only to lazily memoize — single-threaded JS event-loop discipline applies.
@@ -347,7 +347,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -392,7 +392,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -435,7 +435,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -476,7 +476,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -517,7 +517,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -558,7 +558,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -644,7 +644,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
         let path: PathLike = match PathLike::from_js(global, &mut args)? {
             Some(p) => p,
             None => {
@@ -714,7 +714,7 @@ impl S3Client {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
-        let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, arguments.slice());
+        let mut args = crate::ArgumentsSlice::init(vm, arguments.slice());
 
         let Some(path) = PathLike::from_js(global, &mut args)? else {
             return Err(global.throw_invalid_arguments(format_args!("Expected file path string")));
@@ -764,4 +764,4 @@ impl S3Client {
 
 // `FormatTag` / `JSType` are the ConsoleObject formatter enums
 // (`.Double`, `.NumberObject`), re-exported at the `bun_jsc` crate root.
-use bun_jsc::{FormatTag, JSType};
+use crate::{FormatTag, JSType};

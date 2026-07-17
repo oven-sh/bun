@@ -11,7 +11,7 @@ use core::mem;
 
 use bun_sys::cares::c_ares as ares;
 use bun_core::{OwnedString, String as BunString, ZStr};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
 
 // The JsClass derive / codegen wires toJS/fromJS/fromJSDirect.
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; the one
@@ -718,7 +718,7 @@ impl SocketAddress {
 }
 
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
-    use bun_jsc::js_global_object::SysErrOptions;
+    use crate::js_global_object::SysErrOptions;
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
         0 => Err(global.throw_sys_error(

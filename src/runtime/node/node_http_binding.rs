@@ -1,7 +1,7 @@
 //! `node:http` native binding — `getBunServerAllClosedPromise` /
 //! `{get,set}MaxHTTPHeaderSize`.
 
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use crate::server::{DebugHTTPSServer, DebugHTTPServer, HTTPSServer, HTTPServer};
 

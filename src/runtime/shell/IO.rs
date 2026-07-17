@@ -5,7 +5,7 @@
 use bun_core::collections::VecExt;
 use core::fmt;
 
-use crate::api::bun_loop::stdio::{Capture, Stdio};
+use crate::api::bun_spawn::stdio::{Capture, Stdio};
 use crate::shell::interpreter::OutputNeedsIOSafeGuard;
 use crate::shell::io_reader::IOReader;
 use crate::shell::io_writer::IOWriter;

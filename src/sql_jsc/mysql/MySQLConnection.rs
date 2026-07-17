@@ -1,4 +1,4 @@
-use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
+use crate::sql::jsc::{JSValue, VirtualMachineSqlExt as _};
 use bun_core::collections::{OffsetByteList, StringHashMap, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
@@ -34,17 +34,17 @@ use bun_sql::postgres::socket_monitor as SocketMonitor;
 use bun_sql::shared::connection_flags::ConnectionFlags;
 use bun_sql::shared::data::Data;
 
-use crate::mysql::js_mysql_connection::JSMySQLConnection;
-use crate::mysql::js_mysql_query::JSMySQLQuery;
-use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
-use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, Param};
+use crate::sql::mysql::js_mysql_connection::JSMySQLConnection;
+use crate::sql::mysql::js_mysql_query::JSMySQLQuery;
+use crate::sql::mysql::my_sql_request_queue::MySQLRequestQueue;
+use crate::sql::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, Param};
 
 pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 // Re-export so callers can write `my_sql_connection::Status::Connected`
 // without naming `bun_sql`.
 pub use bun_sql::mysql::connection_state::ConnectionState as Status;
 
-use crate::jsc::api::server_config::SSLConfig;
+use crate::sql::jsc::api::server_config::SSLConfig;
 
 bun_core::define_scoped_log!(debug, MySQLConnection, visible);
 
@@ -328,7 +328,7 @@ impl MySQLConnection {
 
         // `as_mut()` is `'static`, so `tls_group` borrows the VM singleton —
         // not `*self` — and stays live across the field reads below.
-        let tls_group: &mut bun_uws::SocketGroup = crate::jsc::VirtualMachine::get()
+        let tls_group: &mut bun_uws::SocketGroup = crate::sql::jsc::VirtualMachine::get()
             .as_mut()
             .mysql_socket_group::<true>();
 
@@ -1559,9 +1559,9 @@ pub enum CachingSha2 {
 pub enum FlushQueueError {
     AuthenticationFailed,
 }
-impl From<FlushQueueError> for crate::Error {
+impl From<FlushQueueError> for crate::sql::Error {
     fn from(_: FlushQueueError) -> Self {
-        crate::Error::AuthenticationFailed
+        crate::sql::Error::AuthenticationFailed
     }
 }
 

@@ -17,8 +17,8 @@ use crate::crypto::boringssl_jsc::err_to_js;
 use crate::socket::uws_jsc::create_bun_socket_error_to_js;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl;
-use bun_jsc::JsClass as _;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::JsClass as _;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 
 /// Re-export the codegen-emitted module so
@@ -287,7 +287,7 @@ impl SecureContext {
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
         // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
-        // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
+        // Rust crate split, `crate::vm::RareData::ssl_ctx_cache()` returns an
         // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
         // on this crate's `RuntimeState` (one per JS thread, same lifetime as
         // `RareData`). Reach it via the thread-local — same instance
@@ -391,8 +391,8 @@ impl SecureContext {
 
 const SSL_CTX_BASE_COST: usize = 50 * 1024;
 
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
+use crate::ZigStringJsc as _;
+use crate::zig_string::ZigString;
 use bun_uws_sys::socket_context::c;
 
 mod cpp {

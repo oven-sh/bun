@@ -1,12 +1,12 @@
 use bun_core::collections::VecExt;
-use bun_jsc::JsCell;
+use crate::JsCell;
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::sync::atomic::{AtomicU32, Ordering};
 
-use crate::jsc::EventLoopTimer;
-use crate::jsc::webcore::AutoFlusher;
-use crate::jsc::{
+use crate::sql::jsc::EventLoopTimer;
+use crate::sql::jsc::webcore::AutoFlusher;
+use crate::sql::jsc::{
     self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
     VirtualMachineSqlExt as _,
 };
@@ -19,19 +19,19 @@ use bun_core::ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_uws as uws;
 use core::ptr::NonNull;
 
-use crate::jsc::{EventLoopTimerState, EventLoopTimerTag};
-use crate::postgres::AuthenticationState;
-use crate::postgres::PostgresSQLQuery;
-use crate::postgres::PostgresSQLStatement;
-use crate::postgres::data_cell as DataCell;
-use crate::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
-use crate::postgres::postgres_request as PostgresRequest;
-use crate::postgres::postgres_request::MessageType;
-use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
-use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
-use crate::postgres::sasl::SASLStatus;
-use crate::shared::CachedStructure as PostgresCachedStructure;
-use crate::shared::connection_ctor_args::{self, ConnectionCtorArgs};
+use crate::sql::jsc::{EventLoopTimerState, EventLoopTimerTag};
+use crate::sql::postgres::AuthenticationState;
+use crate::sql::postgres::PostgresSQLQuery;
+use crate::sql::postgres::PostgresSQLStatement;
+use crate::sql::postgres::data_cell as DataCell;
+use crate::sql::postgres::error_jsc::{create_postgres_error, postgres_error_to_js};
+use crate::sql::postgres::postgres_request as PostgresRequest;
+use crate::sql::postgres::postgres_request::MessageType;
+use crate::sql::postgres::postgres_sql_query::{self, Status as QueryStatus};
+use crate::sql::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
+use crate::sql::postgres::sasl::SASLStatus;
+use crate::sql::shared::CachedStructure as PostgresCachedStructure;
+use crate::sql::shared::connection_ctor_args::{self, ConnectionCtorArgs};
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -56,7 +56,7 @@ const MAX_PIPELINE_SIZE: usize = u16::MAX as usize; // about 64KB per connection
 type PreparedStatementsMap = StringHashMap<*mut PostgresSQLStatement>;
 
 pub mod js {
-    pub use crate::jsc::codegen::JSPostgresSQLConnection::*;
+    pub use crate::sql::jsc::codegen::JSPostgresSQLConnection::*;
 }
 pub use js::{from_js, from_js_direct, to_js};
 
@@ -77,8 +77,8 @@ impl jsc::JsClass for PostgresSQLConnection {
 }
 
 // `verify_error_to_js` sunk to `bun_jsc::system_error`; reach it via
-// `crate::jsc::verify_error_to_js`.
-use crate::jsc::verify_error_to_js;
+// `crate::sql::jsc::verify_error_to_js`.
+use crate::sql::jsc::verify_error_to_js;
 
 //
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -130,7 +130,7 @@ pub struct PostgresSQLConnection {
     // Self-wrapper back-ref (the JS object that owns this payload). Stored as a
     // weak `JsRef`, never a bare `JSValue` — this struct is heap-allocated and
     // the conservative GC scan covers stack/registers only.
-    pub js_value: JsCell<crate::jsc::JsRef>,
+    pub js_value: JsCell<crate::sql::jsc::JsRef>,
 
     pub backend_parameters: JsCell<StringMap>,
     pub backend_key_data: JsCell<protocol::BackendKeyData>,
@@ -226,7 +226,7 @@ impl PostgresSQLConnection {
     /// singleton (see [`vm_mut`]); single-thread affinity ⇒ no two
     /// `&mut EventLoop` ever coexist.
     #[inline]
-    fn event_loop(&self) -> &'static mut crate::jsc::EventLoop {
+    fn event_loop(&self) -> &'static mut crate::sql::jsc::EventLoop {
         // `vm_mut()` yields the process-lifetime `'static mut VM` (see above);
         // the event loop it owns lives for the VM's lifetime. Single-JS-thread
         // invariant ⇒ callers never hold two `&mut EventLoop` at once.
@@ -286,7 +286,7 @@ impl PostgresSQLConnection {
     /// (`self.writer()` / `self.flush_data()` / `self.fail()` do not).
     #[inline]
     #[allow(clippy::mut_from_ref)] // body projects through `JsCell` (UnsafeCell-backed); see SAFETY note
-    fn sasl_state_mut(&self) -> Option<&mut crate::postgres::sasl::SASL> {
+    fn sasl_state_mut(&self) -> Option<&mut crate::sql::postgres::sasl::SASL> {
         // SAFETY: see doc comment — single-JS-thread, no re-entrant access to
         // `authentication_state` for the borrow's lifetime.
         match unsafe { self.authentication_state.get_mut() } {
@@ -418,7 +418,7 @@ impl PostgresSQLConnection {
     }
 
     bun_jsc::cached_prop_hostfns! {
-        crate::jsc::codegen::JSPostgresSQLConnection;
+        crate::sql::jsc::codegen::JSPostgresSQLConnection;
         lazy_array(get_queries => queries_get_cached, queries_set_cached),
         (get_on_connect, set_on_connect => onconnect_get_cached, onconnect_set_cached),
         (get_on_close,   set_on_close   => onclose_get_cached, onclose_set_cached),
@@ -1208,7 +1208,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             statements: JsCell::new(PreparedStatementsMap::default()),
             prepared_statement_id: Cell::new(0),
             pending_activity_count: AtomicU32::new(0),
-            js_value: JsCell::new(crate::jsc::JsRef::empty()),
+            js_value: JsCell::new(crate::sql::jsc::JsRef::empty()),
             backend_parameters: JsCell::new(StringMap::init(true)),
             backend_key_data: JsCell::new(protocol::BackendKeyData::default()),
             database,
@@ -1295,7 +1295,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     this.poll_ref.with_mut(|r| r.ref_(this.vm_ctx()));
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
-    this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
+    this.js_value.set(crate::sql::jsc::JsRef::init_weak(js_value));
     js::onconnect_set_cached(js_value, global_object, on_connect);
     js::onclose_set_cached(js_value, global_object, on_close);
     bun_core::analytics::features::postgres_connections.fetch_add(1, Ordering::Relaxed);
@@ -2379,7 +2379,7 @@ impl PostgresSQLConnection {
         mut reader: protocol::NewReader<Context>,
     ) -> Result<(), AnyPostgresError> {
         #[inline(always)]
-        fn pg_err(e: crate::Error) -> AnyPostgresError {
+        fn pg_err(e: crate::sql::Error) -> AnyPostgresError {
             e.name().parse().unwrap_or(AnyPostgresError::JSError)
         }
         debug!("on({})", <&'static str>::from(message_type));
@@ -2961,7 +2961,7 @@ impl PostgresSQLConnection {
                     Status::Connecting | Status::SentStartupMessage
                 ) {
                     let v =
-                        crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
+                        crate::sql::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                     drop(err);
                     self.fail_with_js_value(v);
 
@@ -2977,12 +2977,12 @@ impl PostgresSQLConnection {
                 // Convert to JS while we still own `err` — materialize the JS value once and route through
                 // `on_js_error` to avoid double-ownership of the non-Clone ErrorResponse.
                 let js_err =
-                    crate::postgres::protocol::error_response_jsc::to_js(&err, self.global());
+                    crate::sql::postgres::protocol::error_response_jsc::to_js(&err, self.global());
                 if let Some(stmt) = request.statement_mut() {
                     if stmt.status == StatementStatus::Parsing {
                         stmt.status = StatementStatus::Failed;
                         stmt.error_response = Some(
-                            crate::postgres::postgres_sql_statement::Error::Protocol(err),
+                            crate::sql::postgres::postgres_sql_statement::Error::Protocol(err),
                         );
                         if self
                             .statements

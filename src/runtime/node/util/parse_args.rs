@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_core::{OwnedString, String, ZigString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
+use crate::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
     OptionDefinition, OptionValueType, TokenSubtype, classify_token, find_option_by_short_name,

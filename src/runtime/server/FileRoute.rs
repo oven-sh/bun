@@ -65,7 +65,7 @@ use crate::webcore::headers_ref::blob_content_type;
 
 #[inline]
 fn headers_from(fetch_headers: Option<&FetchHeaders>, blob: &Blob) -> Headers {
-    bun_http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
+    crate::http_jsc::headers_jsc::from_fetch_headers(fetch_headers, blob_content_type(blob))
 }
 
 #[inline]

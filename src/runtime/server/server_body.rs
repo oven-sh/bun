@@ -21,10 +21,10 @@ use bun_core::collections::HashMap;
 use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{String as BunString, ZigString, strings};
 use bun_http::{self as http, Method, MimeType};
-use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::uuid::UUID;
-use bun_jsc::{
+use crate::vm::Debugger::DebuggerId;
+use crate::ZigStringJsc as _;
+use crate::uuid::UUID;
+use crate::{
     self as jsc, ArrayBuffer, CallFrame, GlobalRef, JSGlobalObject, JSPromise, JSValue, JsError,
     JsResult, Node, StringJsc as _, Strong, StrongOptional, VirtualMachine, host_fn,
 };
@@ -48,7 +48,7 @@ macro_rules! ctx_log {
     ($($arg:tt)*) => { bun_core::scoped_log!(RequestContext, $($arg)*) };
 }
 
-use bun_jsc::bun_string_jsc;
+use crate::bun_string_jsc;
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 pub(super) use super::html_bundle::{self as html_bundle, HTMLBundle};
@@ -1733,7 +1733,7 @@ where
     ) -> JsResult<JSValue> {
         use super::node_http_response::Flags as NodeHTTPResponseFlags;
         use bun_core::ZigStringSlice;
-        use bun_jsc::HTTPHeaderName;
+        use crate::HTTPHeaderName;
 
         if self.config.websocket.is_none() {
             return Err(global.throw_invalid_arguments(format_args!(

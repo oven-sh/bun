@@ -1,7 +1,7 @@
 //! JS testing bindings for `InternalSourceMap`. Keeps `src/sourcemap/` free of JSC types.
 
 use bun_core::MutableString;
-use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use crate::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_sourcemap::Ordinal;
 use bun_sourcemap::internal_source_map::{self, InternalSourceMap};
 

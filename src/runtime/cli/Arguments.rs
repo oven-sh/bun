@@ -15,8 +15,8 @@ use bun_core::ZStr;
 use bun_core::env::OperatingSystem;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, Global, Output, env_var};
-use bun_jsc::RegularExpression;
-use bun_jsc::regular_expression::Flags as RegexFlags;
+use crate::RegularExpression;
+use crate::regular_expression::Flags as RegexFlags;
 use bun_options_types::code_coverage_options::Reporters as CoverageReporters;
 use bun_options_types::context::{Debugger, DebuggerEnable, HotReload, MacroOptions, Shard};
 use bun_options_types::schema::api;
@@ -1110,7 +1110,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
             // sets (VirtualMachine::configure_from_env): allows resolving
             // `bun:internal-for-testing` / `internal/test/binding` in release
             // builds. Debug builds always allow them.
-            bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+            crate::vm::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
                 .store(true, core::sync::atomic::Ordering::Relaxed);
         }
 
@@ -1409,7 +1409,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
         if let Some(define) = &opts.define {
             if !define.keys.is_empty() {
-                bun_jsc::runtime_transpiler_cache::IS_DISABLED
+                crate::vm::runtime_transpiler_cache::IS_DISABLED
                     .store(true, std::sync::atomic::Ordering::Relaxed);
             }
         }

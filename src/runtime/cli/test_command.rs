@@ -8,14 +8,14 @@ use bun_core::collections::{ArrayHashMap, BoundedArray, StringHashMap};
 use bun_core::{self as bun, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{pretty_error, pretty_errorln};
 use bun_dotenv as DotEnv;
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{self as jsc};
 // `set_time_zone` / `delete_module_registry_entry` take the JSC-side
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
 use bun_core::ZigStringSlice;
 use bun_core::strings;
-use bun_jsc::zig_string::ZigString;
+use crate::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_core::paths::resolve_path;
 use bun_core::paths::string_paths::without_leading_path_separator;
@@ -28,13 +28,13 @@ use bun_sys::{self, Fd, File};
 bun_core::declare_scope!(bun_test, hidden);
 
 // ─── coverage façade ────────────────────────────────────────────────────────
-// Thin adapter over `bun_sourcemap_jsc::code_coverage` that preserves the
+// Thin adapter over `crate::sourcemap_jsc::code_coverage` that preserves the
 // legacy call paths used in `print_code_coverage` below (the adapter
 // dispatches the runtime `enable_ansi_colors` bool to the const generic).
 // Drop once the body is normalised to call `code_coverage::{text,lcov}`
 // directly with `<ENABLE_ANSI_COLORS>`.
 mod coverage {
-    pub(super) use bun_sourcemap_jsc::code_coverage::{
+    pub(super) use crate::sourcemap_jsc::code_coverage::{
         ByteRangeMapping, Fraction, Report as CodeCoverageReport, lcov as Lcov,
     };
 
@@ -50,7 +50,7 @@ mod coverage {
     #[allow(non_snake_case)]
     pub(super) mod Text {
         use super::*;
-        use bun_sourcemap_jsc::code_coverage::text;
+        use crate::sourcemap_jsc::code_coverage::text;
 
         /// Runtime-bool → const-generic dispatch for `text::write_format`.
         #[inline]

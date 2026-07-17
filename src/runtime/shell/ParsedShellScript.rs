@@ -3,7 +3,7 @@ use core::mem::size_of;
 use core::sync::atomic::Ordering;
 
 use bun_core::String as BunString;
-use bun_jsc::{
+use crate::{
     CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell,
     JsRef, JsResult, MarkedArgumentBuffer, StringJsc as _,
 };
@@ -115,7 +115,7 @@ impl ParsedShellScript {
         let arguments = callframe.arguments_old::<2>();
         // SAFETY: `bun_vm()` is non-null for a Bun-owned global.
         let vm = global.bun_vm();
-        let mut arguments = bun_jsc::ArgumentsSlice::init(vm, arguments.slice());
+        let mut arguments = crate::vm::ArgumentsSlice::init(vm, arguments.slice());
         let Some(str_js) = arguments.next_eat() else {
             return Err(global.throw(format_args!("$`...`.cwd(): expected a string argument")));
         };

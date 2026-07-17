@@ -31,7 +31,7 @@ use super::SizeType;
 // Re-export the canonical data types from `bun_jsc`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_jsc::webcore_types::store::{
+pub use crate::webcore_types::store::{
     Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
 };
 

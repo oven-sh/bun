@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_core::Output;
-use bun_jsc::{JSGlobalObject, JSValue};
+use crate::{JSGlobalObject, JSValue};
 
 use super::diff::print_diff::{print_diff_main, DiffConfig};
 use super::pretty_format::{FormatOptions, JestPrettyFormat, MessageLevel};
@@ -87,7 +87,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
 /// JSC-parsed module record and Bun's transpiler output when they disagree.
 ///
 /// Lives here (not in
-/// `bun_bundler_jsc::analyze_jsc`) because `DiffFormatter` is a `bun_runtime`
+/// `crate::bundler_jsc::analyze_jsc`) because `DiffFormatter` is a `bun_runtime`
 /// type and `bun_bundler_jsc` is a lower-tier crate that cannot depend on it;
 /// the `extern "C"` symbol resolves the same at link time regardless of which
 /// crate defines it.

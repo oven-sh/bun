@@ -1,13 +1,13 @@
 use core::cell::Cell;
 use core::ptr::NonNull;
 
-use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
-use crate::jsc::{
+use crate::sql::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
+use crate::sql::jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
     VirtualMachine, VirtualMachineSqlExt as _,
 };
-use crate::shared::query_ctor_args::QueryCtorArgs;
-use bun_jsc::JsCell;
+use crate::sql::shared::query_ctor_args::QueryCtorArgs;
+use crate::JsCell;
 use bun_core::ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::protocol::any_mysql_error::{self as AnyMySQLError};
@@ -15,8 +15,8 @@ use bun_sql::postgres::command_tag::CommandTag;
 use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 
 use super::js_mysql_connection::MySQLConnection;
-use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
-use crate::postgres::command_tag_jsc::CommandTagJsc as _;
+use crate::sql::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
+use crate::sql::postgres::command_tag_jsc::CommandTagJsc as _;
 // `my_sql_query` exports both the `MySQLQuery` *struct* and a
 // `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
 // the name once pulls in both namespaces, so the `debug!` macro below resolves
@@ -580,7 +580,7 @@ impl JSMySQLQuery {
     /// allocation owned by the JS-thread VM singleton stored in `self.vm`;
     /// single-thread affinity ⇒ no two `&mut EventLoop` coexist.
     #[inline]
-    fn event_loop(&self) -> &mut crate::jsc::EventLoop {
+    fn event_loop(&self) -> &mut crate::sql::jsc::EventLoop {
         self.vm().event_loop_mut()
     }
     #[inline]

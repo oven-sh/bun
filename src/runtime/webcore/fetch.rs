@@ -50,9 +50,9 @@ use crate::webcore::jsc::{
 };
 use bun_core::{String as BunString, Tag as BunStringTag, ZigStringSlice};
 use bun_http::{self as http, FetchRedirect, Headers, HeadersExt as _, MimeType};
-use bun_http_jsc::method_jsc;
+use crate::http_jsc::method_jsc;
 use bun_core::http_types::Method::Method;
-use bun_jsc::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
+use crate::{HTTPHeaderName, StringJsc as _, SysErrorJsc as _};
 #[allow(unused_imports)]
 use bun_core::paths::{self, PathBuffer};
 use bun_sys::FdExt as _;
@@ -71,7 +71,7 @@ use crate::webcore::{
 };
 use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
-use bun_http_jsc::headers_jsc::from_fetch_headers;
+use crate::http_jsc::headers_jsc::from_fetch_headers;
 #[cfg(windows)]
 use bun_core::paths::resolve_path::PosixToWinNormalizer;
 use bun_core::picohttp as picohttp;

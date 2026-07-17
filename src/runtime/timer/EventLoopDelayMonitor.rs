@@ -1,5 +1,5 @@
-use bun_jsc::JSValue;
-use bun_jsc::virtual_machine::VirtualMachine;
+use crate::JSValue;
+use crate::vm::virtual_machine::VirtualMachine;
 
 // Export functions for C++
 #[unsafe(no_mangle)]

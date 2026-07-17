@@ -1,4 +1,4 @@
-use crate::jsc::{JSGlobalObject, JSValue};
+use crate::sql::jsc::{JSGlobalObject, JSValue};
 use bun_sql::postgres::postgres_types::Int4;
 
 #[derive(Default)]
@@ -23,7 +23,7 @@ impl Signature {
 
     // JSError (from QueryBindingIterator /
     // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
-    // crate-wide `crate::Error`.
+    // crate-wide `crate::sql::Error`.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
@@ -31,10 +31,10 @@ impl Signature {
         columns: JSValue,
         prepared_statement_id: u64,
         unnamed: bool,
-    ) -> crate::Result<Signature> {
-        use crate::jsc::js_error_to_postgres;
-        use crate::postgres::types::tag_jsc;
-        use crate::shared::QueryBindingIterator;
+    ) -> crate::sql::Result<Signature> {
+        use crate::sql::jsc::js_error_to_postgres;
+        use crate::sql::postgres::types::tag_jsc;
+        use crate::sql::shared::QueryBindingIterator;
         use bun_sql::postgres::types::tag::Tag;
 
         let mut fields: Vec<Int4> = Vec::new();
@@ -91,7 +91,7 @@ impl Signature {
         }
 
         if iter.any_failed() {
-            return Err(crate::Error::InvalidQueryBinding);
+            return Err(crate::sql::Error::InvalidQueryBinding);
         }
         // max u64 length is 20, max prepared_statement_name length is 63
         let prepared_statement_name: Box<[u8]> = if unnamed {

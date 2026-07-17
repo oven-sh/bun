@@ -13,8 +13,8 @@
 
 use core::ffi::c_char;
 
-use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
+use crate::vm::virtual_machine::VirtualMachine;
+use crate::{self as jsc, JSGlobalObject, JSValue, JsError, JsResult, SysErrorJsc};
 
 use crate::node::fs as node_fs;
 use crate::webcore::Blob;

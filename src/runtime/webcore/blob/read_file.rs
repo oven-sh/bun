@@ -19,9 +19,9 @@ use bun_core;
 use bun_core::String as BunString;
 use bun_loop::{self as io, FileAction};
 #[cfg(windows)]
-// `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
-use bun_jsc::event_loop::EventLoop;
-use bun_jsc::{
+// `crate::vm::EventLoop` is the *module*; the struct is one level deeper.
+use crate::vm::event_loop::EventLoop;
+use crate::{
     self as jsc, AnyPromise, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, SystemError,
 };
 #[cfg(windows)]
@@ -156,16 +156,16 @@ pub enum ReadFileResultType {
     Err(SystemError),
 }
 
-pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
+pub type ReadFileTask = crate::vm::work_task::WorkTask<ReadFile>;
 
 // `WorkTaskContext` fixes `run`/`then` to take `*mut Self`; the trait method
 // cannot be marked `unsafe fn` and the parameter type cannot change, so the
 // lint is unsatisfiable here. The pointers come from the work-pool hand-off
 // and are guaranteed live (see SAFETY notes below).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
-impl bun_jsc::work_task::WorkTaskContext for ReadFile {
+impl crate::vm::work_task::WorkTaskContext for ReadFile {
     const TASK_TAG: bun_loop::TaskTag = bun_loop::task_tag::ReadFileTask;
-    fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
+    fn run(this: *mut Self, task: *mut crate::vm::work_task::WorkTask<Self>) {
         // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
         unsafe { (*this).run(task) }
     }
@@ -264,7 +264,7 @@ impl FileCloser for ReadFile {
     fn io_poll(&mut self) -> &mut bun_loop::Poll {
         &mut self.io_poll
     }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
+    fn task(&mut self) -> &mut crate::vm::WorkPoolTask {
         &mut self.task
     }
     fn update(&mut self) {
@@ -307,7 +307,7 @@ impl FileCloser for ReadFile {
     // unsatisfiable here. The pointer is the intrusive `&mut self.task` set
     // in `on_io_request_closed` and is guaranteed live.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask) {
+    fn on_close_io_request(task: *mut crate::vm::WorkPoolTask) {
         // SAFETY: only reached via `WorkPoolTask::callback` with `task` =
         // `&mut self.task` (intrusive) registered in `on_io_request_closed`;
         // recover parent.
@@ -1006,7 +1006,7 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn io_poll(&mut self) -> &mut bun_loop::Poll {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
+    fn task(&mut self) -> &mut crate::vm::WorkPoolTask {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn update(&mut self) {
@@ -1015,7 +1015,7 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn schedule_close(_: &mut bun_loop::Request) -> bun_loop::Action<'_> {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    fn on_close_io_request(_: *mut bun_jsc::WorkPoolTask) {
+    fn on_close_io_request(_: *mut crate::vm::WorkPoolTask) {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
 }

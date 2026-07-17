@@ -20,12 +20,12 @@ use bun_loop::Loop as AsyncLoop;
 #[cfg(windows)]
 use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_loop::{BufferedReader, ReadState};
-use bun_jsc::{self as jsc, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer};
+use crate::{self as jsc, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer};
 use bun_core::ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::EnumSet;
 
-use crate::api::bun_loop::stdio::{self, Stdio};
+use crate::api::bun_spawn::stdio::{self, Stdio};
 use crate::shell::util::OutKind;
 
 /// Local helper: `OutKind` → tag-name string for logs.
@@ -115,7 +115,7 @@ fn read_state_str(s: ReadState) -> &'static str {
     }
 }
 
-pub use crate::api::bun_loop::stdio::Stdio as StdioReexport;
+pub use crate::api::bun_spawn::stdio::Stdio as StdioReexport;
 pub use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;

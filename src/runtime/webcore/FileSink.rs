@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 #[cfg(windows)]
 use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_loop::{self, WriteResult, WriteStatus};
-use bun_jsc::JsCell;
+use crate::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
@@ -324,7 +324,7 @@ impl FileSink {
                         if !status.is_ok() {
                             // SAFETY: `bun_vm()` is non-null when `global_object()` was;
                             // `event_loop()` returns the live VM-owned `*mut EventLoop`.
-                            let _entered = bun_jsc::event_loop::EventLoop::enter_scope(
+                            let _entered = crate::vm::event_loop::EventLoop::enter_scope(
                                 global.bun_vm().as_mut().event_loop(),
                             );
                             stream.cancel(global);
@@ -719,7 +719,7 @@ impl FileSink {
 
     /// `bun_loop::io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_jsc::EventLoopHandle` so the (runtime-registered) vtable
+    /// the stored `crate::vm::EventLoopHandle` so the (runtime-registered) vtable
     /// can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_loop::io::EventLoopHandle {
@@ -746,14 +746,14 @@ impl FileSink {
     /// typed `&mut VirtualMachine` (None for the mini loop or null).
     #[inline]
     #[allow(clippy::mut_from_ref)] // recovers `&mut` from a type-erased raw ptr (per-thread VM, not aliased)
-    fn js_vm(&self) -> Option<&mut bun_jsc::VirtualMachineRef> {
+    fn js_vm(&self) -> Option<&mut crate::vm::VirtualMachineRef> {
         let p = self.event_loop_handle.bun_vm();
         if p.is_null() {
             return None;
         }
         // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
         // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
+        Some(unsafe { &mut *p.cast::<crate::vm::VirtualMachineRef>() })
     }
 
     pub fn connect(&self, signal: streams::Signal) {
@@ -976,7 +976,7 @@ impl FileSink {
             // that already has a Bun VM (`get()` panics otherwise); `event_loop()`
             // is the live per-thread `jsc::EventLoop`.
             event_loop_handle: EventLoopHandle::init(
-                (*bun_jsc::VirtualMachineRef::get())
+                (*crate::vm::VirtualMachineRef::get())
                     .event_loop()
                     .cast::<()>(),
             ),

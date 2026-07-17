@@ -1,19 +1,9 @@
 --- a/src/liblsquic/lsquic_full_conn_ietf.c
 +++ b/src/liblsquic/lsquic_full_conn_ietf.c
-@@ -4664,10 +4664,20 @@
-     struct lsquic_packet_out *packet_out;
-     int sz;
- 
--    /* FIXME Select PNS based on handshake status (possible on the client): if
--     * appropriate keys are not available, encryption will fail.
-+    /* bun: upstream's FIXME, implemented.  PNS_APP pre-handshake allocates a
-+     * packet whose keys do not exist yet; encryption fails, the packet is
-+     * re-queued forever, and the conn is destroyed with the CONNECTION_CLOSE
-+     * unsent -- the peer never learns and idles out (RFC 9000 s10.2.3 wants
-+     * the highest PNS with keys).  ngtcp2 selects the level; do the same.
+@@ -4669,4 +4669,11 @@
       */
 -    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, PNS_APP,
-+    enum packnum_space pns;
++    enum packnum_space pns;  /* bun: highest PNS with keys (RFC 9000 s10.2.3) */
 +    if (conn->ifc_conn.cn_flags & LSCONN_HANDSHAKE_DONE)
 +        pns = PNS_APP;
 +    else if (conn->ifc_flags & IFC_IGNORE_INIT)
@@ -23,7 +13,6 @@
 +    packet_out = lsquic_send_ctl_new_packet_out(&conn->ifc_send_ctl, 0, pns,
                                                                  CUR_NPATH(conn));
      if (!packet_out)
-     {
 --- a/src/liblsquic/lsquic_mini_conn_ietf.h
 +++ b/src/liblsquic/lsquic_mini_conn_ietf.h
 @@ -91,6 +91,10 @@

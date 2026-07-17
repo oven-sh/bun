@@ -60,13 +60,13 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 
 ### Tier 4: engine (fan-out after tier 3)
 
-| Crate                | Absorbs                                                                 | LOC     | Depends on                                             |
-| -------------------- | ----------------------------------------------------------------------- | ------- | ------------------------------------------------------ |
-| `bun_react_compiler` | (unchanged)                                                             | 63,000  | `bun_core`, `bun_ast`                                  |
-| `bun_css`            | (unchanged)                                                             | 72,000  | `bun_core`, `bun_sys`, `bun_ast`, `bun_macros`         |
+| Crate                | Absorbs                                                                 | LOC     | Depends on                                                |
+| -------------------- | ----------------------------------------------------------------------- | ------- | --------------------------------------------------------- |
+| `bun_react_compiler` | (unchanged)                                                             | 63,000  | `bun_core`, `bun_ast`                                     |
+| `bun_css`            | (unchanged)                                                             | 72,000  | `bun_core`, `bun_sys`, `bun_ast`, `bun_macros`            |
 | `bun_loop`           | `bun_io` (minus `write.rs`), `bun_event_loop`, `bun_spawn`, `bun_patch` | ~22,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_uws`, `bun_macros` |
-| `bun_sql`            | `bun_sql`                                                               | 6,000   | `bun_core`, `bun_sys`, `bun_crypto`                    |
-| `bun_js`             | `bun_js_parser`, `bun_js_printer`                                       | ~57,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_react_compiler` |
+| `bun_sql`            | `bun_sql`                                                               | 6,000   | `bun_core`, `bun_sys`, `bun_crypto`                       |
+| `bun_js`             | `bun_js_parser`, `bun_js_printer`                                       | ~57,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_react_compiler`    |
 
 ### Tier 5: toolchain
 

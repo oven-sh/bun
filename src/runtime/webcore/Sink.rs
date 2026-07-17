@@ -692,7 +692,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             // `call_check_slow` satisfies the C++ ThrowScope's
             // `simulateThrow()`.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::crate::vm::virtual_machine::VirtualMachine::get().global();
+            let global = crate::vm::virtual_machine::VirtualMachine::get().global();
             let _ =
                 ::bun_jsc::call_check_slow(global, || T::on_close_extern(cpp, JSValue::UNDEFINED));
         }
@@ -706,7 +706,7 @@ impl<T: JsSinkAbi> SinkSignal<T> {
             // `AsyncContextFrame::call` overload (no TopExceptionScope of its
             // own); see `close` above. Same wrapper.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
-            let global = ::crate::vm::virtual_machine::VirtualMachine::get().global();
+            let global = crate::vm::virtual_machine::VirtualMachine::get().global();
             let _ = ::bun_jsc::call_check_slow(global, || {
                 T::on_ready_extern(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
             });

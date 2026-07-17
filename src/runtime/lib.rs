@@ -5,6 +5,8 @@
 // are individually `#[allow]`ed at the extern block with a justification.
 #![deny(improper_ctypes, improper_ctypes_definitions)]
 #![feature(adt_const_params)]
+#![feature(thread_local)]
+#![allow(incomplete_features)]
 
 extern crate alloc;
 extern crate self as bun_runtime;
@@ -27,13 +29,13 @@ pub use error::{Error, Result};
 
 // §8 Step 7.5 — flat group-A re-export so mounted group-B / `*_jsc` sources'
 // `use crate::{self as jsc, JSValue, JSGlobalObject, VM, …}` lines resolve.
-pub use crate::*;
+pub use bun_jsc::*;
 
 /// `crate::jsc` is now a thin re-export of the real `bun_jsc` crate. Draft
 /// modules that imported `crate::jsc::…` (instead of `bun_jsc::…`) continue to
 /// resolve unchanged.
 pub mod jsc {
-    pub use crate::*;
+    pub use bun_jsc::*;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

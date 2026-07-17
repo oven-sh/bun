@@ -158,9 +158,9 @@ macro_rules! impl_timer_object {
                     );
                 }
                 if global.bun_vm().as_mut().is_inspector_enabled() {
-                    ::crate::vm::Debugger::did_schedule_async_call(
+                    crate::vm::Debugger::did_schedule_async_call(
                         global,
-                        ::crate::vm::Debugger::AsyncCallType::DOMTimer,
+                        crate::vm::Debugger::AsyncCallType::DOMTimer,
                         super::ID { id, kind: kind.big() }.async_id(),
                         kind != super::Kind::SetInterval,
                     );

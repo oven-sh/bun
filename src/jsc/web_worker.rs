@@ -936,6 +936,14 @@ impl WebWorker {
                 env_loader: NonNull::new(loader_ptr),
                 store_fd: self.store_fd,
                 graph: parent.standalone_module_graph,
+                // Same rule as every other execArgv option: an explicit list,
+                // even an empty one, replaces the parent's rather than adding
+                // to it, so only an inheriting worker takes the parent's CA intent.
+                use_system_ca: if own_exec_argv.is_some() {
+                    exec_argv.use_system_ca
+                } else {
+                    parent.use_system_ca
+                },
                 ..Default::default()
             },
         )?;

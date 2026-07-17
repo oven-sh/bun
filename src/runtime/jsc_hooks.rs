@@ -1559,6 +1559,12 @@ unsafe fn parse_worker_exec_argv(
         }
         if bytes == b"--no-addons" {
             no_addons = true;
+        } else if bytes == b"--use-system-ca" {
+            out.use_system_ca = Some(true);
+        } else if bytes == b"--no-use-system-ca" {
+            // Only the explicit negation beats NODE_USE_SYSTEM_CA; node lets the
+            // env var still win under --use-bundled-ca.
+            out.use_system_ca = Some(false);
         } else if bytes == b"--cpu-prof" {
             out.cpu_prof = true;
         } else if bytes == b"--cpu-prof-interval" {

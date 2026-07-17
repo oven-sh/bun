@@ -84,6 +84,8 @@ pub struct InitOptions {
     /// The CLI's `api.TransformOptions`. Consumed by `RuntimeHooks::init_runtime_state`
     /// → `Transpiler::init(.., configureTransformOptionsForBunVM(args), ..)`.
     pub transform_options: bun_options_types::schema::api::TransformOptions,
+    /// Explicit CA intent for this VM; `None` lets NODE_USE_SYSTEM_CA decide.
+    pub use_system_ca: Option<bool>,
     /// Consumed by `RuntimeHooks::init_runtime_state` → `configureDebugger`.
     pub debugger: bun_options_types::context::Debugger,
     /// When `Some`, [`init`] adopts
@@ -126,6 +128,7 @@ impl Default for InitOptions {
             store_fd: false,
             smol: false,
             eval_mode: false,
+            use_system_ca: None,
             is_main_thread: false,
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
@@ -216,6 +219,10 @@ pub struct VirtualMachine {
     /// only leak the hook's `ctx` allocation.
     pub has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
+    /// Explicit `--use-system-ca` / `--no-use-system-ca` for THIS thread, or
+    /// `None` when neither was given and NODE_USE_SYSTEM_CA decides. Node makes
+    /// this an Environment option, so a Worker's execArgv can differ.
+    pub use_system_ca: Option<bool>,
     pub is_main_thread: bool,
     pub exit_handler: ExitHandler,
 
@@ -1650,6 +1657,7 @@ pub type RuntimeState = *mut c_void;
 #[derive(Default, Clone, Copy)]
 pub struct WorkerExecArgv {
     pub allow_addons: Option<bool>,
+    pub use_system_ca: Option<bool>,
     pub cpu_prof: bool,
     pub cpu_prof_interval: Option<u32>,
 }
@@ -2088,6 +2096,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).main_resolved_path).write(bun_core::String::empty());
             addr_of_mut!((*vm).hide_bun_stackframes).write(true);
             addr_of_mut!((*vm).is_main_thread).write(opts.is_main_thread);
+            addr_of_mut!((*vm).use_system_ca).write(opts.use_system_ca);
             // Left at the
             // zeroed default this aliases `hot_reload_counter`'s initial 0, so a
             // watcher event that races the very first entry-point load makes
@@ -2832,6 +2841,8 @@ pub struct Options {
     // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
     // CLI option struct lives in `bun_cli`, a forward dep). See
     // `runtime/jsc_hooks.rs` for the `configureDebugger` call site.
+    /// Explicit CA intent; `None` lets NODE_USE_SYSTEM_CA decide.
+    pub use_system_ca: Option<bool>,
     pub is_main_thread: bool,
     pub destruct_main_thread_on_exit: bool,
 }
@@ -3726,6 +3737,7 @@ impl VirtualMachine {
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
+            use_system_ca: opts.use_system_ca,
             // The global is created
             // with `worker.cpp_worker`, `worker.execution_context_id`,
             // and `worker.mini` so the C++ ZigGlobalObject is born with its

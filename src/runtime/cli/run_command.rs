@@ -951,6 +951,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bun_ast::initialize_store();
 
         let vm_ptr = VirtualMachine::init(VmInitOptions {
+            use_system_ca: crate::cli::Arguments::main_use_system_ca(),
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),

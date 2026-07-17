@@ -86,17 +86,11 @@ it("should create selected template with @ prefix implicit `/create` with versio
   await exited;
 });
 
-// The GitHub tarball endpoint can respond without Content-Length and without
-// Transfer-Encoding: chunked (close-delimited body). When such a body arrives
-// in more than one TCP packet the HTTP client reports intermediate progress,
-// and `AsyncHTTP::send_sync` (used by `bun create`, `bun upgrade`, `bun pm view`)
-// previously treated the first progress callback as the final result: it either
-// returned with an incomplete body or panicked on an `Option::unwrap()` of the
-// absent response metadata (observed in CI build 74166 during api.github.com
-// flapping).
+// Close-delimited body (no Content-Length, no chunked) split across packets:
+// send_sync must wait for the terminal callback, not return on the first
+// progress update. https://github.com/oven-sh/bun/pull/34425
 it("handles a close-delimited GitHub tarball body split across packets", async () => {
-  // Valid gzip of a single-member tar archive ("package.json" at depth 1 so
-  // extraction succeeds once the body is fully received).
+  // Single-member tar (package.json at depth 1) gzipped into the body.
   const pkg = Buffer.from(
     JSON.stringify({
       name: "split-body-template",
@@ -121,23 +115,26 @@ it("handles a close-delimited GitHub tarball body split across packets", async (
   pkg.copy(tar, 512);
   const gz = gzipSync(tar);
 
-  // Raw TLS server so we control the exact HTTP framing: no Content-Length
-  // header, no chunked encoding, body ends when the socket closes.
+  // Raw TLS server: no Content-Length, no chunked; body ends at FIN.
   const sockets = new Set<nodetls.TLSSocket>();
   const server = nodetls.createServer({ cert: tls.cert, key: tls.key }, socket => {
     sockets.add(socket);
+    socket.setNoDelay(true);
     socket.on("error", () => {});
     socket.on("close", () => sockets.delete(socket));
     socket.once("data", () => {
-      socket.write("HTTP/1.1 200 OK\r\n" + "content-type: application/x-gzip\r\n" + "connection: close\r\n" + "\r\n");
-      // First body packet.
-      socket.write(gz.subarray(0, Math.floor(gz.length / 2)));
-      // Second body packet on a later tick so it arrives as a separate TLS
-      // record and triggers a second on_data() in the HTTP client.
-      setImmediate(() => {
-        socket.write(gz.subarray(Math.floor(gz.length / 2)));
-        socket.end();
-      });
+      socket.write("HTTP/1.1 200 OK\r\ncontent-type: application/x-gzip\r\nconnection: close\r\n\r\n");
+      // Drip the body in many fragments, each on its own tick, so the client
+      // cannot coalesce them all into a single on_data() before the first one
+      // reaches its poll loop.
+      const step = Math.max(1, Math.floor(gz.length / 12));
+      let i = 0;
+      const push = () => {
+        if (i >= gz.length) return socket.end();
+        socket.write(gz.subarray(i, (i += step)));
+        setImmediate(push);
+      };
+      push();
     });
   });
   server.listen(0, "127.0.0.1");

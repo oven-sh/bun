@@ -606,8 +606,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      // TODO: on Windows
-      if (!isWindows) proc.unref();
+      proc.unref();
       await proc.exited;
     }
 
@@ -623,7 +622,7 @@ describe("spawn unref and kill should not hang", () => {
       });
 
       proc.kill();
-      if (!isWindows) proc.unref();
+      proc.unref();
 
       await proc.exited;
       console.count("Finished");
@@ -639,8 +638,7 @@ describe("spawn unref and kill should not hang", () => {
         stderr: "ignore",
         stdin: "ignore",
       });
-      // TODO: on Windows
-      if (!isWindows) proc.unref();
+      proc.unref();
       proc.kill();
       await proc.exited;
     }
@@ -648,7 +646,6 @@ describe("spawn unref and kill should not hang", () => {
     expect().pass();
   });
 
-  // process.unref() on Windows does not work ye :(
   it("should not hang after unref", async () => {
     const proc = spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "does-not-hang.js")],
@@ -777,10 +774,12 @@ it("await exited resolves after unref() when nothing else is ref'd (Windows)", a
     timeout: 20_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  expect(stderr).toBe("");
-  expect(stdout).toBe("resolved\n");
-  expect(child.signalCode).toBeNull();
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
+    stdout: "resolved\n",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 it("#3480", async () => {

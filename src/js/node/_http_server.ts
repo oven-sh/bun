@@ -941,7 +941,7 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
           }
           // Node's resOnFinish is always attached and checks hasSubscribers at
           // 'finish' time, so a subscriber added mid-request still observes it.
-          http_res.once("finish", publishServerResponseFinish.bind(undefined, http_req, http_res, socket, server));
+          http_res.on("finish", publishServerResponseFinish);
         }
 
         if (isPipelined) {
@@ -2162,13 +2162,16 @@ function _writeHead(statusCode, reason, obj, response) {
 
 Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
 
-function publishServerResponseFinish(request, response, socket, server) {
+function publishServerResponseFinish(this: any) {
   if (!onServerResponseFinishChannel.hasSubscribers) return;
+  // Same socket lookup as emitResponseFinishHandleSocket (req.socket may be
+  // nulled by the stream destroyer; this.socket is the assignSocket fallback).
+  const socket = this.req?.socket ?? this.socket;
   onServerResponseFinishChannel.publish({
-    request,
-    response,
+    request: this.req,
+    response: this,
     socket,
-    server,
+    server: socket?.server,
   });
 }
 

@@ -345,7 +345,7 @@ impl ReadableStream {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                     context: FileReader {
-                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(crate::vm::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
                         start_offset: Some(blob.offset.get() as usize),
@@ -404,7 +404,7 @@ impl ReadableStream {
                 let reader = NewSource::<FileReader>::new_mut(NewSource {
                     global_this: Some(bun_core::ptr::BackRef::new(global_this)),
                     context: FileReader {
-                        event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                        event_loop: core::cell::Cell::new(crate::vm::EventLoopHandle::init(
                             global_this.bun_vm().as_mut().event_loop().cast(),
                         )),
                         start_offset: Some(offset),
@@ -427,7 +427,7 @@ impl ReadableStream {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_core::ptr::BackRef::new(global_this)),
             context: FileReader {
-                event_loop: core::cell::Cell::new(jsc::EventLoopHandle::init(
+                event_loop: core::cell::Cell::new(crate::vm::EventLoopHandle::init(
                     global_this.bun_vm().as_mut().event_loop().cast(),
                 )),
                 ..Default::default()

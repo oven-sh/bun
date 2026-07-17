@@ -493,6 +493,19 @@ extern "C" int __wrap___libc_start_main(int (*main)(int, char**, char**), int ar
 
 #endif // linux
 
+// C-linkage wrapper for Rust FFI: forwards to ScriptExecutionContext::markTerminating()
+// (defined as inline in ScriptExecutionContext.h)
+#if !defined(WIN32)
+#include "ScriptExecutionContext.h"
+extern "C" void ScriptExecutionContext__markTerminating(JSC::JSGlobalObject* globalObject)
+{
+    auto* ctx = WebCore::ScriptExecutionContext::from(globalObject);
+    if (ctx) {
+        ctx->markTerminating();
+    }
+}
+#endif
+
 // macOS
 #if defined(__APPLE__)
 

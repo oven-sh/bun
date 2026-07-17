@@ -222,11 +222,13 @@ describe("randomUUIDv7", () => {
         "-e",
         `
           const origin = performance.timeOrigin;
+          // origin + perf.now() at ~1.8e12 has ~0.0004ms double ULP; the old
+          // skew was ~0.4ms, so a 0.01ms threshold separates the two cleanly.
           let firstAhead = null;
           for (let i = 0; i < 50_000; i++) {
             const d = Date.now();
             const p = origin + performance.now();
-            if (d > p && firstAhead === null) firstAhead = { i, d, p, diff: +(d - p).toFixed(3) };
+            if (d - p > 0.01 && firstAhead === null) firstAhead = { i, d, p, diff: +(d - p).toFixed(4) };
           }
           console.log(JSON.stringify(firstAhead));
         `,

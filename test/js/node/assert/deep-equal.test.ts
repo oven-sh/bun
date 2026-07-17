@@ -117,6 +117,22 @@ const cases: Case[] = [
     loose: true,
   },
   { name: "two boxed bigints", a: () => Object(1n), b: () => Object(1n), strict: true, loose: true },
+  {
+    name: "two boxed symbols wrapping distinct symbols",
+    a: () => Object(Symbol("s")),
+    b: () => Object(Symbol("s")),
+    strict: false,
+    loose: false,
+  },
+  { name: "two boxed unequal bigints", a: () => Object(1n), b: () => Object(2n), strict: false, loose: false },
+  {
+    name: "a boxed string with an extra own property",
+    a: () => withExtraProperty(new String("test")),
+    b: () => new String("test"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Undefined-valued and missing properties. Both modes compare own key counts.
   {
@@ -245,6 +261,21 @@ const cases: Case[] = [
     a: () => ({ [sym]: 1 }),
     b: () => ({ [sym]: 1 }),
     strict: true,
+    loose: true,
+  },
+  {
+    name: "an enumerable symbol key and a non-enumerable one",
+    a: () => ({ [sym]: 1 }),
+    b: () => Object.defineProperty({}, sym, { value: 1, enumerable: false }),
+    strict: false,
+    loose: true,
+    looseBug: "reports not equal",
+  },
+  {
+    name: "typed arrays differing only in a symbol property",
+    a: () => Object.assign(new Uint8Array([1]), { [sym]: true }),
+    b: () => Object.assign(new Uint8Array([1]), { [sym]: false }),
+    strict: false,
     loose: true,
   },
   {
@@ -498,7 +529,6 @@ const cases: Case[] = [
     b: () => new Uint8Array([1]),
     strict: false,
     loose: false,
-    strictBug: "reports equal",
     looseBug: "reports equal",
   },
 
@@ -616,6 +646,44 @@ describe("util.isDeepStrictEqual", () => {
     expect(util.isDeepStrictEqual(undefined, undefined)).toBe(true);
     expect(util.isDeepStrictEqual(null, undefined)).toBe(false);
     expect(util.isDeepStrictEqual(Object.create(null), Object.create(null))).toBe(true);
+  });
+
+  // The third argument was added in Node v26.
+  describe("skipPrototype", () => {
+    class Foo {
+      constructor(value) {
+        this.value = value;
+      }
+    }
+    class Bar {
+      constructor(value) {
+        this.value = value;
+      }
+    }
+
+    test("ignores differing constructors when set", () => {
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42))).toBe(false);
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(42), true)).toBe(true);
+    });
+
+    test("still compares values", () => {
+      expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true)).toBe(false);
+    });
+
+    test("applies to nested values", () => {
+      expect(util.isDeepStrictEqual({ inner: new Foo(1) }, { inner: new Bar(1) })).toBe(false);
+      expect(util.isDeepStrictEqual({ inner: new Foo(1) }, { inner: new Bar(1) }, true)).toBe(true);
+    });
+
+    test("ignores the boxed-primitive subclass distinction", () => {
+      class S extends String {}
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"))).toBe(false);
+      expect(util.isDeepStrictEqual(new String("a"), new S("a"), true)).toBe(true);
+    });
+
+    test("does not leak into assert.deepStrictEqual", () => {
+      expect(() => assert.deepStrictEqual(new Foo(42), new Bar(42))).toThrow();
+    });
   });
 });
 

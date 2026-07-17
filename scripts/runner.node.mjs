@@ -758,6 +758,12 @@ async function runTests() {
           NO_COLOR: "1",
           BUN_DEBUG_QUIET_LOGS: "1",
         };
+        if (title.includes("test-util-styletext")) {
+          // These assert styleText's own color decisions against a TTY, so they
+          // have to see the real environment instead of the forced no-color one.
+          delete env.FORCE_COLOR;
+          delete env.NO_COLOR;
+        }
         if (!isWindows && title.includes("/sequential/")) {
           // Sequential node tests share common.PORT (12346); a cluster worker
           // or child_process subprocess that outlives its test can keep that

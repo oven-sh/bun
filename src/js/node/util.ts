@@ -423,6 +423,13 @@ function prepareCallSites(_err, callSites) {
   return result;
 }
 
+function validateSourceMapOption(options) {
+  const { sourceMap } = options;
+  if (sourceMap !== undefined) {
+    validateBoolean(sourceMap, "options.sourceMap");
+  }
+}
+
 function getCallSites(frameCount = 10, options) {
   // If options is not provided check if frameCount is an object
   if (options === undefined) {
@@ -430,18 +437,14 @@ function getCallSites(frameCount = 10, options) {
       // If frameCount is an object, it is the options object
       options = frameCount;
       validateObject(options, "options");
-      if (options.sourceMap !== undefined) {
-        validateBoolean(options.sourceMap, "options.sourceMap");
-      }
+      validateSourceMapOption(options);
       frameCount = 10;
     } else {
       options = {};
     }
   } else {
     validateObject(options, "options");
-    if (options.sourceMap !== undefined) {
-      validateBoolean(options.sourceMap, "options.sourceMap");
-    }
+    validateSourceMapOption(options);
   }
 
   // Using kDefaultMaxCallStackSizeToCapture as reference

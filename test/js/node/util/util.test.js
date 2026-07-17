@@ -342,9 +342,10 @@ describe("util", () => {
   });
 
   it("multiplecolors", () => {
-    expect(util.styleText(["bold", "red"], "test")).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
-    expect(util.styleText("bold", "test")).toBe("\u001b[1mtest\u001b[22m");
-    expect(util.styleText("red", "test")).toBe("\u001b[31mtest\u001b[39m");
+    const noValidate = { validateStream: false };
+    expect(util.styleText(["bold", "red"], "test", noValidate)).toBe("\u001b[1m\u001b[31mtest\u001b[39m\u001b[22m");
+    expect(util.styleText("bold", "test", noValidate)).toBe("\u001b[1mtest\u001b[22m");
+    expect(util.styleText("red", "test", noValidate)).toBe("\u001b[31mtest\u001b[39m");
   });
 
   it("styleText", () => {
@@ -376,7 +377,7 @@ describe("util", () => {
       },
     );
 
-    assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
+    assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
   });
 
   describe("getSystemErrorName", () => {

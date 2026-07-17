@@ -1438,15 +1438,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        // Buffer and Uint8Array share a JSType, so matching elements are not enough.
-        // Typed arrays never reach the shared constructor check below, because this
-        // case returns directly.
-        if constexpr (isStrict && !skipPrototype) {
-            if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
-                return false;
-            }
-        }
-
         // Strict mode also compares own non-index properties (e.g. symbols); loose
         // ignores them. Guarded because the property walk below enumerates every
         // index, which would make each comparison O(elements).

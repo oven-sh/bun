@@ -8,6 +8,24 @@ const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 // Export Domain
 var domain: any = {};
 
+// Tag `err` as thrown (best-effort: frozen / non-extensible / proxy-backed
+// values cannot be decorated) and dispatch it on the already-exited domain.
+function emitThrownError(d, err) {
+  if (typeof err === "object" && err !== null) {
+    try {
+      ObjectDefineProperty(err, "domain", {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: d,
+        writable: true,
+      });
+      err.domainThrown = true;
+    } catch {}
+  }
+  d.emit("error", err);
+}
+
 // Wrap `cb` so that when it runs, `d` is entered for the duration of the call
 // and any synchronous throw is routed through the domain's 'error' event.
 function bindCallbackToDomain(d, cb) {
@@ -18,25 +36,10 @@ function bindCallbackToDomain(d, cb) {
       return cb.$apply(this, arguments);
     } catch (err) {
       // Match node: the domain is exited before its 'error' handler runs, so
-      // work scheduled inside the handler is not bound to the failed domain,
-      // and the error is tagged as thrown rather than emitted.
+      // work scheduled inside the handler is not bound to the failed domain.
       exited = true;
       d.exit();
-      if (typeof err === "object" && err !== null) {
-        // Best-effort: a frozen / non-extensible / proxy-backed thrown value
-        // must still reach the handler even if it cannot be decorated.
-        try {
-          ObjectDefineProperty(err, "domain", {
-            __proto__: null,
-            configurable: true,
-            enumerable: false,
-            value: d,
-            writable: true,
-          });
-          err.domainThrown = true;
-        } catch {}
-      }
-      d.emit("error", err);
+      emitThrownError(d, err);
     } finally {
       if (!exited) d.exit();
     }
@@ -134,23 +137,10 @@ domain.createDomain = domain.create = function () {
     try {
       return fn.$apply(this, args);
     } catch (err) {
-      // Match node: exit before dispatching 'error' (see bindCallbackToDomain)
-      // and tag the error as thrown.
+      // Match node: exit before dispatching 'error' (see bindCallbackToDomain).
       exited = true;
       this.exit();
-      if (typeof err === "object" && err !== null) {
-        try {
-          ObjectDefineProperty(err, "domain", {
-            __proto__: null,
-            configurable: true,
-            enumerable: false,
-            value: d,
-            writable: true,
-          });
-          err.domainThrown = true;
-        } catch {}
-      }
-      d.emit("error", err);
+      emitThrownError(d, err);
     } finally {
       if (!exited) this.exit();
     }

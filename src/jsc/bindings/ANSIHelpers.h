@@ -156,11 +156,13 @@ static const Char* findEscapeCharacter(const Char* start, const Char* end)
     return nullptr;
 }
 
-// SIMD scan for first byte in the inclusive range [Lo, Hi]. Returns nullptr if
-// not found. Used to find CSI terminators (any byte in 0x40-0x7E, the "final
-// byte" range from ECMA-48). Wrapping subtract + unsigned compare:
+// SIMD scan for first byte in the inclusive range [Lo, Hi] or equal to any of
+// `Also`. Returns nullptr if not found. Used to find the byte that ends a CSI:
+// the final byte (any byte in 0x40-0x7E, ECMA-48) or an aborting
+// ESC/CAN/SUB/ST.
+// Wrapping subtract + unsigned compare:
 //   c in [Lo, Hi]  <=>  (c - Lo) <= (Hi - Lo) unsigned
-template<uint8_t Lo, uint8_t Hi, typename Char>
+template<uint8_t Lo, uint8_t Hi, uint8_t... Also, typename Char>
 ALWAYS_INLINE static const Char* scanForByteInRange(const Char* start, const Char* end)
 {
     static_assert(Lo <= Hi);
@@ -174,20 +176,26 @@ ALWAYS_INLINE static const Char* scanForByteInRange(const Char* start, const Cha
     for (; end - it >= static_cast<ptrdiff_t>(stride); it += stride) {
         const auto chunk = SIMD::load(reinterpret_cast<const SIMDType*>(it));
         const auto shifted = SIMD::sub(chunk, vlo);
-        const auto inRange = SIMD::lessThanOrEqual(shifted, vrange);
-        if (const auto idx = SIMD::findFirstNonZeroIndex(inRange))
+        auto match = SIMD::lessThanOrEqual(shifted, vrange);
+        if constexpr (sizeof...(Also) > 0) {
+            if constexpr (sizeof(SIMDType) == 1)
+                match = SIMD::bitOr(match, SIMD::equal<static_cast<Latin1Character>(Also)...>(chunk));
+            else
+                match = SIMD::bitOr(match, SIMD::equal<static_cast<char16_t>(Also)...>(chunk));
+        }
+        if (const auto idx = SIMD::findFirstNonZeroIndex(match))
             return it + *idx;
     }
     for (; it != end; ++it) {
-        if (static_cast<SIMDType>(*it - Lo) <= static_cast<SIMDType>(Hi - Lo))
+        if (static_cast<SIMDType>(*it - Lo) <= static_cast<SIMDType>(Hi - Lo) || ((static_cast<unsigned>(*it) == Also) || ...))
             return it;
     }
     return nullptr;
 }
 
 // SIMD scan for first byte equal to any of `Targets`. Returns nullptr if not
-// found. Used to find OSC terminators (0x07/0x9C/ESC) and ST sequence
-// terminators (0x9C/ESC).
+// found. Used to find OSC terminators (0x07/0x9C/ESC), ST sequence
+// terminators (0x9C/ESC) and the CAN/SUB bytes that abort a payload.
 template<uint8_t... Targets, typename Char>
 ALWAYS_INLINE static const Char* scanForAnyByte(const Char* start, const Char* end)
 {
@@ -217,13 +225,26 @@ ALWAYS_INLINE static const Char* scanForAnyByte(const Char* start, const Char* e
 }
 
 // Consume an ANSI escape sequence that starts at `start`. Returns a pointer to
-// the first byte immediately following the escape sequence.
+// the first byte immediately following the escape sequence. Returns `start`
+// unchanged when there is no sequence there (the broad SIMD mask in
+// findEscapeCharacter also stops on C1 bytes that introduce nothing).
 //
 // If the ANSI escape sequence is immediately followed by another escape
 // sequence, this function will consume that one as well, and so on.
-template<typename Char>
+//
+// An in-progress sequence is aborted the way the VT500/xterm state machine
+// aborts it: ESC re-introduces a new sequence, and CAN (0x18), SUB (0x1A) and
+// the C1 ST (0x9C) return to ground with the byte itself consumed (zero-width).
+//
+// `Utf8` selects UTF-8 code-unit semantics: a C1 codepoint is the two-byte form
+// 0xC2 0x9x, so C1 introducers and the C1 ST are matched as that pair (a bare
+// byte in 0x80-0x9F is a continuation byte, never a control), and an nF
+// intermediate skips a whole codepoint. Latin-1 and UTF-16 inputs use the
+// default, where one code unit is one codepoint.
+template<bool Utf8 = false, typename Char>
 static const Char* consumeANSI(const Char* start, const Char* end)
 {
+    static_assert(!Utf8 || sizeof(Char) == 1);
     enum class State {
         start,
         gotEsc,
@@ -257,28 +278,52 @@ static const Char* consumeANSI(const Char* start, const Char* end)
             case 0x9f: // application program command
                 state = State::needSt;
                 break;
+            case 0xc2: {
+                // UTF-8: the C1 introducers encode as 0xC2 0x9x.
+                if constexpr (Utf8) {
+                    if (it + 1 == end)
+                        return it;
+                    const auto next = static_cast<uint8_t>(*(it + 1));
+                    if (next == 0x9b)
+                        state = State::inCsi;
+                    else if (next == 0x9d)
+                        state = State::inOsc;
+                    else if (next == 0x90 || next == 0x98 || next == 0x9e || next == 0x9f)
+                        state = State::needSt;
+                    else
+                        return it;
+                    ++it;
+                    break;
+                }
+                return it;
+            }
             default:
                 return it;
             }
             break;
 
+        case State::inOscGotEsc:
+        case State::needStGotEsc:
+            if (c == '\\') {
+                state = State::start; // ESC \ is the string terminator
+                break;
+            }
+            // Any other ESC aborted the payload and introduces a new sequence,
+            // so this byte is the one following that ESC.
+            state = State::gotEsc;
+            [[fallthrough]];
         case State::gotEsc:
             switch (c) {
+            // ESC aborts the sequence in progress and introduces a new one.
+            case 0x1b:
+                break;
+            // CAN and SUB abort the sequence to ground; the byte is consumed.
+            case 0x18:
+            case 0x1a:
+                state = State::start;
+                break;
             case '[':
                 state = State::inCsi;
-                break;
-            // Two-byte XTerm sequences
-            // https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-            case ' ':
-            case '#':
-            case '%':
-            case '(':
-            case ')':
-            case '*':
-            case '+':
-            case '.':
-            case '/':
-                state = State::ignoreNextChar;
                 break;
             case ']':
                 state = State::inOsc;
@@ -291,62 +336,102 @@ static const Char* consumeANSI(const Char* start, const Char* end)
                 state = State::needSt;
                 break;
             default:
-                // Otherwise, assume this is a one-byte sequence
-                state = State::start;
+                // ECMA-48, 5th ed. §5.3: 0x20-0x2F are intermediate bytes (the
+                // nF sequences, e.g. the charset designator ESC ( B) and
+                // 0x30-0x7E is the final byte of a two-byte escape (ESC 7,
+                // ESC c, ESC =). Anything else cannot continue a sequence, so
+                // only the ESC itself is consumed.
+                if (c >= 0x20 && c <= 0x2f) {
+                    state = State::ignoreNextChar;
+                    break;
+                }
+                if (c >= 0x30 && c <= 0x7e) {
+                    state = State::start;
+                    break;
+                }
+                // C1 ST aborts the sequence to ground; the code unit is
+                // consumed. (In UTF-8 a bare 0x9c is a continuation byte.)
+                if (!Utf8 && c == static_cast<Char>(0x9c)) {
+                    state = State::start;
+                    break;
+                }
+                return it;
             }
             break;
 
         case State::ignoreNextChar:
+            if (c == 0x1b) {
+                // ESC aborts the nF sequence and introduces a new one.
+                state = State::gotEsc;
+                break;
+            }
+            if constexpr (Utf8) {
+                // Skip the whole codepoint, not just its lead byte.
+                while (it + 1 != end && (static_cast<uint8_t>(*(it + 1)) & 0xC0) == 0x80)
+                    ++it;
+            }
             state = State::start;
             break;
 
         case State::inCsi: {
-            // ECMA-48, 5th ed. §5.4 d) — final byte is in [0x40, 0x7E].
-            // Bulk SIMD scan for the terminator instead of stepping byte-by-byte;
-            // CSI parameters can be 1-15+ bytes (e.g. \x1b[1;31;48;2;255;0;0m).
-            const auto* term = scanForByteInRange<0x40, 0x7e>(it, end);
+            // ECMA-48, 5th ed. §5.4 d) — final byte is in [0x40, 0x7E]; ESC,
+            // CAN, SUB and the C1 ST (0xC2 0x9C in UTF-8) abort the sequence
+            // instead. Bulk SIMD scan for the ending byte instead of stepping
+            // byte-by-byte; CSI parameters can be 1-15+ bytes
+            // (e.g. \x1b[1;31;48;2;255;0;0m).
+            const Char* term;
+            if constexpr (Utf8)
+                term = scanForByteInRange<0x40, 0x7e, 0x1b, 0x18, 0x1a, 0xc2>(it, end);
+            else
+                term = scanForByteInRange<0x40, 0x7e, 0x1b, 0x18, 0x1a, 0x9c>(it, end);
             if (!term)
                 return end;
-            it = term; // ++it on next loop iteration steps past terminator
+            it = term; // ++it on next loop iteration steps past this byte
+            if constexpr (Utf8) {
+                if (*term == static_cast<Char>(0xc2)) {
+                    if (it + 1 == end)
+                        return end;
+                    ++it; // second byte of the two-byte codepoint
+                    if (static_cast<uint8_t>(*it) != 0x9c)
+                        break; // ordinary payload codepoint, keep scanning
+                }
+            }
+            state = *term == static_cast<Char>(0x1b) ? State::gotEsc : State::start;
+            break;
+        }
+
+        case State::inOsc:
+        case State::needSt: {
+            // OSC payload ends at BEL (0x07); OSC and the control strings end at
+            // ST — C1 0x9c or ESC \ (0xC2 0x9C in UTF-8, where a bare 0x9c is a
+            // continuation byte) — and CAN/SUB abort them to ground.
+            // Everything else inside is opaque payload (filenames, titles,
+            // hyperlinks), so SIMD-scan for those bytes.
+            const bool osc = state == State::inOsc;
+            const Char* term;
+            if constexpr (Utf8)
+                term = osc ? scanForAnyByte<0x07, 0x1b, 0xc2, 0x18, 0x1a>(it, end) : scanForAnyByte<0x1b, 0xc2, 0x18, 0x1a>(it, end);
+            else
+                term = osc ? scanForAnyByte<0x07, 0x9c, 0x1b, 0x18, 0x1a>(it, end) : scanForAnyByte<0x1b, 0x9c, 0x18, 0x1a>(it, end);
+            if (!term)
+                return end;
+            it = term;
+            if (*term == static_cast<Char>(0x1b)) {
+                state = osc ? State::inOscGotEsc : State::needStGotEsc;
+                break;
+            }
+            if constexpr (Utf8) {
+                if (*term == static_cast<Char>(0xc2)) {
+                    if (it + 1 == end)
+                        return end;
+                    ++it; // second byte of the two-byte codepoint
+                    if (static_cast<uint8_t>(*it) != 0x9c)
+                        break; // ordinary payload character, keep scanning
+                }
+            }
             state = State::start;
             break;
         }
-
-        case State::inOsc: {
-            // OSC payload ends at BEL (0x07), C1 ST (0x9c), or ESC (which then
-            // looks for backslash). Inside the payload everything else is opaque
-            // (filenames, titles, hyperlinks), so SIMD-scan for those 3 bytes.
-            const auto* term = scanForAnyByte<0x07, 0x9c, 0x1b>(it, end);
-            if (!term)
-                return end;
-            it = term;
-            state = (*term == static_cast<Char>(0x1b)) ? State::inOscGotEsc : State::start;
-            break;
-        }
-
-        case State::inOscGotEsc:
-            if (c == '\\')
-                state = State::start;
-            else
-                state = State::inOsc;
-            break;
-
-        case State::needSt: {
-            // ST-terminated payload: scan for ESC or C1 ST.
-            const auto* term = scanForAnyByte<0x1b, 0x9c>(it, end);
-            if (!term)
-                return end;
-            it = term;
-            state = (*term == static_cast<Char>(0x1b)) ? State::needStGotEsc : State::start;
-            break;
-        }
-
-        case State::needStGotEsc:
-            if (c == '\\')
-                state = State::start;
-            else
-                state = State::needSt;
-            break;
         }
     }
     return end;
@@ -452,9 +537,11 @@ static inline uint32_t sgrCloseCode(uint32_t openCode)
     case 2:
         return 22; // bold, dim
     case 3:
-        return 23; // italic
+    case 20:
+        return 23; // italic, fraktur
     case 4:
-        return 24; // underline
+    case 21:
+        return 24; // underline, double underline
     case 5:
     case 6:
         return 25; // blink
@@ -502,8 +589,16 @@ static inline uint32_t sgrCloseCode(uint32_t openCode)
     case 106:
     case 107:
         return 49;
+    case 51:
+    case 52:
+        return 54; // framed, encircled
     case 53:
         return 55; // overline
+    case 58: // 256/truecolor underline color introducer
+        return 59;
+    case 73:
+    case 74:
+        return 75; // superscript, subscript
     default:
         return 0; // Unknown → caller uses full reset
     }
@@ -522,7 +617,10 @@ static inline bool isSgrEndCode(uint32_t code)
     case 29:
     case 39:
     case 49:
+    case 54:
     case 55:
+    case 59:
+    case 75:
         return true;
     default:
         return false;

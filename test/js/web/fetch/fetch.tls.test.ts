@@ -387,6 +387,7 @@ describe.concurrent("fetch-tls", () => {
           err = e;
         }
         expect(err).toBeInstanceOf(Error);
+        expect((err as Error).message).toBe("pinned");
       }
       expect(targetConnections).toBe(0);
     } finally {

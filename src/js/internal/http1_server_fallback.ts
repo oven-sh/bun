@@ -78,14 +78,17 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // to suppress the Content-Length this block would otherwise invent. Writing
     // both is a smuggling shape (RFC 9112 6.1), not a cosmetic slip.
     const chunkedFromAutoBits = (autoBits & 16) !== 0;
+    // Decide the framing here, but write it after Date/Connection/Keep-Alive:
+    // Node's _storeHeader emits Content-Length and the chunked Transfer-Encoding
+    // after its automatic connection block.
+    let autoContentLength = null;
+    let autoChunked = false;
     if (!hasContentLength && !hasTransferEncoding && !noBody && !closeDelimited) {
-      if (chunkedFromAutoBits) {
+      if (chunkedFromAutoBits || contentLength === null) {
         chunked = true;
-      } else if (contentLength === null) {
-        chunked = true;
-        out += "Transfer-Encoding: chunked\r\n";
+        autoChunked = !chunkedFromAutoBits;
       } else {
-        out += `Content-Length: ${contentLength}\r\n`;
+        autoContentLength = contentLength;
       }
     }
     // Mirror the native writeAutoHeaders exactly: each line is written iff its
@@ -123,8 +126,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         }
       }
     }
-    // Last, where Node's _storeHeader puts it — after Connection/Keep-Alive.
-    if (chunkedFromAutoBits && chunked) {
+    // Last, where Node's _storeHeader puts them — after Connection/Keep-Alive.
+    if (autoContentLength !== null) {
+      out += `Content-Length: ${autoContentLength}\r\n`;
+    } else if (autoChunked || (chunkedFromAutoBits && chunked)) {
       out += "Transfer-Encoding: chunked\r\n";
     }
     out += "\r\n";
@@ -270,6 +275,7 @@ function connectionListenerHTTP1(server, socket, options) {
   }
 
   let req = null;
+  let pendingUpgrade = null;
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,
@@ -293,6 +299,23 @@ function connectionListenerHTTP1(server, socket, options) {
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
     req._addHeaderLines(rawHeaders, rawHeaders.length);
+
+    // Node's parserOnIncoming: llhttp's upgrade verdict only sticks for CONNECT
+    // or when someone will actually handle the 'upgrade' event; otherwise the
+    // request falls through to normal dispatch with req.upgrade cleared.
+    // Returning 2 makes llhttp stop at the end of this message, so the bytes
+    // after it — the tunnel payload — are never parsed as HTTP.
+    if (upgrade) {
+      req.upgrade =
+        req.method === "CONNECT" ||
+        (typeof server.shouldUpgradeCallback === "function"
+          ? !!server.shouldUpgradeCallback(req)
+          : server.listenerCount("upgrade") > 0);
+      if (req.upgrade) {
+        pendingUpgrade = req;
+        return 2;
+      }
+    }
     // The body is fed by the parser callbacks below; reading just resumes the socket.
     req._read = function (_size) {
       if (socket.readable) socket.resume();
@@ -351,13 +374,42 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.destroy(err);
     }
   }
-  socket.on("data", data => {
+  function onHttp1SocketData(data) {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
       onHttp1SocketError(ret, data);
+      return;
     }
-  });
-  socket.on("error", err => onHttp1SocketError(err, undefined));
+    if (pendingUpgrade) {
+      // Node's onParserExecuteCommon: this connection stops being HTTP here.
+      // Free the parser, hand the socket over with whatever followed the
+      // request head (the first tunnel bytes), and destroy when nobody is
+      // listening — reachable only for CONNECT, since a listener-less Upgrade
+      // already fell through to normal dispatch above.
+      const upgradeReq = pendingUpgrade;
+      pendingUpgrade = null;
+      socket.removeListener("data", onHttp1SocketData);
+      socket.removeListener("error", onHttp1SocketErrorListener);
+      connections.delete(socket);
+      try {
+        parser.close();
+      } catch {}
+      socket.parser = null;
+      const eventName = upgradeReq.method === "CONNECT" ? "connect" : "upgrade";
+      const bodyHead = typeof ret === "number" ? data.slice(ret) : Buffer.alloc(0);
+      if (server.listenerCount(eventName) > 0) {
+        socket.readableFlowing = null;
+        server.emit(eventName, upgradeReq, socket, bodyHead);
+      } else {
+        socket.destroy();
+      }
+    }
+  }
+  function onHttp1SocketErrorListener(err) {
+    onHttp1SocketError(err, undefined);
+  }
+  socket.on("data", onHttp1SocketData);
+  socket.on("error", onHttp1SocketErrorListener);
   socket.once("close", () => {
     connections.delete(socket);
     try {

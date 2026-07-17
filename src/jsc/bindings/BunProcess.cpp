@@ -4383,11 +4383,27 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
 {
     auto* process = global->processObject();
     auto& vm = JSC::getVM(global);
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Node reserves the "NODE_" cmd prefix for the channel's own traffic and
+    // routes such messages to "internalMessage" on both ends of the channel.
     auto ident = vm.propertyNames->message;
+    JSValue message = JSValue::decode(value);
+    if (message.isObject()) {
+        JSValue cmd = message.getObject()->getIfPropertyExists(global, JSC::Identifier::fromString(vm, "cmd"_s));
+        RETURN_IF_EXCEPTION(scope, void());
+        if (cmd && cmd.isString()) {
+            auto cmdString = cmd.toWTFString(global);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (cmdString.length() > 5 && cmdString.startsWith("NODE_"_s)) {
+                ident = JSC::Identifier::fromString(vm, "internalMessage"_s);
+            }
+        }
+    }
+
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
-        args.append(JSValue::decode(value));
+        args.append(message);
         args.append(JSValue::decode(handle));
         process->wrapped().emit(ident, args);
     }

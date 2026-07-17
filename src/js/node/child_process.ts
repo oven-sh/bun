@@ -37,6 +37,7 @@ var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
 var StringPrototypeIncludes = String.prototype.includes;
+var StringPrototypeStartsWith = String.prototype.startsWith;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
@@ -1676,7 +1677,7 @@ const nodeToBunLookup = {
 // Messages whose `cmd` carries the reserved "NODE_" prefix are routed to
 // "internalMessage" rather than "message", as node does.
 const INTERNAL_IPC_PREFIX = "NODE_";
-const StringPrototypeStartsWith = String.prototype.startsWith;
+
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;
   const cmd = message.cmd;

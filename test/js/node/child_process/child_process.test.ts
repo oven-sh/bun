@@ -127,6 +127,45 @@ describe("ChildProcess.spawn()", () => {
   });
 });
 
+describe("fork() IPC", () => {
+  // Node reserves the "NODE_" cmd prefix for the channel's own traffic and
+  // routes it to "internalMessage" on BOTH ends. The vendored
+  // test-child-process-internal only covers child -> parent.
+  it("routes a NODE_-prefixed cmd from parent to the child's internalMessage", async () => {
+    const dir = tmpdirSync();
+    const child_path = path.join(dir, "internal-message-fixture.js");
+    await write(
+      child_path,
+      `process.on("message", m => console.log("message:" + JSON.stringify(m)));
+       process.on("internalMessage", m => console.log("internalMessage:" + JSON.stringify(m)));
+       process.on("disconnect", () => process.exit(0));`,
+    );
+
+    const child = fork(child_path, { stdio: ["ignore", "pipe", "inherit", "ipc"] });
+    try {
+      child.send({ cmd: "NODE_foo" });
+      // The prefix only counts at position 0, and must be longer than "NODE_".
+      child.send({ cmd: "fooNODE_" });
+      child.send({ cmd: "NODE_" });
+
+      let out = "";
+      for await (const chunk of child.stdout!) {
+        out += chunk;
+        if (out.split("\n").length > 3) break;
+      }
+
+      expect(out.split("\n").filter(Boolean)).toEqual([
+        'internalMessage:{"cmd":"NODE_foo"}',
+        'message:{"cmd":"fooNODE_"}',
+        'message:{"cmd":"NODE_"}',
+      ]);
+    } finally {
+      child.disconnect();
+      child.kill();
+    }
+  });
+});
+
 describe("spawn()", () => {
   it("should spawn a process", () => {
     const child = spawn("bun", ["-v"]);
@@ -403,6 +442,39 @@ describe("spawn()", () => {
       expect(!!child).toBe(true);
       expect(child.stdout).not.toBeNull();
       expect(child.stderr).not.toBeNull();
+    });
+
+    // Another subprocess's `.stdin` is a WriteStream over a FileSink with no
+    // `fd` of its own; the sink knows the pipe's write end. Windows hands back
+    // a raw HANDLE rather than a descriptor, so there is nothing to pass on.
+    // Mirrors node's test-child-process-stdio-merge-stdouts-into-cat, which
+    // cannot be vendored because it has no Windows guard.
+    it.skipIf(isWindows)("accepts another subprocess's stdin as a stdio target", async () => {
+      // (cat [p1] ; cat [p2]) | cat [p3]
+      let p1, p2;
+      const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
+      try {
+        // Spawning p1/p2 is the fallible step this guards, so p3's cleanup is
+        // already registered by the time it can throw.
+        p1 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
+        p2 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
+
+        p3.stdout.setEncoding("utf8");
+
+        const firstChunk = once(p3.stdout, "data");
+        p1.stdin.end("hello\n");
+        expect((await firstChunk)[0]).toBe("hello\n");
+
+        const secondChunk = once(p3.stdout, "data");
+        p2.stdin.end("world\n");
+        expect((await secondChunk)[0]).toBe("world\n");
+
+        const thirdChunk = once(p3.stdout, "data");
+        p3.stdin.end("foobar\n");
+        expect((await thirdChunk)[0]).toBe("foobar\n");
+      } finally {
+        for (const p of [p1, p2, p3]) p?.kill();
+      }
     });
   });
 
@@ -918,32 +990,5 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
 
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect(r.error?.code).toBe("ENOTSUP");
-  });
-
-  // A subprocess's `.stdin` is a WriteStream over a FileSink with no `fd` of
-  // its own; the sink knows the pipe's write end. Windows hands back a raw
-  // HANDLE rather than a descriptor, so there is nothing to pass along there.
-  it.if(!isWindows)("accepts another subprocess's stdin as a stdio target", async () => {
-    // (cat [p1] ; cat [p2]) | cat [p3] — node's test-child-process-stdio-merge-stdouts-into-cat
-    const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
-    const p1 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
-    const p2 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
-    try {
-      p3.stdout.setEncoding("utf8");
-
-      const firstChunk = once(p3.stdout, "data");
-      p1.stdin.end("hello\n");
-      expect((await firstChunk)[0]).toBe("hello\n");
-
-      const secondChunk = once(p3.stdout, "data");
-      p2.stdin.end("world\n");
-      expect((await secondChunk)[0]).toBe("world\n");
-
-      const thirdChunk = once(p3.stdout, "data");
-      p3.stdin.end("foobar\n");
-      expect((await thirdChunk)[0]).toBe("foobar\n");
-    } finally {
-      for (const p of [p1, p2, p3]) p.kill();
-    }
   });
 });

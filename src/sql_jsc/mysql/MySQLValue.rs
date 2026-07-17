@@ -806,7 +806,7 @@ impl Time {
                 } else {
                     buffer[0] = 12; // length
                     buffer[9..13].copy_from_slice(&self.microseconds.to_le_bytes());
-                    12
+                    13
                 }
             }
             _ => unreachable!(),

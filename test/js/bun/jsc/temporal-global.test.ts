@@ -7,7 +7,7 @@ import { bunEnv, bunExe } from "harness";
 test("Temporal is not exposed by default", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", `process.stdout.write(typeof Temporal)`],
-    env: bunEnv,
+    env: { ...bunEnv, BUN_JSC_useTemporal: undefined },
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);

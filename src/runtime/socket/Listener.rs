@@ -484,8 +484,7 @@ impl Listener {
                     && matches!(
                         mapped,
                         Some(bun_sys::SystemErrno::ENOTSOCK) | Some(bun_sys::SystemErrno::EBADF)
-                    ))
-            {
+                    )) {
                 bun_sys::SystemErrno::EINVAL as c_int
             } else {
                 errno

@@ -1102,10 +1102,16 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     } catch (e) {
       ctrl = e;
     }
-    expect({ code: ctrl.code, errcode: ctrl.errcode, errstr: ctrl.errstr }).toEqual({
+    expect({
+      code: ctrl.code,
+      errcode: ctrl.errcode,
+      errstr: ctrl.errstr,
+      hasErrstr: Object.prototype.hasOwnProperty.call(ctrl, "errstr"),
+    }).toEqual({
       code: "ERR_SQLITE_ERROR",
       errcode: 1,
       errstr: "SQL logic error",
+      hasErrstr: true,
     });
     db.close();
   });

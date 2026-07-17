@@ -176,8 +176,9 @@ static JSC::JSUint8Array* adoptSqliteBuffer(JSGlobalObject* globalObject, void* 
 // Error helpers (match Node.js node_sqlite.cc shapes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Every ERR_SQLITE_ERROR carries `errcode` (the extended result code) and
-// `errstr` (its canonical English text), matching node_sqlite.cc.
+// Node's CreateSQLiteError(isolate, sqlite3*) / (isolate, int) shape: sets
+// both `errcode` and `errstr`. (throwSqliteResultCode below mirrors the
+// THROW_ERR_SQLITE_ERROR(isolate, int) overload, which omits errstr.)
 static JSObject* createNodeSqliteError(JSGlobalObject* globalObject, int errcode, const WTF::String& message)
 {
     auto& vm = getVM(globalObject);

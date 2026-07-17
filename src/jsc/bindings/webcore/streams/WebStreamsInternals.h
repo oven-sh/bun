@@ -176,6 +176,11 @@ void markPromiseAsHandled(JSC::VM&, JSC::JSPromise*); // userJS: no — WebStrea
 // settles with a primitive / the stored error, so none of these can run user JS or throw.
 JSC::JSPromise* webStreamClosedPromise(JSC::JSGlobalObject*, JSReadableStream*); // userJS: no — WebStreamsMisc.cpp
 JSC::JSPromise* webStreamClosedPromise(JSC::JSGlobalObject*, JSWritableStream*); // userJS: no — WebStreamsMisc.cpp
+// node:stream's addAbortSignal on a web stream: the controller.error(e) op, without needing
+// Node's kControllerErrorFunction own property. No-op once past readable/writable.
+void webStreamControllerError(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue error); // userJS: yes — WebStreamsMisc.cpp
+void webStreamControllerError(JSC::JSGlobalObject*, JSWritableStream*, JSC::JSValue error); // userJS: yes — WebStreamsMisc.cpp
+void webStreamControllerError(JSC::JSGlobalObject*, JSTransformStream*, JSC::JSValue error); // userJS: yes — WebStreamsMisc.cpp
 void resolveStreamClosedPromise(JSC::VM&, JSReadableStream*); // userJS: no — WebStreamsMisc.cpp
 void resolveStreamClosedPromise(JSC::VM&, JSWritableStream*); // userJS: no — WebStreamsMisc.cpp
 void rejectStreamClosedPromise(JSC::VM&, JSReadableStream*, JSC::JSValue error); // userJS: no — WebStreamsMisc.cpp

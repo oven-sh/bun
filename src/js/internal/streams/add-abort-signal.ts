@@ -1,6 +1,6 @@
 "use strict";
 
-const { isNodeStream, isWebStream, kControllerErrorFunction } = require("internal/streams/utils");
+const { isNodeStream, isWebStream } = require("internal/streams/utils");
 const eos = require("internal/streams/end-of-stream");
 
 const SymbolDispose = Symbol.dispose;
@@ -33,7 +33,9 @@ function addAbortSignalNoValidate(signal, stream) {
         stream.destroy($makeAbortError(undefined, { cause: signal.reason }));
       }
     : () => {
-        stream[kControllerErrorFunction]($makeAbortError(undefined, { cause: signal.reason }));
+        // Bun's native web streams don't carry Node's kControllerErrorFunction own property;
+        // error through the real controller-error op (a no-op once past readable/writable).
+        $webStreamControllerError(stream, $makeAbortError(undefined, { cause: signal.reason }));
       };
   if (signal.aborted) {
     onAbort();

@@ -114,6 +114,12 @@ declare function $pokePromiseAsHandled(promise: Promise<any>): void;
  * Does not lock the stream. Throws when given anything else.
  */
 declare function $webStreamClosedPromise(stream: ReadableStream | WritableStream): Promise<void>;
+/**
+ * Node's controller.error(e) for a WHATWG stream: errors the stream through its controller,
+ * no-op once past readable/writable. Used by node:stream's addAbortSignal in place of Node's
+ * Symbol.for("nodejs.webstream.controllerErrorFunction") own property.
+ */
+declare function $webStreamControllerError(stream: ReadableStream | WritableStream | TransformStream, error: any): void;
 declare function $getInternalField<Fields extends any[], N extends keyof Fields>(
   base: InternalFieldObject<Fields>,
   number: N,

@@ -785,7 +785,8 @@ class Zstd extends ZlibBase {
 
     const writeState = new Uint32Array(2);
     // Node does not validate options.dictionary here (unlike Zlib/Brotli) — a
-    // non-view is silently ignored.
+    // non-view is silently ignored — and re-reads it rather than caching. Both
+    // are load-bearing for parity, so this mirrors lib/zlib.js:920 verbatim.
     handle.init(
       initParamsArray,
       pledgedSrcSize,

@@ -347,6 +347,11 @@ mod _impl {
         }
 
         pub fn init(&mut self, pledged_src_size: u64, dictionary: Option<&[u8]>) -> Error {
+            // Mirrors node's `state_.reset(ZSTD_createCCtx())`: free the previous
+            // context first. `init` is JS-reachable twice on one handle.
+            if self.state.is_some() {
+                self.deinit_state();
+            }
             match self.mode {
                 NodeMode::ZSTD_COMPRESS => {
                     self.pledged_src_size = pledged_src_size;

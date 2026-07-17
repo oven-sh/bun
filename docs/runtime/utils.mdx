@@ -888,9 +888,10 @@ Wrap text to a specified column width. It preserves ANSI escape codes and hyperl
 Bun.wrapAnsi("The quick brown fox jumps over the lazy dog", 20);
 // => "The quick brown fox\njumps over the lazy\ndog"
 
-// Preserves ANSI escape codes
+// Preserves ANSI escape codes: an open style is closed at each row end
+// and re-opened on the next row so every row renders correctly on its own
 Bun.wrapAnsi("\u001b[31mThe quick brown fox jumps over the lazy dog\u001b[0m", 20);
-// => "\u001b[31mThe quick brown fox\njumps over the lazy\ndog\u001b[0m"
+// => "\u001b[31mThe quick brown fox\u001b[39m\n\u001b[31mjumps over the lazy\u001b[39m\n\u001b[31mdog\u001b[0m"
 ```
 
 ### Options
@@ -907,7 +908,7 @@ Bun.wrapAnsi("Hello World", 5, {
 | Option              | Default | Description                                                                                                     |
 | ------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
 | `hard`              | `false` | If `true`, break words in the middle if they exceed the column width.                                           |
-| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, only break at explicit newlines.                                |
+| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, break every line at exactly the column width.                   |
 | `trim`              | `true`  | If `true`, trim leading and trailing whitespace from each line.                                                 |
 | `ambiguousIsNarrow` | `true`  | If `true`, treat ambiguous-width Unicode characters as 1 column wide. If `false`, treat them as 2 columns wide. |
 
@@ -937,7 +938,8 @@ namespace Bun {
       hard?: boolean;
       /**
        * If `true`, wrap at word boundaries when possible.
-       * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+       * If `false`, break every line at exactly the column width (characters
+       * are split wherever the limit falls, ignoring word boundaries).
        *
        * @default true
        */

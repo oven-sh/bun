@@ -5,7 +5,7 @@
 // - We should not be creating JSFunction's in process.nextTick.
 
 use bun_core::String as BunString;
-use bun_jsc::ipc::{IsInternal, SerializeAndSendResult};
+use bun_jsc::ipc::{Handle, IsInternal, SerializeAndSendResult};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, StrongOptional};
 
 use crate::api::bun::subprocess::Subprocess;
@@ -156,10 +156,11 @@ pub(crate) fn on_internal_message_child(
 pub(crate) fn handle_internal_message_child(
     global: &JSGlobalObject,
     message: JSValue,
+    handle: JSValue,
 ) -> JsResult<()> {
     bun_output::scoped_log!(IPC, "handleInternalMessageChild");
 
-    child_singleton().dispatch(message, global)
+    child_singleton().dispatch(message, handle, global)
 }
 
 #[bun_jsc::host_fn]
@@ -189,6 +190,48 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
     if !message.is_object() {
         return Err(global.throw_invalid_argument_type_value("message", "object", message));
     }
+    // Only NODE_HANDLE envelopes (built by cluster/primary.ts's send()) carry
+    // a descriptor: the non-reading UDP wrap of a cluster-shared dgram socket.
+    // Any other handle argument (e.g. round-robin newconn) keeps the internal,
+    // handle-less form the worker's decoder expects. Converted before the ack
+    // callback is registered so a failure here cannot strand a never-acked
+    // entry in the callback table.
+    let carries_descriptor = if handle.is_undefined_or_null() {
+        false
+    } else if let Some(cmd) = message.get(global, "cmd")? {
+        cmd.is_string()
+            && bun_core::OwnedString::new(cmd.to_bun_string(global)?).eql_comptime(b"NODE_HANDLE")
+    } else {
+        false
+    };
+    let (zig_handle, is_internal): (Option<Handle>, IsInternal) = if !carries_descriptor {
+        (None, IsInternal::Internal)
+    } else {
+        #[cfg(windows)]
+        {
+            // Sending descriptors over IPC is not implemented on Windows;
+            // Node reports the same for cluster-shared dgram handles.
+            return Err(global.throw(format_args!(
+                "passing a dgram handle over IPC is not supported on Windows"
+            )));
+        }
+        #[cfg(not(windows))]
+        {
+            let fd = match handle.get(global, "fd")? {
+                Some(value) => value.coerce_to_i32(global)?,
+                None => -1,
+            };
+            if fd < 0 {
+                return Err(global
+                    .throw_invalid_arguments(format_args!("Expected handle to have a valid fd")));
+            }
+            (
+                Some(Handle::init(bun_sys::Fd::from_native(fd), handle)),
+                IsInternal::External,
+            )
+        }
+    };
+
     if callback.is_function() {
         let _ = ipc_data.internal_msg_queue.callbacks.put(
             ipc_data.internal_msg_queue.seq,
@@ -215,9 +258,8 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         );
     }
 
-    let _ = handle;
     let success =
-        ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
+        ipc_data.serialize_and_send(global, message, is_internal, JSValue::NULL, zig_handle);
     Ok(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {

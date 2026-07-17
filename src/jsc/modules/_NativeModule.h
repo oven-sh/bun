@@ -30,6 +30,7 @@
     macro("bun:app"_s, BunApp) \
     macro("node:buffer"_s, NodeBuffer) \
     macro("node:constants"_s, NodeConstants) \
+    macro("node:sqlite"_s, NodeSqlite) \
     macro("node:string_decoder"_s, NodeStringDecoder) \
     macro("node:util/types"_s, NodeUtilTypes)  \
     macro("utf-8-validate"_s, UTF8Validate) \

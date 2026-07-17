@@ -205,6 +205,18 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalO
         return ncrypto::EVPKeyPointer::PKFormatType::JWK;
     }
 
+    if (formatStr == "raw-public"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::RawPublic;
+    }
+
+    if (formatStr == "raw-private"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::RawPrivate;
+    }
+
+    if (formatStr == "raw-seed"_s) {
+        return ncrypto::EVPKeyPointer::PKFormatType::RawSeed;
+    }
+
     Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, formatValue);
     return {};
 }
@@ -346,9 +358,53 @@ JSValue createCryptoError(JSC::JSGlobalObject* globalObject, ThrowScope& scope, 
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "reason"_s), jsString(vm, reasonString), reasonSlot);
             RETURN_IF_EXCEPTION(scope, {});
 
-            // Convert reason to error code (e.g. "this error" -> "ERR_OSSL_THIS_ERROR")
+            // Build "ERR_OSSL_<LIB>_THIS_ERROR" like Node's error::Decorate (crypto_util.cc);
+            // the SSL library drops the OSSL_ prefix. BoringSSL reason strings are already
+            // underscore-separated macro names, so only uppercasing is needed here.
             String upperReason = reasonString.convertToASCIIUppercase();
-            String code = makeString("ERR_OSSL_"_s, upperReason);
+
+            int errLib = ERR_GET_LIB(err);
+            ASCIILiteral lib = ""_s;
+            switch (errLib) {
+#define BUN_OSSL_LIB_CASE(name) \
+    case ERR_LIB_##name:        \
+        lib = #name "_"_s;      \
+        break;
+                BUN_OSSL_LIB_CASE(SYS)
+                BUN_OSSL_LIB_CASE(BN)
+                BUN_OSSL_LIB_CASE(RSA)
+                BUN_OSSL_LIB_CASE(DH)
+                BUN_OSSL_LIB_CASE(EVP)
+                BUN_OSSL_LIB_CASE(BUF)
+                BUN_OSSL_LIB_CASE(OBJ)
+                BUN_OSSL_LIB_CASE(PEM)
+                BUN_OSSL_LIB_CASE(DSA)
+                BUN_OSSL_LIB_CASE(X509)
+                BUN_OSSL_LIB_CASE(ASN1)
+                BUN_OSSL_LIB_CASE(CONF)
+                BUN_OSSL_LIB_CASE(CRYPTO)
+                BUN_OSSL_LIB_CASE(EC)
+                BUN_OSSL_LIB_CASE(SSL)
+                BUN_OSSL_LIB_CASE(BIO)
+                BUN_OSSL_LIB_CASE(PKCS7)
+                BUN_OSSL_LIB_CASE(X509V3)
+                BUN_OSSL_LIB_CASE(RAND)
+                BUN_OSSL_LIB_CASE(ENGINE)
+                BUN_OSSL_LIB_CASE(OCSP)
+                BUN_OSSL_LIB_CASE(UI)
+                BUN_OSSL_LIB_CASE(COMP)
+                BUN_OSSL_LIB_CASE(ECDSA)
+                BUN_OSSL_LIB_CASE(ECDH)
+                BUN_OSSL_LIB_CASE(CMS)
+                BUN_OSSL_LIB_CASE(HMAC)
+                BUN_OSSL_LIB_CASE(USER)
+#undef BUN_OSSL_LIB_CASE
+            default:
+                break;
+            }
+
+            ASCIILiteral prefix = errLib == ERR_LIB_SSL ? ""_s : "OSSL_"_s;
+            String code = makeString("ERR_"_s, prefix, lib, upperReason);
 
             PutPropertySlot codeSlot(errorObject, false);
             errorObject->put(errorObject, globalObject, Identifier::fromString(vm, "code"_s), jsString(vm, code), codeSlot);
@@ -702,6 +758,12 @@ ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSGlobalObject* globalObject
             return EVPKeyPointer::PKFormatType::DER;
         } else if (formatView == "jwk"_s) {
             return EVPKeyPointer::PKFormatType::JWK;
+        } else if (formatView == "raw-public"_s) {
+            return EVPKeyPointer::PKFormatType::RawPublic;
+        } else if (formatView == "raw-private"_s) {
+            return EVPKeyPointer::PKFormatType::RawPrivate;
+        } else if (formatView == "raw-seed"_s) {
+            return EVPKeyPointer::PKFormatType::RawSeed;
         }
     }
 
@@ -768,6 +830,40 @@ void parseKeyFormatAndType(JSGlobalObject* globalObject, ThrowScope& scope, JSOb
     config.format = parseKeyFormat(globalObject, scope, formatValue, isInput ? std::optional { EVPKeyPointer::PKFormatType::PEM } : std::nullopt, makeOptionString(objName, "format"_s));
     RETURN_IF_EXCEPTION(scope, );
 
+    if (config.format == EVPKeyPointer::PKFormatType::RawPublic) {
+        if (isPublic && *isPublic == false) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "format"_s), formatValue);
+            return;
+        }
+        if (!typeValue.isUndefined()) {
+            if (!typeValue.isString()) {
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+                return;
+            }
+            auto typeStr = typeValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, );
+            if (typeStr == "compressed"_s) {
+                config.ec_point_form = POINT_CONVERSION_COMPRESSED;
+            } else if (typeStr != "uncompressed"_s) {
+                ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+                return;
+            }
+        }
+        return;
+    }
+
+    if (config.format == EVPKeyPointer::PKFormatType::RawPrivate || config.format == EVPKeyPointer::PKFormatType::RawSeed) {
+        if (isPublic && *isPublic == true) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "format"_s), formatValue);
+            return;
+        }
+        if (!typeValue.isUndefined()) {
+            ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "type"_s), typeValue);
+            return;
+        }
+        return;
+    }
+
     bool isRequired = (!isInput || config.format == EVPKeyPointer::PKFormatType::DER) && config.format != EVPKeyPointer::PKFormatType::JWK;
     std::optional<EVPKeyPointer::PKEncodingType> maybeKeyType = parseKeyType(globalObject, scope, typeValue, isRequired, keyTypeValue, isPublic, makeOptionString(objName, "type"_s));
     RETURN_IF_EXCEPTION(scope, );
@@ -799,6 +895,12 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
         RETURN_IF_EXCEPTION(scope, );
 
         if (!isInput) {
+            if (config.format == EVPKeyPointer::PKFormatType::RawPublic || config.format == EVPKeyPointer::PKFormatType::RawPrivate || config.format == EVPKeyPointer::PKFormatType::RawSeed) {
+                if (!cipherValue.isUndefinedOrNull() || !passphraseValue.isUndefined()) {
+                    ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, "raw format"_s, "does not support encryption"_s);
+                    return;
+                }
+            }
             if (!cipherValue.isUndefinedOrNull()) {
                 if (!cipherValue.isString()) {
                     ERR::INVALID_ARG_VALUE(scope, globalObject, makeOptionString(objName, "cipher"_s), cipherValue);
@@ -858,6 +960,7 @@ void parsePublicKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSO
     config.format = dummyConfig.format;
     config.type = dummyConfig.type;
     config.output_key_object = dummyConfig.output_key_object;
+    config.ec_point_form = dummyConfig.ec_point_form;
 }
 
 void parsePrivateKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject* enc, JSValue keyTypeValue, WTF::StringView objName, EVPKeyPointer::PrivateKeyEncodingConfig& config)

@@ -647,6 +647,11 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
     // can never run (e.g. notifyPeerClosed posted during the final collectNow).
     if (auto* ctx = globalObject->scriptExecutionContext())
         ctx->markTerminating();
+    // Same for DeferredWorkTimer: collectNow -> finalizers and ~VM ->
+    // WaiterListManager::unregister both reach scheduleWorkSoon; past this
+    // point those calls must not enqueue into our drained concurrent queue.
+    if (auto* clientData = WebCore::clientData(vm))
+        clientData->deferredWorkTimer.markShuttingDown();
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);

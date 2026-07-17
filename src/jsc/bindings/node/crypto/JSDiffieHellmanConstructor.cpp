@@ -87,7 +87,9 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         RETURN_IF_EXCEPTION(scope, {});
 
         if (bits < 2) {
-            ERR_put_error(ERR_LIB_DH, 0, DH_R_MODULUS_TOO_LARGE, __FILE__, __LINE__);
+            // Matches Node on BoringSSL (src/crypto/crypto_dh.cc): too-small bit counts are
+            // reported as a bignum-library error (ERR_OSSL_BN_BITS_TOO_SMALL).
+            ERR_put_error(ERR_LIB_BN, 0, BN_R_BITS_TOO_SMALL, __FILE__, __LINE__);
             throwCryptoError(globalObject, scope, ERR_get_error(), "Invalid prime length"_s);
             return {};
         }
@@ -169,11 +171,18 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellman, (JSC::JSGlobalObject * globalOb
         }
     }
 
+    // Node's DiffieHellman JS constructor eagerly reads `verifyError`, so DH parameter
+    // checking happens at construction time and a failed DH_check throws here.
+    auto checkResult = dh.check();
+    if (checkResult == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
+    }
+
     // Get the appropriate structure and create the DiffieHellman object
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanClassStructure.get(zigGlobalObject);
 
-    return JSC::JSValue::encode(JSDiffieHellman::create(vm, structure, globalObject, WTF::move(dh)));
+    return JSC::JSValue::encode(JSDiffieHellman::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(checkResult)));
 }
 
 } // namespace Bun

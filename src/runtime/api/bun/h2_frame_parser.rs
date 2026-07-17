@@ -3441,6 +3441,15 @@ impl H2FrameParser {
     /// to the socket, so a multi-frame batch carries the already-corked bytes (e.g. the
     /// response HEADERS frame) in the same write.
     fn drain_cork_into(&self, out: &mut Vec<u8>) {
+        // CORK_BUFFER is thread-local across every session: only drain bytes we corked.
+        // send_data()'s multi-frame path reaches here without having called cork(), and
+        // prepending another session's corked frames to this one's batch sends them to
+        // the wrong peer. uncork() clears CORKED_H2 before calling this, so None passes.
+        if let Some(corked) = CORKED_H2.with(|c| c.get())
+            && !std::ptr::eq(corked, self.as_ctx_ptr())
+        {
+            return;
+        }
         let off = CORK_OFFSET.with(|c| c.get()) as usize;
         if off == 0 {
             return;

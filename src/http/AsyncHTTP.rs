@@ -639,6 +639,10 @@ fn send_sync_callback(
     async_http: *mut AsyncHTTP<'static>,
     result: HTTPClientResult<'_>,
 ) {
+    // `init_sync` leaves every streaming/progress signal unset, so the only
+    // callback is the terminal one; writing on `has_more` would hand
+    // `send_sync` a partial body and then write to a freed channel.
+    debug_assert!(!result.has_more);
     // SAFETY: `async_http` is the HTTP-thread copy (inside ThreadlocalAsyncHTTP)
     // and `real` was set to the caller's stack/heap AsyncHTTP before scheduling.
     let async_http = unsafe { &mut *async_http };
@@ -697,11 +701,15 @@ impl<'a> AsyncHTTP<'a> {
         if let Some(err) = result.fail {
             return Err(err);
         }
-        debug_assert!(result.metadata.is_some());
+        let Some(metadata) = result.metadata else {
+            // Terminal result with neither error nor response head; surface as
+            // a network error rather than panicking on network-driven state.
+            return Err(crate::Error::ConnectionClosed);
+        };
         // The returned `Response` borrows `metadata.owned_buf` (status text +
         // header slices); suppress Drop so the borrowed buffer outlives the
         // call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(result.metadata.unwrap());
+        let metadata = core::mem::ManuallyDrop::new(metadata);
         Ok(metadata.response)
     }
 

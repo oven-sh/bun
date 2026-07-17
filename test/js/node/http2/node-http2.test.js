@@ -13,9 +13,9 @@ import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
-// there; the 10k-request maxSessionMemory stress test takes ~90s under
+// there; the 10k-request maxSessionMemory stress test takes ~105s under
 // debug+ASAN vs ~2s release, so scale for either.
-const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
+const ASAN_MULTIPLIER = isDebug ? 15 : isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -3365,6 +3365,72 @@ it("Http2Stream pull-mode read() after pause() replenishes the receive window", 
     expect(received).toBe(PAYLOAD);
   } finally {
     client.close();
+    server.close();
+  }
+});
+
+// The outbound cork buffer is thread-local across every Http2Session. Interleaving
+// respond()/write() across two sessions used to let the second session's corked
+// HEADERS be prepended to the first session's multi-frame DATA batch and sent to
+// the wrong peer: one client saw a foreign HEADERS frame, the other never saw its
+// own (test/js/web/fetch/fetch-backpressure.test.ts went intermittently red on
+// Windows CI once #32488 widened the interleaving window).
+it("http2 server sends each session's frames to its own peer under interleaved respond()/write()", async () => {
+  const BIG = Buffer.alloc(64 * 1024, 65);
+  const N = 10;
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const streams = [];
+  const bothStreams = Promise.withResolvers();
+  server.on("error", bothStreams.reject);
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    streams.push(stream);
+    if (streams.length === 2) bothStreams.resolve();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const results = Promise.all(
+      [0, 1].map(
+        i =>
+          new Promise(resolve => {
+            let total = 0;
+            let status;
+            const fail = e => {
+              bothStreams.reject(e);
+              resolve({ i, status, total, err: String(e) });
+            };
+            const client = http2.connect(`https://127.0.0.1:${server.address().port}`, TLS_OPTIONS);
+            client.on("error", fail);
+            const req = client.request({ ":path": "/" });
+            req.on("response", h => (status = h[":status"]));
+            req.on("data", c => (total += c.length));
+            req.on("end", () => {
+              client.close();
+              resolve({ i, status, total });
+            });
+            req.on("error", fail);
+            req.end();
+          }),
+      ),
+    );
+    await bothStreams.promise;
+    // A.respond() corks A's HEADERS; B.respond() force-uncorks A (to A's socket)
+    // then corks B's HEADERS. A.write(64KB) takes the multi-frame DATA path,
+    // which drains the thread-local cork: without the ownership check it pulls
+    // B's HEADERS into A's batch.
+    streams[0].respond({ ":status": 200 });
+    streams[1].respond({ ":status": 200 });
+    for (let k = 0; k < N; k++) {
+      streams[0].write(BIG);
+      streams[1].write(BIG);
+    }
+    streams[0].end();
+    streams[1].end();
+    expect(await results).toEqual([
+      { i: 0, status: 200, total: BIG.length * N },
+      { i: 1, status: 200, total: BIG.length * N },
+    ]);
+  } finally {
     server.close();
   }
 });

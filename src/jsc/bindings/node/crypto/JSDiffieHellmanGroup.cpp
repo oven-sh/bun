@@ -63,13 +63,7 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanGroupGetter_verifyError, (JSC::JSGlobalO
         return ERR::INVALID_THIS(scope, globalObject, "DiffieHellmanGroup"_s);
     }
 
-    auto& dh = thisObject->getImpl();
-    auto result = dh.check();
-    if (result == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
-        return ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
-    }
-
-    return JSValue::encode(JSC::jsNumber(static_cast<int>(result)));
+    return JSValue::encode(JSC::jsNumber(thisObject->verifyError()));
 }
 
 } // namespace Bun

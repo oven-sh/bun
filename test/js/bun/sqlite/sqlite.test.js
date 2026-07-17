@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -2052,6 +2052,42 @@ it("keeps database handles working when many Workers open databases concurrently
     exitCode: 0,
   });
 }, 30000);
+
+it("exit-time WAL checkpoint runs even with a never-finalized prepared statement", async () => {
+  // Sibling of the node:sqlite test. With un-finalized statements, close_v2
+  // zombifies the connection and defers the WAL checkpoint to a finalize
+  // that never comes; Bun__closeAllSQLiteDatabasesForTermination now
+  // checkpoints explicitly first.
+  const dir = tempDirWithFiles("bun-sqlite-exit-zombie", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require('bun:sqlite');
+       const db = new Database('exit.db');
+       db.exec('PRAGMA journal_mode = WAL');
+       db.exec('CREATE TABLE t (x INTEGER)');
+       const stmt = db.prepare('INSERT INTO t VALUES (?)');
+       stmt.run(42);
+       // stmt stays referenced and is never finalized; db is never closed.
+       console.log(require('node:fs').statSync('exit.db-wal').size > 0);`,
+    ],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("true\n");
+  const wal = path.join(dir, "exit.db-wal");
+  // TRUNCATE moved every frame into exit.db (or the sidecar was unlinked
+  // by a full close). Either way, no un-checkpointed data is stranded.
+  expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
+  const verify = new Database(path.join(dir, "exit.db"));
+  expect(verify.query("SELECT x FROM t").get().x).toBe(42);
+  verify.close();
+  expect(exitCode).toBe(0);
+});
 
 // sqlite3_prepare_v3 treats an interior NUL byte as end-of-SQL. The exec/run
 // multi-statement loop used to re-prepare the same empty statement forever

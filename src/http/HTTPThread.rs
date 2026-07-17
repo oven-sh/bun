@@ -1370,6 +1370,15 @@ mod _event_loop_draft {
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
+                // Run the deferred-free thunk (`Store::process_deferred_frees`)
+                // like `MiniEventLoop::tick_once` does after its raw tick; the
+                // FilePoll hive slots freed during this tick are reclaimed here.
+                // SAFETY: `loop_` was born `*mut` (`init_global`), so `cast_mut`
+                // keeps its provenance; it is HTTP-thread-only and disjoint from
+                // the C `us_loop_t` behind `uws_loop`, and no other `&`/`&mut`
+                // to this `MiniEventLoop` is live here (`uws_loop` re-derived
+                // per iteration, last used above).
+                unsafe { (*self.loop_.cast_mut()).on_after_event_loop() };
                 assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {

@@ -128,8 +128,8 @@ void us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct
     loop->data.sweep_next_tick_ns = -1;
 #endif
     loop->data.sweep_timer_count = 0;
-    loop->data.recv_buf = malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
-    loop->data.send_buf = malloc(LIBUS_SEND_BUFFER_LENGTH);
+    loop->data.recv_buf = us_malloc(LIBUS_RECV_BUFFER_LENGTH + LIBUS_RECV_BUFFER_PADDING * 2);
+    loop->data.send_buf = us_malloc(LIBUS_SEND_BUFFER_LENGTH);
     /* Every read on this loop writes into recv_buf; a NULL here makes each one
      * fail with EFAULT for the life of the process. */
     if (!loop->data.recv_buf || !loop->data.send_buf) Bun__outOfMemory();
@@ -149,8 +149,8 @@ void us_internal_loop_data_free(struct us_loop_t *loop) {
     us_internal_free_loop_ssl_data(loop);
 #endif
 
-    free(loop->data.recv_buf);
-    free(loop->data.send_buf);
+    us_free(loop->data.recv_buf);
+    us_free(loop->data.send_buf);
 
 #ifdef LIBUS_USE_LIBUV
     us_timer_close(loop->data.sweep_timer, 0);
@@ -882,8 +882,9 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
              * recvmsg(MSG_ERRQUEUE) does — so EPOLLERR stays level-triggered
              * until we drain it explicitly. Do that here, surfacing each
              * errno via on_recv_error; the socket stays open. On other
-             * platforms (kqueue EV_ERROR, Windows) an error event is fatal —
-             * preserve close-on-error there. */
+             * platforms only a *poll* error (kqueue EV_ERROR, Windows) is
+             * still fatal below; a plain recv failure is reported the same
+             * way it is here, not treated as fatal. */
             int recv_error_surfaced = 0;
             int recv_would_block_only = 0;
             if (error) {
@@ -906,13 +907,24 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                                 break;
                             }
                         }
-                        u->on_recv_error(u, ee ? ee : ECONNREFUSED);
+                        u->on_recv_error(u, ee ? ee : ECONNREFUSED, 1);
                     }
                 }
             }
-#endif
 
-            if ((events & LIBUS_SOCKET_READABLE) && !u->closed) {
+            /* An EPOLLERR with no EPOLLIN and an empty error queue still has to
+             * run the receive path: that is how a pending sk_err — an ICMP for
+             * a socket that never enabled IP_RECVERR, e.g. one adopted from an
+             * external descriptor by bsd_udp_open() and then connected — is
+             * reaped by recvmmsg and reported instead of the socket being
+             * closed below. libuv folds a bare EPOLLERR into EPOLLIN for the
+             * same reason (uv__io_poll, deps/uv/src/unix/linux.c). */
+            const int run_recv =
+                (events & LIBUS_SOCKET_READABLE) || (error && !recv_error_surfaced);
+#else
+            const int run_recv = events & LIBUS_SOCKET_READABLE;
+#endif
+            if (run_recv && !u->closed) {
 
                 do {
                     struct udp_recvbuf recvbuf;
@@ -923,15 +935,32 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     } else {
                         if (npackets == LIBUS_SOCKET_ERROR) {
                             if (!bsd_would_block()) {
-#if defined(__linux__)
-                                int recv_err = errno;
-                                recv_error_surfaced = 1;
-                                if (u->on_recv_error) {
-                                    u->on_recv_error(u, recv_err);
-                                }
-#else
-                                /* non-Linux: fall through and close below */
+#if defined(_WIN32)
+                                /* recvfrom's error is in WSAGetLastError(),
+                                 * not errno; keep close-on-error here. */
                                 error = 1;
+#else
+                                /* A failing recvmsg is a socket *condition* to
+                                 * report, not a fatal event. On the BSDs, which
+                                 * have no error queue, this is the ONLY way the
+                                 * kernel delivers a connected socket's ICMP
+                                 * error (so_error): Node reports it as
+                                 * `recvmsg <code>` and keeps the socket open.
+                                 * Only a genuine poll error still closes below. */
+                                int recv_err = errno;
+                                if (u->on_recv_error) {
+#if defined(__linux__)
+                                    recv_error_surfaced = 1;
+#endif
+                                    u->on_recv_error(u, recv_err, 0);
+                                } else {
+                                    /* No error handler (QUIC creates its UDP
+                                     * sockets with recv_error_cb = NULL): the
+                                     * close is the only handling this path has,
+                                     * and a persistent recv error on a still-
+                                     * readable fd must not spin the loop. */
+                                    error = 1;
+                                }
 #endif
                             }
 #if defined(__linux__)

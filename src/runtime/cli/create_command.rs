@@ -2644,6 +2644,14 @@ impl Example {
                         .expect("infallible: variant checked")
                         .data
                         .slice();
+                    let string_prop = |key: &[u8]| -> &'static [u8] {
+                        property
+                            .value
+                            .and_then(|v| v.as_property(key))
+                            .and_then(|q| q.expr.data.e_string())
+                            .map(|s| s.data.slice())
+                            .unwrap_or(b"")
+                    };
                     list[i] = Example {
                         name: if let Some(slash) =
                             bun_core::strings::index_of_char_usize(name, b'/')
@@ -2652,28 +2660,8 @@ impl Example {
                         } else {
                             name
                         },
-                        version: property
-                            .value
-                            .unwrap()
-                            .as_property(b"version")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
-                        description: property
-                            .value
-                            .unwrap()
-                            .as_property(b"description")
-                            .unwrap()
-                            .expr
-                            .data
-                            .e_string()
-                            .unwrap()
-                            .data
-                            .slice(),
+                        version: string_prop(b"version"),
+                        description: string_prop(b"description"),
                         local: false,
                     };
                 }

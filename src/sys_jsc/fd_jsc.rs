@@ -54,12 +54,14 @@ impl FdJsc for Fd {
             ));
         }
         if float < 0.0 || float > i32::MAX as f64 {
+            // Node validates fd with validateInt32, which spells the range with "&&".
+            // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L126
+            let range = format!(">= 0 && <= {}", i32::MAX);
             return Err(global.throw_range_error(
                 float,
                 RangeErrorOptions {
                     field_name: b"fd",
-                    min: 0,
-                    max: i64::from(i32::MAX),
+                    msg: range.as_bytes(),
                     ..Default::default()
                 },
             ));

@@ -16,20 +16,56 @@
  */
 // clang-format off
 #pragma once
+
+/* <stdint.h> pulls in glibc's <features.h>, which locks the feature-test
+ * macros for the rest of the TU. bsd.h needs _GNU_SOURCE for mmsghdr/accept4
+ * but is included after us, so set it here before any system header (including
+ * whatever mimalloc.h transitively pulls in). */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
+#if defined(__SANITIZE_ADDRESS__)
+#define LIBUS_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define LIBUS_ASAN 1
+#endif
+#endif
+
+#if !defined(LIBUS_ASAN)
+#include "mimalloc.h"
+#ifndef us_calloc
+#define us_calloc mi_calloc
+#endif
+#ifndef us_malloc
+#define us_malloc mi_malloc
+#endif
+#ifndef us_realloc
+#define us_realloc mi_realloc
+#endif
+#ifndef us_free
+#define us_free mi_free
+#endif
+#ifndef us_strdup
+#define us_strdup mi_strdup
+#endif
+#else
 #ifndef us_calloc
 #define us_calloc calloc
 #endif
-
 #ifndef us_malloc
 #define us_malloc malloc
 #endif
-
 #ifndef us_realloc
 #define us_realloc realloc
 #endif
-
 #ifndef us_free
 #define us_free free
+#endif
+#ifndef us_strdup
+#define us_strdup strdup
+#endif
 #endif
 
 #ifndef LIBUSOCKETS_H
@@ -91,13 +127,6 @@
 #define LIBUS_SOCKET_DESCRIPTOR SOCKET
 #else
 #define LIBUS_SOCKET_DESCRIPTOR int
-#endif
-
-/* <stdint.h> pulls in glibc's <features.h>, which locks the feature-test
- * macros for the rest of the TU. bsd.h needs _GNU_SOURCE for mmsghdr/accept4
- * but is included after us, so set it here before any system header. */
-#if !defined(_WIN32) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE
 #endif
 
 #include "stddef.h"
@@ -191,11 +220,24 @@ struct us_udp_packet_buffer_t *us_create_udp_packet_buffer();
 
 //struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, struct us_udp_packet_buffer_t *, int), void (*drain_cb)(struct us_udp_socket_t *), char *host, unsigned short port);
 
-struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int), const char *host, unsigned short port, int flags, int *err, void *user);
+struct us_udp_socket_t *us_create_udp_socket(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), const char *host, unsigned short port, int flags, int *err, void *user);
 
 void us_udp_socket_close(struct us_udp_socket_t *s);
 
 int us_udp_socket_set_broadcast(struct us_udp_socket_t *s, int enabled);
+
+/* SO_RCVBUF / SO_SNDBUF for a UDP socket. size == 0 reads the current value,
+ * non-zero sets it. Returns 0 and writes the resulting value to *out, or the
+ * failing setsockopt/getsockopt result (error in errno / WSAGetLastError). */
+int us_udp_socket_buffer_size(struct us_udp_socket_t *s, int is_recv, int size, int *out);
+
+/* Underlying socket descriptor of a UDP socket. */
+LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s);
+
+/* Adopts an already created (and usually already bound) UDP socket descriptor
+ * instead of creating a new one. The fd is made non-blocking and the standard
+ * receive-path options are applied. Returns null with *err set on failure. */
+struct us_udp_socket_t *us_create_udp_socket_from_fd(us_loop_r loop, void (*data_cb)(struct us_udp_socket_t *, void *, int), void (*drain_cb)(struct us_udp_socket_t *), void (*close_cb)(struct us_udp_socket_t *), void (*recv_error_cb)(struct us_udp_socket_t *, int, int), LIBUS_SOCKET_DESCRIPTOR fd, int *err, void *user);
 
 /* This one is ugly, should be ext! not user */
 void *us_udp_socket_user(struct us_udp_socket_t *s);

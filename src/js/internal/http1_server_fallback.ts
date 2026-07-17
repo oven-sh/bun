@@ -246,8 +246,9 @@ function connectionListenerHTTP1(server, socket, options) {
   parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
   parser.socket = socket;
   socket.parser = parser;
-  if (typeof server.maxHeadersCount === "number") {
-    parser.maxHeaderPairs = server.maxHeadersCount << 1;
+  const { maxHeadersCount } = server;
+  if (typeof maxHeadersCount === "number") {
+    parser.maxHeaderPairs = maxHeadersCount << 1;
   }
 
   let req = null;

@@ -187,8 +187,13 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     // (env conversion).
     #[cfg(windows)]
     {
+        // Under ASAN the `#[global_allocator]` is `System`, so routing libuv
+        // through mimalloc would give it a different heap than the rest of
+        // the process and hide its allocations from the interceptor. Leave
+        // libuv on the CRT allocator (ASAN-intercepted) in that build.
         // SAFETY: mimalloc fns match the libuv allocator signatures; called
         // exactly once before any uv handle is created.
+        #[cfg(not(bun_asan))]
         unsafe {
             let _ = bun_sys::windows::libuv::uv_replace_allocator(
                 Some(bun_alloc::mimalloc::mi_malloc),

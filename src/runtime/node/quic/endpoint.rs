@@ -2306,10 +2306,10 @@ impl QuicEndpoint {
         // Read before engine_connect: once the conn exists it holds `session`
         // as its ctx, and unwinding that safely is far more delicate than
         // simply not creating it.
-        let keepalive_us = read_u64_option(global, options, "keepAlive")?
-            .map_or(0, |ms| ms.saturating_mul(1000));
-        let use_preferred =
-            read_u64_option(global, options, "preferredAddressPolicy")? == Some(PREFERRED_ADDRESS_USE);
+        let keepalive_us =
+            read_u64_option(global, options, "keepAlive")?.map_or(0, |ms| ms.saturating_mul(1000));
+        let use_preferred = read_u64_option(global, options, "preferredAddressPolicy")?
+            == Some(PREFERRED_ADDRESS_USE);
         // engine_connect fires on_new_conn synchronously; hold the scope so a
         // schedule_process from inside it cannot re-enter the engine.
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);

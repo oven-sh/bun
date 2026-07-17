@@ -700,6 +700,16 @@ int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) {
 
 void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
+#ifdef LIBUS_USE_LIBUV
+        /* Arming READABLE below hands ownership back to normal delivery (the
+         * SHUT_DOWN branch closes next iteration), so the sweep no longer owns
+         * this socket - and after SD_SEND the sweep's send() probe would
+         * misread WSAESHUTDOWN as a peer reset. */
+        if (s->fin_deferred) {
+            s->fin_deferred = 0;
+            s->group->loop->data.fin_deferred_count--;
+        }
+#endif
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         /* Peer FIN already delivered: the half-open poll has settled at
          * events=0, so us_poll_change(&READABLE)=0 would be a no-op on

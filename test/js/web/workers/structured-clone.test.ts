@@ -449,6 +449,29 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             structuredCloneFn(buffer, { transfer: [buffer] });
           }).toThrow(DOMException);
         });
+        // Bun's native borrows call ArrayBuffer::pin(), which makes the buffer
+        // non-detachable without setting the C-API lock flag. Transferring a
+        // pinned buffer must copy via transferTo()'s copyTo() fallback, not
+        // throw (see bindings.cpp JSC__JSValue__pinArrayBuffer). Locks this in
+        // so a future WebKit sync that re-adds upstream's !isDetachable() gate
+        // in SerializedScriptValue::create fails CI.
+        test("A Bun-pinned ArrayBuffer copies on transfer instead of detaching", async () => {
+          const zlib = require("zlib");
+          const ab = new ArrayBuffer(64);
+          new Uint8Array(ab).fill(42);
+          const { promise, resolve, reject } = Promise.withResolvers<void>();
+          // Starting the async deflate pins ab for the duration of the call.
+          zlib.deflate(new Uint8Array(ab), (e: unknown) => (e ? reject(e) : resolve()));
+          const clone = structuredCloneFn(ab, { transfer: [ab] });
+          expect({
+            cloneLength: clone.byteLength,
+            origLength: ab.byteLength,
+            sameObject: clone === ab,
+            cloneFirst: new Uint8Array(clone)[0],
+          }).toEqual({ cloneLength: 64, origLength: 64, sameObject: false, cloneFirst: 42 });
+          await promise;
+          expect(ab.byteLength).toBe(64);
+        });
         // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
         // Serializing (not transferring) a detached ArrayBuffer must throw a
         // "DataCloneError" DOMException, not a TypeError.

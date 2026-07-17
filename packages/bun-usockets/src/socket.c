@@ -859,15 +859,17 @@ void us_socket_pause(struct us_socket_t *s) {
 }
 
 void us_socket_resume(struct us_socket_t *s) {
+    if (!s->flags.is_paused) return;
 #ifdef LIBUS_USE_LIBUV
     /* Reads flow again: normal delivery discovers the deferred FIN (and any
-     * reset behind it), so the sweep no longer owns this socket. */
+     * reset behind it), so the sweep no longer owns this socket. Cleared
+     * after the !is_paused early-return so a readable_ended socket enrolled
+     * at settle keeps sweep ownership when resume() is a no-op. */
     if (s->fin_deferred) {
         s->fin_deferred = 0;
         s->group->loop->data.fin_deferred_count--;
     }
 #endif
-    if (!s->flags.is_paused) return;
     s->flags.is_paused = 0;
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;

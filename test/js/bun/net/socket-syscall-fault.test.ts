@@ -4,8 +4,8 @@ import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
-import nodeTls from "node:tls";
 import { join } from "node:path";
+import nodeTls from "node:tls";
 
 const skip = !fault.available() || isWindows;
 

@@ -1053,9 +1053,9 @@ describe("net.Server accepted-socket buffering", () => {
     try {
       const listening = Promise.withResolvers<void>();
       server.once("error", listening.reject);
-      server.listen(0, () => listening.resolve());
+      server.listen(0, "127.0.0.1", () => listening.resolve());
       await listening.promise;
-      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port });
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
       await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
       const buf = await received.promise;
@@ -1080,9 +1080,9 @@ describe("net.Server accepted-socket buffering", () => {
     try {
       const listening = Promise.withResolvers<void>();
       server.once("error", listening.reject);
-      server.listen(0, () => listening.resolve());
+      server.listen(0, "127.0.0.1", () => listening.resolve());
       await listening.promise;
-      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port });
+      client = createConnection({ port: (server.address() as import("node:net").AddressInfo).port, host: "127.0.0.1" });
       client.on("error", received.reject);
       await new Promise<void>((resolve, reject) => client!.end("hello", err => (err ? reject(err) : resolve())));
       const data = await received.promise;
@@ -1107,13 +1107,14 @@ describe("net.Socket onread flow control", () => {
     try {
       const listening = Promise.withResolvers<void>();
       server.once("error", listening.reject);
-      server.listen(0, () => {
+      server.listen(0, "127.0.0.1", () => {
         server.off("error", listening.reject);
         listening.resolve();
       });
       await listening.promise;
       socket = createConnection({
         port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
         onread: {
           buffer: Buffer.alloc(4),
           callback(n: number, buf: Buffer) {
@@ -1149,13 +1150,14 @@ describe("net.Socket onread with a zero-length buffer", () => {
     try {
       const listening = Promise.withResolvers<void>();
       server.once("error", listening.reject);
-      server.listen(0, () => {
+      server.listen(0, "127.0.0.1", () => {
         server.off("error", listening.reject);
         listening.resolve();
       });
       await listening.promise;
       socket = createConnection({
         port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
         onread: {
           buffer: kind === "static buffer" ? Buffer.alloc(0) : () => Buffer.alloc(0),
           callback: () => reject(new Error("onread callback must not be invoked")),
@@ -1189,10 +1191,11 @@ it("onread: nothing is delivered between a false return and resume()", async () 
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => listening.resolve());
+    server.listen(0, "127.0.0.1", () => listening.resolve());
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: Buffer.alloc(64),
         callback(n: number, buf: Buffer) {
@@ -1237,10 +1240,11 @@ it("onread: resume() then pause() before the drain tick leaves the handle paused
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => listening.resolve());
+    server.listen(0, "127.0.0.1", () => listening.resolve());
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: Buffer.alloc(64),
         callback(n: number, buf: Buffer) {
@@ -1285,10 +1289,11 @@ it("onread: a false return on the last slice of a redelivered tail stays paused 
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => listening.resolve());
+    server.listen(0, "127.0.0.1", () => listening.resolve());
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: Buffer.alloc(4),
         callback(n: number, buf: Buffer) {
@@ -1339,13 +1344,14 @@ describe("net.Socket onread buffer factory", () => {
     try {
       const listening = Promise.withResolvers<void>();
       server.once("error", listening.reject);
-      server.listen(0, () => {
+      server.listen(0, "127.0.0.1", () => {
         server.off("error", listening.reject);
         listening.resolve();
       });
       await listening.promise;
       client = createConnection({
         port: (server.address() as import("node:net").AddressInfo).port,
+        host: "127.0.0.1",
         onread: {
           buffer: () => (sawFirst ? (bad() as any) : bufA),
           callback(n: number, buf: Buffer) {
@@ -1386,13 +1392,14 @@ it("onread: read() after a redundant pause() still redelivers the declined tail"
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", listening.reject);
       listening.resolve();
     });
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: Buffer.alloc(4),
         callback(n: number, buf: Buffer) {
@@ -1430,13 +1437,14 @@ it("onread: a peer FIN does not redeliver the declined tail before resume()", as
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", listening.reject);
       listening.resolve();
     });
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: Buffer.alloc(4),
         callback(n: number, buf: Buffer) {
@@ -1478,13 +1486,14 @@ it("onread: read() redelivers the declined tail without resume()", async () => {
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", listening.reject);
       listening.resolve();
     });
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: Buffer.alloc(4),
         callback(n: number, buf: Buffer) {
@@ -1518,13 +1527,14 @@ it("onread: a buffer factory that never yields a Uint8Array hands the callback `
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", listening.reject);
       listening.resolve();
     });
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: () => null as any,
         callback(_n: number, buf: unknown) {
@@ -1560,13 +1570,14 @@ it("onread: `false` from a callback holding the `true` sentinel still pauses unt
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", listening.reject);
       listening.resolve();
     });
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: () => 42 as any,
         callback(n: number, buf: unknown) {
@@ -1612,13 +1623,14 @@ it("onread: a callback that throws mid-chunk destroys the socket instead of leav
   try {
     const listening = Promise.withResolvers<void>();
     server.once("error", listening.reject);
-    server.listen(0, () => {
+    server.listen(0, "127.0.0.1", () => {
       server.off("error", listening.reject);
       listening.resolve();
     });
     await listening.promise;
     client = createConnection({
       port: (server.address() as import("node:net").AddressInfo).port,
+      host: "127.0.0.1",
       onread: {
         buffer: Buffer.alloc(4),
         callback(n: number, buf: Buffer) {

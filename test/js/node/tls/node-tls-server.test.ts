@@ -1314,9 +1314,9 @@ it("handshakeTimeout applies to sockets handed in via server.emit('connection')"
   const netServer = net.createServer(raw => tlsServer.emit("connection", raw));
   let stalled: net.Socket | undefined;
   try {
-    netServer.listen(0);
+    netServer.listen(0, "127.0.0.1");
     await once(netServer, "listening");
-    stalled = net.connect((netServer.address() as AddressInfo).port);
+    stalled = net.connect((netServer.address() as AddressInfo).port, "127.0.0.1");
     stalled.on("error", () => {});
     const [error, wrapped] = await clientError.promise;
     expect(error.code).toBe("ERR_TLS_HANDSHAKE_TIMEOUT");
@@ -1341,9 +1341,9 @@ it("a timed-out connection that the peer then closes reports tlsClientError once
   });
   let stalled: net.Socket | undefined;
   try {
-    server.listen(0);
+    server.listen(0, "127.0.0.1");
     await once(server, "listening");
-    stalled = net.connect((server.address() as AddressInfo).port);
+    stalled = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
     stalled.on("error", () => {});
     const serverSide = await firstError.promise;
     const closed = once(serverSide, "close");
@@ -1363,9 +1363,9 @@ it("handshakeTimeout reports a stalled natively-accepted client through tlsClien
   server.on("tlsClientError", (err, sock) => clientError.resolve([err, sock as TLSSocket]));
   let stalled: net.Socket | undefined;
   try {
-    server.listen(0);
+    server.listen(0, "127.0.0.1");
     await once(server, "listening");
-    stalled = net.connect((server.address() as AddressInfo).port);
+    stalled = net.connect((server.address() as AddressInfo).port, "127.0.0.1");
     stalled.on("error", () => {});
     const [error, sock] = await clientError.promise;
     expect(error.code).toBe("ERR_TLS_HANDSHAKE_TIMEOUT");
@@ -1401,12 +1401,13 @@ describe("tls.Server secure-context options", () => {
     try {
       const listening = Promise.withResolvers<void>();
       server.once("listening", listening.resolve);
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await Promise.race([listening.promise, peer.promise]);
       const connected = Promise.withResolvers<void>();
       client = connect(
         {
           port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
           checkServerIdentity: () => undefined,
           ...clientOptions,
@@ -1472,12 +1473,13 @@ describe("tls.Server secure-context options", () => {
       const listening = Promise.withResolvers<void>();
       rawServer.once("listening", listening.resolve);
       rawServer.once("error", listening.reject);
-      rawServer.listen(0);
+      rawServer.listen(0, "127.0.0.1");
       await listening.promise;
       const connected = Promise.withResolvers<void>();
       client = connect(
         {
           port: (rawServer.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
           checkServerIdentity: () => undefined,
           key: agent6Key,
@@ -1513,12 +1515,12 @@ describe("tls.Server secure-context options", () => {
       const listening = Promise.withResolvers<void>();
       rawServer.once("listening", listening.resolve);
       rawServer.once("error", listening.reject);
-      rawServer.listen(0);
+      rawServer.listen(0, "127.0.0.1");
       await listening.promise;
       const connected = Promise.withResolvers<void>();
       // No client key/cert: the handshake must still complete.
       client = connect(
-        { port: (rawServer.address() as AddressInfo).port, rejectUnauthorized: false },
+        { port: (rawServer.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false },
         connected.resolve,
       );
       client.on("error", connected.reject);
@@ -1552,9 +1554,9 @@ describe("tls.Server secure-context options", () => {
       const listening = Promise.withResolvers<void>();
       rawServer.once("listening", listening.resolve);
       rawServer.once("error", listening.reject);
-      rawServer.listen(0);
+      rawServer.listen(0, "127.0.0.1");
       await listening.promise;
-      client = connect({ port: (rawServer.address() as AddressInfo).port, rejectUnauthorized: false }, () =>
+      client = connect({ port: (rawServer.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false }, () =>
         client!.end(),
       );
       client.on("error", wrapClosed.reject);
@@ -1604,12 +1606,13 @@ describe("tls.Server secure-context options", () => {
       const listening = Promise.withResolvers<void>();
       rawServer.once("listening", listening.resolve);
       rawServer.once("error", listening.reject);
-      rawServer.listen(0);
+      rawServer.listen(0, "127.0.0.1");
       await listening.promise;
       const connected = Promise.withResolvers<void>();
       client = connect(
         {
           port: (rawServer.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
           checkServerIdentity: () => undefined,
           key: agent6Key,
@@ -1650,9 +1653,9 @@ describe("tls.Server secure-context options", () => {
     try {
       const listening = Promise.withResolvers<void>();
       rawServer.once("error", listening.reject);
-      rawServer.listen(0, listening.resolve);
+      rawServer.listen(0, "127.0.0.1", listening.resolve);
       await listening.promise;
-      client = net.connect((rawServer.address() as AddressInfo).port);
+      client = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
       client.on("error", () => {});
       const err = await surfaced.promise;
       expect({ emitted, code: err.code, rawDestroyed: raw!.destroyed }).toEqual({
@@ -1687,12 +1690,13 @@ describe("tls.Server secure-context options", () => {
     try {
       const listening = Promise.withResolvers<void>();
       rawServer.once("error", listening.reject);
-      rawServer.listen(0, listening.resolve);
+      rawServer.listen(0, "127.0.0.1", listening.resolve);
       await listening.promise;
       const connected = Promise.withResolvers<void>();
       client = connect(
         {
           port: (rawServer.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
           checkServerIdentity: () => undefined,
         },
@@ -1737,11 +1741,12 @@ describe("tls.Server secure-context options", () => {
     server.on("secureConnection", () => (sawSecureConnection = true));
     let client: TLSSocket | undefined;
     try {
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await once(server, "listening");
       const closed = Promise.withResolvers<void>();
       client = connect({
         port: (server.address() as AddressInfo).port,
+        host: "127.0.0.1",
         rejectUnauthorized: false,
         checkServerIdentity: () => undefined,
         key: agent6Key,
@@ -1782,9 +1787,9 @@ it("destroys a server wrap whose socket was destroyed before the deferred upgrad
     const listening = Promise.withResolvers<void>();
     rawServer.once("listening", listening.resolve);
     rawServer.once("error", listening.reject);
-    rawServer.listen(0);
+    rawServer.listen(0, "127.0.0.1");
     await listening.promise;
-    conn = net.connect((rawServer.address() as AddressInfo).port);
+    conn = net.connect((rawServer.address() as AddressInfo).port, "127.0.0.1");
     const connected = Promise.withResolvers<void>();
     conn.once("connect", connected.resolve);
     conn.once("error", connected.reject);
@@ -1833,12 +1838,13 @@ it("exposes the server-side peer verification result via socket.ssl.verifyError(
       const listening = Promise.withResolvers<void>();
       server.once("listening", listening.resolve);
       server.once("error", listening.reject);
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await listening.promise;
       const connected = Promise.withResolvers<void>();
       socket = connect(
         {
           port: (server.address() as AddressInfo).port,
+          host: "127.0.0.1",
           rejectUnauthorized: false,
           checkServerIdentity: () => undefined,
           ...clientCert,

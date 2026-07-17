@@ -796,10 +796,10 @@ describe("rejectUnauthorized only treats a literal `false` as opting out", () =>
     const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
     let client: TLSSocket | undefined;
     try {
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await once(server, "listening");
       const { promise, resolve, reject } = Promise.withResolvers<Error & { code?: string }>();
-      client = tlsConnect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: value as any }, () =>
+      client = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: value as any }, () =>
         reject(new Error("secureConnect must not be reached")),
       );
       client.on("error", resolve);
@@ -815,10 +815,10 @@ describe("rejectUnauthorized only treats a literal `false` as opting out", () =>
     const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
     let client: TLSSocket | undefined;
     try {
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await once(server, "listening");
       const { promise, resolve, reject } = Promise.withResolvers<void>();
-      client = tlsConnect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false }, resolve);
+      client = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false }, resolve);
       client.on("error", reject);
       await promise;
       expect(client.authorized).toBe(false);
@@ -846,13 +846,13 @@ it("a server using `crl` must not poison the process-wide default CA store", asy
     const crl = readFileSync(${JSON.stringify(crlPath)}, "utf8");
     async function main() {
       const poison = tls.createServer({ key, cert, requestCert: true, crl });
-      poison.listen(0);
+      poison.listen(0, "127.0.0.1");
       await once(poison, "listening");
       const server = tls.createServer({ key, cert }, s => s.end());
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await once(server, "listening");
       // No \`ca\`: relies on NODE_EXTRA_CA_CERTS reaching the default store.
-      const socket = tls.connect({ port: server.address().port, checkServerIdentity: () => undefined });
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined });
       await once(socket, "secureConnect");
       console.log("authorized=" + socket.authorized);
       socket.end();
@@ -895,9 +895,9 @@ it("a no-`ca` tls.connect({ crl }) applies the CRL to its own copy of the defaul
     const crl = readFileSync(${JSON.stringify(crlPath)}, "utf8");
     async function main() {
       const server = tls.createServer({ key, cert }, s => s.end());
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await once(server, "listening");
-      const socket = tls.connect({ port: server.address().port, checkServerIdentity: () => undefined, crl });
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", checkServerIdentity: () => undefined, crl });
       socket.on("error", error => {
         console.log("error=" + error.code);
         process.exit(0);
@@ -946,10 +946,10 @@ it("socket.ssl is assignable like Node's plain own property", async () => {
   const server = tls.createServer({ ...COMMON_CERT_ }, s => s.end());
   let client: TLSSocket | undefined;
   try {
-    server.listen(0);
+    server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const connected = Promise.withResolvers<void>();
-    client = tlsConnect({ port: (server.address() as AddressInfo).port, rejectUnauthorized: false }, connected.resolve);
+    client = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false }, connected.resolve);
     client.on("error", connected.reject);
     await connected.promise;
     expect(typeof (client as any).ssl?.verifyError).toBe("function");
@@ -989,10 +989,11 @@ it("a `ca` that parses to zero certificates is an empty pin set, never the defau
     const cert = readFileSync(${JSON.stringify(join(fixturesDir, "agent6-cert.pem"))}, "utf8");
     async function main() {
       const server = tls.createServer({ key, cert }, s => s.end());
-      server.listen(0);
+      server.listen(0, "127.0.0.1");
       await once(server, "listening");
       const socket = tls.connect({
         port: server.address().port,
+        host: "127.0.0.1",
         ca: key,
         allowPartialTrustChain: true,
         checkServerIdentity: () => undefined,
@@ -1032,9 +1033,9 @@ it("tls.connect({rejectUnauthorized: undefined}) with NODE_TLS_REJECT_UNAUTHORIZ
     const tls = require("node:tls");
     const { once } = require("node:events");
     const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, s => s.end());
-    server.listen(0);
+    server.listen(0, "127.0.0.1");
     server.on("listening", () => {
-      const socket = tls.connect({ port: server.address().port, rejectUnauthorized: undefined });
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1", rejectUnauthorized: undefined });
       socket.on("error", error => {
         console.log("error=" + error.code);
         socket.destroy();
@@ -1068,9 +1069,9 @@ it("an inherited rejectUnauthorized cannot disable certificate verification", as
     Object.prototype.rejectUnauthorized = false;
     const tls = require("node:tls");
     const server = tls.createServer(${JSON.stringify(COMMON_CERT_)}, s => s.end());
-    server.listen(0);
+    server.listen(0, "127.0.0.1");
     server.on("listening", () => {
-      const socket = tls.connect({ port: server.address().port });
+      const socket = tls.connect({ port: server.address().port, host: "127.0.0.1" });
       socket.on("error", error => {
         console.log("error=" + error.code);
         socket.destroy();

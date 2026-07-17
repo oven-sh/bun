@@ -114,7 +114,7 @@ void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, con
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
 
         if (usages && ((!key.d.isNull() && (usages ^ CryptoKeyUsageSign)) || (key.d.isNull() && (usages ^ CryptoKeyUsageVerify)))) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a ECDSA key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
         if (usages && !key.use.isNull() && key.use != "sig"_s) {
@@ -148,21 +148,21 @@ void CryptoAlgorithmECDSA::importKey(CryptoKeyFormat format, KeyData&& data, con
     }
     case CryptoKeyFormat::Raw:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a ECDSA key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
         result = CryptoKeyEC::importRaw(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a ECDSA key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
         result = CryptoKeyEC::importSpki(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageSign)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a ECDSA key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an ECDSA key"_s);
             return;
         }
         result = CryptoKeyEC::importPkcs8(ecParameters.identifier, ecParameters.namedCurve, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);

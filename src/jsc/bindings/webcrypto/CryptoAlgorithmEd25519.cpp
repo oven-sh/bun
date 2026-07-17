@@ -125,7 +125,7 @@ void CryptoAlgorithmEd25519::importKey(CryptoKeyFormat format, KeyData&& data, c
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
         if (usages && ((!key.d.isNull() && (usages ^ CryptoKeyUsageSign)) || (key.d.isNull() && (usages ^ CryptoKeyUsageVerify)))) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a Ed25519 key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
         if (usages && !key.use.isNull() && key.use != "sig"_s) {
@@ -147,21 +147,21 @@ void CryptoAlgorithmEd25519::importKey(CryptoKeyFormat format, KeyData&& data, c
     }
     case CryptoKeyFormat::Raw:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a Ed25519 key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages && (usages ^ CryptoKeyUsageVerify)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a Ed25519 key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageSign)) {
-            exceptionCallback(SyntaxError, "Unsupported key usage for a Ed25519 key"_s);
+            exceptionCallback(SyntaxError, "Unsupported key usage for an Ed25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::Ed25519, CryptoKeyOKP::NamedCurve::Ed25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);

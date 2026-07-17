@@ -142,7 +142,7 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
         }
         isUsagesAllowed = isUsagesAllowed || !usages;
         if (!isUsagesAllowed) {
-            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
 
@@ -162,21 +162,21 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
     }
     case CryptoKeyFormat::Raw:
         if (usages) {
-            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages) {
-            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageDeriveKey) && (usages ^ CryptoKeyUsageDeriveBits) && (usages ^ (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits))) {
-            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for an X25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);

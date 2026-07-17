@@ -243,6 +243,14 @@ impl PosixLoop {
         unsafe { c::us_wakeup_loop(self) };
     }
 
+    /// Nanoseconds this loop has spent parked, for eventLoopUtilization().
+    /// `&self`: a parent thread reads this while the worker holds its own
+    /// `&mut` — the body is one atomic load, so it must not alias mutably.
+    pub fn idle_ns(&self) -> u64 {
+        // SAFETY: self is a valid loop pointer; the counter is read atomically.
+        unsafe { c::us_loop_idle_ns(self as *const Loop as *mut Loop) }
+    }
+
     #[inline]
     pub fn wake(&mut self) {
         self.wakeup();
@@ -472,6 +480,14 @@ impl WindowsLoop {
         unsafe { c::us_wakeup_loop(self) };
     }
 
+    /// Nanoseconds this loop has spent parked, for eventLoopUtilization().
+    /// `&self`: a parent thread reads this while the worker holds its own
+    /// `&mut` — the body is one atomic load, so it must not alias mutably.
+    pub fn idle_ns(&self) -> u64 {
+        // SAFETY: self is a valid loop pointer; the counter is read atomically.
+        unsafe { c::us_loop_idle_ns(self as *const Loop as *mut Loop) }
+    }
+
     #[inline]
     pub fn wake(&mut self) {
         self.wakeup();
@@ -649,6 +665,7 @@ mod c {
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
+        pub(super) fn us_loop_idle_ns(loop_: *mut Loop) -> u64;
         pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_removePostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);

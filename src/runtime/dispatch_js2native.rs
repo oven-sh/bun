@@ -78,6 +78,30 @@ pub(crate) fn bun_get_use_system_ca(
     })
 }
 
+/// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
+/// performance.eventLoopUtilization() is defined in terms of (node derives
+/// active as now - loopStart - idle).
+pub(crate) fn bun_get_loop_elu(
+    global: &JSGlobalObject,
+    _frame: &CallFrame,
+) -> JsResult<JSValue> {
+    let vm = bun_jsc::virtual_machine::VirtualMachine::get();
+    // SAFETY: the VM owns this loop and this runs on its thread.
+    let loop_ = unsafe { (*vm.event_loop).usockets_loop().as_ref() };
+    let Some(loop_) = loop_ else {
+        return Ok(JSValue::NULL);
+    };
+    // Idle BEFORE elapsed, matching node's order (it passes loopIdleTime() in
+    // and reads process.hrtime() after). Reversed, idle is dated after now and
+    // active = now - idle comes out short.
+    let idle_ms = loop_.idle_ns() as f64 / 1_000_000.0;
+    let elapsed_ms = vm.loop_start.elapsed().as_secs_f64() * 1000.0;
+    let arr = JSValue::create_empty_array(global, 2)?;
+    arr.put_index(global, 0, JSValue::js_number(elapsed_ms))?;
+    arr.put_index(global, 1, JSValue::js_number(idle_ms))?;
+    Ok(arr)
+}
+
 mod css {
     pub use bun_css_jsc::css_internals::{
         _test, attr_test, minify_error_test_with_options, minify_test, minify_test_with_options,

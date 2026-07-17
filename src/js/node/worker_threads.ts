@@ -6,6 +6,7 @@ type WebWorker = InstanceType<typeof globalThis.Worker>;
 const EventEmitter = require("node:events");
 const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
+const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
 const Writable = require("internal/streams/writable");
 const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
 const {
@@ -135,7 +136,9 @@ function injectFakeEmitter(Class) {
 
   function wrapped(run, listener) {
     return function (event) {
-      return listener(run(event));
+      // node invokes emitter listeners with the emitter as `this`; an
+      // addEventListener handler's `this` is already the target, so forward it.
+      return listener.$call(this, run(event));
     };
   }
 
@@ -1187,16 +1190,16 @@ class Worker extends EventEmitter {
 
   get performance() {
     return (this.#performance ??= {
-      eventLoopUtilization() {
-        warnNotImplementedOnce("worker_threads.Worker.performance");
-        return {
-          idle: 0,
-          active: 0,
-          utilization: 0,
-        };
-      },
+      eventLoopUtilization: this.#eventLoopUtilization.bind(this),
     });
   }
+
+  #eventLoopUtilization(utilization1, utilization2) {
+    // null covers both "thread gone" and "loop has not turned" — node reports
+    // all-zero for each.
+    return internalEventLoopUtilization(this.#worker.eventLoopUtilizationInternal(), utilization1, utilization2);
+  }
+
 
   terminate(callback: unknown) {
     if (typeof callback === "function") {

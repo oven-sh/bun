@@ -408,6 +408,13 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
         }
     }
 
+    /* Only ticks that really park are timed, so a busy loop pays nothing and a
+     * parked one pays two vDSO reads against a syscall it was making anyway.
+     * Publish the entry so a cross-thread reader can add the in-progress park. */
+    const uint64_t idle_start_ns = will_idle_inside_event_loop ? us_internal_monotonic_ns() : 0;
+    if (will_idle_inside_event_loop)
+        __atomic_store_n(&loop->data.idle_entry_ns, idle_start_ns, __ATOMIC_RELEASE);
+
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
     /* A zero timespec already has a fast path in ep_poll (fs/eventpoll.c):
@@ -427,6 +434,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
             timeout);
     } while (IS_EINTR(loop->num_ready_polls));
 #endif
+
+    if (will_idle_inside_event_loop) {
+        __atomic_add_fetch(&loop->data.idle_ns, us_internal_monotonic_ns() - idle_start_ns,
+                           __ATOMIC_RELAXED);
+        __atomic_store_n(&loop->data.idle_entry_ns, 0, __ATOMIC_RELEASE);
+    }
 
     /* Before anything can allocate again. */
     if (handed_off)

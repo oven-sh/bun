@@ -399,6 +399,49 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
     }
 }
 
+/// The PARENT reading a live worker's loop counters. False once the worker VM is
+/// gone, which node reports as all-zero. `vm_lock` only closes the TOCTOU on
+/// `vm`: `idle_ns` is atomic and `loop_start` is fixed before publish.
+///
+/// # Safety
+/// `worker` is a live `WebWorker*` owned by the calling C++ `Worker`; the out
+/// params are non-null and writable.
+#[unsafe(no_mangle)]
+pub(crate) unsafe extern "C" fn WebWorker__getELU(
+    worker: *mut WebWorker,
+    out_elapsed_ms: *mut f64,
+    out_idle_ms: *mut f64,
+) -> bool {
+    // SAFETY: per fn contract — a live WebWorker for the duration of the call.
+    let w = unsafe { &*worker };
+    w.vm_lock.lock();
+    let vm_ptr = w.vm_ptr();
+    let live = !vm_ptr.is_null();
+    if live {
+        // No `&VirtualMachine` binding: the worker thread may hold a live mutable
+        // view. Raw-pointer access keeps any autoref scoped to the access, as the
+        // terminate path above does.
+        // SAFETY: event_loop() is the live self-pointer; the reads below are an
+        // atomic load and a Copy field written before the VM was published.
+        let loop_ = unsafe { (*(*vm_ptr).event_loop()).usockets_loop().as_ref() };
+        let Some(loop_) = loop_ else {
+            w.vm_lock.unlock();
+            return false;
+        };
+        // Idle BEFORE elapsed, matching node's order — reversed, idle is dated
+        // after now and active = now - idle comes out short.
+        let idle_ms = loop_.idle_ns() as f64 / 1_000_000.0;
+        let elapsed_ms = unsafe { (*vm_ptr).loop_start }.elapsed().as_secs_f64() * 1000.0;
+        // SAFETY: per fn contract — out params are writable.
+        unsafe {
+            *out_elapsed_ms = elapsed_ms;
+            *out_idle_ms = idle_ms;
+        }
+    }
+    w.vm_lock.unlock();
+    live
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WebWorker__getParentWorker(vm: &VirtualMachine) -> *mut c_void {
     vm.worker_ref()

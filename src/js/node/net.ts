@@ -1968,20 +1968,15 @@ Socket.prototype._destroy = function _destroy(err, callback) {
   $debug("Socket.prototype._destroy");
 
   this.connecting = false;
-  // Tear down the wrapped transport (tls.connect({ socket })) with this socket:
-  // the 'end'-listener release path only covers a graceful close, so a failed
-  // handshake or mid-stream destroy would otherwise leave the caller's socket
-  // with destroyed=false and its 'close' handlers never firing.
+  // Tear down the wrapped transport (tls.connect({ socket })) with this socket
+  // so the caller's 'close' fires on a failed handshake or mid-stream destroy
+  // too, not only on the graceful 'end' path kCloseRawConnection covers.
   const upgraded = this[kupgraded];
   if (upgraded && !upgraded.destroyed) {
-    if (upgraded instanceof Socket) {
-      // The raw half shares this._handle's fd (released via closeSocketHandle
-      // below); drop it so the wrapped Socket's own _destroy doesn't re-close.
-      upgraded._handle = null;
-      upgraded.destroy();
-    } else {
-      upgraded.destroy?.();
-    }
+    // On the upgradeTLS path upgraded._handle is the raw twin of this._handle
+    // (same us_socket_t; its close() is a no-op once this closes). For a
+    // duplex-wrapped net.Socket (named pipe) _handle owns its own fd.
+    upgraded.destroy?.();
   }
 
   // Close an fd adopted for synchronous writes (node closes the wrapping

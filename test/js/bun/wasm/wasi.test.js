@@ -234,8 +234,8 @@ describe.concurrent("proc_exit / returnOnExit", () => {
     expect(() => wasi.start(instance)).toThrow(WebAssembly.RuntimeError);
   });
 
-  it("validates returnOnExit is a boolean", () => {
-    expect(() => new WASI({ version: "preview1", returnOnExit: "yes" })).toThrow(
+  it.each(["yes", null, 1])("validates returnOnExit is a boolean (%p)", value => {
+    expect(() => new WASI({ version: "preview1", returnOnExit: value })).toThrow(
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
   });

@@ -798,7 +798,7 @@ var require_wasi = __commonJS({
         this.env = wasiConfig.env ?? defaultConfig.env;
 
         const args = wasiConfig.args ?? defaultConfig.args;
-        const returnOnExit = wasiConfig.returnOnExit ?? true;
+        const { returnOnExit = true } = wasiConfig;
         validateBoolean(returnOnExit, "options.returnOnExit");
         this.returnOnExit = returnOnExit;
         this.memory = void 0;

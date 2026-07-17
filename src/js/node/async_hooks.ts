@@ -25,6 +25,13 @@
 const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled", 1);
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
+// SameValue in pure operators. Node compares stores with the primordial
+// ObjectIs; capturing Object.is here would still inherit a patch applied
+// before this module was lazily loaded.
+function sameValue(a, b) {
+  if (a === b) return a !== 0 || 1 / a === 1 / b;
+  return a !== a && b !== b;
+}
 
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
@@ -73,10 +80,47 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
+// Node parity: dispose() is enterWith(previousStore), which on a fresh ALS
+// installs [als, undefined] instead of splicing like run(). Bun's
+// cleanupAsyncHooksData resets top-level next tick, so residue is bounded.
+class RunScope {
+  #storage;
+  #previousStore;
+  #disposed = false;
+
+  constructor(storage, store) {
+    this.#storage = storage;
+    this.#previousStore = storage.getStore();
+    storage.enterWith(store);
+  }
+
+  dispose() {
+    if (this.#disposed) {
+      return;
+    }
+    this.#disposed = true;
+    this.#storage.enterWith(this.#previousStore);
+  }
+
+  [Symbol.dispose]() {
+    this.dispose();
+  }
+}
+
 class AsyncLocalStorage {
   #disabled = false;
+  #defaultValue = undefined;
+  #name = undefined;
 
-  constructor() {
+  constructor(options) {
+    if (options !== undefined) {
+      validateObject(options, "options");
+      this.#defaultValue = options.defaultValue;
+      const name = options.name;
+      if (name !== undefined) {
+        this.#name = `${name}`;
+      }
+    }
     setAsyncHooksEnabled(true);
 
     // In debug mode assign every AsyncLocalStorage a unique ID
@@ -130,7 +174,7 @@ class AsyncLocalStorage {
       }
     }
     set(context.concat(this, store));
-    $assert(this.getStore() === store);
+    $assert(sameValue(this.getStore(), store));
   }
 
   exit(cb, ...args) {
@@ -141,22 +185,37 @@ class AsyncLocalStorage {
   // is assumed to be true is *actually* true.
   run(store_value, callback, ...args) {
     $debug("run " + (this as any).__id__);
+    // Node short-circuits when the value is unchanged: no enterWith, no
+    // finally-restore. Observable when the callback calls enterWith() —
+    // the new value survives past run() (verified against Node v22/v26).
+    // Not while disabled: getStore() masks the frame with #defaultValue then,
+    // so a match here would skip installing store_value and let the callback
+    // read the unmasked frame value instead.
+    if (!this.#disabled && sameValue(this.getStore(), store_value)) {
+      return callback(...args);
+    }
     var context = get() as any[]; // we make sure to .slice() before mutating
     var hasPrevious = false;
     var previous_value;
     var i = 0;
     var contextWasAlreadyInit = !context;
     // we must renable it when asyncLocalStorage.run() is called https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    const wasDisabled = this.#disabled;
     this.#disabled = false;
     if (contextWasAlreadyInit) {
       set((context = [this, store_value]));
     } else {
       // it's safe to mutate context now that it was cloned
       context = context!.slice();
-      i = context.indexOf(this);
+      // Scan even (key) slots only — a value slot can hold this storage when
+      // another ALS stored it via enterWith/run.
+      i = -1;
+      for (var j = 0, len = context.length; j < len; j += 2) {
+        if (context[j] === this) {
+          i = j;
+          break;
+        }
+      }
       if (i > -1) {
-        $assert(i % 2 === 0);
         hasPrevious = true;
         previous_value = context[i + 1];
         context[i + 1] = store_value;
@@ -169,34 +228,62 @@ class AsyncLocalStorage {
       set(context);
     }
     $assert(i > -1, "i was not set");
-    $assert(this.getStore() === store_value, "run: store_value was not set");
+    $assert(sameValue(this.getStore(), store_value), "run: store_value was not set");
     try {
       return callback(...args);
     } finally {
       // Note: early `return` will prevent `throw` above from working. I think...
-      // Set AsyncContextFrame to undefined if we are out of context values
-      if (!wasDisabled) {
+      // Set AsyncContextFrame to undefined if we are out of context values.
+      // Restoration is unconditional, mirroring node's `finally { enterWith(prior) }`:
+      // entering a disabled storage must not leave store_value installed after run().
+      {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
         if (context2 === context && contextWasAlreadyInit) {
           $assert(context2.length === 2, "context was mutated without copy");
           set(undefined);
         } else {
-          context2 = context2.slice(); // array is cloned here
-          $assert(context2[i] === this);
-          if (hasPrevious) {
-            context2[i + 1] = previous_value;
+          // The context array can change shape during the callback (disable()
+          // splices storages out), so re-locate this storage by identity
+          // instead of trusting the index captured before the callback ran.
+          // This mirrors node's run(), whose finally is enterWith(prior):
+          // restore by value, re-adding the previous value even after a
+          // disable() during the callback.
+          context2 = context2 ? context2.slice() : []; // array is cloned here
+          // Scan even (key) slots only — a value slot can hold this storage
+          // when another ALS stored it via enterWith/run.
+          let idx = -1;
+          for (let j = 0, len = context2.length; j < len; j += 2) {
+            if (context2[j] === this) {
+              idx = j;
+              break;
+            }
+          }
+          if (idx > -1) {
+            if (hasPrevious) {
+              context2[idx + 1] = previous_value;
+              set(context2);
+            } else {
+              context2.splice(idx, 2);
+              $assert(context2.length % 2 === 0);
+              set(context2.length ? context2 : undefined);
+            }
+          } else if (hasPrevious) {
+            // disable() removed us mid-callback; node still restores the
+            // previous value (and the storage becomes enabled again).
+            this.#disabled = false;
+            context2.push(this, previous_value);
             set(context2);
           } else {
-            // i wonder if this is a fair assert to make
-            context2.splice(i, 2);
-            $assert(context2.length % 2 === 0);
-            set(context2.length ? context2 : undefined);
+            // idx===-1 && !hasPrevious: disable() removed us; Node's finally
+            // is unconditionally enterWith(prior), which re-enables regardless.
+            this.#disabled = false;
           }
         }
+        const expectedStore = hasPrevious ? previous_value : this.#defaultValue;
         $assert(
-          this.getStore() === previous_value,
+          sameValue(this.getStore(), expectedStore),
           "run: previous_value",
-          Bun.inspect(previous_value),
+          Bun.inspect(expectedStore),
           "was not restored, i see",
           this.getStore(),
         );
@@ -222,16 +309,28 @@ class AsyncLocalStorage {
     }
   }
 
+  get name() {
+    return this.#name || "";
+  }
+
   getStore() {
     $debug("getStore " + (this as any).__id__);
-    // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
-    if (this.#disabled) return;
+    // Node v26: both ALS impls return #defaultValue after disable() — the
+    // frame impl has no disabled flag; the legacy impl's not-enabled branch
+    // is `return this.#defaultValue`.
+    if (this.#disabled) return this.#defaultValue;
     var context = get();
-    if (!context) return;
-    var { length } = context;
-    for (var i = 0; i < length; i += 2) {
-      if (context[i] === this) return context[i + 1];
+    if (context) {
+      var { length } = context;
+      for (var i = 0; i < length; i += 2) {
+        if (context[i] === this) return context[i + 1];
+      }
     }
+    return this.#defaultValue;
+  }
+
+  withScope(store) {
+    return new RunScope(this, store);
   }
 
   // Node.js internal function. In Bun's implementation, calling this is not
@@ -256,18 +355,16 @@ if (IS_BUN_DEVELOPMENT) {
 class AsyncResource {
   type;
   #snapshot;
+  #triggerAsyncId;
 
   constructor(type, opts?) {
     validateString(type, "type");
 
-    let triggerAsyncId = opts;
-    if (opts != null) {
-      if (typeof opts !== "number") {
-        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
-      }
-      if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
-        throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
-      }
+    // Node defaults to getDefaultTriggerAsyncId() (the current execution async
+    // id); Bun does not track async ids, so its executionAsyncId() is 0.
+    let triggerAsyncId = typeof opts === "number" ? opts : opts?.triggerAsyncId === undefined ? 0 : opts.triggerAsyncId;
+    if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
+      throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
     }
     if (hasEnabledCreateHook && type.length === 0) {
       throw $ERR_ASYNC_TYPE(type);
@@ -276,6 +373,7 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    this.#triggerAsyncId = triggerAsyncId;
   }
 
   emitBefore() {
@@ -291,7 +389,7 @@ class AsyncResource {
   }
 
   triggerAsyncId() {
-    return 0;
+    return this.#triggerAsyncId;
   }
 
   emitDestroy() {
@@ -310,7 +408,25 @@ class AsyncResource {
 
   bind(fn, thisArg) {
     validateFunction(fn, "fn");
-    return this.runInAsyncScope.bind(this, fn, thisArg ?? this);
+    let bound;
+    if (thisArg === undefined) {
+      const resource = this;
+      bound = function (this: unknown, ...args) {
+        return resource.runInAsyncScope(fn, this, ...args);
+      };
+    } else {
+      bound = this.runInAsyncScope.bind(this, fn, thisArg);
+    }
+    Object.defineProperties(bound, {
+      length: {
+        __proto__: null,
+        configurable: true,
+        enumerable: false,
+        value: fn.length,
+        writable: false,
+      },
+    });
+    return bound;
   }
 
   static bind(fn, type, thisArg) {

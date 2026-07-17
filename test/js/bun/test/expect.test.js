@@ -949,6 +949,69 @@ describe("expect()", () => {
     }
   });
 
+  test("toThrow does not treat a returned Error as thrown", () => {
+    // An Error that is *returned* (not thrown) must not satisfy toThrow().
+    const returnsError = () => new TypeError("boom");
+    const assertFails = (/** @type {() => void} */ fn) =>
+      expect(fn).toThrow(/did not throw|didn't throw|to throw an error/);
+
+    assertFails(() => expect(returnsError).toThrow());
+    assertFails(() => expect(returnsError).toThrow("boom"));
+    assertFails(() => expect(returnsError).toThrow(/boom/));
+    assertFails(() => expect(returnsError).toThrow(TypeError));
+    assertFails(() => expect(returnsError).toThrow(new TypeError("boom")));
+    assertFails(() => expect(returnsError).toThrow(expect.objectContaining({ name: "TypeError" })));
+    assertFails(() => expect(returnsError).toThrow(expect.any(TypeError)));
+    assertFails(() => expect(returnsError).toThrowErrorMatchingSnapshot());
+    if (!isVitest) {
+      assertFails(() => expect(returnsError).toThrowErrorMatchingInlineSnapshot(`"boom"`));
+    }
+
+    expect(returnsError).not.toThrow();
+    expect(returnsError).not.toThrow("boom");
+    expect(returnsError).not.toThrow(/boom/);
+    expect(returnsError).not.toThrow(TypeError);
+    expect(returnsError).not.toThrow(new TypeError("boom"));
+
+    // Error subclass and plain object with a message property are still just return values
+    class MyError extends Error {}
+    assertFails(() => expect(() => new MyError("sub")).toThrow());
+    expect(() => new MyError("sub")).not.toThrow();
+    assertFails(() => expect(() => ({ message: "not an error" })).toThrow());
+    expect(() => ({ message: "not an error" })).not.toThrow();
+
+    // Actually throwing still works for every expected-value shape
+    const throwsError = () => {
+      throw new TypeError("boom");
+    };
+    expect(throwsError).toThrow();
+    expect(throwsError).toThrow("boom");
+    expect(throwsError).toThrow(/boom/);
+    expect(throwsError).toThrow(TypeError);
+    expect(throwsError).toThrow(new TypeError("boom"));
+    expect(throwsError).toThrow(expect.objectContaining({ name: "TypeError" }));
+    expect(throwsError).toThrow(expect.any(TypeError));
+    expect(() => expect(throwsError).not.toThrow()).toThrow();
+
+    // Throwing non-Error values still counts as throwing
+    for (const v of [42, "str", null, undefined, { a: 1 }, [1, 2]]) {
+      expect(() => {
+        throw v;
+      }).toThrow();
+    }
+
+    if (isBun) {
+      // Bun-only extension: a Promise-returning function is awaited.
+      // Returning an Error is still not a throw under .resolves.
+      expect(() => Promise.reject(new Error("rej"))).toThrow("rej");
+      expect(async () => {
+        throw new Error("async");
+      }).toThrow("async");
+      expect(() => Promise.resolve(new Error("ok"))).not.toThrow();
+      expect(async () => new TypeError("boom")).not.toThrow();
+    }
+  });
+
   test("deepEquals derived strings and strings", () => {
     let a = new String("hello");
     let b = "hello";

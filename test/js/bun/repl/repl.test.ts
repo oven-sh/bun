@@ -1398,6 +1398,25 @@ describe("--interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  // node's `-i` is an alias for --interactive. Bun's own `-i` is
+  // --install=fallback, which has no meaning under node emulation, so the node
+  // meaning wins there; everywhere else `-i` stays --install=fallback.
+  test("bun-as-node: `node -i` enters the REPL", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-i"],
+      argv0: "node",
+      env,
+      stdin: Buffer.from("1+1\n"),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("Welcome to Bun");
+    expect(stdout).toContain("2");
+    expect(stderr).not.toContain("Missing script to execute");
+    expect(exitCode).toBe(0);
+  });
+
   test("bun run --interactive is not a silent no-op", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "run", "--interactive"],

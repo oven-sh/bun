@@ -725,7 +725,7 @@ where
             // SAFETY: precondition — `ctx` is the live owning context; it
             // outlives the reloader and every Task spawned from it (BACKREF).
             ctx: unsafe { bun_core::ptr::BackRef::from_raw(ctx) },
-            verbose: cfg!(feature = "debug_logs") || verbose,
+            verbose: bun_core::env::IS_DEBUG || verbose,
             pending_count: AtomicU32::new(0),
             main: MainFile::default(),
             tombstones: StringHashMap::default(),
@@ -752,7 +752,7 @@ where
     }
 
     fn debug(args: core::fmt::Arguments<'_>) {
-        if cfg!(feature = "debug_logs") {
+        if bun_core::env::IS_DEBUG {
             bun_core::scoped_log!(hot_reloader, "{}", args);
         } else {
             bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
@@ -791,7 +791,7 @@ where
         let reloader = bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: `this` is the live owning context; it outlives the reloader.
             ctx: unsafe { bun_core::ptr::BackRef::from_raw(this) },
-            verbose: cfg!(feature = "debug_logs") || ctx.log_level_at_least_info(),
+            verbose: bun_core::env::IS_DEBUG || ctx.log_level_at_least_info(),
             pending_count: AtomicU32::new(0),
             main: MainFile::init(entry_path.unwrap_or(b"")),
             tombstones: StringHashMap::default(),

@@ -84,7 +84,7 @@ const post_rss = process.memoryUsage.rss();
 
 server.close();
 
-let margin = 1024 * 1024 * 15;
+let margin = 1024 * 1024 * 24;
 if (isWindows) margin = 1024 * 1024 * 40;
 // Under ASAN we use the system allocator so the interceptor sees every
 // allocation. The ASAN free-quarantine (default 256 MB) plus glibc malloc

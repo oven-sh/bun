@@ -269,7 +269,7 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub h3_request_pool: *mut request_context::RequestContextStackAllocator<Self, SSL, DEBUG, true>,
     pub all_closed_promise: jsc::JSPromiseStrong,
 
-    pub listen_callback: jsc::AnyTask::AnyTask,
+    pub listen_callback: bun_loop::AnyTask::AnyTask,
     // allocator field dropped — global mimalloc per §Allocators
     pub poll_ref: KeepAlive,
 
@@ -725,14 +725,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         ctx_mut.request_body = Some(body_hive.clone());
 
         let global = server.global_this();
-        let signal = jsc::AbortSignal::new(global);
+        let signal = crate::vm::AbortSignal::new(global);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         ctx_mut.signal = core::ptr::NonNull::new(signal);
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
 
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
         let signal_ref =
-            unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
+            unsafe { crate::vm::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
         // ownership: `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
@@ -1932,7 +1932,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // don't enable `config.http3` don't pay either.
             h3_request_pool: core::ptr::null_mut(),
             all_closed_promise: jsc::JSPromiseStrong::default(),
-            listen_callback: jsc::AnyTask::AnyTask {
+            listen_callback: bun_loop::AnyTask::AnyTask {
                 ctx: None,
                 callback: |_| Ok(()),
             },
@@ -2886,7 +2886,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // Starting up an HTTP server is a good time to GC.
         let vm = this_ref.vm();
-        if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
+        if vm.aggressive_garbage_collection == crate::vm::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {
             // SAFETY: event_loop() returns the VM's owned `*mut EventLoop`;

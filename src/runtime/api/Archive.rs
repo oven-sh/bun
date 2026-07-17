@@ -90,7 +90,7 @@ impl Archive {
         writer: &mut W,
     ) -> crate::Result<()>
     where
-        F: crate::vm::ConsoleFormatter,
+        F: crate::jsc_ext::ConsoleFormatter,
         W: core::fmt::Write,
     {
         let data = self.store.shared_view();

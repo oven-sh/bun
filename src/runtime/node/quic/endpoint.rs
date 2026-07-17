@@ -2284,10 +2284,10 @@ impl QuicEndpoint {
         // Read before the session exists: `QuicSession::create` self-roots, and
         // the conn that follows holds it as its ctx, so a throw after either
         // point has to unwind state that a plain `?` here avoids creating.
-        let keepalive_us = read_u64_option(global, options, "keepAlive")?
-            .map_or(0, |ms| ms.saturating_mul(1000));
-        let use_preferred =
-            read_u64_option(global, options, "preferredAddressPolicy")? == Some(PREFERRED_ADDRESS_USE);
+        let keepalive_us =
+            read_u64_option(global, options, "keepAlive")?.map_or(0, |ms| ms.saturating_mul(1000));
+        let use_preferred = read_u64_option(global, options, "preferredAddressPolicy")?
+            == Some(PREFERRED_ADDRESS_USE);
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,

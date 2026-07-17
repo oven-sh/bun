@@ -2379,6 +2379,69 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   }, 30_000);
 
+  // An accessor- or Proxy-backed options object returns a fresh handler fn
+  // that is NOT a data property of the object, so nothing on the JS heap
+  // retains it between from_js reading it and serve_with! writing it into the
+  // wrapper's WriteBarrier slot. Without a scoped gcProtect across
+  // init()/listen()'s allocations, that fn is collectible; under
+  // collectContinuously it IS collected, and the first request dispatches
+  // into a freed cell. Pre-PR this was safe because from_js rooted each
+  // callback in a Strong the moment get_truthy returned.
+  test("handlers returned by an accessor-backed options object survive Bun.serve init under collectContinuously", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        // Each get_truthy("fetch"/"message"/...) hits a getter that allocates
+        // a fresh closure with no other JS-heap referrer. Use getters (not a
+        // Proxy) so accidental extra lookups of the same key don't allocate a
+        // second fn that rotates the first one out of the arena; "extra
+        // lookup collected the cell early" and "no protect collected it" are
+        // indistinguishable failures otherwise.
+        const opts = {
+          port: 0,
+          development: true,
+          get fetch() { return (req, server) => {
+            if (server.upgrade(req)) return;
+            return new Response("ok-fetch");
+          }; },
+          get error() { return () => new Response("err", { status: 500 }); },
+          websocket: {
+            get open() { return ws => ws.send("ws-open"); },
+            get message() { return (ws, m) => ws.send("m:" + m); },
+            close() {},
+          },
+        };
+        const server = Bun.serve(opts);
+        // HTTP path (on_request slot).
+        const body = await (await fetch(server.url, { keepalive: false })).text();
+        // WebSocket path (wsOnOpen + wsOnMessage slots).
+        const ws = new WebSocket(server.url);
+        const msgs = [];
+        const got2 = new Promise(r => {
+          ws.onmessage = e => { msgs.push(e.data); if (msgs.length === 2) r(); };
+          ws.onopen = () => ws.send("hi");
+          ws.onerror = () => r();
+        });
+        await got2;
+        ws.close();
+        server.stop(true);
+        console.log(JSON.stringify({ body, msgs }));
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1", BUN_JSC_useConcurrentGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const { body, msgs } = JSON.parse(stdout.trim() || "{}");
+    expect({ body, msgs }).toEqual({ body: "ok-fetch", msgs: ["ws-open", "m:hi"] });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  }, 30_000);
+
   // A ws.close() inside the message handler on the last socket of a stopped
   // server downgrades the wrapper (the sole GC root for wsOnError) before the
   // message handler returns. The error path must have copied on_error to the

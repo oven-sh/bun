@@ -3368,7 +3368,7 @@ where
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
         // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
-        let mut args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
+        let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
         args[0].ensure_still_alive();
 
         let response_value = match this.config.on_request.call(&global, server_js, &args) {
@@ -3386,19 +3386,6 @@ where
         // SAFETY: self_ptr is live for the request's duration; the &mut held
         // by ctx.create's BACKREF aliases disjoint fields.
         ctx.on_response(unsafe { &*self_ptr }, args[0], response_value);
-
-        // Scrub the Request cell pointer from this frame's storage. A later
-        // event-loop tick dispatching `close` via `innerInvokeEventListeners`
-        // allocates a frame whose reserved-but-unwritten locals overlap this
-        // exact slot; `Heap::gatherStackRoots` on that tick then marks the
-        // stale pointer (proven via `BUN_JSC_verboseVerifyGC` +
-        // `Heap::dumpVerifierMarkerData`: "visited from scan of
-        // ConservativeScan roots"; heap snapshot with
-        // `appendHidden`→`append` shows zero incoming edges). Same mechanism
-        // as JSC's own `sanitizeStackForVM`, which cannot reach above current
-        // SP. `black_box` prevents the dead store from being elided.
-        args[0] = JSValue::ZERO;
-        core::hint::black_box(&mut args);
 
         ctx.defer_deinit_until_callback_completes = None;
 

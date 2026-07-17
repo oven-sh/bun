@@ -1596,6 +1596,19 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
         break 'brk config;
     };
 
+    // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
+    // past that point the raw-`JSValue` handler shadows have no GC root until
+    // `wrap_handler_slot` writes them into the wrapper's WriteBarrier slots.
+    // For a data-property options object the user's `{ fetch: fn }` on this
+    // stack still retains them, but a Proxy- or accessor-backed options
+    // object returns a fresh fn that nothing else holds. `compute_id`,
+    // `listen()`'s `set_routes`, and the `ptr_to_js` wrapper allocation can
+    // all trigger a GC in that window, so gcProtect each handler for its
+    // duration. `Protected`'s `Drop` unprotects on every exit path (including
+    // a thrown `listen()` and the hot-reload early return).
+    let _handler_pins: [bun_jsc::js_value::Protected; 10] =
+        crate::server::protect_handler_shadows(&config);
+
     // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
@@ -1662,9 +1675,7 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             // slots — the wrapper is the sole GC root for these; `ServerConfig`
             // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
             // The async-context wrap is applied here (not in `from_js`) so the
-            // freshly-allocated wrapper fn is rooted by the slot immediately;
-            // the unwrapped fn is held live by the user's options object on the
-            // `serve()` stack across `init`/`listen` until this point.
+            // freshly-allocated wrapper fn is rooted by the slot immediately.
             crate::server::wrap_handler_slot(
                 &mut server_ref.config.on_request,
                 obj,
@@ -1690,6 +1701,10 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
             server_ref.js_value.set_strong(obj, global_object);
+            // Slots are rooted; release the scoped gcProtects and run the
+            // "server just started" GC nudge split out of `listen()`.
+            drop(_handler_pins);
+            server_ref.gc_hint_after_listen();
 
             if global_object.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {

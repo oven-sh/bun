@@ -606,6 +606,31 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 /// shadow↔slot pairing in one helper is what stops the serve / reload / ws /
 /// clientError sites from drifting.
 #[inline]
+/// gcProtect every handler callback `ServerConfig::from_js` / `Handler::from_js`
+/// stored as a raw-`JSValue` shadow, for the window between `init()` (which
+/// `mem::take`s `config` into the unscanned heap box) and the
+/// `wrap_handler_slot` writes in `serve_with!`. Returns an RAII array whose
+/// `Drop` unprotects on every exit path. `JSValue::ZERO` slots are cheap
+/// no-ops on both sides (the C++ `gcProtect`/`gcUnprotect` early-return on
+/// non-cells), so there is no need to branch on `is_empty()`.
+pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 10] {
+    let ws = config.websocket.as_ref().map(|w| &w.handler);
+    let z = JSValue::ZERO;
+    [
+        config.on_request,
+        config.on_error,
+        config.on_node_http_request,
+        ws.map_or(z, |h| h.on_open),
+        ws.map_or(z, |h| h.on_message),
+        ws.map_or(z, |h| h.on_close),
+        ws.map_or(z, |h| h.on_drain),
+        ws.map_or(z, |h| h.on_error),
+        ws.map_or(z, |h| h.on_ping),
+        ws.map_or(z, |h| h.on_pong),
+    ]
+    .map(JSValue::protected)
+}
+
 pub(crate) fn wrap_handler_slot(
     shadow: &mut JSValue,
     server_js: JSValue,
@@ -2987,17 +3012,28 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `this` is the live boxed server from `init()`; no other borrow is live.
         unsafe { &mut *this }.ref_();
 
-        // Starting up an HTTP server is a good time to GC.
-        let vm = this_ref.vm();
+        // NOTE: the "starting an HTTP server is a good time to GC" nudge runs
+        // from the caller (`serve_with!` in BunObject.rs) after the handler
+        // callbacks are rooted in the wrapper's WriteBarrier slots; see
+        // `gc_hint_after_listen` below.
+
+        route_list_value
+    }
+
+    /// The server-just-started GC nudge, split out of `listen()` so
+    /// `serve_with!` can run it after the wrapper's handler slots are
+    /// populated. Between `init()` (which `mem::take`s `config` into the
+    /// heap-boxed `NewServer`) and the slot writes, a Proxy- or
+    /// accessor-backed options object's fresh handler fn is held only by the
+    /// unscanned heap box, so collecting there would free a fn we then write
+    /// into the slot and dispatch into.
+    pub(crate) fn gc_hint_after_listen(&self) {
+        let vm = self.vm();
         if vm.aggressive_garbage_collection == jsc::virtual_machine::GCLevel::Aggressive {
             vm.auto_garbage_collect();
         } else {
-            // SAFETY: event_loop() returns the VM's owned `*mut EventLoop`;
-            // non-null while the VM is alive.
             vm.event_loop_ref().perform_gc();
         }
-
-        route_list_value
     }
 }
 

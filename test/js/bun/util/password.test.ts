@@ -30,12 +30,15 @@ describe.skipIf(isDebug)("does not leak", () => {
         for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
         const before = process.memoryUsage.rss();
-        for (let i = 0; i < 60000; i++) Bun.password.hashSync("hey", opts);
+        // The leak this guards (#29913) is ~100 bytes/iter. Allocator noise is
+        // bounded (observed up to ~4.5 MB on newer glibc) while a real leak
+        // scales with iterations, so measure 2x the warm-up to widen the gap.
+        for (let i = 0; i < 120000; i++) Bun.password.hashSync("hey", opts);
         Bun.gc(true);
         const growthMB = (process.memoryUsage.rss() - before) / 1024 / 1024;
         // ASAN's free quarantine (default 256 MB) plus redzones and glibc page
         // retention inflate RSS even when nothing is leaking.
-        const limit = ${isASAN ? 400 : 4};
+        const limit = ${isASAN ? 400 : 8};
         if (growthMB > limit) throw new Error("leaked " + growthMB.toFixed(2) + "MB (limit " + limit + "MB)");
       `);
   }, 90_000);

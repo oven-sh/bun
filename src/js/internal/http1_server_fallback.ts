@@ -242,6 +242,10 @@ function connectionListenerHTTP1(server, socket, options) {
   const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
   const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
 
+  // Node's connectionListenerInternal sets this so handlers can reach the server
+  // through req.socket.server (nodejs/node#13435).
+  socket.server = server;
+
   const connections = (server[kHttp1Connections] ??= new SafeSet());
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;

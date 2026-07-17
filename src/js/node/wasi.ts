@@ -1236,7 +1236,6 @@ var require_wasi = __commonJS({
                   break outer;
                 }
               }
-              read += r;
             }
             this.view.setUint32(nread, read, true);
             return constants_1.WASI_ESUCCESS;

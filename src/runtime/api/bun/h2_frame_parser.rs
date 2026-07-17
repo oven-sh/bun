@@ -1,5 +1,9 @@
-//! HTTP/2 frame parser — ported from h2_frame_parser.zig
+//! HTTP/2 frame parser.
 #![allow(
+    // Transitional: the legacy inbound half of this file is dead now that the rewrite engine
+    // (src/runtime/api/bun/h2) serves all inbound traffic; it is removed together with the
+    // outbound migration. Until then, suppress dead-code for the file.
+    dead_code,
     non_camel_case_types,
     non_upper_case_globals,
     clippy::too_many_arguments
@@ -7,6 +11,7 @@
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 
 use crate::api::socket::{TCPSocket, TLSSocket};
@@ -16,7 +21,7 @@ use crate::webcore::AutoFlusher;
 use bstr::BStr;
 use bun_collections::{ByteVecExt, HashMap as BunHashMap, HiveArrayFallback, VecExt};
 use bun_core::MutableString;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::String as BunString;
 use bun_http::lshpack;
 use bun_jsc::AbortSignal;
 use bun_jsc::ErrorCode as JscErrorCode;
@@ -25,8 +30,7 @@ use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, Strong,
-    StrongOptional,
+    CallFrame, GlobalRef, JSGlobalObject, JSValue, JsCell, JsClass, JsRef, JsResult, StrongOptional,
 };
 use bun_ptr::IntrusiveRc;
 
@@ -38,7 +42,7 @@ bun_output::declare_scope!(H2FrameParser, visible);
 // (see `${TypeName}__fromJS` etc. in build/*/codegen/ZigGeneratedClasses.cpp);
 // replace with the macro-derived modules once the .rs codegen backend lands.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_snake_case, non_camel_case_types, dead_code)]
+#[allow(non_snake_case, non_camel_case_types)]
 pub mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
 
@@ -64,7 +68,8 @@ pub mod JSH2FrameParser {
         onAborted,
         onAltSvc,
         onOrigin,
-        onFrameError
+        onFrameError,
+        onStreamPush
     );
 
     // `Gc` enum + `get`/`set`/`clear` impl — emitted by
@@ -78,8 +83,7 @@ pub mod JSH2FrameParser {
         safe fn __get_constructor(global: *mut JSGlobalObject) -> JSValue;
     }
 
-    /// Lazily fetch the JS constructor from `globalObject` (Zig:
-    /// `JSH2FrameParser.getConstructor`).
+    /// Lazily fetch the JS constructor from `globalObject`.
     #[inline]
     pub fn get_constructor(global: &JSGlobalObject) -> JSValue {
         __get_constructor(global.as_mut_ptr())
@@ -111,19 +115,26 @@ enum BunSocket {
     TcpWriteonly(bun_ptr::BackRef<TCPSocket>),
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__getHTTP2CommonString(
         global_object: &JSGlobalObject,
         hpack_index: u32,
     ) -> JSValue;
     safe fn Bun__wrapAbortError(global_object: &JSGlobalObject, cause: JSValue) -> JSValue;
+    /// One-call materialization of a decoded header block: returns the
+    /// [rawHeadersArray, headersObject, sensitiveArray|undefined] tuple, or a
+    /// zero JSValue with a JS exception pending. See H2HeadersMaterializer.cpp.
+    fn Bun__h2__materializeHeaders(
+        global_object: &JSGlobalObject,
+        packed: *const u8,
+        meta: *const u32,
+        field_count: usize,
+    ) -> JSValue;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Local shim for `globalObject.ERR(.HTTP2_INVALID_SETTING_VALUE*, fmt, .{}).throw()`
-// (Zig codegen surfaces these as per-code helper methods on JSGlobalObject; the
-// Rust ErrorCode table exposes them via `JscErrorCode::*` instead.)
+// Local builder for throwing `HTTP2_INVALID_SETTING_VALUE*` errors; the
+// ErrorCode table exposes them via `JscErrorCode::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub(crate) struct H2ErrBuilder<'a> {
     global: &'a JSGlobalObject,
@@ -140,7 +151,6 @@ pub(crate) trait H2GlobalErrExt {
     fn err_http2_invalid_setting_value_range_error(&self, msg: &'static str) -> H2ErrBuilder<'_>;
     fn err_http2_invalid_setting_value(&self, msg: &'static str) -> H2ErrBuilder<'_>;
     fn err_http2_too_many_custom_settings(&self, msg: &'static str) -> H2ErrBuilder<'_>;
-    fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_>;
 }
 impl H2GlobalErrExt for JSGlobalObject {
     #[inline]
@@ -167,17 +177,9 @@ impl H2GlobalErrExt for JSGlobalObject {
             msg,
         }
     }
-    #[inline]
-    fn err_invalid_arg_type(&self, msg: &'static str) -> H2ErrBuilder<'_> {
-        H2ErrBuilder {
-            global: self,
-            code: JscErrorCode::INVALID_ARG_TYPE,
-            msg,
-        }
-    }
 }
 
-pub fn get_http2_common_string(
+pub(crate) fn get_http2_common_string(
     global_object: &JSGlobalObject,
     hpack_index: u32,
 ) -> Option<JSValue> {
@@ -200,13 +202,30 @@ const DEFAULT_WINDOW_SIZE: u64 = u16::MAX as u64;
 const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
 const MAX_HEADER_TABLE_SIZE_F64: f64 = MAX_HEADER_TABLE_SIZE as f64;
 const MAX_FRAME_SIZE_F64: f64 = MAX_FRAME_SIZE as f64;
+// writeStream() return-value flag (bitwise-OR'd with the settled stream state, which is < 8):
+// the data was flushed without queueing and the engine did not invoke the write callback —
+// the JS caller (Http2Stream._write/_writev) completes it asynchronously. Mirrored in
+// src/js/node/http2.ts (kWriteFlushedWithoutCallback).
+const WRITE_FLUSHED_WITHOUT_CALLBACK: u32 = 0x10;
 // RFC 7541 Section 4.1: Each header entry has 32 bytes of overhead
 // for the HPACK dynamic table entry structure
 const HPACK_ENTRY_OVERHEAD: usize = 32;
 // Maximum number of custom settings (same as Node.js MAX_ADDITIONAL_SETTINGS)
 const MAX_CUSTOM_SETTINGS: usize = 10;
-// Maximum custom setting ID (0xFFFF per RFC 7540)
-const MAX_CUSTOM_SETTING_ID: f64 = 0xFFFF as f64;
+
+// Bits of `H2FrameParser::explicit_settings`: which standard SETTINGS were explicitly provided by
+// JS (only those go on the wire — node never serializes defaults).
+const SETTING_BIT_HEADER_TABLE_SIZE: u8 = 1 << 0;
+const SETTING_BIT_ENABLE_PUSH: u8 = 1 << 1;
+const SETTING_BIT_MAX_CONCURRENT_STREAMS: u8 = 1 << 2;
+const SETTING_BIT_INITIAL_WINDOW_SIZE: u8 = 1 << 3;
+const SETTING_BIT_MAX_FRAME_SIZE: u8 = 1 << 4;
+const SETTING_BIT_MAX_HEADER_LIST_SIZE: u8 = 1 << 5;
+const SETTING_BIT_ENABLE_CONNECT_PROTOCOL: u8 = 1 << 6;
+
+/// Maximum on-wire size of a SETTINGS payload we emit: the 7 standard parameters plus
+/// MAX_CUSTOM_SETTINGS custom entries, 6 bytes each.
+const MAX_SETTINGS_PAYLOAD_SIZE: usize = (7 + MAX_CUSTOM_SETTINGS) * 6;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum PaddingStrategy {
@@ -224,7 +243,6 @@ enum FrameType {
     HTTP_FRAME_PRIORITY = 0x02,
     HTTP_FRAME_RST_STREAM = 0x03,
     HTTP_FRAME_SETTINGS = 0x04,
-    HTTP_FRAME_PUSH_PROMISE = 0x05,
     HTTP_FRAME_PING = 0x06,
     HTTP_FRAME_GOAWAY = 0x07,
     HTTP_FRAME_WINDOW_UPDATE = 0x08,
@@ -257,7 +275,7 @@ enum SettingsFlags {
     ACK = 0x1,
 }
 
-// Non-exhaustive enum in Zig (`_` catch-all) → newtype over u32
+// Open set of wire values → newtype over u32
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ErrorCode(u32);
@@ -266,20 +284,15 @@ impl ErrorCode {
     const PROTOCOL_ERROR: Self = Self(0x1);
     const INTERNAL_ERROR: Self = Self(0x2);
     const FLOW_CONTROL_ERROR: Self = Self(0x3);
-    const SETTINGS_TIMEOUT: Self = Self(0x4);
-    const STREAM_CLOSED: Self = Self(0x5);
     const FRAME_SIZE_ERROR: Self = Self(0x6);
     const REFUSED_STREAM: Self = Self(0x7);
     const CANCEL: Self = Self(0x8);
     const COMPRESSION_ERROR: Self = Self(0x9);
-    const CONNECT_ERROR: Self = Self(0xa);
     const ENHANCE_YOUR_CALM: Self = Self(0xb);
-    const INADEQUATE_SECURITY: Self = Self(0xc);
-    const HTTP_1_1_REQUIRED: Self = Self(0xd);
     const MAX_PENDING_SETTINGS_ACK: Self = Self(0xe);
 }
 
-// Non-exhaustive enum in Zig → newtype over u16
+// Open set of wire values → newtype over u16
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct SettingsType(u16);
@@ -292,7 +305,6 @@ impl SettingsType {
     const SETTINGS_MAX_HEADER_LIST_SIZE: Self = Self(0x6);
     // non standard extension settings here (we still dont support this ones)
     const SETTINGS_ENABLE_CONNECT_PROTOCOL: Self = Self(0x8);
-    const SETTINGS_NO_RFC7540_PRIORITIES: Self = Self(0x9);
 }
 
 #[inline]
@@ -326,12 +338,9 @@ impl UInt31WithReserved {
     fn init(value: u32, reserved: bool) -> Self {
         Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
     }
-    /// PORT NOTE (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
-    /// `packed struct(u32){ reserved: bool, uint31: u31 }`, which on little-endian places
-    /// `reserved` in bit 0 and yields `(uint31 << 1) | reserved`. That is a latent RFC 7540
-    /// §6.3 bug in Zig's deprecated PRIORITY path — the wire format wants the reserved/E
-    /// bit at bit 31. We keep the RFC-compliant `(reserved << 31) | uint31` layout here, which
-    /// already matches `from_bytes`/`write` and the on-wire `StreamPriority.stream_identifier`.
+    /// Note: the wire format (RFC 7540 §6.3) wants the reserved/E bit at bit
+    /// 31, so the layout is `(reserved << 31) | uint31`, which matches
+    /// `from_bytes`/`write` and the on-wire `StreamPriority.stream_identifier`.
     #[inline]
     fn to_uint32(self) -> u32 {
         self.0
@@ -365,10 +374,10 @@ unsafe impl bytemuck::Zeroable for StreamPriority {}
 unsafe impl bytemuck::Pod for StreamPriority {}
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 impl StreamPriority {
-    pub const BYTE_SIZE: usize = 5;
+    pub(crate) const BYTE_SIZE: usize = 5;
     #[inline]
-    fn write(&self, writer: &mut impl WireWriter) -> bool {
-        let mut swap = *self;
+    fn write(self, writer: &mut impl WireWriter) -> bool {
+        let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
         writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
     }
@@ -387,7 +396,8 @@ impl StreamPriority {
 }
 
 // packed struct(u72): length: u24, type: u8, flags: u8, streamIdentifier: u32
-// TODO(port): u24 — represented as u32 here; wire encoding handled in write()/from()
+// `length` is u24 on the wire; widened to u32 here (Rust has no u24). The 3-byte
+// big-endian encoding is handled explicitly in write()/decode().
 #[derive(Clone, Copy)]
 pub struct FrameHeader {
     length: u32, // u24 on the wire
@@ -409,7 +419,6 @@ impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
     fn write(&self, writer: &mut impl WireWriter) -> bool {
-        // TODO(port): byteSwapAllFields on packed struct(u72) — emit big-endian wire format manually
         let mut buf = [0u8; Self::BYTE_SIZE];
         buf[0] = ((self.length >> 16) & 0xFF) as u8;
         buf[1] = ((self.length >> 8) & 0xFF) as u8;
@@ -421,11 +430,9 @@ impl FrameHeader {
     }
     /// Decode a complete 9-byte big-endian frame header.
     ///
-    /// Zig accumulates raw wire bytes directly into the packed `struct(u72)`
-    /// across two `from()` calls and byte-swaps at the end. `FrameHeader` here
-    /// is not `#[repr(packed)]` (its `length` is a widened `u32`), so the
-    /// caller assembles the 9 raw bytes on the stack and hands us the finished
-    /// buffer instead — no per-instance or thread-local scratch needed.
+    /// `FrameHeader` is not `#[repr(packed)]` (its `length` is a widened
+    /// `u32`), so the caller assembles the 9 raw bytes on the stack and hands
+    /// us the finished buffer — no per-instance or thread-local scratch needed.
     #[inline]
     fn decode(raw: &[u8; Self::BYTE_SIZE]) -> Self {
         Self {
@@ -464,10 +471,12 @@ impl SettingsPayloadUnit {
 }
 
 // packed struct(u336) — 7 × (u16 type + u32 value) = 42 bytes
-// TODO(port): #[repr(C, packed)] for wire layout; verify byteSwapAllFields equivalence in Phase B
+// Wire layout via #[repr(C, packed)]: all fields are byte-aligned u16/u32, and
+// the per-field swap_bytes() in write() swaps each field individually, not the
+// whole backing int.
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
-pub struct FullSettingsPayload {
+pub(crate) struct FullSettingsPayload {
     _header_table_size_type: u16,
     header_table_size: u32,
     _enable_push_type: u16,
@@ -511,9 +520,21 @@ impl Default for FullSettingsPayload {
     }
 }
 impl FullSettingsPayload {
-    pub const BYTE_SIZE: usize = 42;
+    pub(crate) const BYTE_SIZE: usize = 42;
 
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_engine_settings(&self) -> crate::api::h2::settings::Settings {
+        crate::api::h2::settings::Settings {
+            header_table_size: self.header_table_size,
+            enable_push: self.enable_push,
+            max_concurrent_streams: self.max_concurrent_streams,
+            initial_window_size: self.initial_window_size,
+            max_frame_size: self.max_frame_size,
+            max_header_list_size: self.max_header_list_size,
+            enable_connect_protocol: self.enable_connect_protocol,
+        }
+    }
+
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
         let result = JSValue::create_empty_object(global_object, 8);
         // Packed-field reads are by-value (Copy) → no unaligned-ref hazard.
         let header_table_size = self.header_table_size;
@@ -562,7 +583,7 @@ impl FullSettingsPayload {
         result
     }
 
-    pub fn update_with(&mut self, option: SettingsPayloadUnit) {
+    pub(crate) fn update_with(&mut self, option: SettingsPayloadUnit) {
         match SettingsType(option.type_) {
             SettingsType::SETTINGS_HEADER_TABLE_SIZE => self.header_table_size = option.value,
             SettingsType::SETTINGS_ENABLE_PUSH => self.enable_push = option.value,
@@ -579,9 +600,8 @@ impl FullSettingsPayload {
         }
     }
 
-    pub fn write(&self, writer: &mut impl WireWriter) -> bool {
+    pub(crate) fn write(&self, writer: &mut impl WireWriter) -> bool {
         let mut swap = *self;
-        // TODO(port): byteSwapAllFields — swap each field manually
         swap._header_table_size_type = swap._header_table_size_type.swap_bytes();
         swap.header_table_size = swap.header_table_size.swap_bytes();
         swap._enable_push_type = swap._enable_push_type.swap_bytes();
@@ -600,7 +620,7 @@ impl FullSettingsPayload {
     }
 }
 
-/// Writer trait used for `(comptime Writer: type, writer: Writer)` params.
+/// Writer trait used for generic wire-serialization writer params.
 /// All call sites use either a `FixedBufferStream` cursor or `DirectWriterStruct`.
 use bun_io::Write as WireWriter;
 
@@ -608,144 +628,123 @@ use bun_io::Write as WireWriter;
 // Static header maps
 // ──────────────────────────────────────────────────────────────────────────
 
-// PERF(port): was phf::Map<&[u8], ()> used only via .contains_key() on a 1-entry
-// set. A single slice compare is strictly cheaper than a SipHash + compare.
+// A 1-entry set: a single slice compare; a lookup table buys nothing.
 #[inline]
 fn is_valid_response_pseudo_header(name: &[u8]) -> bool {
     name == b":status"
 }
 
-// PERF(port): was phf::Map<&[u8], ()> used only via .contains_key() on a 5-entry
-// set. phf hashes the full key (SipHash) before compare; with 5 keys whose
-// lengths are {5,7,7,9,10} a length-gated match rejects most misses on a single
-// usize compare and hits in ≤2 slice compares — cheaper than the hash.
+bun_core::comptime_string_set! {
+    static REQUEST_PSEUDO_HEADERS = {
+        b":path",
+        b":method",
+        b":scheme",
+        b":protocol",
+        b":authority",
+    };
+}
+
 #[inline]
 fn is_valid_request_pseudo_header(name: &[u8]) -> bool {
-    match name.len() {
-        5 => name == b":path",
-        7 => name == b":method" || name == b":scheme",
-        9 => name == b":protocol",
-        10 => name == b":authority",
-        _ => false,
-    }
+    REQUEST_PSEUDO_HEADERS.contains(name)
+}
+
+#[inline]
+fn is_valid_header_value(value: &[u8]) -> bool {
+    !value.iter().any(|&c| matches!(c, 0 | b'\n' | b'\r'))
+}
+
+#[inline]
+pub(crate) fn is_malformed_field_name(name: &[u8]) -> bool {
+    let rest = match name.split_first() {
+        None => return true,
+        Some((b':', rest)) => rest,
+        Some(_) => name,
+    };
+    rest.is_empty()
+        || !rest.iter().all(|&c| {
+            matches!(
+                c,
+                b'a'..=b'z'
+                    | b'0'..=b'9'
+                    | b'!'
+                    | b'#'
+                    | b'$'
+                    | b'%'
+                    | b'&'
+                    | b'\''
+                    | b'*'
+                    | b'+'
+                    | b'-'
+                    | b'.'
+                    | b'^'
+                    | b'_'
+                    | b'`'
+                    | b'|'
+                    | b'~'
+            )
+        })
+}
+
+#[inline]
+pub(crate) fn is_malformed_field_value(value: &[u8]) -> bool {
+    value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
 }
 
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
 
-/// Returns a stable index in `0..SINGLE_VALUE_HEADERS_LEN` for headers that
-/// must carry only a single value, or `None` otherwise. The index is used
-/// solely to address a per-request `[bool; SINGLE_VALUE_HEADERS_LEN]` bitset
-/// for duplicate detection — the concrete numeric value has no other meaning.
-///
-/// PERF(port): Zig used `ComptimeStringMap.indexOf`, which compiles to a
-/// length-gated switch. The Phase-A draft used a `phf::Map` but, because phf
-/// does not expose stable indices, had to fall back to a *linear*
-/// `.entries().position()` scan — 40 slice compares per header per HTTP/2
-/// request. The hand-rolled match below restores the Zig dispatch shape: one
-/// `usize` length compare rejects every miss whose length has no entries, and
-/// the largest same-length bucket is 5 entries (len 7), so a hit costs at
-/// most 5 short slice compares and a miss typically costs 0–2.
+bun_core::comptime_string_map! {
+    /// Maps headers that must carry only a single value to a stable index in
+    /// `0..SINGLE_VALUE_HEADERS_LEN`. The index is used solely to address a
+    /// per-request `[bool; SINGLE_VALUE_HEADERS_LEN]` bitset for duplicate
+    /// detection — the concrete numeric value has no other meaning.
+    static SINGLE_VALUE_HEADERS: usize = {
+        b"tk" => 36,
+        b"age" => 9,
+        b"dnt" => 19,
+        b"date" => 18,
+        b"etag" => 20,
+        b"from" => 22,
+        b"host" => 23,
+        b":path" => 4,
+        b"range" => 33,
+        b":status" => 0,
+        b":method" => 1,
+        b":scheme" => 3,
+        b"expires" => 21,
+        b"referer" => 34,
+        b"if-match" => 24,
+        b"if-range" => 27,
+        b"location" => 30,
+        b":protocol" => 5,
+        b":authority" => 2,
+        b"user-agent" => 38,
+        b"content-md5" => 15,
+        b"retry-after" => 35,
+        b"content-type" => 17,
+        b"max-forwards" => 31,
+        b"authorization" => 10,
+        b"content-range" => 16,
+        b"if-none-match" => 26,
+        b"last-modified" => 29,
+        b"content-length" => 13,
+        b"content-encoding" => 11,
+        b"content-language" => 12,
+        b"content-location" => 14,
+        b"if-modified-since" => 25,
+        b"if-unmodified-since" => 28,
+        b"proxy-authorization" => 32,
+        b"access-control-max-age" => 7,
+        b"x-content-type-options" => 39,
+        b"upgrade-insecure-requests" => 37,
+        b"access-control-request-method" => 8,
+        b"access-control-allow-credentials" => 6,
+    };
+}
+
+#[inline]
 fn single_value_headers_index_of(name: &[u8]) -> Option<usize> {
-    match name.len() {
-        2 => match name {
-            b"tk" => Some(36),
-            _ => None,
-        },
-        3 => match name {
-            b"age" => Some(9),
-            b"dnt" => Some(19),
-            _ => None,
-        },
-        4 => match name {
-            b"date" => Some(18),
-            b"etag" => Some(20),
-            b"from" => Some(22),
-            b"host" => Some(23),
-            _ => None,
-        },
-        5 => match name {
-            b":path" => Some(4),
-            b"range" => Some(33),
-            _ => None,
-        },
-        7 => match name {
-            b":status" => Some(0),
-            b":method" => Some(1),
-            b":scheme" => Some(3),
-            b"expires" => Some(21),
-            b"referer" => Some(34),
-            _ => None,
-        },
-        8 => match name {
-            b"if-match" => Some(24),
-            b"if-range" => Some(27),
-            b"location" => Some(30),
-            _ => None,
-        },
-        9 => match name {
-            b":protocol" => Some(5),
-            _ => None,
-        },
-        10 => match name {
-            b":authority" => Some(2),
-            b"user-agent" => Some(38),
-            _ => None,
-        },
-        11 => match name {
-            b"content-md5" => Some(15),
-            b"retry-after" => Some(35),
-            _ => None,
-        },
-        12 => match name {
-            b"content-type" => Some(17),
-            b"max-forwards" => Some(31),
-            _ => None,
-        },
-        13 => match name {
-            b"authorization" => Some(10),
-            b"content-range" => Some(16),
-            b"if-none-match" => Some(26),
-            b"last-modified" => Some(29),
-            _ => None,
-        },
-        14 => match name {
-            b"content-length" => Some(13),
-            _ => None,
-        },
-        16 => match name {
-            b"content-encoding" => Some(11),
-            b"content-language" => Some(12),
-            b"content-location" => Some(14),
-            _ => None,
-        },
-        17 => match name {
-            b"if-modified-since" => Some(25),
-            _ => None,
-        },
-        19 => match name {
-            b"if-unmodified-since" => Some(28),
-            b"proxy-authorization" => Some(32),
-            _ => None,
-        },
-        22 => match name {
-            b"access-control-max-age" => Some(7),
-            b"x-content-type-options" => Some(39),
-            _ => None,
-        },
-        25 => match name {
-            b"upgrade-insecure-requests" => Some(37),
-            _ => None,
-        },
-        29 => match name {
-            b"access-control-request-method" => Some(8),
-            _ => None,
-        },
-        32 => match name {
-            b"access-control-allow-credentials" => Some(6),
-            _ => None,
-        },
-        _ => None,
-    }
+    SINGLE_VALUE_HEADERS.get(name).copied()
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -949,7 +948,7 @@ pub fn js_get_packed_settings(
         if let Some(header_table_size) = options.get(global_object, "headerTableSize")? {
             if header_table_size.is_number() {
                 let v = header_table_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected headerTableSize to be a number between 0 and 2^32-1"
                     )));
@@ -975,7 +974,7 @@ pub fn js_get_packed_settings(
         if let Some(initial_window_size) = options.get(global_object, "initialWindowSize")? {
             if initial_window_size.is_number() {
                 let v = initial_window_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected initialWindowSize to be a number between 0 and 2^32-1"
                     )));
@@ -1007,7 +1006,7 @@ pub fn js_get_packed_settings(
         if let Some(max_concurrent_streams) = options.get(global_object, "maxConcurrentStreams")? {
             if max_concurrent_streams.is_number() {
                 let v = max_concurrent_streams.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected maxConcurrentStreams to be a number between 0 and 2^32-1"
                     )));
@@ -1022,7 +1021,7 @@ pub fn js_get_packed_settings(
         if let Some(max_header_list_size) = options.get(global_object, "maxHeaderListSize")? {
             if max_header_list_size.is_number() {
                 let v = max_header_list_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected maxHeaderListSize to be a number between 0 and 2^32-1"
                     )));
@@ -1038,7 +1037,7 @@ pub fn js_get_packed_settings(
         if let Some(max_header_size) = options.get(global_object, "maxHeaderSize")? {
             if max_header_size.is_number() {
                 let v = max_header_size.to_int32();
-                if v as u32 > MAX_HEADER_TABLE_SIZE || v < 0 {
+                if v < 0 {
                     return Err(global_object.throw(format_args!(
                         "Expected maxHeaderSize to be a number between 0 and 2^32-1"
                     )));
@@ -1052,7 +1051,6 @@ pub fn js_get_packed_settings(
         }
     }
 
-    // TODO(port): byteSwapAllFields — done inside .write(); here we need raw swapped bytes
     let mut buf = [0u8; FullSettingsPayload::BYTE_SIZE];
     let mut cursor = FixedBufferStream::new(&mut buf);
     let _ = settings.write(&mut cursor);
@@ -1077,7 +1075,14 @@ impl Handlers {
         self.global_object
     }
 
-    pub fn call_event_handler(
+    /// A zero/empty arg means a value failed to materialize (e.g. a header
+    /// materializer bailed); skip the callback rather than passing it to JS.
+    /// The pending-termination-exception guard lives in `run_callback`.
+    fn should_skip_dispatch(&self, data: &[JSValue]) -> bool {
+        data.contains(&JSValue::ZERO)
+    }
+
+    pub(crate) fn call_event_handler(
         &self,
         event: JSH2FrameParser::Gc,
         this_value: JSValue,
@@ -1087,14 +1092,23 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else {
             return false;
         };
+        // A zero/empty arg means a value failed to materialize (e.g. the VM is
+        // terminating); skip the callback rather than passing it to JS, which
+        // asserts/crashes in Bun__JSValue__call.
+        if self.should_skip_dispatch(data) {
+            return false;
+        }
         self.vm
             .event_loop_ref()
             .run_callback(callback, &self.global(), context, data);
         true
     }
 
-    pub fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
+    pub(crate) fn call_write_callback(&self, callback: JSValue, data: &[JSValue]) -> bool {
         if !callback.is_callable() {
+            return false;
+        }
+        if self.should_skip_dispatch(data) {
             return false;
         }
         self.vm
@@ -1103,7 +1117,7 @@ impl Handlers {
         true
     }
 
-    pub fn call_event_handler_with_result(
+    pub(crate) fn call_event_handler_with_result(
         &self,
         event: JSH2FrameParser::Gc,
         this_value: JSValue,
@@ -1112,6 +1126,9 @@ impl Handlers {
         let Some(callback) = event.get(this_value) else {
             return JSValue::ZERO;
         };
+        if self.should_skip_dispatch(data) {
+            return JSValue::ZERO;
+        }
         self.vm.event_loop_ref().run_callback_with_result(
             callback,
             &self.global(),
@@ -1120,7 +1137,7 @@ impl Handlers {
         )
     }
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_object: &JSGlobalObject,
         opts: JSValue,
         this_value: JSValue,
@@ -1171,6 +1188,7 @@ impl Handlers {
         handler_pair!(onAltSvc, "altsvc");
         handler_pair!(onOrigin, "origin");
         handler_pair!(onFrameError, "frameError");
+        handler_pair!(onStreamPush, "streamPush");
 
         if let Some(callback_value) = opts.fast_get(global_object, bun_jsc::BuiltinName::Error)? {
             if !callback_value.is_cell() || !callback_value.is_callable() {
@@ -1189,7 +1207,6 @@ impl Handlers {
         if JSH2FrameParser::Gc::onWrite.get(this_value) == Some(JSValue::ZERO)
             || JSH2FrameParser::Gc::onWrite.get(this_value).is_none()
         {
-            // TODO(port): Zig compares to .zero; codegen may return None — check both
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected at least \"write\" callback")));
         }
@@ -1216,8 +1233,8 @@ impl Handlers {
 }
 
 pub use JSH2FrameParser::get_constructor as H2FrameParserConstructor;
-/// snake_case alias for the codegen'd `$zig(h2_frame_parser.zig, H2FrameParserConstructor)`
-/// thunk in `generated_js2native.rs` (the generator snake-cases the Zig export name).
+/// snake_case alias for the codegen'd `$rust(h2_frame_parser.rs, H2FrameParserConstructor)`
+/// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
 
 use bun_io::FixedBufferStream;
@@ -1226,7 +1243,7 @@ use bun_io::FixedBufferStream;
 // H2FrameParser
 // ──────────────────────────────────────────────────────────────────────────
 
-const ENABLE_AUTO_CORK: bool = false; // ENABLE CORK OPTIMIZATION
+const ENABLE_AUTO_CORK: bool = true;
 const ENABLE_ALLOCATOR_POOL: bool = true; // ENABLE HIVE ALLOCATOR OPTIMIZATION
 const MAX_BUFFER_SIZE: u32 = 32768;
 
@@ -1235,16 +1252,97 @@ const MAX_BUFFER_SIZE: u32 = 32768;
 /// array is ~tens of KB and would otherwise sit in every thread's TLS).
 type H2FrameParserHiveAllocator = HiveArrayFallback<H2FrameParser, 256>;
 
+// Exactly one max-size TLS record of plaintext: every full-buffer flush is one SSL_write
+// producing one full 16 KB record (uSockets' BIO sends per record, so corking beyond a
+// record adds memcpy without saving syscalls). write() fills to this boundary and keeps
+// corking the remainder, so frame headers corked ahead of a DATA payload no longer force
+// a tiny flush of their own.
+const H2_CORK_BUFFER_SIZE: usize = 16384;
+
 thread_local! {
     // Boxed so only a pointer lives in static TLS — these two buffers are 32 KB
     // combined and would otherwise dominate PT_TLS MemSiz on every thread
     // (see test/js/bun/binary/tls-segment-size). Lazily allocated on first
     // HTTP/2 access; threads that never touch h2 pay nothing.
-    static CORK_BUFFER: RefCell<Box<[u8; 16386]>> = RefCell::new(Box::new([0u8; 16386]));
+    static CORK_BUFFER: RefCell<Box<[u8; H2_CORK_BUFFER_SIZE]>> =
+        RefCell::new(Box::new([0u8; H2_CORK_BUFFER_SIZE]));
     static CORK_OFFSET: Cell<u16> = const { Cell::new(0) };
+    // Multi-frame DATA batches (send_data): all frame headers + payload slices of one
+    // write are serialized here and hit the socket in a single _write, instead of one
+    // cork flush per 16 KB frame. Reused across calls; capacity is capped after use.
+    static BATCH_BUFFER: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+    // Wire-order segments of the in-progress send_data batch: frame headers (and any
+    // padded frames) live in BATCH_BUFFER and are referenced by offset; payload slices
+    // of plain-TCP writes are referenced directly so flush can writev them without
+    // copying 16 KB per frame into the batch.
+    static BATCH_SEGMENTS: RefCell<Vec<BatchSegment>> = const { RefCell::new(Vec::new()) };
+    // Reused iovec scratch for the vectored flush.
+    static BATCH_IOVECS: RefCell<Vec<bun_uws_sys::UsIoVec>> = const { RefCell::new(Vec::new()) };
     static CORKED_H2: Cell<Option<*mut H2FrameParser>> = const { Cell::new(None) };
-    static POOL: RefCell<Option<Box<H2FrameParserHiveAllocator>>> = const { RefCell::new(None) };
+    // `ManuallyDrop` inside the `Box`: the TLS destructor runs after
+    // `WebWorker::destroy` has raw-deallocated the VM, so `HiveArray::Drop`
+    // on any leaked parser would touch freed JSC/uws state. Skip slot
+    // teardown (a leaked parser is a bug anyway) while still freeing the
+    // pool allocation itself.
+    static POOL: RefCell<Option<Box<ManuallyDrop<H2FrameParserHiveAllocator>>>> =
+        const { RefCell::new(None) };
     static SHARED_REQUEST_BUFFER: RefCell<Box<[u8; 16384]>> = RefCell::new(Box::new([0u8; 16384]));
+}
+
+/// One wire-order piece of a multi-frame send_data batch (see BATCH_SEGMENTS).
+#[derive(Clone, Copy)]
+enum BatchSegment {
+    /// Bytes inside BATCH_BUFFER (frame headers, padded frames, corked prefix).
+    Batch { off: u32, len: u32 },
+    /// A borrowed payload slice, valid for the duration of the send_data call.
+    Ext { ptr: *const u8, len: u32 },
+}
+
+struct DispatchGuard<'a>(&'a Cell<u32>);
+
+impl Drop for DispatchGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get() - 1);
+    }
+}
+
+/// The `+1` a native frame holds on the parser while it runs code that can free it (an inbound
+/// dispatch, a write that re-enters JS). Live guards are counted in
+/// `H2FrameParser::native_keepalives` so `finalize` can release the ones whose frame will never
+/// return — see `release_refs_stranded_by_exit`.
+struct Keepalive<'a>(&'a H2FrameParser);
+
+impl Drop for Keepalive<'_> {
+    fn drop(&mut self) {
+        let parser = self.0;
+        debug_assert!(parser.native_keepalives.get() > 0);
+        // Decrement first: this `deref()` can be the last one and free `parser`.
+        parser
+            .native_keepalives
+            .set(parser.native_keepalives.get() - 1);
+        parser.deref();
+    }
+}
+
+/// A `&mut Stream` that only exists inside an armed dispatch scope (`enter_stream_dispatch`):
+/// while it is live, rewrite_read defers stream frees, so user JS that re-enters `read()`
+/// (option getters, header-value `toString`) cannot free the stream out from under the borrow.
+struct GuardedStream<'a> {
+    stream: &'a mut Stream,
+    _dispatch: DispatchGuard<'a>,
+}
+
+impl core::ops::Deref for GuardedStream<'_> {
+    type Target = Stream;
+    fn deref(&self) -> &Stream {
+        self.stream
+    }
+}
+
+impl core::ops::DerefMut for GuardedStream<'_> {
+    fn deref_mut(&mut self) -> &mut Stream {
+        self.stream
+    }
 }
 
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
@@ -1261,6 +1359,28 @@ pub struct H2FrameParser {
     handlers: JsCell<Handlers>,
     native_socket: Cell<BunSocket>,
     local_settings: Cell<FullSettingsPayload>,
+    /// Bitmask (SETTING_BIT_*) of standard SETTINGS explicitly provided by JS. node only
+    /// serializes explicitly submitted settings — defaults are never put on the wire, so the
+    /// initial SETTINGS frame for default options is empty.
+    explicit_settings: Cell<u8>,
+    /// Custom (non-standard id) settings provided by JS, accumulated across every settings()
+    /// call. Reported on localSettings.customSettings (node's Http2Settings::Update reads the
+    /// session-level custom_settings_state, which is cumulative).
+    custom_settings: JsCell<Vec<(u16, u32)>>,
+    /// Custom settings carried by the most recent settings() call only. Node's
+    /// updateSettingsBuffer resets numCustomSettings per call, so the wire SETTINGS frame must
+    /// carry only this submission's keys.
+    wire_custom_settings: JsCell<Vec<(u16, u32)>>,
+    /// Setting ids from the remoteCustomSettings option: received SETTINGS entries with these
+    /// (non-standard) ids are exposed on remoteSettings.customSettings.
+    remote_custom_settings_filter: JsCell<Vec<u16>>,
+    /// Captured (id, value) pairs for the ids in remote_custom_settings_filter.
+    remote_custom_settings: JsCell<Vec<(u16, u32)>>,
+    /// Constructor-time SETTINGS_MAX_HEADER_LIST_SIZE, used to seed the engine's enforcement
+    /// limit when it is created lazily (nghttp2 only applies submitted local settings on ACK, so
+    /// a header block already in flight when the limit is lowered must not be rejected; the
+    /// engine raises/lowers its own limit as ACKs arrive).
+    enforced_max_header_list_size: Cell<u32>,
     // only available after receiving settings or ACK
     remote_settings: Cell<Option<FullSettingsPayload>>,
     // current frame being read
@@ -1283,7 +1403,31 @@ pub struct H2FrameParser {
     remote_used_window_size: Cell<u64>,
 
     max_header_list_pairs: Cell<u32>,
+    /// node maxSettings session option: maximum entries accepted in a single SETTINGS frame.
+    max_settings: Cell<u32>,
+    /// Receive-window growth requested by setLocalWindowSize() while a dispatch held the engine
+    /// borrow; applied by rewrite_read() on its next pass.
+    pending_recv_window_growth: Cell<i64>,
+    /// Bridge: outbound DATA bytes the legacy encoder wrote since the engine last ran, applied to
+    /// the engine's connection-level send window in rewrite_read (the engine cell may be borrowed
+    /// when the DATA goes out). Without this the engine's window only ever grows and a compliant
+    /// peer's cumulative WINDOW_UPDATEs would eventually trip the §6.9.1 overflow error.
+    pending_send_window_consumed: Cell<u64>,
+    /// Same bridge per stream: (stream id, bytes) pairs drained into the engine's per-stream send
+    /// windows in rewrite_read.
+    pending_stream_send_consumed: JsCell<Vec<(u32, u64)>>,
+    /// Local-settings snapshot of each SETTINGS frame the legacy encoder sent, in send order,
+    /// drained into the engine's per-SETTINGS ack queue in rewrite_read (§6.5.3: ACKs apply in
+    /// order).
+    pending_settings_window_submissions:
+        JsCell<Vec<crate::api::h2::connection::PendingLocalSettings>>,
+    /// Stream ids whose legacy-side lifecycle finished while a dispatch held the engine
+    /// borrow (the normal request path: receive() -> JS handler -> respond -> END_STREAM).
+    /// Drained into Connection::close_stream on the next rewrite_read batch.
+    pending_engine_stream_closes: JsCell<Vec<u32>>,
+    dispatch_depth: Cell<u32>,
     max_rejected_streams: Cell<u32>,
+    max_session_invalid_frames: Cell<u32>,
     max_outstanding_settings: Cell<u32>,
     outstanding_settings: Cell<u32>,
     rejected_streams: Cell<u32>,
@@ -1292,7 +1436,19 @@ pub struct H2FrameParser {
     max_outstanding_pings: Cell<u64>,
     out_standing_pings: Cell<u64>,
     max_send_header_block_length: Cell<u32>,
+    /// node strictSingleValueFields session option (default true): when false, duplicate
+    /// single-value headers and array values for them are encoded as-is instead of rejected.
+    strict_single_value_fields: Cell<bool>,
     last_stream_id: Cell<u32>,
+    /// Highest PEER-initiated stream id processed (odd ids for a server, even for a
+    /// client). This — not `last_stream_id` — is what an auto-filled GOAWAY must carry:
+    /// RFC 9113 §6.8 last_stream_id refers to streams the RECEIVER initiated, and
+    /// nghttp2 servers reject a GOAWAY naming a client-initiated id with a connection
+    /// PROTOCOL_ERROR (node's last_proc_stream_id semantics).
+    last_peer_stream_id: Cell<u32>,
+    // Stream id whose header block is awaiting CONTINUATION frames
+    // (RFC 9113 §4.3); 0 when none.
+    expecting_continuation: Cell<u32>,
     is_server: Cell<bool>,
     preface_received_len: Cell<u8>,
     // we buffer requests until we get the first settings ACK
@@ -1306,10 +1462,34 @@ pub struct H2FrameParser {
     hpack: JsCell<Option<lshpack::HpackHandle>>,
 
     has_nonnative_backpressure: Cell<bool>,
+    /// A native write returned a terminal result (socket closed, shut down, or the kernel
+    /// rejected the send). Latched once; the deferred tick closes the transport.
+    transport_write_fatal: Cell<bool>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
+    /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
+    /// Read only by `release_refs_stranded_by_exit()`.
+    native_keepalives: Cell<u32>,
 
     auto_flusher: JsCell<AutoFlusher>,
     padding_strategy: Cell<PaddingStrategy>,
+
+    // ---- from-scratch rewrite engine (src/runtime/api/bun/h2) ----
+    // The fields above are the legacy frame state being retired; read()/host functions will route
+    // through `engine` instead. `None` until configured with is_server + settings.
+    engine: core::cell::RefCell<Option<crate::api::h2::connection::Connection>>,
+    /// Unconsumed inbound tail (the engine holds no reassembly buffer — design B): bytes after the
+    /// last complete frame are kept here and prepended to the next read().
+    rewrite_tail: JsCell<Vec<u8>>,
+    /// Promised stream id whose PUSH_PROMISE header block is being delivered by the engine (its
+    /// on_headers_complete dispatches onStreamPush instead of onStreamHeaders).
+    rewrite_pending_push: Cell<u32>,
+    /// stream id -> JS stream context object, for the rewrite engine's Sink callbacks.
+    sctx: JsCell<BunHashMap<u32, StrongOptional>>,
+    /// In-progress decoded header array + sensitive-name array, accumulated across on_header.
+    /// Packed name/value bytes of the header block being decoded (reused per block).
+    hdr_block: JsCell<Vec<u8>>,
+    /// Per-field metadata for `hdr_block`: [nameLen | (sensitive << 31), valueLen].
+    hdr_meta: JsCell<Vec<u32>>,
 }
 
 impl H2FrameParser {
@@ -1337,10 +1517,18 @@ impl H2FrameParser {
     /// match the C signature. All mutation goes through `Cell`/`JsCell` fields.
     #[inline]
     fn as_ctx_ptr(&self) -> *mut Self {
-        (self as *const Self).cast_mut()
+        std::ptr::from_ref::<Self>(self).cast_mut()
     }
 
-    pub fn ref_(&self) {
+    /// Hold a `+1` for the extent of a native frame that can re-enter JS (and therefore free the
+    /// parser). Counted, so `finalize` can release it if `process.exit()` strands the frame.
+    fn keepalive(&self) -> Keepalive<'_> {
+        self.ref_();
+        self.native_keepalives.set(self.native_keepalives.get() + 1);
+        Keepalive(self)
+    }
+
+    pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `RefCount::ref_` only reads/writes the
         // embedded `ref_count` Cell (interior-mutable), so `&self`→`*mut`
         // is sound for that single field access.
@@ -1349,7 +1537,7 @@ impl H2FrameParser {
     // R-2: `&self` — `RefCount` is `Cell`-backed and every other field is
     // `Cell`/`JsCell`, so `destructor()` (→ `deinit()`) writes only through
     // `UnsafeCell`-derived pointers; the `*mut` cast is signature-only.
-    pub fn deref(&self) {
+    pub(crate) fn deref(&self) {
         // SAFETY: `self` is live; `deref` decrements the intrusive count and,
         // on zero, calls `destructor(this)` which frees via `heap::take`.
         // The caller must not touch `self` after this returns when count was 1.
@@ -1359,17 +1547,16 @@ impl H2FrameParser {
 
 /// The streams hashmap may mutate when growing we use this when we need to make sure its safe to iterate over it
 ///
-/// Zig walks the raw bucket array by index so a rehash mid-loop can't
-/// invalidate the iterator. `bun_collections::HashMap` is backed by
-/// `std::collections::HashMap`, which exposes no bucket index and randomises
-/// iteration order on every mutation, so the bucket trick can't be ported
-/// faithfully. Instead we snapshot the stream IDs at `init` and re-look-up
+/// `bun_collections::HashMap` is backed by `std::collections::HashMap`, which
+/// exposes no bucket index and randomises iteration order on every mutation,
+/// so iterating while mutating is not possible directly. Instead we snapshot
+/// the stream IDs at `init` and re-look-up
 /// each one on demand: streams removed mid-loop are skipped, streams added
 /// mid-loop are not visited, and nothing is yielded twice. That's the
 /// guarantee the call sites actually rely on (flush / emit-to-all / detach).
-pub struct StreamResumableIterator {
-    // PORT NOTE: Zig's `parser: *H2FrameParser` freely aliases. R-2: `streams`
-    // is now `JsCell`-backed, so a shared backref suffices and the in-loop
+pub(crate) struct StreamResumableIterator {
+    // Note: `streams`
+    // is `JsCell`-backed, so a shared backref suffices and the in-loop
     // body can keep its own `&H2FrameParser` without provenance gymnastics.
     // `ParentRef` encapsulates the back-pointer invariant (parser outlives the
     // iterator — every call site constructs the iterator from a live `&Self`
@@ -1379,7 +1566,7 @@ pub struct StreamResumableIterator {
     index: usize,
 }
 impl StreamResumableIterator {
-    pub fn init(parser: &H2FrameParser) -> Self {
+    pub(crate) fn init(parser: &H2FrameParser) -> Self {
         let ids = parser.streams.get().keys().copied().collect();
         Self {
             parser: bun_ptr::ParentRef::new(parser),
@@ -1387,7 +1574,7 @@ impl StreamResumableIterator {
             index: 0,
         }
     }
-    pub fn next(&mut self) -> Option<*mut Stream> {
+    pub(crate) fn next(&mut self) -> Option<*mut Stream> {
         // R-2: `streams` is `JsCell`-backed (UnsafeCell), so the shared backref
         // read here coexists soundly with the loop body's own `&self` accesses.
         let streams = self.parser.streams.get();
@@ -1412,8 +1599,6 @@ pub enum FlushState {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
     IDLE = 1,
-    RESERVED_LOCAL = 3,
-    RESERVED_REMOTE = 4,
     OPEN = 2,
     HALF_CLOSED_LOCAL = 5,
     HALF_CLOSED_REMOTE = 6,
@@ -1425,9 +1610,16 @@ pub struct Stream {
     state: StreamState,
     js_context: StrongOptional, // jsc.Strong.Optional
     wait_for_trailers: bool,
-    close_after_drain: bool,
     end_after_headers: bool,
     is_waiting_more_headers: bool,
+    header_block_size: usize,
+    header_block_count: usize,
+    // Header block fragments buffered across HEADERS + CONTINUATION until
+    // END_HEADERS arrives (RFC 9113 §4.3); capped at `max_header_list_size`.
+    pending_header_block: Vec<u8>,
+    // Flags from the HEADERS frame that started `pending_header_block`;
+    // CONTINUATION frames only carry END_HEADERS.
+    pending_header_flags: u8,
     padding: Option<u8>,
     padding_strategy: PaddingStrategy,
     rst_code: u32,
@@ -1443,20 +1635,22 @@ pub struct Stream {
     // remote used window size for the stream
     remote_used_window_size: u64,
     signal: Option<Box<SignalRef>>,
+    // The JS readable for this stream is paused (setStreamReading(id, false)): the engine defers
+    // replenishing the stream's receive window until reading resumes, backpressuring the peer.
+    reading_paused: bool,
 
     // when we have backpressure we queue the data e round robin the Streams
     data_frame_queue: PendingQueue,
 }
 
-pub struct SignalRef {
+pub(crate) struct SignalRef {
     // LIFETIMES.tsv: SHARED — AbortSignal is intrusively refcounted across FFI/codegen.
     // `AbortSignal` is an opaque C++ type whose ref/unref go through
     // `WebCore__AbortSignal__ref/unref`; it does not (and cannot) implement
-    // `bun_ptr::RefCounted`, so balance refs by hand in `attach_signal` / `Drop`
-    // (mirrors Zig `*AbortSignal`). `BackRef` captures the backref invariant
+    // `bun_ptr::RefCounted`, so balance refs by hand in `attach_signal` /
+    // `Drop`. `BackRef` captures the backref invariant
     // (signal is `ref_()`'d in `attach_signal` and outlives this struct until
     // `Drop` calls `detach()`/`unref()`), so reads go through safe `Deref`.
-    // TODO(port): wrap in a dedicated smart-pointer once AbortSignal grows one.
     signal: bun_ptr::BackRef<AbortSignal>,
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
     // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
@@ -1464,23 +1658,20 @@ pub struct SignalRef {
     // `RefCounted` bound is unsatisfiable. `ParentRef` captures the backref
     // invariant (parser is `ref_()`'d in `attach_signal` and outlives the
     // `SignalRef` until `Drop` calls `deref()`), so reads go through safe
-    // `Deref`; the explicit `ref_()/deref()` balancing stays (mirrors Zig
-    // `*H2FrameParser`).
+    // `Deref`; the explicit `ref_()/deref()` balancing stays.
     parser: bun_ptr::ParentRef<H2FrameParser>,
     stream_id: u32,
 }
 
 impl SignalRef {
-    pub fn is_aborted(&self) -> bool {
+    pub(crate) fn is_aborted(&self) -> bool {
         // BackRef invariant: signal kept alive via .ref_() in attach_signal.
         self.signal.aborted()
     }
 
-    pub fn abort_listener(this: *mut SignalRef, reason: JSValue) {
+    pub(crate) fn abort_listener(this: &mut SignalRef, reason: JSValue) {
         bun_output::scoped_log!(H2FrameParser, "abortListener");
         reason.ensure_still_alive();
-        // SAFETY: this is a stable heap allocation owned by Stream.signal
-        let this = unsafe { &mut *this };
         // ParentRef backref — ref()'d in `attach_signal`, valid until detach/deinit.
         // R-2: shared deref — `abort_stream` takes `&self`.
         let parser = this.parser.get();
@@ -1519,20 +1710,13 @@ struct PendingQueue {
 }
 
 impl PendingQueue {
-    pub fn enqueue(&mut self, value: PendingFrame) {
+    pub(crate) fn enqueue(&mut self, value: PendingFrame) {
         self.data.push(value);
         self.len += 1;
         bun_output::scoped_log!(H2FrameParser, "PendingQueue.enqueue {}", self.len);
     }
 
-    pub fn peek(&mut self) -> Option<&mut PendingFrame> {
-        if self.len == 0 {
-            return None;
-        }
-        Some(&mut self.data[0])
-    }
-
-    pub fn peek_last(&mut self) -> Option<&mut PendingFrame> {
+    pub(crate) fn peek_last(&mut self) -> Option<&mut PendingFrame> {
         if self.len == 0 {
             return None;
         }
@@ -1540,21 +1724,14 @@ impl PendingQueue {
         Some(&mut self.data[last])
     }
 
-    pub fn slice(&mut self) -> &mut [PendingFrame] {
-        if self.len == 0 {
-            return &mut [];
-        }
-        &mut self.data[self.front..self.front + self.len]
-    }
-
-    pub fn peek_front(&mut self) -> Option<&mut PendingFrame> {
+    pub(crate) fn peek_front(&mut self) -> Option<&mut PendingFrame> {
         if self.len == 0 {
             return None;
         }
         Some(&mut self.data[self.front])
     }
 
-    pub fn dequeue(&mut self) -> Option<PendingFrame> {
+    pub(crate) fn dequeue(&mut self) -> Option<PendingFrame> {
         if self.len == 0 {
             bun_output::scoped_log!(H2FrameParser, "PendingQueue.dequeue null");
             return None;
@@ -1571,7 +1748,7 @@ impl PendingQueue {
         Some(value)
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.len == 0
     }
 }
@@ -1588,7 +1765,7 @@ struct PendingFrame {
 }
 
 impl PendingFrame {
-    pub fn slice(&self) -> &[u8] {
+    pub(crate) fn slice(&self) -> &[u8] {
         &self.buffer[self.offset as usize..self.len as usize]
     }
 }
@@ -1620,22 +1797,22 @@ impl Stream {
             return FlushState::NoAction;
         }
         // try to flush one frame
-        let Some(frame) = self.data_frame_queue.peek_front() else {
+        let Some(front) = self.data_frame_queue.peek_front() else {
             return FlushState::NoAction;
         };
-        // PORT NOTE: reshaped for borrowck — `frame` aliases self.data_frame_queue;
-        // capture pointers and rely on stable Vec backing within this scope.
-        let frame: *mut PendingFrame = frame;
-        // SAFETY: frame is a stable element of self.data_frame_queue's Vec backing store; not moved while this borrow lives (no push/pop until after use)
-        let frame = unsafe { &mut *frame };
+        let frame_len = front.len;
+        let frame_remaining = front.slice().len();
 
-        let mut is_flow_control_limited = false;
+        let mut owned_frame: Option<PendingFrame> = None;
         let no_backpressure: bool = 'brk: {
             let mut writer = client.to_writer();
 
-            if frame.len == 0 {
+            if frame_len == 0 {
                 // flush a zero payload frame
-                let mut data_header = FrameHeader {
+                let Some(frame) = self.data_frame_queue.dequeue() else {
+                    return FlushState::NoAction;
+                };
+                let data_header = FrameHeader {
                     type_: FrameType::HTTP_FRAME_DATA as u8,
                     flags: if frame.end_stream && !self.wait_for_trailers {
                         DataFrameFlags::END_STREAM as u8
@@ -1645,14 +1822,10 @@ impl Stream {
                     stream_identifier: self.id,
                     length: 0,
                 };
+                owned_frame = Some(frame);
                 break 'brk data_header.write(&mut writer);
             } else {
-                // Inline `frame.slice()` so the borrow is on `frame.buffer`
-                // alone — `frame.offset` / `frame.end_stream` stay disjoint
-                // and can be mutated/read below while the slice is live.
-                let frame_slice: &[u8] = &frame.buffer[frame.offset as usize..frame.len as usize];
-                let max_size = frame_slice
-                    .len()
+                let max_size = frame_remaining
                     .min(
                         (self
                             .remote_window_size
@@ -1668,11 +1841,10 @@ impl Stream {
                     )
                     .min(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
                 if max_size == 0 {
-                    is_flow_control_limited = true;
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "dataFrame flow control limited {} {} {} {} {} {}",
-                        frame_slice.len(),
+                        frame_remaining,
                         self.remote_window_size,
                         self.remote_used_window_size,
                         client.remote_window_size.get(),
@@ -1688,11 +1860,13 @@ impl Stream {
                         FlushState::NoAction
                     };
                 }
-                if max_size < frame_slice.len() {
-                    is_flow_control_limited = true;
+                if max_size < frame_remaining {
                     // we need to break the frame into smaller chunks
+                    let Some(frame) = self.data_frame_queue.peek_front() else {
+                        return FlushState::NoAction;
+                    };
+                    let able_to_send = frame.slice()[0..max_size].to_vec();
                     frame.offset += u32::try_from(max_size).expect("int cast");
-                    let able_to_send = &frame_slice[0..max_size];
                     client
                         .queued_data_size
                         .set(client.queued_data_size.get() - able_to_send.len() as u64);
@@ -1717,12 +1891,13 @@ impl Stream {
                     client
                         .remote_used_window_size
                         .set(client.remote_used_window_size.get() + payload_size as u64);
+                    client.note_engine_send_consumed(self.id, payload_size as u64);
 
                     let mut flags: u8 = 0; // we ignore end_stream for now because we know we have more data to send
                     if padding != 0 {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
-                    let mut data_header = FrameHeader {
+                    let data_header = FrameHeader {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: self.id,
@@ -1740,13 +1915,19 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + able_to_send.len()..payload_size].fill(0);
                             writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
-                        break 'brk writer.write_all(able_to_send).is_ok();
+                        break 'brk writer.write_all(&able_to_send).is_ok();
                     }
                 } else {
                     // flush with some payload
+                    owned_frame = self.data_frame_queue.dequeue();
+                    let Some(frame) = owned_frame.as_ref() else {
+                        return FlushState::NoAction;
+                    };
+                    let frame_slice: &[u8] = frame.slice();
                     client
                         .queued_data_size
                         .set(client.queued_data_size.get() - frame_slice.len() as u64);
@@ -1771,6 +1952,7 @@ impl Stream {
                     client
                         .remote_used_window_size
                         .set(client.remote_used_window_size.get() + payload_size as u64);
+                    client.note_engine_send_consumed(self.id, payload_size as u64);
                     let mut flags: u8 = if frame.end_stream && !self.wait_for_trailers {
                         DataFrameFlags::END_STREAM as u8
                     } else {
@@ -1779,7 +1961,7 @@ impl Stream {
                     if padding != 0 {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
-                    let mut data_header = FrameHeader {
+                    let data_header = FrameHeader {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: self.id,
@@ -1797,6 +1979,7 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + frame_slice.len()..payload_size].fill(0);
                             writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
@@ -1806,10 +1989,9 @@ impl Stream {
             }
         };
 
-        // defer block from Zig (only when !is_flow_control_limited)
-        if !is_flow_control_limited {
+        // defer block from Zig (only when the full frame was flushed)
+        if let Some(_frame) = owned_frame {
             // only call the callback + free the frame if we write to the socket the full frame
-            let mut _frame = self.data_frame_queue.dequeue().unwrap();
             client
                 .outbound_queue_size
                 .set(client.outbound_queue_size.get() - 1);
@@ -1856,7 +2038,7 @@ impl Stream {
     ) {
         let global_this = client.global_this;
 
-        // PORT NOTE: `dispatch_write_callback()` below re-enters JS, which can
+        // Note: `dispatch_write_callback()` below re-enters JS, which can
         // call back into `H2FrameParser` host-fns (e.g. `writeStream`) that
         // look this `Stream` up by id from `client.streams` and reach
         // `queue_frame()` again with a fresh `&mut Stream` aliasing this one.
@@ -1875,9 +2057,13 @@ impl Stream {
             // SAFETY: helper for the pre-dispatch accesses below; `last_frame`
             // is the unique tail slot in `self.data_frame_queue.data`, valid
             // until the dispatch call (after which we re-`black_box` before
-            // every access — see PORT NOTE above).
+            // every access — see note above).
             macro_rules! lf {
                 () => {
+                    // SAFETY: `last_frame` points at the live tail slot of
+                    // `self.data_frame_queue`; provenance is re-laundered via
+                    // `black_box` before each post-dispatch expansion so no
+                    // other `&mut` to the slot is live here (see note).
                     unsafe { &mut *last_frame }
                 };
             }
@@ -1886,16 +2072,18 @@ impl Stream {
                 lf!().end_stream = end_stream;
                 // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                 // this is fine is like a per-stream CORKING in a frame level
-                if let Some(old_callback) = lf!().callback.get() {
+                let old_callback = core::mem::replace(
+                    &mut lf!().callback,
+                    StrongOptional::create(callback, &global_this),
+                );
+                if let Some(old_callback_value) = old_callback.get() {
                     // Escape `this` so a self-derived address is observable
                     // across the opaque JS call (belt-and-suspenders; either
                     // launder alone defeats the caching).
                     core::hint::black_box(this);
-                    client.dispatch_write_callback(old_callback);
-                    core::hint::black_box(last_frame);
-                    lf!().callback.deinit();
+                    client.dispatch_write_callback(old_callback_value);
                 }
-                lf!().callback = StrongOptional::create(callback, &global_this);
+                drop(old_callback);
                 return;
             }
             if lf!().len == 0 {
@@ -1922,13 +2110,15 @@ impl Stream {
                     lf!().end_stream = end_stream;
                     // we can only hold 1 callback at a time so we conclude the last one, and keep the last one as pending
                     // this is fine is like a per-stream CORKING in a frame level
-                    if let Some(old_callback) = lf!().callback.get() {
+                    let old_callback = core::mem::replace(
+                        &mut lf!().callback,
+                        StrongOptional::create(callback, &global_this),
+                    );
+                    if let Some(old_callback_value) = old_callback.get() {
                         core::hint::black_box(this);
-                        client.dispatch_write_callback(old_callback);
-                        core::hint::black_box(last_frame);
-                        lf!().callback.deinit();
+                        client.dispatch_write_callback(old_callback_value);
                     }
-                    lf!().callback = StrongOptional::create(callback, &global_this);
+                    drop(old_callback);
                     return;
                 }
                 // we keep the old callback because the new will be part of another frame
@@ -1991,20 +2181,26 @@ impl Stream {
             state: StreamState::OPEN,
             js_context: StrongOptional::empty(),
             wait_for_trailers: false,
-            close_after_drain: false,
             end_after_headers: false,
             is_waiting_more_headers: false,
+            header_block_size: 0,
+            header_block_count: 0,
+            pending_header_block: Vec::new(),
+            pending_header_flags: 0,
             padding: None,
             padding_strategy,
             rst_code: 0,
             stream_dependency: 0,
             exclusive: false,
-            weight: 36,
+            // RFC 7540 §5.3.5 / nghttp2 NGHTTP2_DEFAULT_WEIGHT: streams default to weight 16,
+            // which is what stream.state.weight reports when no priority was signaled.
+            weight: 16,
             window_size: initial_window_size as u64,
             used_window_size: 0,
             remote_window_size: remote_window_size as u64,
             remote_used_window_size: 0,
             signal: None,
+            reading_paused: false,
             data_frame_queue: PendingQueue::default(),
         }
     }
@@ -2018,22 +2214,14 @@ impl Stream {
     pub fn can_receive_data(&self) -> bool {
         matches!(
             self.state,
-            StreamState::IDLE
-                | StreamState::RESERVED_LOCAL
-                | StreamState::RESERVED_REMOTE
-                | StreamState::OPEN
-                | StreamState::HALF_CLOSED_LOCAL
+            StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_LOCAL
         )
     }
 
     pub fn can_send_data(&self) -> bool {
         matches!(
             self.state,
-            StreamState::IDLE
-                | StreamState::RESERVED_LOCAL
-                | StreamState::RESERVED_REMOTE
-                | StreamState::OPEN
-                | StreamState::HALF_CLOSED_REMOTE
+            StreamState::IDLE | StreamState::OPEN | StreamState::HALF_CLOSED_REMOTE
         )
     }
 
@@ -2107,6 +2295,22 @@ impl Stream {
 
     /// this can be called multiple times
     pub fn free_resources<const FINALIZING: bool>(&mut self, client: &H2FrameParser) {
+        // The rewrite engine only sees inbound traffic, so a completed request would leave
+        // its engine entry as HalfClosedRemote and its legacy slot + Box behind forever —
+        // one entry per request. Queue the id; the next rewrite_read batch evicts the engine
+        // entry and frees the legacy slot. Always deferred: every caller still holds
+        // `&mut Stream` into the map entry, and the engine cell may be mutably borrowed
+        // (stream completing synchronously inside receive()).
+        if !FINALIZING {
+            client
+                .pending_engine_stream_closes
+                .with_mut(|v| v.push(self.id));
+            // Release the engine-dispatch context root too; without this the Strong JS
+            // stream object lives until the session dies.
+            client.sctx.with_mut(|m| {
+                m.remove(&self.id);
+            });
+        }
         self.detach_context();
         self.clean_queue::<FINALIZING>(client);
         if let Some(signal) = self.signal.take() {
@@ -2119,26 +2323,15 @@ impl Stream {
     }
 }
 
-// Route AbortSignal callbacks through the Rust trait — the Zig spec passes a
-// fn pointer; `bun_jsc::abort_signal::listen` instead expects `*mut C: AbortListener`.
+// Route AbortSignal callbacks through the trait —
+// `bun_jsc::abort_signal::listen` expects `*mut C: AbortListener`.
 impl AbortListener for SignalRef {
     fn on_abort(&mut self, reason: JSValue) {
-        SignalRef::abort_listener(std::ptr::from_mut::<SignalRef>(self), reason);
+        SignalRef::abort_listener(self, reason);
     }
 }
 
 type HeaderValue = lshpack::DecodeResult;
-
-// PORT NOTE: `lshpack::HpackError` does not yet impl `From` for `bun_core::Error`
-// (see TODO in lshpack.rs). Map variants 1:1 to interned error names so Zig
-// callers that match on `error.UnableToDecode` etc. keep their semantics.
-fn hpack_error_to_core(e: lshpack::HpackError) -> bun_core::Error {
-    match e {
-        lshpack::HpackError::UnableToDecode => bun_core::err!("UnableToDecode"),
-        lshpack::HpackError::EmptyHeaderName => bun_core::err!("EmptyHeaderName"),
-        lshpack::HpackError::UnableToEncode => bun_core::err!("UnableToEncode"),
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — core methods
@@ -2155,15 +2348,13 @@ impl H2FrameParser {
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<usize> {
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
-        // PORT NOTE: Zig wrote into `allocatedSlice()` past `.len` then bumped `.len` on
-        // success. In Rust, materializing `&mut [u8]` over uninitialized capacity is UB and
+        // Note: materializing `&mut [u8]` over uninitialized capacity is UB and
         // hpack.encode() needs `&mut [u8]` (not `&mut [MaybeUninit<u8>]`), so zero-extend to
         // `required` first. On both Ok and Err we truncate so `len` never exposes scratch
-        // bytes — the `?` early-return / corrupted-len hazard from the original port is gone.
+        // bytes.
         encoded_headers.resize(required, 0);
         match self.encode(
             encoded_headers.as_mut_slice(),
@@ -2183,31 +2374,31 @@ impl H2FrameParser {
         }
     }
 
-    pub fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
+    pub(crate) fn decode(&self, src_buffer: &[u8]) -> crate::Result<HeaderValue> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack.decode(src_buffer).map_err(hpack_error_to_core);
+                return hpack.decode(src_buffer).map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToDecode"))
+            Err(crate::Error::UnableToDecode)
         })
     }
 
-    pub fn encode(
+    pub(crate) fn encode(
         &self,
         dst_buffer: &mut [u8],
         dst_offset: usize,
         name: &[u8],
         value: &[u8],
         never_index: bool,
-    ) -> Result<usize, bun_core::Error> {
+    ) -> crate::Result<usize> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
                 // lets make sure the name is lowercase
                 return hpack
                     .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(hpack_error_to_core);
+                    .map_err(crate::Error::from);
             }
-            Err(bun_core::err!("UnableToEncode"))
+            Err(crate::Error::UnableToEncode)
         })
     }
 
@@ -2257,7 +2448,7 @@ impl H2FrameParser {
     }
 
     fn increment_window_size_if_needed(&self) {
-        // PORT NOTE: reshaped for borrowck — collect actions then apply
+        // Note: reshaped for borrowck — collect actions then apply
         let mut updates: Vec<(u32, u64)> = Vec::new();
         for (_, item) in self.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
@@ -2302,7 +2493,46 @@ impl H2FrameParser {
         }
     }
 
-    pub fn set_settings(&self, settings: FullSettingsPayload) -> bool {
+    /// Serialize the SETTINGS entries that go on the wire: only the standard parameters JS set
+    /// explicitly plus any custom settings (node never serializes defaults — a session created
+    /// with default options sends an empty SETTINGS frame). Returns the payload length.
+    fn write_settings_payload(&self, out: &mut [u8; MAX_SETTINGS_PAYLOAD_SIZE]) -> usize {
+        let s = self.local_settings.get();
+        let mask = self.explicit_settings.get();
+        let mut off = 0usize;
+        let mut put = |out: &mut [u8; MAX_SETTINGS_PAYLOAD_SIZE], id: u16, value: u32| {
+            out[off..off + 2].copy_from_slice(&id.to_be_bytes());
+            out[off + 2..off + 6].copy_from_slice(&value.to_be_bytes());
+            off += 6;
+        };
+        if mask & SETTING_BIT_HEADER_TABLE_SIZE != 0 {
+            put(out, 0x1, s.header_table_size);
+        }
+        if mask & SETTING_BIT_ENABLE_PUSH != 0 {
+            put(out, 0x2, s.enable_push);
+        }
+        if mask & SETTING_BIT_MAX_CONCURRENT_STREAMS != 0 {
+            put(out, 0x3, s.max_concurrent_streams);
+        }
+        if mask & SETTING_BIT_INITIAL_WINDOW_SIZE != 0 {
+            put(out, 0x4, s.initial_window_size);
+        }
+        if mask & SETTING_BIT_MAX_FRAME_SIZE != 0 {
+            put(out, 0x5, s.max_frame_size);
+        }
+        if mask & SETTING_BIT_MAX_HEADER_LIST_SIZE != 0 {
+            put(out, 0x6, s.max_header_list_size);
+        }
+        if mask & SETTING_BIT_ENABLE_CONNECT_PROTOCOL != 0 {
+            put(out, 0x8, s.enable_connect_protocol);
+        }
+        for (id, value) in self.wire_custom_settings.get().iter() {
+            put(out, *id, *value);
+        }
+        off
+    }
+
+    pub(crate) fn set_settings(&self, settings: FullSettingsPayload) -> bool {
         bun_output::scoped_log!(H2FrameParser, "HTTP_FRAME_SETTINGS ack false");
 
         if self.outstanding_settings.get() >= self.max_outstanding_settings.get() {
@@ -2316,26 +2546,36 @@ impl H2FrameParser {
             return false;
         }
 
-        let mut buffer = [0u8; FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
+        self.local_settings.set(settings);
+        let mut payload = [0u8; MAX_SETTINGS_PAYLOAD_SIZE];
+        let payload_len = self.write_settings_payload(&mut payload);
+
+        let mut buffer = [0u8; FrameHeader::BYTE_SIZE + MAX_SETTINGS_PAYLOAD_SIZE];
         let mut stream = FixedBufferStream::new(&mut buffer);
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_SETTINGS as u8,
             flags: 0,
             stream_identifier: 0,
-            length: FullSettingsPayload::BYTE_SIZE as u32,
+            length: payload_len as u32,
         };
         let _ = settings_header.write(&mut stream);
+        let _ = stream.write_all(&payload[..payload_len]);
 
         self.outstanding_settings
             .set(self.outstanding_settings.get() + 1);
 
-        self.local_settings.set(settings);
-        let _ = self.local_settings.get().write(&mut stream);
-        let _ = self.write(&buffer);
+        // Remember which values this submission carries so the engine can attribute the peer's
+        // ACK to it (§6.5.3 - ACKs apply to outstanding SETTINGS in order).
+        self.pending_settings_window_submissions.with_mut(|v| {
+            v.push(crate::api::h2::connection::PendingLocalSettings {
+                settings: settings.to_engine_settings(),
+            })
+        });
+        let _ = self.write(&buffer[..FrameHeader::BYTE_SIZE + payload_len]);
         true
     }
 
-    pub fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
+    pub(crate) fn abort_stream(&self, stream: &mut Stream, abort_reason: JSValue) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_RST_STREAM id: {} code: CANCEL",
@@ -2346,7 +2586,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
         let mut writer_stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_RST_STREAM as u8,
             flags: 0,
             stream_identifier: stream.id,
@@ -2371,7 +2611,7 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
+    pub(crate) fn end_stream(&self, stream: &mut Stream, rst_code: ErrorCode) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_RST_STREAM id: {} code: {}",
@@ -2384,7 +2624,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
         let mut writer_stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_RST_STREAM as u8,
             flags: 0,
             stream_identifier: stream.id,
@@ -2417,9 +2657,9 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn send_go_away(
+    pub(crate) fn send_go_away(
         &self,
-        stream_identifier: u32,
+        triggering_stream_id: u32,
         rst_code: ErrorCode,
         debug_data: &[u8],
         last_stream_id: u32,
@@ -2428,7 +2668,7 @@ impl H2FrameParser {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_GOAWAY {} code {} debug_data {} emitError {}",
-            stream_identifier,
+            triggering_stream_id,
             rst_code.0,
             BStr::new(debug_data),
             emit_error
@@ -2436,10 +2676,15 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 8];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        // RFC 9113 section 6.8: GOAWAY frames are always sent on stream 0. A
+        // GOAWAY with a non-zero stream identifier is itself a connection
+        // error of type PROTOCOL_ERROR. The stream that triggered the GOAWAY
+        // is only used for logging above; the last processed stream id goes in
+        // the payload below.
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_GOAWAY as u8,
             flags: 0,
-            stream_identifier,
+            stream_identifier: 0,
             length: u32::try_from(8 + debug_data.len()).expect("int cast"),
         };
         let _ = frame.write(&mut stream);
@@ -2482,7 +2727,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn send_alt_svc(&self, stream_identifier: u32, origin_str: &[u8], alt: &[u8]) {
+    pub(crate) fn send_alt_svc(&self, stream_identifier: u32, origin_str: &[u8], alt: &[u8]) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_ALTSVC stream {} origin {} alt {}",
@@ -2494,7 +2739,7 @@ impl H2FrameParser {
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
         let mut stream = FixedBufferStream::new(&mut buffer);
 
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_ALTSVC as u8,
             flags: 0,
             stream_identifier,
@@ -2515,7 +2760,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn send_ping(&self, ack: bool, payload: &[u8]) {
+    pub(crate) fn send_ping(&self, ack: bool, payload: &[u8]) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_PING ack {} payload {}",
@@ -2529,7 +2774,7 @@ impl H2FrameParser {
             self.out_standing_pings
                 .set(self.out_standing_pings.get() + 1);
         }
-        let mut frame = FrameHeader {
+        let frame = FrameHeader {
             type_: FrameType::HTTP_FRAME_PING as u8,
             flags: if ack { PingFrameFlags::ACK as u8 } else { 0 },
             stream_identifier: 0,
@@ -2540,31 +2785,37 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn send_preface_and_settings(&self) {
+    pub(crate) fn send_preface_and_settings(&self) {
         bun_output::scoped_log!(H2FrameParser, "sendPrefaceAndSettings");
         // PREFACE + Settings Frame
-        let mut preface_buffer =
-            [0u8; 24 + FrameHeader::BYTE_SIZE + FullSettingsPayload::BYTE_SIZE];
+        let mut payload = [0u8; MAX_SETTINGS_PAYLOAD_SIZE];
+        let payload_len = self.write_settings_payload(&mut payload);
+        let mut preface_buffer = [0u8; 24 + FrameHeader::BYTE_SIZE + MAX_SETTINGS_PAYLOAD_SIZE];
         let mut preface_stream = FixedBufferStream::new(&mut preface_buffer);
         let _ = preface_stream.write_all(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_SETTINGS as u8,
             flags: 0,
             stream_identifier: 0,
-            length: FullSettingsPayload::BYTE_SIZE as u32,
+            length: payload_len as u32,
         };
         self.outstanding_settings
             .set(self.outstanding_settings.get() + 1);
+        self.pending_settings_window_submissions.with_mut(|v| {
+            v.push(crate::api::h2::connection::PendingLocalSettings {
+                settings: self.local_settings.get().to_engine_settings(),
+            })
+        });
         let _ = settings_header.write(&mut preface_stream);
-        let _ = self.local_settings.get().write(&mut preface_stream);
-        let _ = self.write(&preface_buffer);
+        let _ = preface_stream.write_all(&payload[..payload_len]);
+        let _ = self.write(&preface_buffer[..24 + FrameHeader::BYTE_SIZE + payload_len]);
     }
 
-    pub fn send_settings_ack(&self) {
+    pub(crate) fn send_settings_ack(&self) {
         bun_output::scoped_log!(H2FrameParser, "send HTTP_FRAME_SETTINGS ack true");
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
         let mut stream = FixedBufferStream::new(&mut buffer);
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_SETTINGS as u8,
             flags: SettingsFlags::ACK as u8,
             stream_identifier: 0,
@@ -2574,7 +2825,11 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn send_window_update(&self, stream_identifier: u32, window_size: UInt31WithReserved) {
+    pub(crate) fn send_window_update(
+        &self,
+        stream_identifier: u32,
+        window_size: UInt31WithReserved,
+    ) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_WINDOW_UPDATE stream {} size {}",
@@ -2583,7 +2838,7 @@ impl H2FrameParser {
         );
         let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 4];
         let mut stream = FixedBufferStream::new(&mut buffer);
-        let mut settings_header = FrameHeader {
+        let settings_header = FrameHeader {
             type_: FrameType::HTTP_FRAME_WINDOW_UPDATE as u8,
             flags: 0,
             stream_identifier,
@@ -2594,7 +2849,29 @@ impl H2FrameParser {
         let _ = self.write(&buffer);
     }
 
-    pub fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
+    /// Armed across every JS dispatch wrapper AND every section that holds a `&mut Stream`
+    /// while user JS can run (property getters, iteration, string coercion), so
+    /// rewrite_read's deferred stream free (pending_engine_stream_closes) only runs at depth 0.
+    fn enter_dispatch(&self) -> DispatchGuard<'_> {
+        self.dispatch_depth.set(self.dispatch_depth.get() + 1);
+        DispatchGuard(&self.dispatch_depth)
+    }
+
+    /// Reborrows a host fn's `*mut Stream` with the dispatch guard armed for the borrow's whole
+    /// lifetime: user JS the caller runs while holding it (option getters, `toString`) can
+    /// re-enter `read()` without freeing the stream. Use this instead of a raw `&mut *ptr`.
+    fn enter_stream_dispatch(&self, stream_ptr: *mut Stream) -> GuardedStream<'_> {
+        let _dispatch = self.enter_dispatch();
+        GuardedStream {
+            // SAFETY: stream_ptr is the heap::alloc'd *mut Stream stored in self.streams; the
+            // map entry outlives the returned borrow because the armed dispatch depth defers
+            // the only free path (rewrite_read's pending close drain) while the guard is live.
+            stream: unsafe { &mut *stream_ptr },
+            _dispatch,
+        }
+    }
+
+    pub(crate) fn dispatch(&self, event: JSH2FrameParser::Gc, value: JSValue) {
         value.ensure_still_alive();
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
@@ -2602,6 +2879,7 @@ impl H2FrameParser {
         let Some(ctx_value) = JSH2FrameParser::Gc::context.get(this_value) else {
             return;
         };
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -2610,7 +2888,7 @@ impl H2FrameParser {
         );
     }
 
-    pub fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
+    pub(crate) fn call(&self, event: JSH2FrameParser::Gc, value: JSValue) -> JSValue {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return JSValue::ZERO;
         };
@@ -2618,16 +2896,23 @@ impl H2FrameParser {
             return JSValue::ZERO;
         };
         value.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         self.handlers
             .get()
             .call_event_handler_with_result(event, this_value, &[ctx_value, value])
     }
 
-    pub fn dispatch_write_callback(&self, callback: JSValue) {
+    pub(crate) fn dispatch_write_callback(&self, callback: JSValue) {
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_write_callback(callback, &[]);
     }
 
-    pub fn dispatch_with_extra(&self, event: JSH2FrameParser::Gc, value: JSValue, extra: JSValue) {
+    pub(crate) fn dispatch_with_extra(
+        &self,
+        event: JSH2FrameParser::Gc,
+        value: JSValue,
+        extra: JSValue,
+    ) {
         let Some(this_value) = self.strong_this.get().try_get() else {
             return;
         };
@@ -2636,6 +2921,7 @@ impl H2FrameParser {
         };
         value.ensure_still_alive();
         extra.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -2644,7 +2930,7 @@ impl H2FrameParser {
         );
     }
 
-    pub fn dispatch_with_2_extra(
+    pub(crate) fn dispatch_with_2_extra(
         &self,
         event: JSH2FrameParser::Gc,
         value: JSValue,
@@ -2660,6 +2946,7 @@ impl H2FrameParser {
         value.ensure_still_alive();
         extra.ensure_still_alive();
         extra2.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -2668,7 +2955,7 @@ impl H2FrameParser {
         );
     }
 
-    pub fn dispatch_with_3_extra(
+    pub(crate) fn dispatch_with_3_extra(
         &self,
         event: JSH2FrameParser::Gc,
         value: JSValue,
@@ -2686,6 +2973,7 @@ impl H2FrameParser {
         extra.ensure_still_alive();
         extra2.ensure_still_alive();
         extra3.ensure_still_alive();
+        let _dispatch = self.enter_dispatch();
         let _ = self.handlers.get().call_event_handler(
             event,
             this_value,
@@ -2696,7 +2984,7 @@ impl H2FrameParser {
 
     fn cork(&self) {
         if let Some(corked) = CORKED_H2.with(|c| c.get()) {
-            if corked as usize == self.as_ctx_ptr() as usize {
+            if std::ptr::eq(corked, self.as_ctx_ptr()) {
                 // already corked
                 return;
             }
@@ -2712,13 +3000,16 @@ impl H2FrameParser {
         CORK_OFFSET.with(|c| c.set(0));
     }
 
-    pub fn _generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
+    pub(crate) fn _generic_flush<S: NativeSocketWrite>(&self, mut socket: S) -> usize {
         let buffer_len = self.write_buffer.get().slice()[self.write_buffer_offset.get()..].len();
         if buffer_len > 0 {
             let result: i32 = socket.write_maybe_corked(
                 &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
             );
             let written: u32 = if result < 0 {
+                if Self::is_transport_fatal_write_result(result) {
+                    self.note_transport_write_fatal();
+                }
                 0
             } else {
                 u32::try_from(result).expect("int cast")
@@ -2747,7 +3038,7 @@ impl H2FrameParser {
         buffer_len
     }
 
-    pub fn _generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
+    pub(crate) fn _generic_write<S: NativeSocketWrite>(&self, mut socket: S, bytes: &[u8]) -> bool {
         bun_output::scoped_log!(H2FrameParser, "_genericWrite {}", bytes.len());
 
         let global = self.global();
@@ -2758,6 +3049,9 @@ impl H2FrameParser {
                     &self.write_buffer.get().slice()[self.write_buffer_offset.get()..],
                 );
                 let written: u32 = if result < 0 {
+                    if Self::is_transport_fatal_write_result(result) {
+                        self.note_transport_write_fatal();
+                    }
                     0
                 } else {
                     u32::try_from(result).expect("int cast")
@@ -2785,6 +3079,9 @@ impl H2FrameParser {
             {
                 let result: i32 = socket.write_maybe_corked(bytes);
                 let written: u32 = if result < 0 {
+                    if Self::is_transport_fatal_write_result(result) {
+                        self.note_transport_write_fatal();
+                    }
                     0
                 } else {
                     u32::try_from(result).expect("int cast")
@@ -2813,6 +3110,9 @@ impl H2FrameParser {
         }
         let result: i32 = socket.write_maybe_corked(bytes);
         let written: u32 = if result < 0 {
+            if Self::is_transport_fatal_write_result(result) {
+                self.note_transport_write_fatal();
+            }
             0
         } else {
             u32::try_from(result).expect("int cast")
@@ -2857,17 +3157,13 @@ impl H2FrameParser {
         written
     }
 
-    pub fn flush(&self) -> usize {
+    pub(crate) fn flush(&self) -> usize {
         bun_output::scoped_log!(H2FrameParser, "flush");
-        // Zig: `this.ref(); defer this.deref();` — keep `self` alive across the
-        // re-entrant JS calls below. ScopedRef stores a raw pointer so it does
-        // not borrow `self`.
-        // SAFETY: `self` is live; all mutation goes through `Cell`/`JsCell`
-        // (UnsafeCell-backed), so the `*mut` cast is signature-only.
-        let _keepalive = unsafe { bun_ptr::ScopedRef::new(self.as_ctx_ptr()) };
+        // Keep `self` alive across the re-entrant JS calls below.
+        let _keepalive = self.keepalive();
 
-        self.uncork();
-        let mut written = match self.native_socket.get() {
+        let mut written = self.uncork();
+        written += match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 self._generic_flush(socket.get())
             }
@@ -2880,13 +3176,16 @@ impl H2FrameParser {
                 let bytes_len = self.write_buffer.get().slice().len();
                 if bytes_len > 0 {
                     let global = self.handlers.get().global();
-                    let output_value = self
+                    // A failed conversion means the VM is terminating (or OOM): report
+                    // nothing flushed instead of calling JS with an empty value.
+                    let Ok(output_value) = self
                         .handlers
                         .get()
                         .binary_type
                         .to_js(self.write_buffer.get().slice(), &global)
-                        .unwrap_or(JSValue::ZERO);
-                    // TODO: properly propagate exception upwards
+                    else {
+                        return 0;
+                    };
                     let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
 
                     // defer block
@@ -2914,9 +3213,9 @@ impl H2FrameParser {
         written
     }
 
-    pub fn _write(&self, bytes: &[u8]) -> bool {
-        self.ref_();
-        let result = match self.native_socket.get() {
+    pub(crate) fn _write(&self, bytes: &[u8]) -> bool {
+        let _keepalive = self.keepalive();
+        match self.native_socket.get() {
             BunSocket::TlsWriteonly(socket) | BunSocket::Tls(socket) => {
                 self._generic_write(socket.get(), bytes)
             }
@@ -2929,22 +3228,26 @@ impl H2FrameParser {
                     // we should not invoke JS when we have backpressure is cheaper to keep it queued here
                     let _ = self.write_buffer.with_mut(|wb| wb.write(bytes));
                     global.vm().deprecated_report_extra_memory(bytes.len());
-                    self.deref();
                     return false;
                 }
                 // fallback to onWrite non-native callback
-                let output_value = self
+                let code = match self
                     .handlers
                     .get()
                     .binary_type
                     .to_js(bytes, &self.handlers.get().global())
-                    .unwrap_or(JSValue::ZERO);
-                // TODO: properly propagate exception upwards
-                let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
-                let code = if result.is_number() {
-                    result.to_int32()
-                } else {
-                    -1
+                {
+                    Ok(output_value) => {
+                        let result = self.call(JSH2FrameParser::Gc::onWrite, output_value);
+                        if result.is_number() {
+                            result.to_int32()
+                        } else {
+                            -1
+                        }
+                    }
+                    // VM terminating (or OOM): treat as dropped — the -1 arm queues the
+                    // bytes and flags backpressure without entering JS.
+                    Err(_) => -1,
                 };
                 let r = match code {
                     -1 => {
@@ -2964,37 +3267,50 @@ impl H2FrameParser {
                         true
                     }
                 };
-                self.deref();
                 return r;
             }
-        };
-        self.deref();
-        result
+        }
     }
 
     fn has_backpressure(&self) -> bool {
         self.write_buffer.get().len_u32() > 0 || self.has_nonnative_backpressure.get()
     }
 
-    fn uncork(&self) {
-        if let Some(corked_ptr) = CORKED_H2.with(|c| c.get()) {
-            // SAFETY: CORKED_H2 holds a ref()'d *mut H2FrameParser, valid until the matching
-            // deref() below. R-2: deref as shared (`&*const`) — every method below takes `&self`.
-            let corked: &H2FrameParser = unsafe { &*corked_ptr.cast_const() };
-            corked.unregister_auto_flush();
-            bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
-
-            let off = CORK_OFFSET.with(|c| c.get()) as usize;
-            CORK_OFFSET.with(|c| c.set(0));
-            CORKED_H2.with(|c| c.set(None));
-
-            if off > 0 {
-                CORK_BUFFER.with_borrow(|buf| {
-                    let _ = corked._write(&buf[0..off]);
-                });
-            }
-            corked.deref();
+    fn uncork(&self) -> usize {
+        let Some(corked_ptr) = CORKED_H2.with(|c| c.get()) else {
+            return 0;
+        };
+        if !std::ptr::eq(corked_ptr, self.as_ctx_ptr()) {
+            // Another parser owns the cork slot; its own auto_flush /
+            // on_native_writable will drain it. Draining it here writes to a
+            // foreign fd from inside self's writable callback and tears down
+            // the other parser's auto-flush registration. cork()'s
+            // force-uncork already handles slot handover when a new owner
+            // takes it.
+            return 0;
         }
+        self.unregister_auto_flush();
+        bun_output::scoped_log!(H2FrameParser, "uncork {:p}", corked_ptr);
+        CORKED_H2.with(|c| c.set(None));
+
+        // _write can re-enter JS (JS-stream-backed sockets, h2-over-h2 tunnels),
+        // so no thread-local borrow may be held across it: move the corked bytes
+        // into a taken scratch Vec first.
+        let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
+        data.clear();
+        self.drain_cork_into(&mut data);
+        let n = data.len();
+        if n != 0 {
+            let _ = self._write(&data);
+            data.clear();
+        }
+        BATCH_BUFFER.with_borrow_mut(|b| {
+            if b.capacity() == 0 {
+                *b = data;
+            }
+        });
+        self.deref();
+        n
     }
 
     fn register_auto_flush(&self) {
@@ -3033,48 +3349,300 @@ impl H2FrameParser {
         self.deref();
     }
 
-    pub fn on_auto_flush(&self) -> bool {
-        self.ref_();
+    /// A `write_maybe_corked` in `_generic_write`/`_generic_flush` returned a fatal
+    /// errno (< -1: the kernel rejected the send - peer gone). No retry can succeed,
+    /// and when the failure is only visible on the write side (a peer reset the read
+    /// path has not observed yet - routine on Windows, where the RST completes the
+    /// send first), nothing else ever closes the socket: the parser would re-buffer
+    /// and wait forever for a drain (observed as the http2 flood tests hanging on the
+    /// Windows CI agents). -1 (socket closed/shut down/not writable yet) is NOT
+    /// latched: those are routine during setup and teardown and the close path that
+    /// produced them owns the lifecycle. Latch the fatal and let the deferred tick
+    /// close the transport - the failing write can be deep inside frame emission, so
+    /// the close must not run under the caller's stack.
+    /// Errno classification lives in `us_socket_write_check_error` (socket.c):
+    /// would-block/transient errnos re-arm writable and are never reported
+    /// here, known peer-gone errnos are reported immediately, and every other
+    /// errno gets a bounded retry window through the same rearm machinery
+    /// before it is reported (this is what keeps macOS's racy EPROTOTYPE from
+    /// killing healthy sessions). So any `result < -1` that reaches this
+    /// function is a send failure the socket layer has already decided cannot
+    /// succeed - re-buffering it would wait forever for a writable event that
+    /// the socket layer deliberately stopped polling for (observed as an h2
+    /// session that never writes again and never errors). Windows fatal codes
+    /// arrive as raw negated WSA values and mean the same thing.
+    fn is_transport_fatal_write_result(result: i32) -> bool {
+        result < -1
+    }
+
+    fn note_transport_write_fatal(&self) {
+        if !self.transport_write_fatal.get() {
+            self.transport_write_fatal.set(true);
+            self.register_auto_flush();
+        }
+    }
+
+    /// Runs from the deferred tick (never under a write): closes the native socket so the
+    /// normal socket-close teardown runs (native callback detach, JS 'close', session
+    /// destroy) - the same path a peer disconnect takes. Closes WITHOUT detaching: a
+    /// close_and_detach here severed the JS wrapper before on_close could dispatch, so
+    /// the session saw neither 'error' nor 'close' and callers waiting on the failure
+    /// hung (grpc-js against a refused server). Not-yet-established sockets are left
+    /// alone entirely - the connect-error path owns their failure delivery, and closing
+    /// a semi-connected socket runs no terminal callback (stranding its refs, see the
+    /// close host_fn in socket_body).
+    fn close_transport_after_fatal_write(&self) {
+        match self.native_socket.get() {
+            BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
+                Self::close_socket_for_dead_transport::<true>(socket.get());
+            }
+            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
+                Self::close_socket_for_dead_transport::<false>(socket.get());
+            }
+            BunSocket::None => {}
+        }
+    }
+
+    fn close_socket_for_dead_transport<const SSL: bool>(socket: &crate::socket::NewSocket<SSL>) {
+        let handler = socket.socket.get();
+        if !handler.is_established() {
+            return;
+        }
+        handler.close(bun_uws::CloseCode::Normal);
+    }
+
+    pub(crate) fn on_auto_flush(&self) -> bool {
+        let _keepalive = self.keepalive();
+        if self.transport_write_fatal.get() {
+            // Returning `false` makes DeferredTaskQueue::run remove the entry
+            // itself, so only the registration's flag and ref are released here
+            // - never a re-entrant map mutation from inside run(). The flag is
+            // cleared before the close so the teardown paths the close re-enters
+            // (detach -> unregister_auto_flush) see an unregistered flusher and
+            // early-return instead of removing a map entry run() still owns.
+            self.auto_flusher.get().registered.set(false);
+            self.deref();
+            // An empty write buffer here means a later write in the same flush()
+            // cycle already drained the bytes the failing send left behind (racy
+            // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
+            if self.has_backpressure() {
+                self.close_transport_after_fatal_write();
+            } else {
+                self.transport_write_fatal.set(false);
+            }
+            return false;
+        }
         let _ = self.flush();
-        self.deref();
         // we will unregister ourselves when the buffer is empty
         true
     }
 
-    pub fn write(&self, bytes: &[u8]) -> bool {
-        bun_output::scoped_log!(H2FrameParser, "write {}", bytes.len());
-        if ENABLE_AUTO_CORK {
-            self.cork();
-            let off = CORK_OFFSET.with(|c| c.get()) as usize;
-            let avail = 16386 - off;
-            if bytes.len() > avail {
-                // not worth corking
-                if off != 0 {
-                    // clean already corked data
-                    self.uncork();
+    /// Move the cork buffer's current contents to the front of `out` without flushing
+    /// to the socket, so a multi-frame batch carries the already-corked bytes (e.g. the
+    /// response HEADERS frame) in the same write.
+    fn drain_cork_into(&self, out: &mut Vec<u8>) {
+        // CORK_BUFFER is thread-local across every session: only drain bytes we corked.
+        // send_data()'s multi-frame path reaches here without having called cork(), and
+        // prepending another session's corked frames to this one's batch sends them to
+        // the wrong peer. uncork() clears CORKED_H2 before calling this, so None passes.
+        if let Some(corked) = CORKED_H2.with(|c| c.get())
+            && !std::ptr::eq(corked, self.as_ctx_ptr())
+        {
+            return;
+        }
+        let off = CORK_OFFSET.with(|c| c.get()) as usize;
+        if off == 0 {
+            return;
+        }
+        CORK_OFFSET.with(|c| c.set(0));
+        CORK_BUFFER.with_borrow(|buf| out.extend_from_slice(&buf[0..off]));
+    }
+
+    /// Send the accumulated multi-frame batch in one socket write. No-op when empty.
+    fn flush_batch_buffer(&self) {
+        // Take the Vecs out of the thread-locals before writing: _write can re-enter JS
+        // (JS-stream-backed sockets), and a re-entrant send_data must not hit a borrowed
+        // RefCell. The re-entrant call sees an empty batch and flushes independently.
+        let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
+        let mut segments = BATCH_SEGMENTS.with_borrow_mut(core::mem::take);
+        if !segments.is_empty() {
+            self.flush_batch_vectored(&data, &segments);
+        } else if !data.is_empty() {
+            let _ = self._write(&data);
+        }
+        segments.clear();
+        BATCH_SEGMENTS.with_borrow_mut(|sg| {
+            if sg.capacity() == 0 {
+                *sg = segments;
+            }
+        });
+        data.clear();
+        // Don't let one huge response pin its capacity forever.
+        const BATCH_CAPACITY_CAP: usize = 1 << 20;
+        if data.capacity() > BATCH_CAPACITY_CAP {
+            data.shrink_to(BATCH_CAPACITY_CAP);
+        }
+        BATCH_BUFFER.with_borrow_mut(|b| {
+            // Hand the (reused) allocation back unless a re-entrant call repopulated it.
+            if b.capacity() == 0 {
+                *b = data;
+            }
+        });
+    }
+
+    /// Vectored flush for plain-TCP batches: frame headers from the batch scratch and
+    /// payload slices straight from the caller's buffer, one writev. A partial write
+    /// copies the unwritten tail into write_buffer, which engages backpressure.
+    fn flush_batch_vectored(&self, batch: &[u8], segments: &[BatchSegment]) {
+        let mut total: usize = 0;
+        let total_written = match self.native_socket.get() {
+            BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => BATCH_IOVECS
+                .with_borrow_mut(|iov| {
+                    iov.clear();
+                    iov.reserve(segments.len());
+                    for seg in segments {
+                        let (ptr, len) = match *seg {
+                            BatchSegment::Batch { off, len } => {
+                                (batch[off as usize..].as_ptr(), len as usize)
+                            }
+                            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
+                        };
+                        if len == 0 {
+                            continue;
+                        }
+                        total += len;
+                        iov.push(bun_uws_sys::UsIoVec {
+                            base: ptr.cast(),
+                            len,
+                        });
+                    }
+                    if total == 0 {
+                        return 0usize;
+                    }
+                    let w = socket.get().write_vectored_raw(iov);
+                    if w < 0 { 0 } else { w as usize }
+                }),
+            _ => {
+                // Socket changed under us (detach mid-call): degrade to the copy path
+                // to preserve order.
+                let mut all: Vec<u8> = Vec::new();
+                for seg in segments {
+                    match *seg {
+                        BatchSegment::Batch { off, len } => {
+                            all.extend_from_slice(&batch[off as usize..(off + len) as usize])
+                        }
+                        BatchSegment::Ext { ptr, len } => {
+                            // SAFETY: Ext slices are valid for the send_data call duration
+                            all.extend_from_slice(unsafe {
+                                core::slice::from_raw_parts(ptr, len as usize)
+                            })
+                        }
+                    }
                 }
-                self._write(bytes)
-            } else {
-                // write at the cork buffer
+                let _ = self._write(&all);
+                return;
+            }
+        };
+        if total_written < total {
+            // Copy the unwritten tail in wire order; write_buffer drains on writable.
+            let mut skip = total_written;
+            let mut buffered: usize = 0;
+            for seg in segments {
+                let (ptr, len) = match *seg {
+                    BatchSegment::Batch { off, len } => {
+                        (batch[off as usize..].as_ptr(), len as usize)
+                    }
+                    BatchSegment::Ext { ptr, len } => (ptr, len as usize),
+                };
+                if skip >= len {
+                    skip -= len;
+                    continue;
+                }
+                // SAFETY: same provenance as the iovec build above; skip < len
+                let rest = unsafe { core::slice::from_raw_parts(ptr.add(skip), len - skip) };
+                skip = 0;
+                let _ = self.write_buffer.with_mut(|wb| wb.write(rest));
+                buffered += rest.len();
+            }
+            if buffered > 0 {
+                self.global().vm().deprecated_report_extra_memory(buffered);
+            }
+        }
+    }
+
+    /// Flush the cork buffer's current contents without releasing cork state, so a
+    /// fill-to-boundary write can keep accumulating the remainder. The corked bytes are
+    /// moved out before _write — it can re-enter JS (JS-stream-backed sockets) and no
+    /// thread-local borrow may be held across it.
+    fn flush_cork_buffer(&self) -> bool {
+        let mut data = BATCH_BUFFER.with_borrow_mut(core::mem::take);
+        data.clear();
+        self.drain_cork_into(&mut data);
+        if data.is_empty() {
+            BATCH_BUFFER.with_borrow_mut(|b| {
+                if b.capacity() == 0 {
+                    *b = data;
+                }
+            });
+            return true;
+        }
+        let ok = self._write(&data);
+        data.clear();
+        BATCH_BUFFER.with_borrow_mut(|b| {
+            if b.capacity() == 0 {
+                *b = data;
+            }
+        });
+        ok
+    }
+
+    pub(crate) fn write(&self, mut bytes: &[u8]) -> bool {
+        bun_output::scoped_log!(H2FrameParser, "write {}", bytes.len());
+        if !ENABLE_AUTO_CORK {
+            return self._write(bytes);
+        }
+        self.cork();
+        let mut ok = true;
+        loop {
+            let off = CORK_OFFSET.with(|c| c.get()) as usize;
+            let avail = H2_CORK_BUFFER_SIZE - off;
+            if bytes.len() <= avail {
+                // Fits: accumulate; the auto-flusher sends it at the end of the tick.
                 CORK_OFFSET.with(|c| c.set((off + bytes.len()) as u16));
                 CORK_BUFFER.with_borrow_mut(|buf| {
                     buf[off..off + bytes.len()].copy_from_slice(bytes);
                 });
-                true
+                return ok;
             }
-        } else {
-            self._write(bytes)
+            if off == 0 {
+                // Nothing corked and the chunk is at least a full record on its own:
+                // skip the copy and send it directly.
+                return self._write(bytes) && ok;
+            }
+            // Fill the buffer to the record boundary and flush exactly one full
+            // record (on TLS this is one SSL_write producing one max-size record —
+            // flushing a partial buffer here would put a tiny record on the wire
+            // for every DATA frame whose header was corked ahead of it).
+            CORK_BUFFER.with_borrow_mut(|buf| {
+                buf[off..H2_CORK_BUFFER_SIZE].copy_from_slice(&bytes[..avail]);
+            });
+            CORK_OFFSET.with(|c| c.set(H2_CORK_BUFFER_SIZE as u16));
+            ok = self.flush_cork_buffer() && ok;
+            // The flush's _write can re-enter JS and re-cork a different parser;
+            // re-assert ownership before touching the shared cork state again.
+            self.cork();
+            bytes = &bytes[avail..];
         }
     }
 }
 
-// PORT NOTE: raw-ptr slice — Zig's `[]const u8` payload may alias `this.readBuffer` across
+// Note: raw-ptr slice — the payload may alias `this.readBuffer` across
 // `readBuffer.reset()` (e.g. handleHeadersFrame resets then calls decodeHeaderBlock(payload)).
 // A borrowed `&'a [u8]` tied to `&'a mut self` forces every caller into an aliasing
 // `unsafe { &mut *self_ptr }` reborrow, which under Stacked Borrows invalidates the slice the
-// moment the caller touches `self` again. Carrying a raw pointer keeps the Zig aliasing intent
+// moment the caller touches `self` again. Carrying a raw pointer keeps the aliasing workable
 // without materialising overlapping `&mut` borrows.
-pub struct Payload {
+pub(crate) struct Payload {
     data_ptr: *const u8,
     data_len: usize,
     end: usize,
@@ -3092,7 +3660,7 @@ impl Payload {
     /// `data_ptr` is derived via `Vec::as_mut_ptr()` (raw-ptr method, no intermediate `&[u8]`
     /// borrow), which is documented to remain valid across non-reallocating mutation, so under
     /// Stacked Borrows the `Vec::clear()` inside `reset()` does not invalidate it and the bytes
-    /// remain readable (matches the Zig ordering where several handlers reset before consuming
+    /// remain readable (several handlers reset before consuming
     /// `payload`). The returned borrow is tied to the local `Payload` (not `self: H2FrameParser`),
     /// so `&mut self` operations on the parser do not conflict with it under borrowck.
     #[inline]
@@ -3105,7 +3673,7 @@ impl Payload {
 }
 
 /// Trait to abstract over TLSSocket / TCPSocket for `_generic_flush`/`_generic_write`.
-pub trait NativeSocketWrite {
+pub(crate) trait NativeSocketWrite {
     fn write_maybe_corked(&mut self, buf: &[u8]) -> i32;
 }
 impl NativeSocketWrite for &TLSSocket {
@@ -3147,7 +3715,11 @@ extern "C" fn on_auto_flush_trampoline(ctx: *mut c_void) -> bool {
 impl H2FrameParser {
     // Default handling for payload is buffering it
     // for data frames we use another strategy
-    pub fn handle_incomming_payload(&self, data: &[u8], stream_identifier: u32) -> Option<Payload> {
+    pub(crate) fn handle_incomming_payload(
+        &self,
+        data: &[u8],
+        stream_identifier: u32,
+    ) -> Option<Payload> {
         let end: usize = (self.remaining_length.get() as usize).min(data.len());
         let payload = &data[0..end];
         self.remaining_length
@@ -3183,8 +3755,8 @@ impl H2FrameParser {
             // no intermediate &[u8]) so the provenance survives `read_buffer.reset()` —
             // Vec::clear() forms `&mut [u8]` internally, which under Stacked Borrows would pop a
             // SharedReadOnly tag obtained from `as_slice().as_ptr()`. Several handlers
-            // (origin/altsvc/continuation/headers) read `payload` AFTER reset(), mirroring the
-            // Zig ordering, so the pointer must outlive that mutation. R-2: `JsCell` is
+            // (origin/altsvc/continuation/headers) read `payload` AFTER reset(),
+            // so the pointer must outlive that mutation. R-2: `JsCell` is
             // `UnsafeCell`-backed; deriving the pointer via `with_mut` keeps SharedReadWrite
             // provenance through later `read_buffer` accesses.
             let (data_ptr, data_len) = self.read_buffer.with_mut(|rb| {
@@ -3205,7 +3777,7 @@ impl H2FrameParser {
         })
     }
 
-    pub fn handle_window_update_frame(
+    pub(crate) fn handle_window_update_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3233,12 +3805,49 @@ impl H2FrameParser {
             let window_size_increment = UInt31WithReserved::from_bytes(payload);
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
+            let increment = window_size_increment.uint31();
+            // RFC 9113 §6.9.1: a WINDOW_UPDATE with a flow-control window increment of 0 is an
+            // error — a stream error (PROTOCOL_ERROR) on a stream, a connection error on stream 0.
+            if increment == 0 {
+                if let Some(s) = stream {
+                    // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
+                    self.end_stream(unsafe { &mut *s }, ErrorCode::PROTOCOL_ERROR);
+                } else {
+                    self.send_go_away(
+                        0,
+                        ErrorCode::PROTOCOL_ERROR,
+                        b"WINDOW_UPDATE with 0 increment",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                }
+                return end;
+            }
+            // RFC 9113 §6.9.1: a flow-control window MUST NOT exceed 2^31-1; exceeding it is a
+            // FLOW_CONTROL_ERROR (stream-scoped on a stream, connection-scoped on stream 0).
             if let Some(s) = stream {
                 // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
-                unsafe { (*s).remote_window_size += window_size_increment.uint31() as u64 };
-            } else {
-                self.remote_window_size
-                    .set(self.remote_window_size.get() + window_size_increment.uint31() as u64);
+                let next = unsafe { (*s).remote_window_size } + increment as u64;
+                if next > MAX_WINDOW_SIZE as u64 {
+                    // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
+                    self.end_stream(unsafe { &mut *s }, ErrorCode::FLOW_CONTROL_ERROR);
+                    return end;
+                }
+                // SAFETY: s is *mut Stream from self.streams; valid while the map entry exists
+                unsafe { (*s).remote_window_size = next };
+            } else if frame.stream_identifier == 0 {
+                let next = self.remote_window_size.get() + increment as u64;
+                if next > MAX_WINDOW_SIZE as u64 {
+                    self.send_go_away(
+                        0,
+                        ErrorCode::FLOW_CONTROL_ERROR,
+                        b"flow-control window exceeded 2^31-1",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return end;
+                }
+                self.remote_window_size.set(next);
             }
             bun_output::scoped_log!(
                 H2FrameParser,
@@ -3254,7 +3863,126 @@ impl H2FrameParser {
         data.len()
     }
 
-    pub fn decode_header_block(
+    /// RFC 9113 §4.1: a frame of unknown/unsupported type MUST be ignored and discarded.
+    pub(crate) fn handle_unknown_frame(&self, frame: FrameHeader, data: &[u8]) -> usize {
+        if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
+            let end = content.end;
+            self.read_buffer.with_mut(|rb| rb.reset());
+            end
+        } else {
+            data.len()
+        }
+    }
+
+    /// Handle an inbound PUSH_PROMISE frame (RFC 9113 §6.6). Decode the promised request header
+    /// block (MUST decode to keep the connection-scoped HPACK context in sync, §4.3), register the
+    /// promised (even) stream, and dispatch `onStreamPush` so the JS client surfaces it as a pushed
+    /// stream. A server receiving PUSH_PROMISE is a connection error (§8.4).
+    pub(crate) fn handle_push_promise_frame(
+        &self,
+        frame: FrameHeader,
+        data: &[u8],
+    ) -> JsResult<usize> {
+        if self.is_server.get() {
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Server received PUSH_PROMISE",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(data.len());
+        }
+        if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
+            let payload = content.data();
+            let end = content.end;
+            self.read_buffer.with_mut(|rb| rb.reset());
+            if payload.len() < 4 {
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::FRAME_SIZE_ERROR,
+                    b"Invalid PUSH_PROMISE frame",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                return Ok(end);
+            }
+            let promised = UInt31WithReserved::from_bytes(&payload[0..4]).uint31();
+            let global_object = self.handlers.get().global();
+            let headers = JSValue::create_empty_array(&global_object, 0)?;
+            headers.ensure_still_alive();
+            let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
+            let mut off = 4usize;
+            while off < payload.len() {
+                let header = match self.decode(&payload[off..]) {
+                    Ok(h) => h,
+                    Err(_) => {
+                        self.send_go_away(
+                            frame.stream_identifier,
+                            ErrorCode::COMPRESSION_ERROR,
+                            b"Invalid HPACK header block",
+                            self.last_stream_id.get(),
+                            true,
+                        );
+                        return Ok(end);
+                    }
+                };
+                off += header.next;
+                let js_name = match get_http2_common_string(&global_object, header.well_know as u32)
+                {
+                    Some(cached) => cached,
+                    None => {
+                        bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.name)?
+                    }
+                };
+                headers.push(&global_object, js_name)?;
+                headers.push(
+                    &global_object,
+                    bun_jsc::bun_string_jsc::create_utf8_for_js(&global_object, header.value)?,
+                )?;
+                if header.never_index {
+                    if sensitive_headers.is_undefined() {
+                        sensitive_headers = JSValue::create_empty_array(&global_object, 0)?;
+                        sensitive_headers.ensure_still_alive();
+                    }
+                    sensitive_headers.push(&global_object, js_name)?;
+                }
+            }
+            // Register the promised stream so its forthcoming response HEADERS/DATA route to it.
+            if promised > self.last_stream_id.get() {
+                self.last_stream_id.set(promised);
+                if promised > self.last_peer_stream_id.get() {
+                    self.last_peer_stream_id.set(promised);
+                }
+            }
+            let local_window = if self.outstanding_settings.get() > 0 {
+                DEFAULT_WINDOW_SIZE as u32
+            } else {
+                self.local_settings.get().initial_window_size
+            };
+            let stream = bun_core::heap::into_raw(Box::new(Stream::init(
+                promised,
+                local_window,
+                self.remote_settings
+                    .get()
+                    .map(|s| s.initial_window_size)
+                    .unwrap_or(DEFAULT_WINDOW_SIZE as u32),
+                self.padding_strategy.get(),
+            )));
+            self.streams.with_mut(|s| s.insert(promised, stream));
+            self.dispatch_with_3_extra(
+                JSH2FrameParser::Gc::onStreamPush,
+                JSValue::js_number(promised as f64),
+                headers,
+                sensitive_headers,
+                JSValue::js_number(frame.flags as f64),
+            );
+            return Ok(end);
+        }
+        Ok(data.len())
+    }
+
+    pub(crate) fn decode_header_block(
         &self,
         payload: &[u8],
         stream: &mut Stream,
@@ -3277,14 +4005,29 @@ impl H2FrameParser {
         headers.ensure_still_alive();
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
-        let mut count: usize = 0;
-        // RFC 7540 Section 6.5.2: Track cumulative header list size
-        let mut header_list_size: usize = 0;
+        let mut malformed = false;
 
-        loop {
+        // Stream-level limit violations seen mid-decode. The loop must consume
+        // the whole block regardless: the HPACK dynamic table is
+        // connection-scoped, so abandoning the block midway would desync it
+        // for every other stream. The rejection is applied once after the loop.
+        let mut rejected = false;
+
+        while offset < payload.len() {
             let header = match self.decode(&payload[offset..]) {
                 Ok(h) => h,
-                Err(_) => break,
+                Err(_) => {
+                    // RFC 9113 §4.3: a decoding error in a header block is a
+                    // connection error of type COMPRESSION_ERROR.
+                    self.send_go_away(
+                        stream_id,
+                        ErrorCode::COMPRESSION_ERROR,
+                        b"Invalid HPACK header block",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return Ok(None);
+                }
             };
             offset += header.next;
             bun_output::scoped_log!(
@@ -3301,48 +4044,37 @@ impl H2FrameParser {
                     self.last_stream_id.get(),
                     true,
                 );
-                return Ok(self.streams.get().get(&stream_id).copied());
+                return Ok(None);
             }
 
             // RFC 7540 Section 6.5.2: Calculate header list size
             // Size = name length + value length + HPACK entry overhead per header
-            header_list_size += header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
+            stream.header_block_size +=
+                header.name.len() + header.value.len() + HPACK_ENTRY_OVERHEAD;
+            stream.header_block_count += 1;
 
-            // Check against maxHeaderListSize setting
-            if header_list_size > self.local_settings.get().max_header_list_size as usize {
-                self.rejected_streams.set(self.rejected_streams.get() + 1);
-                if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-                    self.send_go_away(
-                        stream_id,
-                        ErrorCode::ENHANCE_YOUR_CALM,
-                        b"ENHANCE_YOUR_CALM",
-                        self.last_stream_id.get(),
-                        true,
-                    );
-                } else {
-                    self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
-                }
-                return Ok(self.streams.get().get(&stream_id).copied());
+            // Check against maxHeaderListSize / maxHeaderListPairs.
+            if rejected
+                || stream.header_block_size
+                    > self.local_settings.get().max_header_list_size as usize
+                || (self.max_header_list_pairs.get() as usize) < stream.header_block_count
+            {
+                rejected = true;
+                continue;
             }
 
-            count += 1;
-            if (self.max_header_list_pairs.get() as usize) < count {
-                self.rejected_streams.set(self.rejected_streams.get() + 1);
-                if self.max_rejected_streams.get() <= self.rejected_streams.get() {
-                    self.send_go_away(
-                        stream_id,
-                        ErrorCode::ENHANCE_YOUR_CALM,
-                        b"ENHANCE_YOUR_CALM",
-                        self.last_stream_id.get(),
-                        true,
-                    );
-                } else {
-                    self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
-                }
-                return Ok(self.streams.get().get(&stream_id).copied());
-            }
-
-            if let Some(js_header_name) =
+            if malformed
+                || is_malformed_field_name(header.name)
+                || is_malformed_field_value(header.value)
+                || (header.name.first() == Some(&b':')
+                    && !if self.is_server.get() {
+                        is_valid_request_pseudo_header(header.name)
+                    } else {
+                        is_valid_response_pseudo_header(header.name)
+                    })
+            {
+                malformed = true;
+            } else if let Some(js_header_name) =
                 get_http2_common_string(&global_object, header.well_know as u32)
             {
                 headers.push(&global_object, js_header_name)?;
@@ -3377,10 +4109,27 @@ impl H2FrameParser {
                 js_header_name.ensure_still_alive();
                 js_header_value.ensure_still_alive();
             }
+        }
 
-            if offset >= payload.len() {
-                break;
+        if rejected {
+            self.rejected_streams.set(self.rejected_streams.get() + 1);
+            if self.max_rejected_streams.get() <= self.rejected_streams.get() {
+                self.send_go_away(
+                    stream_id,
+                    ErrorCode::ENHANCE_YOUR_CALM,
+                    b"ENHANCE_YOUR_CALM",
+                    self.last_stream_id.get(),
+                    true,
+                );
+            } else {
+                self.end_stream(stream, ErrorCode::ENHANCE_YOUR_CALM);
             }
+            return Ok(None);
+        }
+
+        if malformed {
+            self.end_stream(stream, ErrorCode::PROTOCOL_ERROR);
+            return Ok(self.streams.get().get(&stream_id).copied());
         }
 
         self.dispatch_with_3_extra(
@@ -3393,7 +4142,7 @@ impl H2FrameParser {
         Ok(self.streams.get().get(&stream_id).copied())
     }
 
-    pub fn handle_data_frame(
+    pub(crate) fn handle_data_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3428,12 +4177,7 @@ impl H2FrameParser {
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
-        let settings = self
-            .remote_settings
-            .get()
-            .unwrap_or(self.local_settings.get());
-
-        let max_frame_size = settings.max_frame_size;
+        let max_frame_size = self.local_settings.get().max_frame_size;
         if frame.length > max_frame_size {
             bun_output::scoped_log!(
                 H2FrameParser,
@@ -3540,18 +4284,15 @@ impl H2FrameParser {
             if !payload.is_empty() {
                 // no padding, just emit the data
                 let global = self.handlers.get().global();
-                let chunk = self
-                    .handlers
-                    .get()
-                    .binary_type
-                    .to_js(payload, &global)
-                    .unwrap_or(JSValue::ZERO);
-                // TODO: properly propagate exception upwards
-                self.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamData,
-                    stream.get_identifier(),
-                    chunk,
-                );
+                // Skip the JS dispatch when conversion fails (VM terminating); keep
+                // `emitted` so the stream pointer is conservatively re-fetched below.
+                if let Ok(chunk) = self.handlers.get().binary_type.to_js(payload, &global) {
+                    self.dispatch_with_extra(
+                        JSH2FrameParser::Gc::onStreamData,
+                        stream.get_identifier(),
+                        chunk,
+                    );
+                }
                 emitted = true;
             }
         }
@@ -3586,11 +4327,11 @@ impl H2FrameParser {
         end
     }
 
-    pub fn handle_go_away_frame(
+    pub(crate) fn handle_go_away_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
-        stream_: Option<*mut Stream>,
+        _stream_: Option<*mut Stream>,
     ) -> usize {
         bun_output::scoped_log!(
             H2FrameParser,
@@ -3598,7 +4339,7 @@ impl H2FrameParser {
             frame.stream_identifier,
             BStr::new(data)
         );
-        if stream_.is_some() {
+        if frame.stream_identifier != 0 {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -3608,12 +4349,7 @@ impl H2FrameParser {
             );
             return data.len();
         }
-        let settings = self
-            .remote_settings
-            .get()
-            .unwrap_or(self.local_settings.get());
-
-        if frame.length < 8 || frame.length > settings.max_frame_size {
+        if frame.length < 8 || frame.length > self.local_settings.get().max_frame_size {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::FRAME_SIZE_ERROR,
@@ -3628,21 +4364,22 @@ impl H2FrameParser {
             let payload = content.data();
             let error_code = u32_from_bytes(&payload[4..8]);
             let global = self.handlers.get().global();
-            let chunk = self
+            let end = content.end;
+            self.read_buffer.with_mut(|rb| rb.reset());
+            // Skip the JS dispatch when conversion fails (VM terminating).
+            if let Ok(chunk) = self
                 .handlers
                 .get()
                 .binary_type
                 .to_js(&payload[8..], &global)
-                .unwrap_or(JSValue::ZERO);
-            // TODO: properly propagate exception upwards
-            let end = content.end;
-            self.read_buffer.with_mut(|rb| rb.reset());
-            self.dispatch_with_2_extra(
-                JSH2FrameParser::Gc::onGoAway,
-                JSValue::js_number(error_code as f64),
-                JSValue::js_number(self.last_stream_id.get() as f64),
-                chunk,
-            );
+            {
+                self.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onGoAway,
+                    JSValue::js_number(error_code as f64),
+                    JSValue::js_number(self.last_stream_id.get() as f64),
+                    chunk,
+                );
+            }
             return end;
         }
         data.len()
@@ -3656,7 +4393,7 @@ impl H2FrameParser {
         bun_jsc::bun_string_jsc::create_utf8_for_js(&global, payload)
     }
 
-    pub fn handle_origin_frame(
+    pub(crate) fn handle_origin_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3692,7 +4429,6 @@ impl H2FrameParser {
 
             let global = self.handlers.get().global();
             while !payload.is_empty() {
-                // TODO(port): fixedBufferStream over const slice for reading u16 BE
                 if payload.len() < 2 {
                     bun_output::scoped_log!(
                         H2FrameParser,
@@ -3744,7 +4480,7 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_altsvc_frame(
+    pub(crate) fn handle_altsvc_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3806,7 +4542,7 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_rst_stream_frame(
+    pub(crate) fn handle_rst_stream_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -3876,13 +4612,13 @@ impl H2FrameParser {
         data.len()
     }
 
-    pub fn handle_ping_frame(
+    pub(crate) fn handle_ping_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
-        stream_: Option<*mut Stream>,
+        _stream_: Option<*mut Stream>,
     ) -> usize {
-        if stream_.is_some() {
+        if frame.stream_identifier != 0 {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -3908,44 +4644,74 @@ impl H2FrameParser {
             let payload = content.data();
             let is_not_ack = frame.flags & PingFrameFlags::ACK as u8 == 0;
             let end = content.end;
-            // PORT NOTE: Zig resets readBuffer before send_ping(payload); reset() only clears len
-            // so the bytes stay readable. Copy out anyway so send_ping/to_js below don't depend on
+            // Note: reset() only clears len so the bytes would stay readable;
+            // copy out anyway so send_ping/to_js below don't depend on
             // that subtlety once read_buffer is mutated further.
             let payload_owned = payload.to_vec();
             self.read_buffer.with_mut(|rb| rb.reset());
 
             // if is not ACK send response
             if is_not_ack {
+                if self.is_over_session_memory_limit() {
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::ENHANCE_YOUR_CALM,
+                        b"ENHANCE_YOUR_CALM",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return end;
+                }
                 self.send_ping(true, &payload_owned);
             } else {
                 self.out_standing_pings
                     .set(self.out_standing_pings.get().saturating_sub(1));
             }
             let global = self.handlers.get().global();
-            let buffer = self
+            // Skip the JS dispatch when conversion fails (VM terminating).
+            if let Ok(buffer) = self
                 .handlers
                 .get()
                 .binary_type
                 .to_js(&payload_owned, &global)
-                .unwrap_or(JSValue::ZERO);
-            // TODO: properly propagate exception upwards
-            self.dispatch_with_extra(
-                JSH2FrameParser::Gc::onPing,
-                buffer,
-                JSValue::from(!is_not_ack),
-            );
+            {
+                self.dispatch_with_extra(
+                    JSH2FrameParser::Gc::onPing,
+                    buffer,
+                    JSValue::from(!is_not_ack),
+                );
+            }
             return end;
         }
         data.len()
     }
 
-    pub fn handle_priority_frame(
+    pub(crate) fn handle_priority_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
         stream_: Option<*mut Stream>,
     ) -> usize {
+        if frame.length as usize != StreamPriority::BYTE_SIZE {
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid Priority frame size",
+                self.last_stream_id.get(),
+                true,
+            );
+            return data.len();
+        }
         let Some(stream_ptr) = stream_ else {
+            if frame.stream_identifier != 0 {
+                // PRIORITY on an idle/closed stream is permitted (RFC 9113 §5.3.4); ignore it.
+                if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier)
+                {
+                    self.read_buffer.with_mut(|rb| rb.reset());
+                    return content.end;
+                }
+                return data.len();
+            }
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::PROTOCOL_ERROR,
@@ -3957,17 +4723,6 @@ impl H2FrameParser {
         };
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let stream = unsafe { &mut *stream_ptr };
-
-        if frame.length as usize != StreamPriority::BYTE_SIZE {
-            self.send_go_away(
-                frame.stream_identifier,
-                ErrorCode::FRAME_SIZE_ERROR,
-                b"invalid Priority frame size",
-                self.last_stream_id.get(),
-                true,
-            );
-            return data.len();
-        }
 
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let payload = content.data();
@@ -3998,7 +4753,7 @@ impl H2FrameParser {
     }
 
     /// RFC 7540 Section 6.10: Handle CONTINUATION frame (type=0x9).
-    pub fn handle_continuation_frame(
+    pub(crate) fn handle_continuation_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -4028,34 +4783,57 @@ impl H2FrameParser {
             );
             return Ok(data.len());
         }
+        if frame.length > self.local_settings.get().max_frame_size {
+            self.send_go_away(
+                frame.stream_identifier,
+                ErrorCode::FRAME_SIZE_ERROR,
+                b"invalid Continuation frame size",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(data.len());
+        }
         if let Some(content) = self.handle_incomming_payload(data, frame.stream_identifier) {
             let payload = content.data();
             let end = content.end;
             self.read_buffer.with_mut(|rb| rb.reset());
-            stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
-            stream = match self.decode_header_block(payload, stream, frame.flags)? {
+            if stream.pending_header_block.len() + payload.len()
+                > self.local_settings.get().max_header_list_size as usize
+            {
+                // Cap the buffered compressed block at max_header_list_size as a
+                // DoS bound; the decoded list size is checked separately in
+                // decode_header_block.
+                self.send_go_away(
+                    frame.stream_identifier,
+                    ErrorCode::ENHANCE_YOUR_CALM,
+                    b"ENHANCE_YOUR_CALM",
+                    self.last_stream_id.get(),
+                    true,
+                );
+                return Ok(end);
+            }
+            stream.pending_header_block.extend_from_slice(payload);
+            if frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0 {
+                // keep buffering until END_HEADERS arrives
+                return Ok(end);
+            }
+            stream.is_waiting_more_headers = false;
+            self.expecting_continuation.set(0);
+            // Take ownership of the buffer so re-entrant parser calls from the
+            // onStreamHeaders dispatch can't alias or free the bytes being decoded.
+            let block = core::mem::take(&mut stream.pending_header_block);
+            // Report the original HEADERS frame's flags (plus END_HEADERS now
+            // that the block is complete), not the CONTINUATION frame's.
+            let block_flags = stream.pending_header_flags | HeadersFrameFlags::END_HEADERS as u8;
+            stream = match self.decode_header_block(&block, stream, block_flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end),
             };
+            // END_STREAM finalization was deferred by handle_headers_frame
+            // until the complete header block had been dispatched.
             if stream.end_after_headers {
-                stream.is_waiting_more_headers = false;
-                if frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0 {
-                    let identifier = stream.get_identifier();
-                    identifier.ensure_still_alive();
-                    if stream.state == StreamState::HALF_CLOSED_REMOTE {
-                        // no more continuation headers we can call it closed
-                        stream.state = StreamState::CLOSED;
-                        stream.free_resources::<false>(self);
-                    } else {
-                        stream.state = StreamState::HALF_CLOSED_LOCAL;
-                    }
-                    self.dispatch_with_extra(
-                        JSH2FrameParser::Gc::onStreamEnd,
-                        identifier,
-                        JSValue::js_number(stream.state as u8 as f64),
-                    );
-                }
+                self.finish_headers_end_stream(stream);
             }
             return Ok(end);
         }
@@ -4064,7 +4842,34 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_headers_frame(
+    /// Finalize a stream whose HEADERS frame carried END_STREAM, after the
+    /// complete header block has been decoded and dispatched.
+    fn finish_headers_end_stream(&self, stream: &mut Stream) {
+        // The stream can be reset (req.close(), AbortSignal) between the
+        // HEADERS fragment and the CONTINUATION that completes the block;
+        // don't regress a CLOSED stream or dispatch onStreamEnd after
+        // onStreamError.
+        if stream.state == StreamState::CLOSED {
+            return;
+        }
+        let identifier = stream.get_identifier();
+        identifier.ensure_still_alive();
+
+        // no more continuation headers we can call it closed
+        if stream.state == StreamState::HALF_CLOSED_LOCAL {
+            stream.state = StreamState::CLOSED;
+            stream.free_resources::<false>(self);
+        } else {
+            stream.state = StreamState::HALF_CLOSED_REMOTE;
+        }
+        self.dispatch_with_extra(
+            JSH2FrameParser::Gc::onStreamEnd,
+            identifier,
+            JSValue::js_number(stream.state as u8 as f64),
+        );
+    }
+
+    pub(crate) fn handle_headers_frame(
         &self,
         frame: FrameHeader,
         data: &[u8],
@@ -4092,11 +4897,7 @@ impl H2FrameParser {
         // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
         let mut stream = unsafe { &mut *stream_ptr };
 
-        let settings = self
-            .remote_settings
-            .get()
-            .unwrap_or(self.local_settings.get());
-        if frame.length > settings.max_frame_size {
+        if frame.length > self.local_settings.get().max_frame_size {
             self.send_go_away(
                 frame.stream_identifier,
                 ErrorCode::FRAME_SIZE_ERROR,
@@ -4166,33 +4967,41 @@ impl H2FrameParser {
             }
             let end = payload.len() - padding;
             stream.end_after_headers = frame.flags & HeadersFrameFlags::END_STREAM as u8 != 0;
+            stream.header_block_size = 0;
+            stream.header_block_count = 0;
+            stream.pending_header_block.clear();
+            stream.is_waiting_more_headers =
+                frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
+            if stream.is_waiting_more_headers {
+                // Buffer fragments until END_HEADERS (RFC 9113 §4.3); the block is
+                // decoded and END_STREAM finalized in handle_continuation_frame so
+                // the JS event order stays onStreamHeaders -> onStreamEnd.
+                let fragment = &payload[offset..end];
+                if fragment.len() > self.local_settings.get().max_header_list_size as usize {
+                    // Cap the buffered compressed block at max_header_list_size
+                    // as a DoS bound; the decoded list size is checked separately
+                    // in decode_header_block.
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::ENHANCE_YOUR_CALM,
+                        b"ENHANCE_YOUR_CALM",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return Ok(end_);
+                }
+                stream.pending_header_block.extend_from_slice(fragment);
+                stream.pending_header_flags = frame.flags;
+                self.expecting_continuation.set(frame.stream_identifier);
+                return Ok(end_);
+            }
             stream = match self.decode_header_block(&payload[offset..end], stream, frame.flags)? {
                 // SAFETY: s is *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                 Some(s) => unsafe { &mut *s },
                 None => return Ok(end_),
             };
-            stream.is_waiting_more_headers =
-                frame.flags & HeadersFrameFlags::END_HEADERS as u8 == 0;
             if stream.end_after_headers {
-                let identifier = stream.get_identifier();
-                identifier.ensure_still_alive();
-
-                if stream.is_waiting_more_headers {
-                    stream.state = StreamState::HALF_CLOSED_REMOTE;
-                } else {
-                    // no more continuation headers we can call it closed
-                    if stream.state == StreamState::HALF_CLOSED_LOCAL {
-                        stream.state = StreamState::CLOSED;
-                        stream.free_resources::<false>(self);
-                    } else {
-                        stream.state = StreamState::HALF_CLOSED_REMOTE;
-                    }
-                }
-                self.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamEnd,
-                    identifier,
-                    JSValue::js_number(stream.state as u8 as f64),
-                );
+                self.finish_headers_end_stream(stream);
             }
             return Ok(end_);
         }
@@ -4201,7 +5010,7 @@ impl H2FrameParser {
         Ok(data.len())
     }
 
-    pub fn handle_settings_frame(&self, frame: FrameHeader, data: &[u8]) -> usize {
+    pub(crate) fn handle_settings_frame(&self, frame: FrameHeader, data: &[u8]) -> usize {
         let is_ack = frame.flags & SettingsFlags::ACK as u8 != 0;
 
         bun_output::scoped_log!(
@@ -4229,7 +5038,7 @@ impl H2FrameParser {
 
         let setting_byte_size = SettingsPayloadUnit::BYTE_SIZE;
         if frame.length > 0 {
-            if is_ack || frame.length as usize % setting_byte_size != 0 {
+            if is_ack || !(frame.length as usize).is_multiple_of(setting_byte_size) {
                 bun_output::scoped_log!(H2FrameParser, "invalid settings frame size");
                 self.send_go_away(
                     frame.stream_identifier,
@@ -4360,6 +5169,36 @@ impl H2FrameParser {
                     );
                     return end;
                 }
+                // RFC 9113 §6.5.2: SETTINGS_ENABLE_PUSH / SETTINGS_ENABLE_CONNECT_PROTOCOL must be
+                // 0 or 1, otherwise a connection error of type PROTOCOL_ERROR.
+                if (SettingsType(unit.type_) == SettingsType::SETTINGS_ENABLE_PUSH
+                    || SettingsType(unit.type_) == SettingsType::SETTINGS_ENABLE_CONNECT_PROTOCOL)
+                    && unit.value > 1
+                {
+                    self.read_buffer.with_mut(|rb| rb.reset());
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::PROTOCOL_ERROR,
+                        b"Invalid SETTINGS value",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return end;
+                }
+                // RFC 9113 §6.5.2: SETTINGS_INITIAL_WINDOW_SIZE above 2^31-1 is a FLOW_CONTROL_ERROR.
+                if SettingsType(unit.type_) == SettingsType::SETTINGS_INITIAL_WINDOW_SIZE
+                    && unit.value > MAX_WINDOW_SIZE
+                {
+                    self.read_buffer.with_mut(|rb| rb.reset());
+                    self.send_go_away(
+                        frame.stream_identifier,
+                        ErrorCode::FLOW_CONTROL_ERROR,
+                        b"Invalid SETTINGS_INITIAL_WINDOW_SIZE",
+                        self.last_stream_id.get(),
+                        true,
+                    );
+                    return end;
+                }
                 remote_settings.update_with(unit);
                 let (_ut, _uv) = (unit.type_, unit.value);
                 bun_output::scoped_log!(
@@ -4425,6 +5264,12 @@ impl H2FrameParser {
         if stream_identifier > self.last_stream_id.get() {
             self.last_stream_id.set(stream_identifier);
         }
+        let peer_parity: u32 = if self.is_server.get() { 1 } else { 0 };
+        if stream_identifier % 2 == peer_parity
+            && stream_identifier > self.last_peer_stream_id.get()
+        {
+            self.last_peer_stream_id.set(stream_identifier);
+        }
 
         // new stream open
         let local_window_size = if self.outstanding_settings.get() > 0 {
@@ -4455,17 +5300,84 @@ impl H2FrameParser {
         };
 
         let global = self.handlers.get().global();
-        if let Err(err) = callback.call(
+        // A prior frame's callback can drain microtasks that tear the worker
+        // down (worker.terminate()); skip rather than calling JS with the
+        // termination exception pending. Same guard as read_bytes().
+        if global.has_exception() {
+            return Some(stream);
+        }
+        match callback.call(
             &global,
             ctx_value,
             &[ctx_value, JSValue::js_number(stream_identifier as f64)],
         ) {
-            global.report_active_exception_as_unhandled(err);
+            Err(err) => global.report_active_exception_as_unhandled(err),
+            Ok(returned) => {
+                // streamStart returns the JS stream it created; storing it here saves the
+                // setStreamContext host call the JS layer used to make per stream.
+                if returned.is_object() {
+                    self.sctx.with_mut(|m| {
+                        m.insert(stream_identifier, StrongOptional::create(returned, &global));
+                    });
+                    // SAFETY: stream is *mut Stream from self.streams; valid while the map
+                    // entry exists
+                    unsafe { (*stream).set_context(returned, &global) };
+                }
+            }
         }
         Some(stream)
     }
 
+    /// Stream lookup for inbound frames. Only a HEADERS frame may allocate new
+    /// stream state (RFC 9113 §5.1); any other frame type referencing an
+    /// unknown stream id is treated as idle/closed and does not allocate.
+    fn lookup_inbound_stream(&self, stream_identifier: u32, frame_type: u8) -> Option<*mut Stream> {
+        if stream_identifier == 0 {
+            return None;
+        }
+        if let Some(stream) = self.streams.get().get(&stream_identifier).copied() {
+            return Some(stream);
+        }
+        if frame_type != FrameType::HTTP_FRAME_HEADERS as u8 || !self.is_server.get() {
+            return None;
+        }
+        // RFC 9113 §4.3: while a header block is mid-reassembly the only legal
+        // frame is a CONTINUATION for that stream, and dispatch_frame will
+        // reject this one. Don't allocate stream state, bump last_stream_id,
+        // or fire onStreamStart for a frame that is about to be rejected.
+        if self.expecting_continuation.get() != 0 {
+            return None;
+        }
+        // Client-initiated streams must use odd identifiers (RFC 9113 §5.1.1).
+        if stream_identifier & 1 == 0 {
+            return None;
+        }
+        // Bound per-connection stream state before allocating: a peer flooding
+        // tiny HEADERS frames with fresh stream ids would otherwise grow
+        // `streams` (and the JS objects pinned by `streamStart`) without limit.
+        // Mirrors the maxSessionMemory check on the PING and request() paths.
+        if self.is_over_session_memory_limit() {
+            self.send_go_away(
+                stream_identifier,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+            return None;
+        }
+        self.handle_received_stream_id(stream_identifier)
+    }
+
     fn read_bytes(&self, bytes: &[u8]) -> JsResult<usize> {
+        // read() loops this per frame. A prior frame's callback can drain
+        // microtasks that tear the worker down (worker.terminate()), leaving a
+        // pending (termination) exception; dispatching further frames then calls
+        // JS with that exception pending (assertNoException) or with torn-down
+        // values. Stop consuming once an exception is pending.
+        if self.handlers.get().global().has_exception() {
+            return Ok(bytes.len());
+        }
         bun_output::scoped_log!(H2FrameParser, "read {}", bytes.len());
         if self.is_server.get() && self.preface_received_len.get() < 24 {
             // Handle Server Preface
@@ -4507,7 +5419,7 @@ impl H2FrameParser {
                 header.stream_identifier
             );
 
-            let stream = self.handle_received_stream_id(header.stream_identifier);
+            let stream = self.lookup_inbound_stream(header.stream_identifier, header.type_);
             return self.dispatch_frame(header, bytes, stream, 0);
         }
 
@@ -4529,10 +5441,8 @@ impl H2FrameParser {
                     .deprecated_report_extra_memory(bytes.len());
                 return Ok(bytes.len());
             }
-            // Zig writes the buffered prefix into the packed struct, then the
-            // tail at `offset = buffered_data`, then byte-swaps. Reassemble the
-            // 9 wire bytes on the stack and decode in one shot — same result,
-            // no shared scratch state.
+            // Reassemble the 9 wire bytes on the stack and decode in one shot
+            // — no shared scratch state.
             let needed = FrameHeader::BYTE_SIZE - buffered_data;
             let mut raw = [0u8; FrameHeader::BYTE_SIZE];
             raw[..buffered_data].copy_from_slice(&self.read_buffer.get().list[..buffered_data]);
@@ -4554,7 +5464,7 @@ impl H2FrameParser {
                 header.flags,
                 header.stream_identifier
             );
-            let stream = self.handle_received_stream_id(header.stream_identifier);
+            let stream = self.lookup_inbound_stream(header.stream_identifier, header.type_);
 
             return self.dispatch_frame(header, &bytes[needed..], stream, needed);
         }
@@ -4589,7 +5499,7 @@ impl H2FrameParser {
         );
         self.current_frame.set(Some(header));
         self.remaining_length.set(header.length as i32);
-        let stream = self.handle_received_stream_id(header.stream_identifier);
+        let stream = self.lookup_inbound_stream(header.stream_identifier, header.type_);
         self.dispatch_frame(
             header,
             &bytes[FrameHeader::BYTE_SIZE..],
@@ -4598,7 +5508,7 @@ impl H2FrameParser {
         )
     }
 
-    // PORT NOTE: hoisted from three identical switch blocks in read_bytes for borrowck/DRY.
+    // Note: hoisted from three identical switch blocks in read_bytes for borrowck/DRY.
     // The `add` parameter is the number of bytes already consumed before `bytes` (0, `needed`, or BYTE_SIZE).
     fn dispatch_frame(
         &self,
@@ -4607,6 +5517,23 @@ impl H2FrameParser {
         stream: Option<*mut Stream>,
         add: usize,
     ) -> JsResult<usize> {
+        // RFC 9113 §4.3 / §6.10: once a HEADERS frame without END_HEADERS has
+        // been received, the only frame permitted on the connection is a
+        // CONTINUATION for that same stream until the header block is complete.
+        let expecting = self.expecting_continuation.get();
+        if expecting != 0
+            && (header.type_ != FrameType::HTTP_FRAME_CONTINUATION as u8
+                || header.stream_identifier != expecting)
+        {
+            self.send_go_away(
+                header.stream_identifier,
+                ErrorCode::PROTOCOL_ERROR,
+                b"Expected CONTINUATION frame",
+                self.last_stream_id.get(),
+                true,
+            );
+            return Ok(bytes.len() + add);
+        }
         Ok(match header.type_ {
             x if x == FrameType::HTTP_FRAME_SETTINGS as u8 => {
                 self.handle_settings_frame(header, bytes) + add
@@ -4641,15 +5568,13 @@ impl H2FrameParser {
             x if x == FrameType::HTTP_FRAME_ORIGIN as u8 => {
                 self.handle_origin_frame(header, bytes, stream)? + add
             }
+            0x05 => {
+                // PUSH_PROMISE (0x5): not a FrameType variant. Surface the pushed stream to JS.
+                self.handle_push_promise_frame(header, bytes)? + add
+            }
             _ => {
-                self.send_go_away(
-                    header.stream_identifier,
-                    ErrorCode::PROTOCOL_ERROR,
-                    b"Unknown frame type",
-                    self.last_stream_id.get(),
-                    true,
-                );
-                bytes.len() + add
+                // RFC 9113 §4.1: frames of unknown/unsupported type MUST be ignored and discarded.
+                self.handle_unknown_frame(header, bytes) + add
             }
         })
     }
@@ -4661,7 +5586,734 @@ impl H2FrameParser {
     }
 }
 
-// PORT NOTE: holds a `BackRef<H2FrameParser>` so the borrow of the parser ends
+/// Bridge the rewrite engine's `Settings` to the JS settings object via the legacy wire payload.
+fn rewrite_settings_to_js(s: &crate::api::h2::settings::Settings, global: GlobalRef) -> JSValue {
+    let fp = FullSettingsPayload {
+        header_table_size: s.header_table_size,
+        enable_push: s.enable_push,
+        max_concurrent_streams: s.max_concurrent_streams,
+        initial_window_size: s.initial_window_size,
+        max_frame_size: s.max_frame_size,
+        max_header_list_size: s.max_header_list_size,
+        enable_connect_protocol: s.enable_connect_protocol,
+        ..Default::default()
+    };
+    fp.to_js(&global)
+}
+
+impl H2FrameParser {
+    /// Bridge the legacy local SETTINGS payload to the rewrite engine's Settings.
+    fn rewrite_local_settings(&self) -> crate::api::h2::settings::Settings {
+        let s = self.local_settings.get();
+        crate::api::h2::settings::Settings {
+            header_table_size: s.header_table_size,
+            enable_push: s.enable_push,
+            max_concurrent_streams: s.max_concurrent_streams,
+            initial_window_size: s.initial_window_size,
+            max_frame_size: s.max_frame_size,
+            max_header_list_size: s.max_header_list_size,
+            enable_connect_protocol: s.enable_connect_protocol,
+        }
+    }
+
+    /// Lazily create the rewrite engine once is_server + local settings are known.
+    fn ensure_engine(&self) {
+        if self.engine.borrow().is_none() {
+            let mut conn = crate::api::h2::connection::Connection::new(
+                self.is_server.get(),
+                self.rewrite_local_settings(),
+            );
+            // The engine is created lazily on the first inbound read, by which point settings()
+            // may already have submitted (still unACKed) values; received header blocks must be
+            // checked against the constructor-time limit until the peer ACKs a later submission.
+            conn.enforced_max_header_list_size = self.enforced_max_header_list_size.get();
+            *self.engine.borrow_mut() = Some(conn);
+        }
+    }
+
+    /// Resolve the JS stream context for the rewrite engine's dispatches: the `sctx` map (populated
+    /// by setStreamContext, i.e. server-side inbound streams) or the legacy stream's own context
+    /// (populated directly by the legacy request() for client-initiated streams).
+    fn rewrite_stream_ctx(&self, stream_id: u32) -> JSValue {
+        if let Some(ctx) = self.sctx.get().get(&stream_id).and_then(|s| s.get()) {
+            return ctx;
+        }
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            return unsafe { (*stream).get_identifier() };
+        }
+        JSValue::UNDEFINED
+    }
+
+    /// Record outbound DATA the legacy encoder wrote so the engine's send windows track reality.
+    /// Buffered in cells and applied in rewrite_read: inbound WINDOW_UPDATE handling always goes
+    /// through rewrite_read first, so the windows are in sync before any overflow check runs.
+    pub(crate) fn note_engine_send_consumed(&self, stream_id: u32, n: u64) {
+        if n == 0 {
+            return;
+        }
+        self.pending_send_window_consumed
+            .set(self.pending_send_window_consumed.get() + n);
+        self.pending_stream_send_consumed.with_mut(|v| {
+            if let Some(last) = v.last_mut()
+                && last.0 == stream_id
+            {
+                last.1 += n;
+            } else {
+                v.push((stream_id, n));
+            }
+        });
+    }
+
+    /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
+    fn rewrite_read(&self, bytes: &[u8]) {
+        bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
+        // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
+        // bytes back into the same parser from inside such a dispatch (e.g. a custom Duplex whose
+        // write path synchronously pushes back into the socket). The engine cell stays mutably
+        // borrowed across the outer receive(), so queue the bytes for the outer call to drain
+        // rather than panicking on a second borrow.
+        if self.engine.try_borrow_mut().is_err() {
+            self.rewrite_tail.with_mut(|t| t.extend_from_slice(bytes));
+            return;
+        }
+        self.ensure_engine();
+        // Keep the engine's local settings in sync with the JS-configured cell (settings() may be
+        // called after the engine was lazily created). Plain Copy structs — no allocation.
+        if let Some(engine) = self.engine.borrow_mut().as_mut() {
+            engine.local_settings = self.rewrite_local_settings();
+            engine.max_header_list_pairs = self.max_header_list_pairs.get();
+            engine.max_settings = self.max_settings.get();
+            engine.max_invalid_frames = self.max_session_invalid_frames.get();
+            // Outbound-ACK-flood counter: only reset when the transport actually
+            // drained (nghttp2 decrements per-send). Resetting per receive() lets
+            // a peer that never reads keep it under the limit forever.
+            if self.write_buffer.get().slice()[self.write_buffer_offset.get()..].is_empty() {
+                engine.note_outbound_drained();
+            }
+            // Apply any receive-window growth setLocalWindowSize() accumulated while a dispatch
+            // held this borrow.
+            let pending = self.pending_recv_window_growth.replace(0);
+            if pending > 0 {
+                engine.recv_window.grow(pending);
+            }
+            // Apply outbound DATA the legacy encoder wrote since the last batch, so the engine's
+            // send windows reflect what is actually in flight (§6.9.1 overflow stays peer-error
+            // only).
+            let sent = self.pending_send_window_consumed.replace(0);
+            if sent > 0 {
+                engine.send_window.consume(sent as i64);
+            }
+            self.pending_stream_send_consumed.with_mut(|v| {
+                // A client-initiated stream has no engine entry until its first inbound
+                // frame; dropping its consume here would leave the engine's send window
+                // permanently wider than the peer's view. Keep unmatched entries queued —
+                // but only while the legacy stream is still alive: a pushed stream the
+                // client never sends frames on would otherwise park its entry forever
+                // (and get scanned on every read).
+                v.retain(|&(id, n)| {
+                    if let Some(s) = engine.streams.get_mut(&id) {
+                        s.send_window.consume(n as i64);
+                        false
+                    } else {
+                        self.streams.get().contains_key(&id)
+                    }
+                });
+            });
+            // Register SETTINGS submissions the legacy encoder sent since the last batch, so the
+            // engine attributes each inbound ACK to the right submission (§6.5.3).
+            self.pending_settings_window_submissions.with_mut(|v| {
+                for w in v.drain(..) {
+                    engine.pending_local_settings_acks.push_back(w);
+                }
+            });
+            // Streams whose legacy lifecycle finished since the last batch: evict the engine
+            // entry and free the legacy slot. free_resources already ran for these (it is the
+            // only producer of this queue); duplicate ids are fine — remove() yields None.
+            if self.dispatch_depth.get() == 0 {
+                self.pending_engine_stream_closes.with_mut(|v| {
+                    for id in v.drain(..) {
+                        engine.close_stream(id);
+                        if let Some(stream) = self.streams.with_mut(|m| m.remove(&id)) {
+                            // SAFETY: stream is the heap::alloc'd *mut Stream owned by the
+                            // map entry just removed; free_resources ran when it was queued,
+                            // dispatch_depth == 0 means no caller below us on the stack holds
+                            // a `&mut Stream` across anything that can run user JS (every
+                            // such site arms enter_dispatch), ids never repeat within a
+                            // session, so this frees exactly once.
+                            unsafe {
+                                drop(bun_core::heap::take(stream));
+                            }
+                        }
+                    }
+                });
+            }
+        }
+        if self.rewrite_tail.get().is_empty() {
+            let feed = {
+                let mut guard = self.engine.borrow_mut();
+                guard.as_mut().unwrap().receive(self, bytes)
+            };
+            if feed.fatal {
+                // GOAWAY is on the wire and on_error tore the session down; feeding the
+                // remainder would only re-parse frames for a dead connection.
+                self.rewrite_tail.with_mut(|t| t.clear());
+                let _ = self.flush();
+                return;
+            }
+            let consumed = feed.consumed;
+            if consumed < bytes.len() {
+                self.rewrite_tail.with_mut(|t| {
+                    // A reentrant read() during dispatch may have queued bytes already; this
+                    // batch's unconsumed remainder precedes them on the wire.
+                    let _ = t.splice(0..0, bytes[consumed..].iter().copied());
+                });
+            }
+        } else {
+            let mut combined = self.rewrite_tail.with_mut(std::mem::take);
+            combined.extend_from_slice(bytes);
+            let feed = {
+                let mut guard = self.engine.borrow_mut();
+                guard.as_mut().unwrap().receive(self, &combined)
+            };
+            if feed.fatal {
+                self.rewrite_tail.with_mut(|t| t.clear());
+                let _ = self.flush();
+                return;
+            }
+            let consumed = feed.consumed;
+            self.rewrite_tail.with_mut(|t| {
+                if consumed < combined.len() {
+                    let _ = t.splice(0..0, combined[consumed..].iter().copied());
+                }
+            });
+        }
+        // Drain bytes queued by reentrant reads during the dispatches above. Stop when the engine
+        // makes no progress (an incomplete frame waiting for more input stays in the tail).
+        loop {
+            if self.rewrite_tail.get().is_empty() {
+                break;
+            }
+            let pending = self.rewrite_tail.with_mut(std::mem::take);
+            let feed = {
+                let mut guard = self.engine.borrow_mut();
+                guard.as_mut().unwrap().receive(self, &pending)
+            };
+            if feed.fatal {
+                self.rewrite_tail.with_mut(|t| t.clear());
+                let _ = self.flush();
+                return;
+            }
+            let consumed = feed.consumed;
+            self.rewrite_tail
+                .with_mut(|t| drop(t.splice(0..0, pending[consumed..].iter().copied())));
+            if consumed == 0 {
+                break;
+            }
+        }
+        // Uncork: flush the engine's queued control/response frames to the socket.
+        let _ = self.flush();
+    }
+}
+
+/// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
+impl crate::api::h2::connection::Sink for H2FrameParser {
+    fn write(&self, bytes: &[u8]) -> crate::api::h2::connection::WriteResult {
+        if self.write(bytes) {
+            crate::api::h2::connection::WriteResult::Sent
+        } else {
+            crate::api::h2::connection::WriteResult::Queued
+        }
+    }
+
+    fn on_error(&self, lib_error_code: i32, _last: u32, debug: &[u8]) {
+        // The engine detected a connection error and already wrote the GOAWAY: surface it to JS
+        // as the negative nghttp2-style library error code (the JS handler builds node's
+        // NghttpError from it: code ERR_HTTP2_ERROR, message nghttp2_strerror), then the end
+        // callback so the session tears itself down and closes the socket.
+        let g = self.global();
+        let chunk = self
+            .handlers
+            .get()
+            .binary_type
+            .to_js(debug, &g)
+            .unwrap_or(JSValue::UNDEFINED);
+        if lib_error_code != 0 {
+            self.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onError,
+                JSValue::js_number(lib_error_code as f64),
+                JSValue::js_number(self.last_stream_id.get() as f64),
+                chunk,
+            );
+        }
+        self.dispatch_with_extra(
+            JSH2FrameParser::Gc::onEnd,
+            JSValue::js_number(self.last_stream_id.get() as f64),
+            chunk,
+        );
+    }
+
+    fn on_too_many_invalid_frames(&self) {
+        // The peer exceeded maxSessionInvalidFrames: surface a session error. The JS error handler
+        // recognizes the string code and destroys the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
+        let code_js = self
+            .string_or_empty_to_js(b"ERR_HTTP2_TOO_MANY_INVALID_FRAMES")
+            .unwrap_or(JSValue::UNDEFINED);
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onError,
+            code_js,
+            JSValue::js_number(self.last_stream_id.get() as f64),
+            JSValue::UNDEFINED,
+        );
+    }
+
+    fn on_local_settings(&self, settings: &crate::api::h2::settings::Settings) {
+        // Bridge: our SETTINGS was ACKed — release the legacy outstanding-settings slot so the
+        // legacy settings() host fn doesn't hit MAX_PENDING_SETTINGS_ACK.
+        self.outstanding_settings
+            .set(self.outstanding_settings.get().saturating_sub(1));
+        let g = self.global();
+        let js = rewrite_settings_to_js(settings, g);
+        // node exposes the custom settings this side submitted on localSettings.customSettings.
+        if !self.custom_settings.get().is_empty() {
+            let custom = JSValue::create_empty_object(&g, self.custom_settings.get().len());
+            for (id, value) in self.custom_settings.get().iter() {
+                // Custom-setting ids are numeric property keys: route through the index-aware put.
+                let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
+                if let Err(err) =
+                    custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
+                {
+                    g.report_active_exception_as_unhandled(err);
+                    break;
+                }
+            }
+            js.put(&g, b"customSettings".as_slice(), custom);
+        }
+        self.dispatch(JSH2FrameParser::Gc::onLocalSettings, js);
+    }
+
+    fn on_remote_custom_setting(&self, id: u16, value: u32) {
+        // Only ids the user listed in remoteCustomSettings are surfaced (node semantics).
+        if !self.remote_custom_settings_filter.get().contains(&id) {
+            return;
+        }
+        self.remote_custom_settings.with_mut(|v| {
+            if let Some(entry) = v.iter_mut().find(|(eid, _)| *eid == id) {
+                entry.1 = value;
+            } else {
+                v.push((id, value));
+            }
+        });
+    }
+
+    fn on_remote_settings(&self, settings: &crate::api::h2::settings::Settings) {
+        // Bridge: the legacy outbound (frame sizing, window init) reads the remote_settings Cell.
+        let fp = FullSettingsPayload {
+            header_table_size: settings.header_table_size,
+            enable_push: settings.enable_push,
+            max_concurrent_streams: settings.max_concurrent_streams,
+            initial_window_size: settings.initial_window_size,
+            max_frame_size: settings.max_frame_size,
+            max_header_list_size: settings.max_header_list_size,
+            enable_connect_protocol: settings.enable_connect_protocol,
+            ..Default::default()
+        };
+        self.remote_settings.set(Some(fp));
+        // §6.9.2 (mirrors the legacy inbound): when the peer's INITIAL_WINDOW_SIZE grows, raise the
+        // send window of streams opened before its SETTINGS arrived (a client's first request is
+        // typically sent before the server's SETTINGS lands), then resume queued sends.
+        for (_, item) in self.streams.get().iter() {
+            // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
+            let stream = unsafe { &mut **item };
+            if settings.initial_window_size as u64 >= stream.remote_window_size {
+                stream.remote_window_size = settings.initial_window_size as u64;
+            }
+        }
+        let _ = self.flush();
+        let g = self.global();
+        let js = rewrite_settings_to_js(settings, g);
+        // Custom setting ids the user asked to track (remoteCustomSettings) and that the peer has
+        // sent are surfaced on remoteSettings.customSettings (node semantics).
+        if !self.remote_custom_settings.get().is_empty() {
+            let custom = JSValue::create_empty_object(&g, self.remote_custom_settings.get().len());
+            for (id, value) in self.remote_custom_settings.get().iter() {
+                // Custom-setting ids are numeric property keys: route through the index-aware put.
+                let key = bun_core::String::clone_utf8(format!("{id}").as_bytes());
+                if let Err(err) =
+                    custom.put_may_be_index(&g, &key, JSValue::js_number(*value as f64))
+                {
+                    g.report_active_exception_as_unhandled(err);
+                    break;
+                }
+            }
+            js.put(&g, b"customSettings".as_slice(), custom);
+        }
+        self.dispatch(JSH2FrameParser::Gc::onRemoteSettings, js);
+    }
+
+    fn on_ping(&self, payload: &[u8], is_ack: bool) {
+        if is_ack {
+            // node (Http2Session::HandlePingFrame): a PING ACK with no outstanding ping is
+            // unsolicited and treated as a connection error (NGHTTP2_ERR_PROTO -> NghttpError
+            // "Protocol error"); the JS error handler destroys the session.
+            if self.out_standing_pings.get() == 0 {
+                let g = self.global();
+                let chunk = self
+                    .handlers
+                    .get()
+                    .binary_type
+                    .to_js(b"unsolicited PING ACK", &g)
+                    .unwrap_or(JSValue::UNDEFINED);
+                self.dispatch_with_2_extra(
+                    JSH2FrameParser::Gc::onError,
+                    JSValue::js_number(crate::api::h2::wire::lib_error::PROTO as f64),
+                    JSValue::js_number(self.last_stream_id.get() as f64),
+                    chunk,
+                );
+                return;
+            }
+            // Balance the increment from send_ping: the legacy inbound path decremented this in
+            // handle_ping; the engine path must do the same or the outstanding-ping limit trips
+            // on long-lived sessions.
+            self.out_standing_pings
+                .set(self.out_standing_pings.get().saturating_sub(1));
+        }
+        let g = self.global();
+        // Skip the JS dispatch when conversion fails (VM terminating).
+        let Ok(buffer) = self.handlers.get().binary_type.to_js(payload, &g) else {
+            return;
+        };
+        self.dispatch_with_extra(JSH2FrameParser::Gc::onPing, buffer, JSValue::from(is_ack));
+    }
+
+    fn on_go_away(&self, code: u32, last: u32, debug: &[u8]) {
+        // Always a Buffer (possibly empty) to match the legacy dispatch shape. The lastStreamID
+        // surfaced to JS is the peer's Last-Stream-ID from the GOAWAY payload (node's documented
+        // semantics for the 'goaway' event).
+        let g = self.global();
+        let chunk = self
+            .handlers
+            .get()
+            .binary_type
+            .to_js(debug, &g)
+            .unwrap_or(JSValue::UNDEFINED);
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onGoAway,
+            JSValue::js_number(code as f64),
+            JSValue::js_number(last as f64),
+            chunk,
+        );
+    }
+
+    fn on_window_update(&self, stream_id: u32, increment: u32) {
+        bun_output::scoped_log!(
+            H2FrameParser,
+            "engine WU received stream={} inc={}",
+            stream_id,
+            increment
+        );
+        // Bridge: the legacy outbound reads its own window cells to decide how much DATA to send.
+        if stream_id == 0 {
+            self.remote_window_size
+                .set(self.remote_window_size.get() + increment as u64);
+        } else if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).remote_window_size += increment as u64 };
+        }
+        let _ = self.flush();
+    }
+
+    fn on_altsvc(&self, stream_id: u32, origin: &[u8], value: &[u8]) {
+        let origin_js = self
+            .string_or_empty_to_js(origin)
+            .unwrap_or(JSValue::UNDEFINED);
+        let value_js = self
+            .string_or_empty_to_js(value)
+            .unwrap_or(JSValue::UNDEFINED);
+        self.dispatch_with_2_extra(
+            JSH2FrameParser::Gc::onAltSvc,
+            origin_js,
+            value_js,
+            JSValue::js_number(stream_id as f64),
+        );
+    }
+
+    fn can_open_stream(&self) -> bool {
+        // node (Http2Session::OnBeginHeadersCallback): a new inbound stream is refused when the
+        // session is over its maxSessionMemory budget.
+        !self.is_over_session_memory_limit()
+    }
+
+    fn is_local_stream(&self, stream_id: u32) -> bool {
+        // The legacy outbound created an entry in the legacy streams map for every locally
+        // initiated stream (request/respond), so membership there means "we sent HEADERS on it".
+        self.streams.get().contains_key(&stream_id)
+    }
+
+    fn highest_started_stream_id(&self) -> u32 {
+        // handle_received_stream_id raises this for every stream registered on this side
+        // (including locally-initiated ones) and eviction never lowers it.
+        self.last_stream_id.get()
+    }
+
+    fn is_stream_reading(&self, stream_id: u32) -> bool {
+        match self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            Some(stream) => unsafe { !(*stream).reading_paused },
+            None => true,
+        }
+    }
+
+    fn on_push_promise(&self, _parent_id: u32, promised_id: u32) {
+        // The promised request headers follow via on_header/on_headers_complete for promised_id;
+        // remember it so that completion dispatches onStreamPush instead of onStreamHeaders.
+        self.rewrite_pending_push.set(promised_id);
+    }
+
+    fn on_origin(&self, payload: &[u8]) {
+        // Match the legacy dispatch shape: a single origin is passed as a string, multiple origins
+        // as an array — one onOrigin dispatch per ORIGIN frame.
+        let g = self.global();
+        let mut origin_value = JSValue::UNDEFINED;
+        let mut count: u32 = 0;
+        let mut rest = payload;
+        while rest.len() >= 2 {
+            let len = u16::from_be_bytes([rest[0], rest[1]]) as usize;
+            if 2 + len > rest.len() {
+                break;
+            }
+            let origin = &rest[2..2 + len];
+            let Ok(origin_js) = self.string_or_empty_to_js(origin) else {
+                return;
+            };
+            if count == 0 {
+                origin_value = origin_js;
+                origin_value.ensure_still_alive();
+            } else if count == 1 {
+                let Ok(array) = JSValue::create_empty_array(&g, 0) else {
+                    return;
+                };
+                array.ensure_still_alive();
+                let _ = array.push(&g, origin_value);
+                let _ = array.push(&g, origin_js);
+                origin_value = array;
+            } else {
+                let _ = origin_value.push(&g, origin_js);
+            }
+            count += 1;
+            rest = &rest[2 + len..];
+        }
+        if count == 0 {
+            return;
+        }
+        self.dispatch(JSH2FrameParser::Gc::onOrigin, origin_value);
+    }
+
+    fn on_stream_open(&self, stream_id: u32) {
+        // Bridge: create the legacy stream entry (the legacy outbound host fns — respond/sendData/
+        // rstStream/getStreamState — look streams up there) AND dispatch onStreamStart, which the
+        // legacy helper already does. The JS streamStart handler then calls setStreamContext,
+        // populating both `sctx` and the legacy stream context.
+        let _ = self.handle_received_stream_id(stream_id);
+    }
+
+    fn on_header(&self, _stream_id: u32, name: &[u8], value: &[u8], never_index: bool) {
+        // Accumulate raw bytes; the whole block is materialized into JS values in one
+        // native call at on_headers_complete (see H2HeadersMaterializer.cpp).
+        self.hdr_block.with_mut(|b| {
+            b.extend_from_slice(name);
+            b.extend_from_slice(value);
+        });
+        self.hdr_meta.with_mut(|m| {
+            let mut packed_name_len = name.len() as u32;
+            if never_index {
+                packed_name_len |= 0x8000_0000;
+            }
+            m.push(packed_name_len);
+            m.push(value.len() as u32);
+        });
+    }
+
+    fn on_headers_complete(&self, stream_id: u32, end_stream: bool, flags: u8) {
+        // Bridge: the JS endAfterHeaders getter reads the legacy stream's end_after_headers flag.
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).end_after_headers = end_stream };
+        }
+        // Materialize the accumulated block in a single native pass: the raw array, the
+        // node-shaped headers object, and the sensitive list (a zero-field block yields an
+        // empty array + object, matching the legacy decoder's upfront array).
+        let g = self.global();
+        let tuple = self.hdr_block.with_mut(|block| {
+            self.hdr_meta.with_mut(|meta| {
+                let field_count = meta.len() / 2;
+                // `call_zero_is_throw` performs the exception-presence check the JSC
+                // validator requires at this FFI boundary (zero return == throw).
+                // SAFETY: block/meta are live Vec borrows for the call duration; the
+                // returned tuple is rooted by the conservative stack scan until
+                // dispatched below.
+                let v = bun_jsc::call_zero_is_throw(&g, || unsafe {
+                    Bun__h2__materializeHeaders(&g, block.as_ptr(), meta.as_ptr(), field_count)
+                });
+                block.clear();
+                meta.clear();
+                v
+            })
+        });
+        let tuple = match tuple {
+            Ok(v) => v,
+            Err(err) => {
+                // Materialization threw (OOM); surface it and drop the block.
+                g.report_active_exception_as_unhandled(err);
+                return;
+            }
+        };
+        if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
+            // A PUSH_PROMISE header block: surface the promised request to JS as a pushed stream.
+            self.rewrite_pending_push.set(0);
+            self.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onStreamPush,
+                JSValue::js_number(stream_id as f64),
+                tuple,
+                JSValue::js_number(flags as f64),
+            );
+        } else {
+            let stream_ctx = self.rewrite_stream_ctx(stream_id);
+            self.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onStreamHeaders,
+                stream_ctx,
+                tuple,
+                JSValue::js_number(flags as f64),
+            );
+        }
+    }
+
+    fn on_data(&self, stream_id: u32, data: &[u8]) {
+        let g = self.global();
+        let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        // Skip the JS dispatch when conversion fails (VM terminating).
+        let Ok(chunk) = self.handlers.get().binary_type.to_js(data, &g) else {
+            return;
+        };
+        self.dispatch_with_extra(JSH2FrameParser::Gc::onStreamData, stream_ctx, chunk);
+    }
+
+    fn on_stream_end(&self, stream_id: u32, state: u8) {
+        // The engine only sees the inbound half while outbound flows through the legacy path, so it
+        // can't know the local side already sent END_STREAM. Combine with the legacy stream's local
+        // state: remote-closed (6) on a stream whose local half is closed (5/7) is fully CLOSED (7),
+        // mirroring the legacy handle_data/headers END_STREAM logic.
+        let mut effective = state;
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            let legacy_state = unsafe { (*stream).state };
+            if state == 6
+                && matches!(
+                    legacy_state,
+                    StreamState::HALF_CLOSED_LOCAL | StreamState::CLOSED
+                )
+            {
+                effective = 7;
+            }
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe {
+                (*stream).state = match effective {
+                    5 => StreamState::HALF_CLOSED_LOCAL,
+                    6 => StreamState::HALF_CLOSED_REMOTE,
+                    7 => StreamState::CLOSED,
+                    _ => legacy_state,
+                };
+            }
+        }
+        let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        self.dispatch_with_extra(
+            JSH2FrameParser::Gc::onStreamEnd,
+            stream_ctx,
+            JSValue::js_number(effective as f64),
+        );
+        if effective == 7 {
+            // Fully closed. In the sync-response flow the JS handler already half-closed the
+            // local side during the HEADERS dispatch, so the legacy send-close branch saw
+            // OPEN and skipped its teardown — free the legacy context here or it (its Strong
+            // JS stream root, and the engine's map entry) leaks per request.
+            if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+                // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+                unsafe { (*stream).free_resources::<false>(self) };
+            }
+            // Release the per-stream JS context root so it can be collected (also done by
+            // free_resources, but a stream may have no legacy entry).
+            self.sctx.with_mut(|m| {
+                m.remove(&stream_id);
+            });
+        }
+    }
+
+    fn on_stream_rejected(&self, stream_id: u32) {
+        // maxSessionRejectedStreams: counts only locally-initiated rejections (oversized or
+        // malformed header blocks) - peer-sent RST_STREAM frames must not consume the budget.
+        self.rejected_streams.set(self.rejected_streams.get() + 1);
+        if self.max_rejected_streams.get() <= self.rejected_streams.get() {
+            self.send_go_away(
+                stream_id,
+                ErrorCode::ENHANCE_YOUR_CALM,
+                b"ENHANCE_YOUR_CALM",
+                self.last_stream_id.get(),
+                true,
+            );
+        }
+    }
+
+    fn on_stream_reset(&self, stream_id: u32, code: u32) {
+        // A mid-block rejection (e.g. max_header_list_size) leaves partially-accumulated header
+        // arrays behind; drop them so they can't leak into the next stream's dispatch. The same
+        // applies to the pending PUSH_PROMISE marker - a rejected push block must not make the
+        // next HEADERS dispatch as a push.
+        self.hdr_block.with_mut(|b| b.clear());
+        self.hdr_meta.with_mut(|m| m.clear());
+        if self.rewrite_pending_push.get() == stream_id && stream_id != 0 {
+            self.rewrite_pending_push.set(0);
+        }
+        // Bridge: mark the legacy stream closed with the rst code (capturing the prior state for
+        // the aborted dispatch below).
+        let mut old_state: u8 = StreamState::OPEN as u8;
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe {
+                old_state = (*stream).state as u8;
+                (*stream).state = StreamState::CLOSED;
+                (*stream).rst_code = code;
+            }
+        }
+        let stream_ctx = self.rewrite_stream_ctx(stream_id);
+        if code == crate::api::h2::wire::ErrorCode::Cancel.as_u32() {
+            // A peer CANCEL is an abort, not an error (node emits 'aborted' and closes with
+            // rstCode 8 without an 'error' event).
+            self.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onAborted,
+                stream_ctx,
+                JSValue::UNDEFINED,
+                JSValue::js_number(old_state as f64),
+            );
+        } else {
+            self.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamError,
+                stream_ctx,
+                JSValue::js_number(code as f64),
+            );
+        }
+        // The reset closes the stream; free the legacy slot (queueing the engine eviction)
+        // and release its JS context root, mirroring the on_stream_end full-close path.
+        if let Some(stream) = self.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).free_resources::<false>(self) };
+        }
+        self.sctx.with_mut(|m| {
+            m.remove(&stream_id);
+        });
+    }
+}
+
+// Note: holds a `BackRef<H2FrameParser>` so the borrow of the parser ends
 // at `to_writer()`'s return — `Stream::flush_queue` interleaves field
 // reads/writes on the parser between `writer.write()` calls. R-2: `write()`
 // takes `&self` (Cell/JsCell-backed), so a shared back-reference is sufficient
@@ -4675,7 +6327,7 @@ impl bun_io::Write for DirectWriterStruct {
         if self.writer.write(data) {
             Ok(())
         } else {
-            Err(bun_core::err!("SocketClosed"))
+            Err(bun_core::Error::WriteFailed)
         }
     }
 }
@@ -4685,30 +6337,7 @@ impl bun_io::Write for DirectWriterStruct {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    #[bun_jsc::host_fn(method)]
-    pub fn set_encoding(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args_list = callframe.arguments_old::<1>();
-        if args_list.len < 1 {
-            return Err(global_object.throw(format_args!("Expected encoding argument")));
-        }
-        let bt = match BinaryType::from_js_value(global_object, args_list.ptr[0])? {
-            Some(bt) => bt,
-            None => {
-                let err = global_object.to_invalid_arguments(format_args!(
-                    "Expected 'binaryType' to be 'arraybuffer', 'uint8array', 'buffer'"
-                ));
-                return Err(global_object.throw_value(err));
-            }
-        };
-        this.handlers.with_mut(|h| h.binary_type = bt);
-        Ok(JSValue::UNDEFINED)
-    }
-
-    pub fn load_settings_from_js_value(
+    pub(crate) fn load_settings_from_js_value(
         &self,
         global_object: &JSGlobalObject,
         options: JSValue,
@@ -4719,9 +6348,12 @@ impl H2FrameParser {
 
         // R-2: read-modify-write the `Cell<FullSettingsPayload>` via a local copy.
         let mut local_settings = self.local_settings.get();
+        // The wire-emit mask is per-call: node's updateSettingsBuffer starts flags at 0 and only
+        // sends entries the user provided in this call. local_settings remains cumulative.
+        let mut explicit_settings: u8 = 0;
 
         macro_rules! number_setting {
-            ($key:literal, $field:ident, $min:expr, $max:expr, $err:literal) => {{
+            ($key:literal, $field:ident, $bit:expr, $min:expr, $max:expr, $err:literal) => {{
                 if let Some(v) = options.get(global_object, $key)? {
                     if v.is_number() {
                         let value = v.as_number();
@@ -4731,6 +6363,7 @@ impl H2FrameParser {
                                 .throw();
                         }
                         local_settings.$field = value as u32;
+                        explicit_settings |= $bit;
                     } else if !v.is_empty_or_undefined_or_null() {
                         return global_object
                             .err_http2_invalid_setting_value_range_error(concat!(
@@ -4747,6 +6380,7 @@ impl H2FrameParser {
         number_setting!(
             "headerTableSize",
             header_table_size,
+            SETTING_BIT_HEADER_TABLE_SIZE,
             0,
             MAX_HEADER_TABLE_SIZE_F64,
             "Expected headerTableSize to be a number between 0 and 2^32-1"
@@ -4755,6 +6389,7 @@ impl H2FrameParser {
         if let Some(enable_push) = options.get(global_object, "enablePush")? {
             if enable_push.is_boolean() {
                 local_settings.enable_push = if enable_push.as_boolean() { 1 } else { 0 };
+                explicit_settings |= SETTING_BIT_ENABLE_PUSH;
             } else if !enable_push.is_undefined() {
                 return global_object
                     .err_http2_invalid_setting_value("Expected enablePush to be a boolean")
@@ -4774,6 +6409,7 @@ impl H2FrameParser {
                 }
                 bun_output::scoped_log!(H2FrameParser, "initialWindowSize: {}", value as u32);
                 local_settings.initial_window_size = value as u32;
+                explicit_settings |= SETTING_BIT_INITIAL_WINDOW_SIZE;
             } else if !v.is_empty_or_undefined_or_null() {
                 return global_object
                     .err_http2_invalid_setting_value_range_error(
@@ -4786,6 +6422,7 @@ impl H2FrameParser {
         number_setting!(
             "maxFrameSize",
             max_frame_size,
+            SETTING_BIT_MAX_FRAME_SIZE,
             16384,
             MAX_FRAME_SIZE_F64,
             "Expected maxFrameSize to be a number between 16,384 and 2^24-1"
@@ -4793,6 +6430,7 @@ impl H2FrameParser {
         number_setting!(
             "maxConcurrentStreams",
             max_concurrent_streams,
+            SETTING_BIT_MAX_CONCURRENT_STREAMS,
             0,
             MAX_HEADER_TABLE_SIZE_F64,
             "Expected maxConcurrentStreams to be a number between 0 and 2^32-1"
@@ -4800,6 +6438,7 @@ impl H2FrameParser {
         number_setting!(
             "maxHeaderListSize",
             max_header_list_size,
+            SETTING_BIT_MAX_HEADER_LIST_SIZE,
             0,
             MAX_HEADER_TABLE_SIZE_F64,
             "Expected maxHeaderListSize to be a number between 0 and 2^32-1"
@@ -4807,14 +6446,29 @@ impl H2FrameParser {
         number_setting!(
             "maxHeaderSize",
             max_header_list_size,
+            SETTING_BIT_MAX_HEADER_LIST_SIZE,
             0,
             MAX_HEADER_TABLE_SIZE_F64,
             "Expected maxHeaderSize to be a number between 0 and 2^32-1"
         );
 
-        self.local_settings.set(local_settings);
+        if let Some(ecp) = options.get(global_object, "enableConnectProtocol")? {
+            if ecp.is_boolean() {
+                local_settings.enable_connect_protocol = if ecp.as_boolean() { 1 } else { 0 };
+                explicit_settings |= SETTING_BIT_ENABLE_CONNECT_PROTOCOL;
+            } else if !ecp.is_undefined() {
+                return global_object
+                    .err_http2_invalid_setting_value(
+                        "Expected enableConnectProtocol to be a boolean",
+                    )
+                    .throw();
+            }
+        }
 
-        // Validate customSettings
+        // Stage customSettings before committing anything — a later validation throw must not
+        // leave partial state installed for the next submission.
+        let mut staged_custom: Vec<(u16, u32)> = Vec::new();
+        // Validate customSettings and remember them so they go on the wire with our SETTINGS.
         if let Some(custom_settings) = options.get(global_object, "customSettings")? {
             if !custom_settings.is_undefined() {
                 let Some(custom_settings_obj) = custom_settings.get_object() else {
@@ -4846,8 +6500,8 @@ impl H2FrameParser {
 
                     // Validate setting ID (key) is in range [0, 0xFFFF]
                     let setting_id_str = prop_name.to_utf8();
-                    // Parse bytes directly (ASCII decimal) — Zig: std.fmt.parseInt(u32, slice, 10).
-                    // Do not insert UTF-8 validation on external data per PORTING.md §Strings.
+                    // Parse bytes directly (ASCII decimal); do not insert
+                    // UTF-8 validation on external data.
                     let Some(setting_id) =
                         bun_core::parse_int::<u32>(setting_id_str.slice(), 10).ok()
                     else {
@@ -4876,6 +6530,7 @@ impl H2FrameParser {
                                 )
                                 .throw();
                         }
+                        staged_custom.push((setting_id as u16, value as u32));
                     } else {
                         return global_object
                             .err_http2_invalid_setting_value_range_error(
@@ -4886,11 +6541,57 @@ impl H2FrameParser {
                 }
             }
         }
+
+        // remoteCustomSettings (session option, not a SETTINGS parameter): non-standard setting
+        // ids whose received values should be exposed on remoteSettings.customSettings. Staged
+        // before any state is committed so a throwing getter / iterator (Proxy/getter on the
+        // user array) does not leave the four cells above already installed.
+        let mut staged_remote_filter: Vec<u16> = Vec::new();
+        if let Some(remote_custom) = options.get(global_object, "remoteCustomSettings")? {
+            if remote_custom.is_array() {
+                let mut value_iter = remote_custom.array_iterator(global_object)?;
+                while let Some(item) = value_iter.next()? {
+                    if !item.is_number() {
+                        continue;
+                    }
+                    let id = item.as_number();
+                    if !(0.0..=65535.0).contains(&id) {
+                        continue;
+                    }
+                    let id = id as u16;
+                    if !staged_remote_filter.contains(&id)
+                        && staged_remote_filter.len() < MAX_CUSTOM_SETTINGS
+                    {
+                        staged_remote_filter.push(id);
+                    }
+                }
+            }
+        }
+
+        self.local_settings.set(local_settings);
+        self.explicit_settings.set(explicit_settings);
+        self.custom_settings.with_mut(|cs| {
+            for &(id, value) in &staged_custom {
+                if let Some(entry) = cs.iter_mut().find(|(eid, _)| *eid == id) {
+                    entry.1 = value;
+                } else if cs.len() < MAX_CUSTOM_SETTINGS {
+                    cs.push((id, value));
+                }
+            }
+        });
+        self.wire_custom_settings.with_mut(|cs| *cs = staged_custom);
+        self.remote_custom_settings_filter.with_mut(|f| {
+            for id in staged_remote_filter {
+                if !f.contains(&id) && f.len() < MAX_CUSTOM_SETTINGS {
+                    f.push(id);
+                }
+            }
+        });
         Ok(())
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn update_settings(
+    pub(crate) fn update_settings(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -4908,7 +6609,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_local_window_size(
+    pub(crate) fn set_local_window_size(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -4940,6 +6641,28 @@ impl H2FrameParser {
         if window_size_value as u64 > old_window_size {
             let increment: u32 = (window_size_value as u64 - old_window_size) as u32;
             this.send_window_update(0, UInt31WithReserved::init(increment, false));
+            // Keep the rewrite engine's receive window in sync: we just advertised a larger
+            // window, so the engine must accept that much DATA without tripping its overflow
+            // check. try_borrow: setLocalWindowSize can be called from JS inside a dispatch
+            // (rewrite_read holds the engine borrow there); deferring the sync to the pending
+            // delta keeps that path panic-free.
+            match this.engine.try_borrow_mut() {
+                Ok(mut guard) => match guard.as_mut() {
+                    Some(engine) => engine.recv_window.grow(increment as i64),
+                    None => {
+                        // The engine is created lazily on the first inbound read; carry the
+                        // growth forward so it applies when that happens.
+                        this.pending_recv_window_growth
+                            .set(this.pending_recv_window_growth.get() + increment as i64);
+                    }
+                },
+                Err(_) => {
+                    // A dispatch is in progress; accumulate the delta for rewrite_read to apply
+                    // when the borrow is released.
+                    this.pending_recv_window_growth
+                        .set(this.pending_recv_window_growth.get() + increment as i64);
+                }
+            }
         }
         for (_, item) in this.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
@@ -4953,7 +6676,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_current_state(
+    pub(crate) fn get_current_state(
         this: &Self,
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -5013,7 +6736,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn goaway(
+    pub(crate) fn goaway(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5029,11 +6752,8 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
         }
         let error_code = error_code_arg.to_int32();
-        if error_code < 1 && error_code > 13 {
-            return Err(global_object.throw(format_args!("invalid errorCode")));
-        }
 
-        let mut last_stream_id = this.last_stream_id.get();
+        let mut last_stream_id = this.last_peer_stream_id.get();
         if args_list.len >= 2 {
             let last_stream_arg = args_list.ptr[1];
             if !last_stream_arg.is_empty_or_undefined_or_null() {
@@ -5043,12 +6763,14 @@ impl H2FrameParser {
                     );
                 }
                 let id = last_stream_arg.to_int32();
-                if id < 0 && id as u32 > MAX_STREAM_ID {
-                    return Err(global_object.throw(format_args!(
-                        "Expected lastStreamId to be a number between 1 and 2147483647"
-                    )));
+                // node: a lastStreamID of 0 or less (the JS wrapper's default) means "use the
+                // last processed stream id"; only an explicit positive id overrides it
+                // (validateNumber imposes no range, so negative values reach this path too).
+                // Without this, graceful close puts Last-Stream-ID=0 on the wire, telling the
+                // peer that every in-flight stream is safe to retry.
+                if id > 0 {
+                    last_stream_id = u32::try_from(id).expect("int cast");
                 }
-                last_stream_id = u32::try_from(id).expect("int cast");
             }
             if args_list.len >= 3 {
                 let opaque_data_arg = args_list.ptr[2];
@@ -5073,7 +6795,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn ping(
+    pub(crate) fn ping(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5083,25 +6805,24 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected payload argument")));
         }
 
+        // node (Http2Session::AddPing): when the outstanding-ping budget is exhausted, ping()
+        // returns false and the JS callback is invoked with ERR_HTTP2_PING_CANCEL — it does NOT
+        // throw.
         if this.out_standing_pings.get() >= this.max_outstanding_pings.get() {
-            let exception = global_object.to_type_error(
-                bun_jsc::ErrorCode::HTTP2_PING_CANCEL,
-                format_args!("HTTP2 ping cancelled"),
-            );
-            return Err(global_object.throw_value(exception));
+            return Ok(JSValue::FALSE);
         }
 
         if let Some(array_buffer) = args_list.ptr[0].as_array_buffer(global_object) {
             let slice = array_buffer.slice();
             this.send_ping(false, slice);
-            return Ok(JSValue::UNDEFINED);
+            return Ok(JSValue::TRUE);
         }
 
         Err(global_object.throw(format_args!("Expected payload to be a Buffer")))
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn origin(
+    pub(crate) fn origin(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5112,7 +6833,7 @@ impl H2FrameParser {
             let mut buffer = [0u8; FrameHeader::BYTE_SIZE];
             let mut stream = FixedBufferStream::new(&mut buffer);
 
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
                 stream_identifier: 0,
@@ -5137,7 +6858,7 @@ impl H2FrameParser {
             let mut buffer = [0u8; FrameHeader::BYTE_SIZE + 2];
             let mut stream = FixedBufferStream::new(&mut buffer);
 
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
                 stream_identifier: 0,
@@ -5151,7 +6872,7 @@ impl H2FrameParser {
             }
         } else if origin_arg.is_array() {
             let mut buffer = vec![0u8; FrameHeader::BYTE_SIZE + 16384];
-            // PERF(port): was stack array [FrameHeader.byteSize + 16384]u8 — heap to avoid 16K stack frame
+            // Heap-allocated to avoid a 16K stack frame.
             let mut stream = FixedBufferStream::new(&mut buffer);
             stream.seek_to(FrameHeader::BYTE_SIZE);
             let mut value_iter = origin_arg.array_iterator(global_object)?;
@@ -5185,7 +6906,7 @@ impl H2FrameParser {
             }
 
             let total_length: u32 = u32::try_from(stream.pos).expect("int cast");
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_ORIGIN as u8,
                 flags: 0,
                 stream_identifier: 0,
@@ -5199,7 +6920,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn altsvc(
+    pub(crate) fn altsvc(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5256,7 +6977,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_end_after_headers(
+    pub(crate) fn get_end_after_headers(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5285,7 +7006,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn is_stream_aborted(
+    pub(crate) fn is_stream_aborted(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5321,7 +7042,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_stream_state(
+    pub(crate) fn get_stream_state(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5384,7 +7105,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_stream_priority(
+    pub(crate) fn set_stream_priority(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5408,8 +7129,8 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        // The `options` getters below can run user JS while `stream` is borrowed.
+        let mut stream = this.enter_stream_dispatch(stream_ptr);
 
         if !stream.can_send_data() && !stream.can_receive_data() {
             return Ok(JSValue::FALSE);
@@ -5477,11 +7198,11 @@ impl H2FrameParser {
             let stream_identifier =
                 UInt31WithReserved::init(stream.stream_dependency, stream.exclusive);
 
-            let mut priority = StreamPriority {
+            let priority = StreamPriority {
                 stream_identifier: stream_identifier.to_uint32(),
                 weight: stream.weight as u8,
             };
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_PRIORITY as u8,
                 flags: 0,
                 stream_identifier: stream.id,
@@ -5496,7 +7217,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn rst_stream(
+    pub(crate) fn rst_stream(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5518,14 +7239,51 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         }
 
-        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
         if !error_arg.is_number() {
             return Err(global_object.throw(format_args!("Invalid ErrorCode")));
         }
-
         let error_code = error_arg.to_u32();
+
+        // maxSessionRejectedStreams: a REFUSED_STREAM reset from the JS layer (the
+        // max-concurrent-streams refusal in streamStart) is the same rejection class the engine
+        // counts; budget it identically so a flood of refused streams still tears the session
+        // down. Server-side only: a client's GOAWAY sweep resets its own unprocessed streams
+        // with REFUSED_STREAM and must not consume the budget.
+        if error_code == ErrorCode::REFUSED_STREAM.0 && this.is_server.get() {
+            this.rejected_streams.set(this.rejected_streams.get() + 1);
+            if this.max_rejected_streams.get() <= this.rejected_streams.get() {
+                this.send_go_away(
+                    stream_id,
+                    ErrorCode::ENHANCE_YOUR_CALM,
+                    b"ENHANCE_YOUR_CALM",
+                    this.last_stream_id.get(),
+                    true,
+                );
+                return Ok(JSValue::UNDEFINED);
+            }
+        }
+
+        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            // Streams the legacy bookkeeping never registered (e.g. peer-initiated pushed streams
+            // surfaced by the rewrite engine) get the RST_STREAM written directly. The frame is
+            // built here rather than through the engine so this stays callable from inside an
+            // engine dispatch (the engine cell may already be borrowed).
+            //
+            // A NO_ERROR reset for an unknown id is always a no-op: it reaches here from the
+            // deferred JS close path (rstNextTick after _destroy) once a cleanly-completed
+            // stream's entry has been evicted. Node sends no RST for cleanly-closed streams;
+            // writing one makes the peer answer with RST(STREAM_CLOSED) per request.
+            if error_code != ErrorCode::NO_ERROR.0 {
+                let mut frame = [0u8; 13];
+                frame[2] = 4; // length = 4
+                frame[3] = 3; // RST_STREAM
+                frame[5..9].copy_from_slice(&stream_id.to_be_bytes());
+                frame[9..13].copy_from_slice(&error_code.to_be_bytes());
+                this.write(&frame);
+                let _ = this.flush();
+            }
+            return Ok(JSValue::TRUE);
+        };
 
         // SAFETY: stream is a *mut Stream from self.streams; valid while the map entry exists
         this.end_stream(unsafe { &mut *stream }, ErrorCode(error_code));
@@ -5539,16 +7297,23 @@ impl H2FrameParser {
 // ──────────────────────────────────────────────────────────────────────────
 
 impl H2FrameParser {
-    // get memory usage in MB
-    fn get_session_memory_usage(&self) -> usize {
-        (self.write_buffer.get().len_u32() as usize + self.queued_data_size.get() as usize)
-            / 1024
-            / 1024
+    // get memory usage in bytes
+    fn get_session_memory_usage_bytes(&self) -> usize {
+        let stream_count = self.streams.get().len();
+        self.write_buffer.get().len_u32() as usize
+            + self.queued_data_size.get() as usize
+            + stream_count * core::mem::size_of::<Stream>()
+    }
+
+    // node's IsAvailableSessionMemory: byte-exact comparison against the configured MiB budget.
+    // The previous integer-MiB floor allowed nearly one extra MiB through.
+    fn is_over_session_memory_limit(&self) -> bool {
+        self.get_session_memory_usage_bytes() > self.max_session_memory.get() as usize * 1024 * 1024
     }
 
     // get memory in bytes
     #[bun_jsc::host_fn(method)]
-    pub fn get_buffer_size(
+    pub(crate) fn get_buffer_size(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -5558,7 +7323,29 @@ impl H2FrameParser {
         ))
     }
 
-    fn send_data(&self, stream: &mut Stream, payload: &[u8], close: bool, callback: JSValue) {
+    /// Returns `(settled_state, callback_deferred)`.
+    ///
+    /// `settled_state` is the state code the close tail settled on (5 = HALF_CLOSED_LOCAL,
+    /// 7 = CLOSED, 0 = no close-tail transition ran). With
+    /// `suppress_half_closed_local_dispatch` the HALF_CLOSED_LOCAL onStreamEnd dispatch
+    /// is skipped — the synchronous caller (writeStream) hands the state to JS via its
+    /// return value instead of re-entering the VM mid-host-call.
+    ///
+    /// With `defer_write_callback`, when the payload is handed to the socket without being
+    /// queued (no flow-control / socket backpressure) the write callback is NOT invoked here:
+    /// `callback_deferred` is true and the JS caller completes it asynchronously instead, so a
+    /// node Writable's `_write` callback never settles synchronously inside `write()`. When the
+    /// payload is queued, the engine still owns the callback and invokes it once the queued
+    /// frames are flushed (backpressure cleared), exactly as before.
+    fn send_data(
+        &self,
+        stream: &mut Stream,
+        payload: &[u8],
+        close: bool,
+        callback: JSValue,
+        suppress_half_closed_local_dispatch: bool,
+        defer_write_callback: bool,
+    ) -> (u8, bool) {
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
@@ -5574,12 +7361,12 @@ impl H2FrameParser {
 
         let stream_id = stream.id;
         let mut enqueued = false;
-        self.ref_();
+        let _keepalive = self.keepalive();
 
         let can_close = close && !stream.wait_for_trailers;
         if payload.is_empty() {
             // empty payload we still need to send a frame
-            let mut data_header = FrameHeader {
+            let data_header = FrameHeader {
                 type_: FrameType::HTTP_FRAME_DATA as u8,
                 flags: if can_close {
                     DataFrameFlags::END_STREAM as u8
@@ -5631,6 +7418,9 @@ impl H2FrameParser {
                     || self.outbound_queue_size.get() > 0
                     || is_flow_control_limited
                 {
+                    // Preserve wire order: anything already batched goes out before the
+                    // queued remainder is flushed later by the drain path.
+                    self.flush_batch_buffer();
                     enqueued = true;
                     // write the full frame in memory and queue the frame
                     // the callback will only be called after the last frame is sended
@@ -5663,6 +7453,7 @@ impl H2FrameParser {
                     stream.remote_used_window_size += payload_size as u64;
                     self.remote_used_window_size
                         .set(self.remote_used_window_size.get() + payload_size as u64);
+                    self.note_engine_send_consumed(stream_id, payload_size as u64);
                     let mut flags: u8 = if end_stream {
                         DataFrameFlags::END_STREAM as u8
                     } else {
@@ -5671,37 +7462,106 @@ impl H2FrameParser {
                     if padding != 0 {
                         flags |= DataFrameFlags::PADDED as u8;
                     }
-                    let mut data_header = FrameHeader {
+                    let data_header = FrameHeader {
                         type_: FrameType::HTTP_FRAME_DATA as u8,
                         flags,
                         stream_identifier: stream_id,
                         length: u32::try_from(payload_size).expect("int cast"),
                     };
-                    let mut writer = self.to_writer();
-                    let _ = data_header.write(&mut writer);
-                    if padding != 0 {
-                        SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
-                            // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
-                            unsafe {
-                                core::ptr::copy(
-                                    slice.as_ptr(),
-                                    buffer.as_mut_ptr().add(1),
-                                    slice.len(),
-                                );
-                            }
-                            buffer[0] = padding;
-                            let _ = writer.write_all(&buffer[0..payload_size]);
-                        });
+                    if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
+                        // Single-frame payload: the cork coalesces it with neighbors.
+                        let mut writer = self.to_writer();
+                        let _ = data_header.write(&mut writer);
+                        if padding != 0 {
+                            SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
+                                // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
+                                unsafe {
+                                    core::ptr::copy(
+                                        slice.as_ptr(),
+                                        buffer.as_mut_ptr().add(1),
+                                        slice.len(),
+                                    );
+                                }
+                                buffer[0] = padding;
+                                buffer[1 + slice.len()..payload_size].fill(0);
+                                let _ = writer.write_all(&buffer[0..payload_size]);
+                            });
+                        } else {
+                            let _ = writer.write_all(slice);
+                        }
                     } else {
-                        let _ = writer.write_all(slice);
+                        // Multi-frame payload: accumulate header + slice in the batch so
+                        // the whole write reaches the socket in one syscall (and, on TLS,
+                        // far fewer SSL_writes) instead of one flush per frame. Plain TCP
+                        // records payload slices by reference and flushes with writev —
+                        // TLS cannot vectorize (SSL_write must consume the bytes to seal
+                        // records), so it keeps the contiguous copy.
+                        let vectorize = matches!(
+                            self.native_socket.get(),
+                            BunSocket::Tcp(_) | BunSocket::TcpWriteonly(_)
+                        ) && !self.has_backpressure();
+                        BATCH_BUFFER.with_borrow_mut(|batch| {
+                            if batch.is_empty() {
+                                batch.reserve(if vectorize {
+                                    1024
+                                } else {
+                                    payload.len()
+                                        + (payload.len() / MAX_PAYLOAD_SIZE_WITHOUT_FRAME + 2)
+                                            * FrameHeader::BYTE_SIZE
+                                });
+                                self.drain_cork_into(batch);
+                                if vectorize && !batch.is_empty() {
+                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
+                                        segs.push(BatchSegment::Batch {
+                                            off: 0,
+                                            len: batch.len() as u32,
+                                        })
+                                    });
+                                }
+                            }
+                            let header_off = batch.len();
+                            let _ = data_header.write(batch);
+                            if padding != 0 {
+                                batch.push(padding);
+                                batch.extend_from_slice(slice);
+                                batch.resize(batch.len() + payload_size - slice.len() - 1, 0);
+                                if vectorize {
+                                    BATCH_SEGMENTS.with_borrow_mut(|segs| {
+                                        segs.push(BatchSegment::Batch {
+                                            off: header_off as u32,
+                                            len: (batch.len() - header_off) as u32,
+                                        })
+                                    });
+                                }
+                            } else if vectorize {
+                                BATCH_SEGMENTS.with_borrow_mut(|segs| {
+                                    segs.push(BatchSegment::Batch {
+                                        off: header_off as u32,
+                                        len: (batch.len() - header_off) as u32,
+                                    });
+                                    segs.push(BatchSegment::Ext {
+                                        ptr: slice.as_ptr(),
+                                        len: slice.len() as u32,
+                                    });
+                                });
+                            } else {
+                                batch.extend_from_slice(slice);
+                            }
+                        });
                     }
                 }
             }
+            self.flush_batch_buffer();
         }
 
-        // defer block from Zig
+        let mut settled_state: u8 = 0;
+        let mut callback_deferred = false;
         if !enqueued {
-            self.dispatch_write_callback(callback);
+            if defer_write_callback && callback.is_callable() {
+                callback_deferred = true;
+            } else {
+                self.dispatch_write_callback(callback);
+            }
             if close {
                 if stream.wait_for_trailers {
                     self.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
@@ -5714,19 +7574,24 @@ impl H2FrameParser {
                     } else {
                         stream.state = StreamState::HALF_CLOSED_LOCAL;
                     }
-                    self.dispatch_with_extra(
-                        JSH2FrameParser::Gc::onStreamEnd,
-                        identifier,
-                        JSValue::js_number(stream.state as u8 as f64),
-                    );
+                    settled_state = stream.state as u8;
+                    if !(suppress_half_closed_local_dispatch
+                        && stream.state == StreamState::HALF_CLOSED_LOCAL)
+                    {
+                        self.dispatch_with_extra(
+                            JSH2FrameParser::Gc::onStreamEnd,
+                            identifier,
+                            JSValue::js_number(stream.state as u8 as f64),
+                        );
+                    }
                 }
             }
         }
-        self.deref();
+        (settled_state, callback_deferred)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn no_trailers(
+    pub(crate) fn no_trailers(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5756,17 +7621,65 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        this.send_data(stream, b"", true, JSValue::UNDEFINED);
+        let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        Ok(JSValue::UNDEFINED)
+    }
+
+    /// node's strictSingleValueFields option (default true): when disabled, duplicate
+    /// single-value headers are encoded as-is instead of being rejected.
+    fn single_value_index_checked(&self, name: &[u8]) -> Option<usize> {
+        if !self.strict_single_value_fields.get() {
+            return None;
+        }
+        single_value_headers_index_of(name)
+    }
+
+    /// setStreamReading(streamId, reading): the JS readable for the stream paused (false) or
+    /// resumed (true). While paused the engine stops replenishing the stream's receive window;
+    /// on resume the deferred replenishment is sent immediately so a peer stalled on a zero
+    /// window is released without waiting for further inbound traffic.
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn set_stream_reading(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        let args_list = callframe.arguments_old::<2>();
+        if args_list.len < 2 {
+            return Err(
+                global_object.throw(format_args!("Expected streamId and reading arguments"))
+            );
+        }
+        let stream_arg = args_list.ptr[0];
+        if !stream_arg.is_number() {
+            return Ok(JSValue::UNDEFINED);
+        }
+        let stream_id = stream_arg.to_u32();
+        let reading = args_list.ptr[1].to_boolean();
+        let Some(stream) = this.streams.get().get(&stream_id).copied() else {
+            // The stream already finished (or never reached the wire); nothing to backpressure.
+            return Ok(JSValue::UNDEFINED);
+        };
+        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+        unsafe { (*stream).reading_paused = !reading };
+        if reading {
+            // Resumed: send the deferred WINDOW_UPDATE now. try_borrow: a resume issued from
+            // inside a dispatch (the engine borrow is held by rewrite_read) is covered by the
+            // batch-end replenish instead.
+            if let Ok(mut guard) = this.engine.try_borrow_mut() {
+                if let Some(engine) = guard.as_mut() {
+                    engine.replenish_stream(this, stream_id);
+                }
+            }
+            let _ = this.flush();
+        }
         Ok(JSValue::UNDEFINED)
     }
 
     /// validate header name and convert to lowecase if needed
-    fn to_valid_header_name<'a>(
-        in_: &'a [u8],
-        out: &'a mut [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
+    fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> crate::Result<&'a [u8]> {
         if in_.len() > 4096 {
-            return Err(bun_core::err!("InvalidHeaderName"));
+            return Err(crate::Error::InvalidHeaderName);
         }
         debug_assert!(out.len() >= in_.len());
         let mut in_slice = in_;
@@ -5805,11 +7718,11 @@ impl H2FrameParser {
                     b':' => {
                         // only allow pseudoheaders at the beginning
                         if i != 0 || any {
-                            return Err(bun_core::err!("InvalidHeaderName"));
+                            return Err(crate::Error::InvalidHeaderName);
                         }
                         continue;
                     }
-                    _ => return Err(bun_core::err!("InvalidHeaderName")),
+                    _ => return Err(crate::Error::InvalidHeaderName),
                 }
             }
 
@@ -5822,8 +7735,24 @@ impl H2FrameParser {
         Ok(if any { &out[0..in_.len()] } else { in_ })
     }
 
+    /// Property lookups by name go through `getIfPropertyExistsImpl`, which must
+    /// not be handed an integer-index-like name (debug assert). Header names that
+    /// are all ASCII digits are valid HTTP tokens but can never be marked
+    /// sensitive, so callers skip the lookup for them.
+    fn is_index_like_name(name: &[u8]) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        for &c in name {
+            if !c.is_ascii_digit() {
+                return false;
+            }
+        }
+        true
+    }
+
     #[bun_jsc::host_fn(method)]
-    pub fn send_trailers(
+    pub(crate) fn send_trailers(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -5851,8 +7780,9 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        // The header/sensitive-object getters and value coercions below can run user JS
+        // while `stream` is borrowed.
+        let mut stream = this.enter_stream_dispatch(stream_ptr);
 
         let Some(headers_obj) = headers_arg.get_object() else {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
@@ -5864,7 +7794,6 @@ impl H2FrameParser {
             );
         }
 
-        // PERF(port): was BufferFallbackAllocator over shared_request_buffer — using plain Vec
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -5912,67 +7841,79 @@ impl H2FrameParser {
                 );
                 return Err(global_object.throw_value(exception));
             }
-            let validated_name =
-                match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                    Ok(n) => n,
-                    Err(_) => {
-                        let exception = global_object.to_type_error(
-                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                            format_args!(
-                                "The arguments Header name is invalid. Received {}",
-                                BStr::new(name)
-                            ),
-                        );
-                        return Err(global_object.throw_value(exception));
-                    }
-                };
+            let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                Ok(n) => n,
+                Err(_) => {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                        format_args!(
+                            "The arguments Header name is invalid. Received {}",
+                            BStr::new(name)
+                        ),
+                    );
+                    return Err(global_object.throw_value(exception));
+                }
+            };
 
             // closure for encode error handling
-            let mut handle_encode =
-                |this: &Self, value: &[u8], never_index: bool| -> JsResult<Option<JSValue>> {
-                    bun_output::scoped_log!(
-                        H2FrameParser,
-                        "encode header {} {}",
-                        BStr::new(validated_name),
-                        BStr::new(value)
+            let mut handle_encode = |this: &Self,
+                                     value: &[u8],
+                                     never_index: bool|
+             -> JsResult<Option<JSValue>> {
+                if !is_valid_header_value(value) {
+                    let exception = global_object.to_type_error(
+                        bun_jsc::ErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                        format_args!("Invalid value for header \"{}\"", BStr::new(validated_name)),
                     );
-                    match this.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        Ok(_) => Ok(None),
-                        Err(err) if err == bun_core::err!("OutOfMemory") => {
-                            Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")))
-                        }
-                        Err(_) => {
-                            stream.state = StreamState::CLOSED;
-                            let identifier = stream.get_identifier();
-                            identifier.ensure_still_alive();
-                            stream.free_resources::<false>(this);
-                            stream.rst_code = ErrorCode::FRAME_SIZE_ERROR.0;
-                            this.dispatch_with_2_extra(
-                                JSH2FrameParser::Gc::onFrameError,
-                                identifier,
-                                JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
-                                JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
-                            );
-                            this.dispatch_with_extra(
-                                JSH2FrameParser::Gc::onStreamError,
-                                identifier,
-                                JSValue::js_number(stream.rst_code as f64),
-                            );
-                            Ok(Some(JSValue::UNDEFINED))
-                        }
+                    return Err(global_object.throw_value(exception));
+                }
+                bun_output::scoped_log!(
+                    H2FrameParser,
+                    "encode header {} {}",
+                    BStr::new(validated_name),
+                    BStr::new(value)
+                );
+                match this.encode_header_into_list(
+                    &mut encoded_headers,
+                    validated_name,
+                    value,
+                    never_index,
+                ) {
+                    Ok(_) => Ok(None),
+                    Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
+                        Err(global_object.throw(format_args!("Failed to allocate header buffer")))
                     }
-                };
+                    Err(_) => {
+                        let identifier = stream.get_identifier();
+                        identifier.ensure_still_alive();
+                        this.dispatch_with_2_extra(
+                            JSH2FrameParser::Gc::onFrameError,
+                            identifier,
+                            JSValue::js_number(FrameType::HTTP_FRAME_HEADERS as u8 as f64),
+                            JSValue::js_number(ErrorCode::FRAME_SIZE_ERROR.0 as f64),
+                        );
+                        // The trailer block cannot be encoded into a legal frame: reset the
+                        // stream so the peer sees RST_STREAM(FRAME_SIZE_ERROR), then shut the
+                        // session down gracefully — the encoder state is no longer trustworthy
+                        // (node/nghttp2 treat this as fatal and close with a NO_ERROR GOAWAY).
+                        let triggering_id = stream.id;
+                        this.end_stream(&mut stream, ErrorCode::FRAME_SIZE_ERROR);
+                        this.send_go_away(
+                            triggering_id,
+                            ErrorCode::NO_ERROR,
+                            b"",
+                            this.last_stream_id.get(),
+                            true,
+                        );
+                        Ok(Some(JSValue::UNDEFINED))
+                    }
+                }
+            };
 
             if js_value.js_type().is_array() {
                 let mut value_iter = js_value.array_iterator(global_object)?;
 
-                if let Some(idx) = single_value_headers_index_of(validated_name) {
+                if let Some(idx) = this.single_value_index_checked(validated_name) {
                     if value_iter.len > 1 || single_value_headers[idx] {
                         let exception = global_object.to_type_error(
                             bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
@@ -6013,11 +7954,16 @@ impl H2FrameParser {
                         }
                     };
 
-                    let never_index =
+                    // All-digit names can't be passed to get_truthy (integer-index-like names
+                    // trip a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
+                    let never_index = if Self::is_index_like_name(validated_name) {
+                        false
+                    } else {
                         match sensitive_arg.get_truthy(global_object, validated_name)? {
                             Some(_) => true,
                             None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                        };
+                        }
+                    };
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
@@ -6027,7 +7973,7 @@ impl H2FrameParser {
                     }
                 }
             } else {
-                if let Some(idx) = single_value_headers_index_of(validated_name) {
+                if let Some(idx) = this.single_value_index_checked(validated_name) {
                     if single_value_headers[idx] {
                         let exception = global_object.to_type_error(
                             bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
@@ -6055,9 +8001,15 @@ impl H2FrameParser {
                     }
                 };
 
-                let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
-                    Some(_) => true,
-                    None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                // All-digit names can't be passed to get_truthy (integer-index-like names trip
+                // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
+                let never_index = if Self::is_index_like_name(validated_name) {
+                    false
+                } else {
+                    match sensitive_arg.get_truthy(global_object, validated_name)? {
+                        Some(_) => true,
+                        None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                    }
                 };
 
                 let value_slice = value_str.to_slice(global_object);
@@ -6083,7 +8035,7 @@ impl H2FrameParser {
         let actual_max_frame_size = this
             .remote_settings
             .get()
-            .unwrap_or(this.local_settings.get())
+            .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
 
         bun_output::scoped_log!(H2FrameParser, "trailers encoded_size {}", encoded_size);
@@ -6092,7 +8044,7 @@ impl H2FrameParser {
 
         if encoded_size <= actual_max_frame_size {
             // Single HEADERS frame - header block fits in one frame
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: base_flags | HeadersFrameFlags::END_HEADERS as u8,
                 stream_identifier: stream.id,
@@ -6110,7 +8062,7 @@ impl H2FrameParser {
 
             let first_chunk_size = actual_max_frame_size;
 
-            let mut headers_frame = FrameHeader {
+            let headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: base_flags, // END_STREAM but NOT END_HEADERS
                 stream_identifier: stream.id,
@@ -6125,7 +8077,7 @@ impl H2FrameParser {
                 let chunk_size = remaining.min(actual_max_frame_size);
                 let is_last = offset + chunk_size >= encoded_size;
 
-                let mut cont_frame = FrameHeader {
+                let cont_frame = FrameHeader {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
                     flags: if is_last {
                         HeadersFrameFlags::END_HEADERS as u8
@@ -6158,13 +8110,20 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn write_stream(
+    pub(crate) fn write_stream(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments_undef::<5>();
-        let [stream_arg, data_arg, encoding_arg, close_arg, callback_arg] = args.ptr;
+        let args = callframe.arguments_undef::<6>();
+        let [
+            stream_arg,
+            data_arg,
+            encoding_arg,
+            close_arg,
+            callback_arg,
+            defer_callback_arg,
+        ] = args.ptr;
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));
@@ -6179,8 +8138,9 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.streams.get().get(&stream_id).copied() else {
             return Err(global_object.throw(format_args!("Invalid stream id")));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        // Coercing `data_arg` (a String subclass's toString) can run user JS while `stream`
+        // is borrowed.
+        let mut stream = this.enter_stream_dispatch(stream_ptr);
         if !stream.can_send_data() {
             this.dispatch_write_callback(callback_arg);
             return Ok(JSValue::FALSE);
@@ -6221,21 +8181,37 @@ impl H2FrameParser {
             }
         };
 
-        this.send_data(stream, buffer.slice(), close, callback_arg);
+        let (settled_state, callback_deferred) = this.send_data(
+            &mut stream,
+            buffer.slice(),
+            close,
+            callback_arg,
+            true,
+            defer_callback_arg.to_boolean(),
+        );
 
-        Ok(JSValue::TRUE)
+        // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of
+        // the engine re-entering the VM with an onStreamEnd(5) dispatch.
+        // WRITE_FLUSHED_WITHOUT_CALLBACK: the data was handed to the socket synchronously and
+        // the write callback was not (and will not be) invoked by the engine; the JS caller
+        // completes the Writable callback asynchronously.
+        let mut result = settled_state as u32;
+        if callback_deferred {
+            result |= WRITE_FLUSHED_WITHOUT_CALLBACK;
+        }
+        Ok(JSValue::js_number(result as f64))
     }
 
     fn get_next_stream_id(&self) -> u32 {
         let mut stream_id: u32 = self.last_stream_id.get();
         if self.is_server.get() {
-            if stream_id % 2 == 0 {
+            if stream_id.is_multiple_of(2) {
                 stream_id += 2;
             } else {
                 stream_id += 1;
             }
         } else {
-            if stream_id % 2 == 0 {
+            if stream_id.is_multiple_of(2) {
                 stream_id += 1;
             } else if stream_id == 0 {
                 stream_id = 1;
@@ -6247,7 +8223,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_next_stream_id(
+    pub(crate) fn set_next_stream_id(
         this: &Self,
         _global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6258,13 +8234,13 @@ impl H2FrameParser {
         debug_assert!(stream_id_arg.is_number());
         let mut last_stream_id = stream_id_arg.to_u32();
         if this.is_server.get() {
-            if last_stream_id % 2 == 0 {
+            if last_stream_id.is_multiple_of(2) {
                 last_stream_id -= 2;
             } else {
                 last_stream_id -= 1;
             }
         } else {
-            if last_stream_id % 2 == 0 {
+            if last_stream_id.is_multiple_of(2) {
                 last_stream_id -= 1;
             } else if last_stream_id == 1 {
                 last_stream_id = 0;
@@ -6277,7 +8253,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn has_native_read(
+    pub(crate) fn has_native_read(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6289,7 +8265,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn get_next_stream(
+    pub(crate) fn get_next_stream(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6304,8 +8280,202 @@ impl H2FrameParser {
         Ok(JSValue::js_number(id as f64))
     }
 
+    /// Server-side: send a PUSH_PROMISE frame on `parentId` announcing `promisedId` + the promised
+    /// request headers (RFC 9113 §6.6 / §8.4). The promised (even) stream is allocated by the JS
+    /// layer via getNextStream; the server then responds on it with the normal request() path.
     #[bun_jsc::host_fn(method)]
-    pub fn get_stream_context(
+    pub(crate) fn push_promise(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        if !this.is_server.get() {
+            return Err(
+                global_object.throw(format_args!("Push streams can only be created by servers"))
+            );
+        }
+        let args_list = callframe.arguments_old::<4>();
+        if args_list.len < 4 {
+            return Err(global_object.throw(format_args!(
+                "Expected parentId, promisedId, headers and sensitiveHeaders arguments"
+            )));
+        }
+        let parent_id = args_list.ptr[0].to_u32();
+        let promised_id = args_list.ptr[1].to_u32();
+        let headers_arg = args_list.ptr[2];
+        let sensitive_arg = args_list.ptr[3];
+        if promised_id > MAX_STREAM_ID {
+            return Ok(JSValue::js_number(-1.0));
+        }
+        let Some(headers_obj) = headers_arg.get_object() else {
+            return Err(global_object.throw(format_args!("Expected headers to be an object")));
+        };
+
+        let mut name_buffer = [0u8; 4096];
+        let mut encoded_headers: Vec<u8> = Vec::new();
+
+        // A PUSH_PROMISE carries a REQUEST, so request pseudo-headers are valid even on the server.
+        // Pseudo-headers must be encoded first, so iterate twice.
+        for ignore_pseudo_headers in 0..2usize {
+            let mut iter = bun_jsc::JSPropertyIterator::init(
+                global_object,
+                headers_obj,
+                bun_jsc::JSPropertyIteratorOptions {
+                    skip_empty_name: false,
+                    include_value: true,
+                    ..Default::default()
+                },
+            )?;
+            while let Some(header_name) = iter.next()? {
+                if header_name.length() == 0 {
+                    continue;
+                }
+                let name_slice = header_name.to_utf8();
+                let name = name_slice.slice();
+                let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                            format_args!(
+                                "The arguments Header name is invalid. Received \"{}\"",
+                                BStr::new(name)
+                            ),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
+                };
+                if name.first() == Some(&b':') {
+                    if ignore_pseudo_headers == 1 {
+                        continue;
+                    }
+                    if !is_valid_request_pseudo_header(validated_name) {
+                        if !global_object.has_exception() {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_PSEUDOHEADER,
+                                    format_args!(
+                                        "\"{}\" is an invalid pseudoheader or is used incorrectly",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
+                        }
+                        return Ok(JSValue::ZERO);
+                    }
+                } else if ignore_pseudo_headers == 0 {
+                    continue;
+                }
+                let js_value = iter.value;
+                if js_value.is_empty_or_undefined_or_null() {
+                    continue;
+                }
+                let value_str = match js_value.to_js_string(global_object) {
+                    Ok(s) => s,
+                    Err(_) => {
+                        global_object.clear_exception();
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!("Invalid value for header \"{}\"", BStr::new(name)),
+                            )
+                            .throw());
+                    }
+                };
+                // All-digit names can't be passed to get_truthy (integer-index-like names trip
+                // a debug assert in getIfPropertyExistsImpl) and can never be sensitive.
+                let never_index = if Self::is_index_like_name(validated_name) {
+                    false
+                } else {
+                    match sensitive_arg.get_truthy(global_object, validated_name)? {
+                        Some(_) => true,
+                        None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                    }
+                };
+                let value_slice = value_str.to_slice(global_object);
+                let value = value_slice.slice();
+                if this
+                    .encode_header_into_list(
+                        &mut encoded_headers,
+                        validated_name,
+                        value,
+                        never_index,
+                    )
+                    .is_err()
+                {
+                    return Err(
+                        global_object.throw(format_args!("Failed to encode push promise headers"))
+                    );
+                }
+            }
+        }
+
+        let max_frame =
+            this.remote_settings
+                .get()
+                .map(|s| s.max_frame_size)
+                .unwrap_or_else(|| this.local_settings.get().max_frame_size) as usize;
+        let payload_size = 4 + encoded_headers.len();
+        if payload_size <= max_frame {
+            // PUSH_PROMISE frame: 9-byte header + 4-byte promised stream id + the header block.
+            let mut hdr_buf = [0u8; FrameHeader::BYTE_SIZE + 4];
+            let mut ws = FixedBufferStream::new(&mut hdr_buf);
+            let frame = FrameHeader {
+                type_: 0x05,
+                flags: 0x04, // END_HEADERS
+                stream_identifier: parent_id,
+                length: payload_size as u32,
+            };
+            let _ = frame.write(&mut ws);
+            let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
+            let _ = ws.write_all(&promised_be.to_ne_bytes());
+            let _ = this.write(&hdr_buf);
+            let _ = this.write(&encoded_headers);
+        } else {
+            // §6.6/§6.10: an oversized block is split - the PUSH_PROMISE (without END_HEADERS)
+            // carries the promised id + the first fragment, then CONTINUATION frames on the
+            // parent stream carry the rest; the last one sets END_HEADERS. Mirrors the
+            // send_trailers()/request() splitting.
+            let first_chunk = max_frame - 4;
+            let mut hdr_buf = [0u8; FrameHeader::BYTE_SIZE + 4];
+            let mut ws = FixedBufferStream::new(&mut hdr_buf);
+            let frame = FrameHeader {
+                type_: 0x05,
+                flags: 0, // continued below
+                stream_identifier: parent_id,
+                length: max_frame as u32,
+            };
+            let _ = frame.write(&mut ws);
+            let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
+            let _ = ws.write_all(&promised_be.to_ne_bytes());
+            let _ = this.write(&hdr_buf);
+            let _ = this.write(&encoded_headers[..first_chunk]);
+
+            let mut offset = first_chunk;
+            while offset < encoded_headers.len() {
+                let chunk = (encoded_headers.len() - offset).min(max_frame);
+                let is_last = offset + chunk >= encoded_headers.len();
+                let mut cont_buf = [0u8; FrameHeader::BYTE_SIZE];
+                let mut cs = FixedBufferStream::new(&mut cont_buf);
+                let cont = FrameHeader {
+                    type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
+                    flags: if is_last { 0x04 } else { 0 }, // END_HEADERS on the final fragment
+                    stream_identifier: parent_id,
+                    length: chunk as u32,
+                };
+                let _ = cont.write(&mut cs);
+                let _ = this.write(&cont_buf);
+                let _ = this.write(&encoded_headers[offset..offset + chunk]);
+                offset += chunk;
+            }
+        }
+
+        let _ = this.flush();
+        Ok(JSValue::js_number(promised_id as f64))
+    }
+
+    #[bun_jsc::host_fn(method)]
+    pub(crate) fn get_stream_context(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6329,7 +8499,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_stream_context(
+    pub(crate) fn set_stream_context(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6345,21 +8515,39 @@ impl H2FrameParser {
         if !stream_id_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream_id to be a number")));
         }
-        let Some(stream) = this.streams.get().get(&stream_id_arg.to_u32()).copied() else {
-            return Err(global_object.throw(format_args!("Invalid stream id")));
-        };
         let context_arg = args_list.ptr[1];
+        let stream_id = stream_id_arg.to_u32();
+        if context_arg.is_empty_or_undefined_or_null() {
+            // Release: a pushed stream torn down before its PUSH_PROMISE left has no reset
+            // dispatch coming, so the JS layer drops the context root explicitly.
+            this.sctx.with_mut(|m| {
+                m.remove(&stream_id);
+            });
+            return Ok(JSValue::UNDEFINED);
+        }
         if !context_arg.is_object() {
             return Err(global_object.throw(format_args!("Expected context to be an object")));
         }
 
-        // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
-        unsafe { (*stream).set_context(context_arg, global_object) };
+        // Rewrite engine: record the JS stream context for the engine's Sink callbacks. Dropping a
+        // previous entry releases its root (StrongOptional: Drop -> destroy).
+        this.sctx.with_mut(|m| {
+            m.insert(
+                stream_id,
+                StrongOptional::create(context_arg, global_object),
+            );
+        });
+
+        // Legacy path: also set on the legacy stream if it still exists (best-effort).
+        if let Some(stream) = this.streams.get().get(&stream_id).copied() {
+            // SAFETY: stream is *mut Stream from self.streams; valid while the map entry exists
+            unsafe { (*stream).set_context(context_arg, global_object) };
+        }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn for_each_stream(
+    pub(crate) fn for_each_stream(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6393,7 +8581,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn emit_abort_to_all_streams(
+    pub(crate) fn emit_abort_to_all_streams(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6432,7 +8620,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn emit_error_to_all_streams(
+    pub(crate) fn emit_error_to_all_streams(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6441,6 +8629,14 @@ impl H2FrameParser {
         if args_list.len < 1 {
             return Err(global_object.throw(format_args!("Expected error argument")));
         }
+
+        // Like `goaway`: only numbers reach `to_u32` (it requires one), and the code is read
+        // once before any `&mut Stream` exists instead of once per stream inside the loop.
+        let error_arg = args_list.ptr[0];
+        if !error_arg.is_number() {
+            return Err(global_object.throw(format_args!("Expected errorCode to be a number")));
+        }
+        let rst_code = error_arg.to_u32();
 
         // R-2: StreamResumableIterator stores a `ParentRef`; `streams` is `JsCell`-backed,
         // so the loop body can keep using `this` (`&Self`) directly.
@@ -6451,22 +8647,18 @@ impl H2FrameParser {
             let stream = unsafe { &mut *stream_ptr };
             if stream.state != StreamState::CLOSED {
                 stream.state = StreamState::CLOSED;
-                stream.rst_code = args_list.ptr[0].to_u32();
+                stream.rst_code = rst_code;
                 let identifier = stream.get_identifier();
                 identifier.ensure_still_alive();
                 stream.free_resources::<false>(this);
-                this.dispatch_with_extra(
-                    JSH2FrameParser::Gc::onStreamError,
-                    identifier,
-                    args_list.ptr[0],
-                );
+                this.dispatch_with_extra(JSH2FrameParser::Gc::onStreamError, identifier, error_arg);
             }
         }
         Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn flush_from_js(
+    pub(crate) fn flush_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -6475,7 +8667,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn request(
+    pub(crate) fn request(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -6503,7 +8695,6 @@ impl H2FrameParser {
                 global_object.throw(format_args!("Expected sensitiveHeaders to be an object"))
             );
         }
-        // PERF(port): was BufferFallbackAllocator over shared_request_buffer — using plain Vec
         let mut encoded_headers: Vec<u8> = Vec::new();
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
@@ -6523,9 +8714,163 @@ impl H2FrameParser {
         // we iterate twice, because pseudo headers must be sent first, but can appear anywhere in the headers object
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
-        for ignore_pseudo_headers in 0..2usize {
-            // PORT NOTE: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
-            // re-initialize per pass instead — same observable property walk as the Zig two-pass loop.
+        // Raw (flat [name, value, ...] array) headers form: encode each pair in
+        // its given order, pseudo-headers first (same two-pass split as the
+        // object form below), preserving interleaved duplicates on the wire.
+        let headers_are_raw_pairs = headers_arg.js_type().is_array();
+        if headers_are_raw_pairs {
+            for ignore_pseudo_headers in 0..2usize {
+                let mut pairs = headers_arg.array_iterator(global_object)?;
+                loop {
+                    let Some(name_js) = pairs.next()? else { break };
+                    let Some(value_js) = pairs.next()? else { break };
+                    if name_js.is_empty_or_undefined_or_null() || value_js.is_undefined_or_null() {
+                        continue;
+                    }
+
+                    let name_str = name_js.to_js_string(global_object)?;
+                    let name_slice = name_str.to_slice(global_object);
+                    let name = name_slice.slice();
+                    if name.is_empty() {
+                        continue;
+                    }
+
+                    let validated_name =
+                        match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                            Ok(n) => n,
+                            Err(_) => {
+                                let exception = global_object.to_type_error(
+                                    bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                                    format_args!(
+                                        "The arguments Header name is invalid. Received \"{}\"",
+                                        BStr::new(name)
+                                    ),
+                                );
+                                return Err(global_object.throw_value(exception));
+                            }
+                        };
+
+                    if name.first() == Some(&b':') {
+                        if ignore_pseudo_headers == 1 {
+                            continue;
+                        }
+
+                        if this.is_server.get() {
+                            if !is_valid_response_pseudo_header(validated_name) {
+                                if !global_object.has_exception() {
+                                    return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
+                                }
+                                return Ok(JSValue::ZERO);
+                            }
+                        } else if !is_valid_request_pseudo_header(validated_name) {
+                            if !global_object.has_exception() {
+                                return Err(global_object.err(JscErrorCode::HTTP2_INVALID_PSEUDOHEADER, format_args!("\"{}\" is an invalid pseudoheader or is used incorrectly", BStr::new(name))).throw());
+                            }
+                            return Ok(JSValue::ZERO);
+                        }
+                    } else if ignore_pseudo_headers == 0 {
+                        continue;
+                    }
+
+                    if let Some(idx) = this.single_value_index_checked(validated_name) {
+                        if single_value_headers[idx] {
+                            let exception = global_object.to_type_error(
+                                bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
+                                format_args!(
+                                    "Header field \"{}\" must only have a single value",
+                                    BStr::new(validated_name)
+                                ),
+                            );
+                            return Err(global_object.throw_value(exception));
+                        }
+                        single_value_headers[idx] = true;
+                    }
+
+                    let value_str = match value_js.to_js_string(global_object) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            global_object.clear_exception();
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(name)
+                                    ),
+                                )
+                                .throw());
+                        }
+                    };
+
+                    let never_index = if Self::is_index_like_name(validated_name) {
+                        false
+                    } else {
+                        match sensitive_arg.get_truthy(global_object, validated_name)? {
+                            Some(_) => true,
+                            None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
+                        }
+                    };
+
+                    let value_slice = value_str.to_slice(global_object);
+                    let value = value_slice.slice();
+                    if !is_valid_header_value(value) {
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!(
+                                    "Invalid value for header \"{}\"",
+                                    BStr::new(validated_name)
+                                ),
+                            )
+                            .throw());
+                    }
+                    bun_output::scoped_log!(
+                        H2FrameParser,
+                        "encode header {} {}",
+                        BStr::new(validated_name),
+                        BStr::new(value)
+                    );
+
+                    if let Err(err) = this.encode_header_into_list(
+                        &mut encoded_headers,
+                        validated_name,
+                        value,
+                        never_index,
+                    ) {
+                        if matches!(err, crate::Error::Alloc(_)) {
+                            return Err(global_object
+                                .throw(format_args!("Failed to allocate header buffer")));
+                        }
+                        let Some(stream) = this.handle_received_stream_id(stream_id) else {
+                            return Ok(JSValue::js_number(-1.0));
+                        };
+                        // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
+                        let stream = unsafe { &mut *stream };
+                        stream.state = StreamState::CLOSED;
+                        if !stream_ctx_arg.is_empty_or_undefined_or_null()
+                            && stream_ctx_arg.is_object()
+                        {
+                            stream.set_context(stream_ctx_arg, global_object);
+                        }
+                        stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
+                        this.dispatch_with_extra(
+                            JSH2FrameParser::Gc::onStreamError,
+                            stream.get_identifier(),
+                            JSValue::js_number(stream.rst_code as f64),
+                        );
+                        return Ok(JSValue::js_number(stream_id as f64));
+                    }
+                }
+            }
+        }
+
+        for ignore_pseudo_headers in 0..(if headers_are_raw_pairs {
+            0usize
+        } else {
+            2usize
+        }) {
+            // Note: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
+            // re-initialize per pass instead — the observable property walk is the same.
             let mut iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
                 headers_obj,
@@ -6544,20 +8889,19 @@ impl H2FrameParser {
                 let name_slice = header_name.to_utf8();
                 let name = name_slice.slice();
 
-                let validated_name =
-                    match Self::to_valid_header_name(name, &mut name_buffer[0..name.len()]) {
-                        Ok(n) => n,
-                        Err(_) => {
-                            let exception = global_object.to_type_error(
-                                bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
-                                format_args!(
-                                    "The arguments Header name is invalid. Received \"{}\"",
-                                    BStr::new(name)
-                                ),
-                            );
-                            return Err(global_object.throw_value(exception));
-                        }
-                    };
+                let validated_name = match Self::to_valid_header_name(name, &mut name_buffer[..]) {
+                    Ok(n) => n,
+                    Err(_) => {
+                        let exception = global_object.to_type_error(
+                            bun_jsc::ErrorCode::INVALID_HTTP_TOKEN,
+                            format_args!(
+                                "The arguments Header name is invalid. Received \"{}\"",
+                                BStr::new(name)
+                            ),
+                        );
+                        return Err(global_object.throw_value(exception));
+                    }
+                };
 
                 if name.first() == Some(&b':') {
                     if ignore_pseudo_headers == 1 {
@@ -6596,7 +8940,7 @@ impl H2FrameParser {
                     bun_output::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
                     let mut value_iter = js_value.array_iterator(global_object)?;
 
-                    if let Some(idx) = single_value_headers_index_of(validated_name) {
+                    if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
                             if !global_object.has_exception() {
                                 let exception = global_object.to_type_error(
@@ -6645,14 +8989,28 @@ impl H2FrameParser {
                             }
                         };
 
-                        let never_index =
+                        let never_index = if Self::is_index_like_name(validated_name) {
+                            false
+                        } else {
                             match sensitive_arg.get_truthy(global_object, validated_name)? {
                                 Some(_) => true,
                                 None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                            };
+                            }
+                        };
 
                         let value_slice = value_str.to_slice(global_object);
                         let value = value_slice.slice();
+                        if !is_valid_header_value(value) {
+                            return Err(global_object
+                                .err(
+                                    JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                    format_args!(
+                                        "Invalid value for header \"{}\"",
+                                        BStr::new(validated_name)
+                                    ),
+                                )
+                                .throw());
+                        }
                         bun_output::scoped_log!(
                             H2FrameParser,
                             "encode header {} {}",
@@ -6666,7 +9024,7 @@ impl H2FrameParser {
                             value,
                             never_index,
                         ) {
-                            if err == bun_core::err!("OutOfMemory") {
+                            if matches!(err, crate::Error::Alloc(_)) {
                                 return Err(global_object
                                     .throw(format_args!("Failed to allocate header buffer")));
                             }
@@ -6692,7 +9050,7 @@ impl H2FrameParser {
                     }
                 } else if !js_value.is_empty_or_undefined_or_null() {
                     bun_output::scoped_log!(H2FrameParser, "single header {}", BStr::new(name));
-                    if let Some(idx) = single_value_headers_index_of(validated_name) {
+                    if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if single_value_headers[idx] {
                             let exception = global_object.to_type_error(
                                 bun_jsc::ErrorCode::HTTP2_HEADER_SINGLE_VALUE,
@@ -6721,14 +9079,28 @@ impl H2FrameParser {
                         }
                     };
 
-                    let never_index =
+                    let never_index = if Self::is_index_like_name(validated_name) {
+                        false
+                    } else {
                         match sensitive_arg.get_truthy(global_object, validated_name)? {
                             Some(_) => true,
                             None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                        };
+                        }
+                    };
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
+                    if !is_valid_header_value(value) {
+                        return Err(global_object
+                            .err(
+                                JscErrorCode::HTTP2_INVALID_HEADER_VALUE,
+                                format_args!(
+                                    "Invalid value for header \"{}\"",
+                                    BStr::new(validated_name)
+                                ),
+                            )
+                            .throw());
+                    }
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "encode header {} {}",
@@ -6742,7 +9114,7 @@ impl H2FrameParser {
                         value,
                         never_index,
                     ) {
-                        if err == bun_core::err!("OutOfMemory") {
+                        if matches!(err, crate::Error::Alloc(_)) {
                             return Err(global_object
                                 .throw(format_args!("Failed to allocate header buffer")));
                         }
@@ -6773,8 +9145,8 @@ impl H2FrameParser {
         let Some(stream_ptr) = this.handle_received_stream_id(stream_id) else {
             return Ok(JSValue::js_number(-1.0));
         };
-        // SAFETY: stream_ptr is a *mut Stream stored in self.streams (heap::alloc); valid for the lifetime of the entry, exclusive access reshaped for borrowck
-        let stream = unsafe { &mut *stream_ptr };
+        // The `options` getters below can run user JS while `stream` is borrowed.
+        let mut stream = this.enter_stream_dispatch(stream_ptr);
         if !stream_ctx_arg.is_empty_or_undefined_or_null() && stream_ctx_arg.is_object() {
             stream.set_context(stream_ctx_arg, global_object);
         }
@@ -6930,7 +9302,7 @@ impl H2FrameParser {
                     if signal_.aborted() {
                         stream.state = StreamState::IDLE;
                         let wrapped = Bun__wrapAbortError(global_object, signal_.abort_reason());
-                        this.abort_stream(stream, wrapped);
+                        this.abort_stream(&mut stream, wrapped);
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
                     stream.attach_signal(this, signal_);
@@ -6945,7 +9317,7 @@ impl H2FrameParser {
         }
 
         // too much memory being use
-        if this.get_session_memory_usage() > this.max_session_memory.get() as usize {
+        if this.is_over_session_memory_limit() {
             stream.state = StreamState::CLOSED;
             stream.rst_code = ErrorCode::ENHANCE_YOUR_CALM.0;
             this.rejected_streams.set(this.rejected_streams.get() + 1);
@@ -7003,7 +9375,7 @@ impl H2FrameParser {
         let actual_max_frame_size = this
             .remote_settings
             .get()
-            .unwrap_or(this.local_settings.get())
+            .unwrap_or_else(|| this.local_settings.get())
             .max_frame_size as usize;
         let priority_overhead: usize = if has_priority {
             StreamPriority::BYTE_SIZE
@@ -7011,10 +9383,15 @@ impl H2FrameParser {
             0
         };
         let available_payload = actual_max_frame_size - priority_overhead;
-        let padding: u8 = if encoded_size > available_payload {
+        // Reserve one byte for the pad-length field so `encoded_size +
+        // padding_overhead` never exceeds `available_payload`; otherwise the
+        // CONTINUATION branch below would slice past the end of the encoded
+        // header block. CONTINUATION frames cannot carry padding, so it is
+        // disabled whenever the block does not fit in a single HEADERS frame.
+        let padding: u8 = if encoded_size >= available_payload {
             0
         } else {
-            stream.get_padding(encoded_size, available_payload)
+            stream.get_padding(encoded_size, available_payload - 1)
         };
         let padding_overhead: usize = if padding != 0 {
             padding as usize + 1
@@ -7042,7 +9419,7 @@ impl H2FrameParser {
                 flags |= HeadersFrameFlags::PADDED as u8;
             }
 
-            let mut frame = FrameHeader {
+            let frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags,
                 stream_identifier: stream.id,
@@ -7054,7 +9431,7 @@ impl H2FrameParser {
             if has_priority {
                 let stream_identifier =
                     UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
-                let mut priority_data = StreamPriority {
+                let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
                     weight: u8::try_from(weight).expect("int cast"),
                 };
@@ -7093,7 +9470,7 @@ impl H2FrameParser {
             let first_chunk_size = actual_max_frame_size - priority_overhead;
             let headers_flags = flags & !(HeadersFrameFlags::END_HEADERS as u8);
 
-            let mut headers_frame = FrameHeader {
+            let headers_frame = FrameHeader {
                 type_: FrameType::HTTP_FRAME_HEADERS as u8,
                 flags: headers_flags
                     | (if has_priority {
@@ -7109,7 +9486,7 @@ impl H2FrameParser {
             if has_priority {
                 let stream_identifier =
                     UInt31WithReserved::init(u32::try_from(parent).expect("int cast"), exclusive);
-                let mut priority_data = StreamPriority {
+                let priority_data = StreamPriority {
                     stream_identifier: stream_identifier.to_uint32(),
                     weight: u8::try_from(weight).expect("int cast"),
                 };
@@ -7125,7 +9502,7 @@ impl H2FrameParser {
                 let chunk_size = remaining.min(actual_max_frame_size);
                 let is_last = offset + chunk_size >= encoded_size;
 
-                let mut cont_frame = FrameHeader {
+                let cont_frame = FrameHeader {
                     type_: FrameType::HTTP_FRAME_CONTINUATION as u8,
                     flags: if is_last {
                         HeadersFrameFlags::END_HEADERS as u8
@@ -7144,12 +9521,34 @@ impl H2FrameParser {
 
         if end_stream {
             stream.end_after_headers = true;
-            stream.state = StreamState::HALF_CLOSED_LOCAL;
 
             if wait_for_trailers {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
                 this.dispatch(JSH2FrameParser::Gc::onWantTrailers, stream.get_identifier());
                 return Ok(JSValue::js_number(stream_id as f64));
             }
+
+            // A HEADERS frame carrying END_STREAM half-closes our side; when
+            // the peer already half-closed (a server responding after the
+            // request body finished) the stream is now fully closed. Mirror
+            // send_data / send_trailers: transition the state forward and
+            // dispatch onStreamEnd — without this a headers-only END_STREAM
+            // response regressed the state to HALF_CLOSED_LOCAL and never
+            // told JS, leaking the stream (and the session's connection
+            // count) until socket close.
+            let identifier = stream.get_identifier();
+            identifier.ensure_still_alive();
+            if stream.state == StreamState::HALF_CLOSED_REMOTE {
+                stream.state = StreamState::CLOSED;
+                stream.free_resources::<false>(this);
+            } else {
+                stream.state = StreamState::HALF_CLOSED_LOCAL;
+            }
+            this.dispatch_with_extra(
+                JSH2FrameParser::Gc::onStreamEnd,
+                identifier,
+                JSValue::js_number(stream.state as u8 as f64),
+            );
         } else {
             stream.wait_for_trailers = wait_for_trailers;
         }
@@ -7163,7 +9562,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn read(
+    pub(crate) fn read(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -7174,55 +9573,48 @@ impl H2FrameParser {
         }
         let buffer = args_list.ptr[0];
         buffer.ensure_still_alive();
-        // Zig: `defer this.incrementWindowSizeIfNeeded()`. Wrap the body in a
-        // closure so `?` short-circuits to the `result` binding instead of out
-        // of the function, and the window-size update still runs on the error
-        // path.
-        let result = (|| {
-            if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
-                let mut bytes = array_buffer.byte_slice();
-                // read all the bytes
-                while !bytes.is_empty() {
-                    let result = this.read_bytes(bytes)?;
-                    bytes = &bytes[result..];
-                }
-                Ok(JSValue::UNDEFINED)
-            } else {
-                Err(global_object
-                    .throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
-            }
-        })();
-        this.increment_window_size_if_needed();
-        result
+        // Same engine-driven inbound path as on_native_read (JS-fed sockets / proxied streams).
+        // The engine dispatches into JS between frames, and a handler can detach/transfer this
+        // ArrayBuffer; copy the bytes so the parse never reads freed memory.
+        if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
+            let copied = array_buffer.byte_slice().to_vec();
+            this.rewrite_read(&copied);
+            Ok(JSValue::UNDEFINED)
+        } else {
+            Err(global_object.throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
+        }
     }
 
-    pub fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
+    pub(crate) fn on_native_read(&self, data: &[u8]) -> JsResult<()> {
         bun_output::scoped_log!(H2FrameParser, "onNativeRead");
-        self.ref_();
-        let mut bytes = data;
-        let result: JsResult<()> = (|| {
-            while !bytes.is_empty() {
-                let result = self.read_bytes(bytes)?;
-                bytes = &bytes[result..];
+        let _keepalive = self.keepalive();
+        // Engine-driven inbound: all reads flow through the rewritten connection engine.
+        self.rewrite_read(data);
+        Ok(())
+    }
+
+    pub(crate) fn on_native_writable(&self) {
+        // flush() ends in flush_stream_queue() → write() → cork(), leaving the
+        // newly-serialized frames in CORK_BUFFER (not on the wire). Returning
+        // here would let loop.c see last_write_failed==0 and disarm WRITABLE,
+        // stranding those bytes until an auto_flush task that may not be
+        // re-registered. Loop flush() until either we hit real socket
+        // backpressure (last_write_failed is then set) or no progress is made.
+        loop {
+            let wrote = self.flush();
+            if self.has_backpressure() || wrote == 0 {
+                break;
             }
-            Ok(())
-        })();
-        self.increment_window_size_if_needed();
-        self.deref();
-        result
+        }
     }
 
-    pub fn on_native_writable(&self) {
-        let _ = self.flush();
-    }
-
-    pub fn on_native_close(&self) {
+    pub(crate) fn on_native_close(&self) {
         bun_output::scoped_log!(H2FrameParser, "onNativeClose");
         self.detach_native_socket();
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn set_native_socket_from_js(
+    pub(crate) fn set_native_socket_from_js(
         this: &Self,
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
@@ -7252,11 +9644,8 @@ impl H2FrameParser {
         Ok(JSValue::UNDEFINED)
     }
 
-    /// Zig: `if (socket.attachNativeCallback(.{ .h2 = this })) … else { socket.ref(); writeonly }`.
-    ///
     /// `attach_native_callback` stores an `IntrusiveRc<H2FrameParser>` (the
-    /// `init_ref` bumps `ref_count`, mirroring Zig's `h2.ref()` inside
-    /// `attachNativeCallback`); the matching `deref` happens in
+    /// `init_ref` bumps `ref_count`); the matching `deref` happens in
     /// `NewSocket::detach_native_callback`. When the socket already has a
     /// native callback attached we fall back to write-only mode and take a
     /// manual `ref()` on the socket itself, balanced by `detach_native_socket`.
@@ -7272,7 +9661,7 @@ impl H2FrameParser {
         // BACKREF: `socket` is the live `m_ctx` borrowed from the JS wrapper rooted by the
         // caller's `socket_js`; it strictly outlives the returned `BunSocket` via the
         // attach/detach refcount protocol (see `BunSocket` docs). `NonNull::new` panics on
-        // null, matching Zig's `*TLSSocket` (never-null) field type.
+        // null — the field is never-null by construction.
         let socket_nn = NonNull::new(socket).expect("NewSocket m_ctx");
         let socket_ref = bun_ptr::BackRef::from(socket_nn);
         if socket_ref.attach_native_callback(NativeCallbacks::H2(h2)) {
@@ -7282,6 +9671,8 @@ impl H2FrameParser {
                 BunSocket::Tcp(bun_ptr::BackRef::from(socket_nn.cast::<TCPSocket>()))
             }
         } else {
+            // attach_native_callback failed: balance the init_ref taken above.
+            self.deref();
             socket_ref.ref_();
             if SSL {
                 BunSocket::TlsWriteonly(bun_ptr::BackRef::from(socket_nn.cast::<TLSSocket>()))
@@ -7291,7 +9682,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn detach_native_socket(&self) {
+    pub(crate) fn detach_native_socket(&self) {
         let native_socket = self.native_socket.replace(BunSocket::None);
 
         match native_socket {
@@ -7306,7 +9697,7 @@ impl H2FrameParser {
         }
     }
 
-    pub fn constructor(
+    pub(crate) fn constructor(
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
         this_value: JSValue,
@@ -7334,11 +9725,20 @@ impl H2FrameParser {
 
         let init = H2FrameParser {
             ref_count: bun_ptr::RefCount::init(),
+            native_keepalives: Cell::new(0),
             handlers: JsCell::new(handlers),
             global_this: GlobalRef::from(global_object),
             strong_this: JsCell::new(JsRef::empty()),
             native_socket: Cell::new(BunSocket::None),
             local_settings: Cell::new(FullSettingsPayload::default()),
+            explicit_settings: Cell::new(0),
+            custom_settings: JsCell::new(Vec::new()),
+            wire_custom_settings: JsCell::new(Vec::new()),
+            remote_custom_settings_filter: JsCell::new(Vec::new()),
+            remote_custom_settings: JsCell::new(Vec::new()),
+            enforced_max_header_list_size: Cell::new(
+                FullSettingsPayload::default().max_header_list_size,
+            ),
             remote_settings: Cell::new(None),
             current_frame: Cell::new(None),
             remaining_length: Cell::new(0),
@@ -7348,7 +9748,15 @@ impl H2FrameParser {
             remote_window_size: Cell::new(DEFAULT_WINDOW_SIZE),
             remote_used_window_size: Cell::new(0),
             max_header_list_pairs: Cell::new(128),
+            max_settings: Cell::new(32),
+            pending_recv_window_growth: Cell::new(0),
+            pending_send_window_consumed: Cell::new(0),
+            pending_stream_send_consumed: JsCell::new(Vec::new()),
+            pending_engine_stream_closes: JsCell::new(Vec::new()),
+            dispatch_depth: Cell::new(0),
+            pending_settings_window_submissions: JsCell::new(Vec::new()),
             max_rejected_streams: Cell::new(100),
+            max_session_invalid_frames: Cell::new(1000),
             max_outstanding_settings: Cell::new(10),
             outstanding_settings: Cell::new(0),
             rejected_streams: Cell::new(0),
@@ -7357,7 +9765,10 @@ impl H2FrameParser {
             max_outstanding_pings: Cell::new(10),
             out_standing_pings: Cell::new(0),
             max_send_header_block_length: Cell::new(0),
+            strict_single_value_fields: Cell::new(true),
             last_stream_id: Cell::new(0),
+            last_peer_stream_id: Cell::new(0),
+            expecting_continuation: Cell::new(0),
             is_server: Cell::new(false),
             preface_received_len: Cell::new(0),
             write_buffer: JsCell::new(Vec::<u8>::default()),
@@ -7366,23 +9777,38 @@ impl H2FrameParser {
             streams: JsCell::new(BunHashMap::default()),
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
+            transport_write_fatal: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
+            engine: core::cell::RefCell::new(None),
+            rewrite_tail: JsCell::new(Vec::new()),
+            rewrite_pending_push: Cell::new(0),
+            sctx: JsCell::new(BunHashMap::default()),
+            hdr_block: JsCell::new(Vec::new()),
+            hdr_meta: JsCell::new(Vec::new()),
         };
         let this: *mut H2FrameParser = if ENABLE_ALLOCATOR_POOL {
             POOL.with_borrow_mut(|pool| {
-                let pool = pool.get_or_insert_with(|| Box::new(H2FrameParserHiveAllocator::init()));
-                let slot = pool.try_get();
-                // SAFETY: `slot` is a freshly-claimed, uninitialised `*mut H2FrameParser`
-                // (HiveArray slot or fallback `Box<MaybeUninit<_>>`); `write` moves
-                // `init` in without dropping prior contents.
-                unsafe { slot.write(init) };
-                slot
+                let pool = pool.get_or_insert_with(|| {
+                    // SAFETY: `new_boxed` returns a `Box::leak`ed, fully
+                    // initialized allocation; `from_raw` reclaims that exact
+                    // pointer back into an owning `Box`. `ManuallyDrop<T>` is
+                    // `repr(transparent)` over `T`, so the pointer cast is a
+                    // layout no-op.
+                    unsafe {
+                        Box::from_raw(
+                            H2FrameParserHiveAllocator::new_boxed()
+                                .as_ptr()
+                                .cast::<ManuallyDrop<H2FrameParserHiveAllocator>>(),
+                        )
+                    }
+                });
+                pool.get_init(init).as_ptr()
             })
         } else {
             bun_core::heap::into_raw(Box::new(init))
         };
-        // Zig: `errdefer this.deinit()`. The remaining `?` sites below may throw a JS
+        // The remaining `?` sites below may throw a JS
         // exception; the guard returns the slot to the pool / frees the Box on that
         // path. Defused on success.
         let guard = scopeguard::guard(this, |this| {
@@ -7414,6 +9840,12 @@ impl H2FrameParser {
             if !settings_js.is_empty_or_undefined_or_null() {
                 bun_output::scoped_log!(H2FrameParser, "settings received in the constructor");
                 this_ref.load_settings_from_js_value(global_object, settings_js)?;
+                // The constructor settings ride on the connection preface, so received header
+                // blocks are checked against them right away; later settings() submissions only
+                // take effect for enforcement once the peer ACKs them.
+                this_ref
+                    .enforced_max_header_list_size
+                    .set(this_ref.local_settings.get().max_header_list_size);
 
                 if let Some(max_pings) = settings_js.get(global_object, "maxOutstandingPings")? {
                     if max_pings.is_number() {
@@ -7438,6 +9870,13 @@ impl H2FrameParser {
                             .set((max_header_list_pairs.to_uint64_no_truncate() as u32).max(4));
                     }
                 }
+                if let Some(max_settings) = settings_js.get(global_object, "maxSettings")? {
+                    if max_settings.is_number() {
+                        this_ref
+                            .max_settings
+                            .set((max_settings.to_uint64_no_truncate() as u32).max(1));
+                    }
+                }
                 if let Some(max_rejected_streams) =
                     settings_js.get(global_object, "maxSessionRejectedStreams")?
                 {
@@ -7445,6 +9884,15 @@ impl H2FrameParser {
                         this_ref
                             .max_rejected_streams
                             .set(max_rejected_streams.to_uint64_no_truncate() as u32);
+                    }
+                }
+                if let Some(max_session_invalid_frames) =
+                    settings_js.get(global_object, "maxSessionInvalidFrames")?
+                {
+                    if max_session_invalid_frames.is_number() {
+                        this_ref
+                            .max_session_invalid_frames
+                            .set(max_session_invalid_frames.to_uint64_no_truncate() as u32);
                     }
                 }
                 if let Some(max_outstanding_settings) =
@@ -7463,6 +9911,15 @@ impl H2FrameParser {
                         this_ref
                             .max_send_header_block_length
                             .set(max_send_header_block_length.to_int32() as u32);
+                    }
+                }
+                if let Some(strict_single_value) =
+                    settings_js.get(global_object, "strictSingleValueFields")?
+                {
+                    if strict_single_value.is_boolean() {
+                        this_ref
+                            .strict_single_value_fields
+                            .set(strict_single_value.to_boolean());
                     }
                 }
                 if let Some(padding_strategy) = settings_js.get(global_object, "paddingStrategy")? {
@@ -7490,7 +9947,7 @@ impl H2FrameParser {
             .strong_this
             .with_mut(|s| s.set_strong(this_value, global_object));
 
-        // PORT NOTE: `HPACK::init` returns a C-allocated wrapper that must be
+        // Note: `HPACK::init` returns a C-allocated wrapper that must be
         // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
         // before freeing). Wrapping it in `heap::take` and letting `Box` drop
         // would `mi_free` the struct but leak the encoder/decoder internals.
@@ -7508,7 +9965,7 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
-    pub fn detach_from_js(
+    pub(crate) fn detach_from_js(
         this: &Self,
         _global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -7532,29 +9989,59 @@ impl H2FrameParser {
 
     /// be careful when calling detach be sure that the socket is closed and the parser not accesible anymore
     /// this function can be called multiple times, it will erase stream info
-    pub fn detach(&self) {
+    pub(crate) fn detach(&self) {
         self.uncork();
         self.unregister_auto_flush();
         self.detach_native_socket();
 
-        // Zig: `this.readBuffer.deinit()` — frees the allocation. `reset()` would only
+        // Free the allocation, not just the length: `reset()` would only
         // clear `len`; detach() is reachable from JS without a following `deinit`, so the
         // capacity must be released here. Drop-and-replace = free.
         self.read_buffer.set(MutableString::default());
         self.write_buffer.with_mut(|wb| wb.clear_and_free());
+        // Drop every per-stream JS context root; the parser is detaching.
+        self.sctx.with_mut(|m| m.clear());
         self.write_buffer_offset.set(0);
 
         // `HpackHandle::drop` → `lshpack_wrapper_deinit` (cleanup + free).
         self.hpack.set(None);
     }
 
+    /// `process.exit()` never unwinds: the VM is destructed from inside the `exit()` call, so
+    /// every `+1` taken by a frame that was still on the stack when JS called it — an inbound
+    /// dispatch (`on_native_read`), a write that re-entered JS (`_write`, `send_data`) — is never
+    /// released, and neither is the cork slot's ref nor the queued auto-flush task's. `deinit()`
+    /// therefore never runs and the parser leaks everything it owns (LeakSanitizer sees the
+    /// refcount's own debug map, the HPACK handle, the read/write buffers).
+    ///
+    /// Called from `finalize` only while the VM is shutting down: the event loop is dead, no JS
+    /// (and no stranded frame) can run again, so releasing those refs cannot make anything
+    /// observe a freed parser. The socket's `+1` (`attach_native_callback`) is deliberately left
+    /// alone — it has a live owner that releases it in `NewSocket::finalize`.
+    fn release_refs_stranded_by_exit(&self) {
+        // The cork slot holds a raw `*mut H2FrameParser` in a thread-local. `uncork()` would
+        // `_write()` the corked bytes, which re-enters JS on a non-native socket; the process is
+        // exiting, so drop them and just release the slot's ref.
+        if CORKED_H2.with(|c| c.get()) == Some(self.as_ctx_ptr()) {
+            CORKED_H2.with(|c| c.set(None));
+            CORK_OFFSET.with(|c| c.set(0));
+            self.deref();
+        }
+        // Removes the deferred task (its ctx is `self`) and releases the ref it holds.
+        self.unregister_auto_flush();
+        let stranded = self.native_keepalives.replace(0);
+        for _ in 0..stranded {
+            self.deref();
+        }
+    }
+
     fn deinit(&self) {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
         self.detach();
-        // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
+        // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         self.strong_this.set(JsRef::empty());
-        // PORT NOTE: take the map out first so `self` is free for
+        // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
         let streams = self.streams.replace(BunHashMap::default());
         for (_, item) in streams.iter() {
@@ -7567,9 +10054,7 @@ impl H2FrameParser {
         }
         drop(streams);
 
-        // defer: pool.put(this) / bun.destroy(this)
-        // Zig has no destructors, so `pool.put` just reclaims storage. Rust still
-        // owes Drop on the remaining fields (`handlers`, `auto_flusher`, the now-
+        // Drop is still owed on the remaining fields (`handlers`, `auto_flusher`, the now-
         // empty `streams`/`read_buffer`/`write_buffer`/`strong_this`, …);
         // `HiveArrayFallback::put` runs `drop_in_place` before recycling the slot,
         // and `heap::destroy` drops via `Box<T>`, so both branches drop exactly once.
@@ -7595,11 +10080,28 @@ impl H2FrameParser {
         }
     }
 
-    pub fn finalize(self: Box<Self>) {
+    pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
-        // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
-        bun_ptr::finalize_js_box(self, |this| this.strong_this.set(JsRef::empty()));
+        // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
+        bun_ptr::finalize_js_box(self, |this| {
+            this.strong_this.set(JsRef::empty());
+            if VirtualMachine::get().is_shutting_down() {
+                // Free the streams first: `free_resources` releases the refs their signals hold.
+                // The map is emptied so a later deinit() won't double-free.
+                let streams = this.streams.replace(BunHashMap::default());
+                for (_, item) in streams.iter() {
+                    let stream = *item;
+                    // SAFETY: map has been emptied; each entry is freed exactly once.
+                    unsafe {
+                        (*stream).free_resources::<true>(this);
+                        drop(bun_core::heap::take(stream));
+                    }
+                }
+                drop(streams);
+                // Then the refs of frames/tasks that will never run again, so the trailing
+                // deref below can actually reach zero and run deinit().
+                this.release_refs_stranded_by_exit();
+            }
+        });
     }
 }
-
-// ported from: src/runtime/api/bun/h2_frame_parser.zig

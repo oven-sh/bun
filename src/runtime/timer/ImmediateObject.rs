@@ -20,7 +20,7 @@ impl ImmediateObject {
         Self::init_with(global, id, Kind::SetImmediate, 0, callback, arguments)
     }
 
-    /// Spec ImmediateObject.zig `runImmediateTask` — thin forwarder to
+    /// Thin forwarder to
     /// `internals.run_immediate_task`. Reached from `bun_jsc::event_loop`
     /// via `__bun_run_immediate_task` (definer in [`crate::dispatch`]).
     ///
@@ -38,6 +38,17 @@ impl ImmediateObject {
             TimerObjectInternals::run_immediate_task(core::ptr::addr_of_mut!((*this).internals), vm)
         }
     }
-}
 
-// ported from: src/runtime/timer/ImmediateObject.zig
+    /// # Safety
+    /// `this` must be a live heap-allocated `ImmediateObject`.
+    #[inline]
+    pub unsafe fn cancel_pending(this: *mut Self, vm: *mut VirtualMachine) {
+        // SAFETY: do not form `&mut *this` — the body derefs and may free `*this`.
+        unsafe {
+            TimerObjectInternals::cancel_pending_immediate(
+                core::ptr::addr_of_mut!((*this).internals),
+                vm,
+            );
+        }
+    }
+}

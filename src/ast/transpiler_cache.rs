@@ -1,4 +1,4 @@
-//! `bun.jsc.RuntimeTranspilerCache` (src/jsc/RuntimeTranspilerCache.zig).
+//! Runtime transpiler cache.
 //!
 //! Single canonical struct, lowered to `bun_ast` so both the parser
 //! (`Features.runtime_transpiler_cache`) and the printer
@@ -11,6 +11,7 @@
 //! `bun_bundler::cache` and are stored here type-erased as `*mut ()`).
 
 use crate::{ExportsKind, Source};
+use core::ptr::NonNull;
 
 pub struct RuntimeTranspilerCache {
     pub input_hash: Option<u64>,
@@ -18,8 +19,8 @@ pub struct RuntimeTranspilerCache {
     pub features_hash: Option<u64>,
     pub exports_kind: ExportsKind,
     /// Set by `put()` / `get()` when a cache hit returns transpiled output.
-    /// Zig: `?bun.String` — bundler/parser only store/read the bytes; T6 owns
-    /// the `bun.String` wrapper when surfacing to JS.
+    /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
+    /// when surfacing to JS.
     pub output_code: Option<Box<[u8]>>,
     /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
     /// the concrete type lives a tier up and is round-tripped via cast.
@@ -50,7 +51,7 @@ impl Default for RuntimeTranspilerCache {
 // edge here; the jsc impl casts it back.
 bun_dispatch::link_interface! {
     pub TranspilerCacheImpl[Jsc] {
-        fn get(source: *const Source, parser_options: *const (), used_jsx: bool) -> bool;
+        fn get(source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool;
         fn put(output_code: &[u8], sourcemap: &[u8], esm_record: &[u8]);
         fn is_disabled() -> bool;
     }
@@ -75,11 +76,9 @@ impl RuntimeTranspilerCache {
     }
 
     #[inline]
-    pub fn get(&mut self, source: &Source, parser_options: *const (), used_jsx: bool) -> bool {
+    pub fn get(&mut self, source: &Source, parser_options: NonNull<()>, used_jsx: bool) -> bool {
         match self.r#impl {
-            Some(k) => {
-                Self::handle(k, self).get(core::ptr::from_ref(source), parser_options, used_jsx)
-            }
+            Some(k) => Self::handle(k, self).get(source, parser_options, used_jsx),
             None => false,
         }
     }

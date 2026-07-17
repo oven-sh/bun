@@ -4,38 +4,26 @@ use bun_jsc::bun_string_jsc::create_utf8_for_js;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // Shared S3 option-string ladder (get_truthy → is_string → from_js → to_utf8).
 use super::__s3_credentials_jsc::get_truthy_string_utf8;
-use bun_core::{self as bstr, ZigStringSlice as Utf8Slice, strings};
-use bun_ptr::RawSlice;
+use bun_core::{ZigStringSlice as Utf8Slice, strings};
 
 pub struct S3ListObjectsOptions {
-    // Self-referential views: these borrow from the corresponding
-    // `_field: Utf8Slice` below. In Zig the slice and its backing storage are
-    // separate fields; `RawSlice` encodes the non-owning contract so callers
-    // read `.as_deref()` instead of open-coding `unsafe { &*p }`.
-    pub continuation_token: Option<RawSlice<u8>>,
-    pub delimiter: Option<RawSlice<u8>>,
-    pub encoding_type: Option<RawSlice<u8>>,
+    // Each `Utf8Slice` owns (or ref-holds) its backing storage; readers go
+    // through `.slice()`.
+    pub continuation_token: Option<Utf8Slice>,
+    pub delimiter: Option<Utf8Slice>,
+    pub encoding_type: Option<Utf8Slice>,
     pub fetch_owner: Option<bool>,
     pub max_keys: Option<i64>,
-    pub prefix: Option<RawSlice<u8>>,
-    pub start_after: Option<RawSlice<u8>>,
-
-    // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
-    // ref-holds its backing WTFStringImpl; modeled as 'static here. Pick
-    // the real lifetime / collapse the dual fields.
-    pub _continuation_token: Option<Utf8Slice>,
-    pub _delimiter: Option<Utf8Slice>,
-    pub _encoding_type: Option<Utf8Slice>,
-    pub _prefix: Option<Utf8Slice>,
-    pub _start_after: Option<Utf8Slice>,
+    pub prefix: Option<Utf8Slice>,
+    pub start_after: Option<Utf8Slice>,
 }
 
-// Zig deinit only forwarded to each Utf8Slice field's deinit; Rust handles
-// that via field Drop, so no explicit `impl Drop` is needed here.
+// Each Utf8Slice field cleans up via Drop, so no explicit `impl Drop` is
+// needed here.
 
-// PORT NOTE: result structs borrow slices out of the input `xml: &[u8]`
-// passed to `parse_s3_list_objects_result`. The Zig code never frees these
-// (they alias the request body buffer). Represented with an explicit `'a` —
+// result structs borrow slices out of the input `xml: &[u8]`
+// passed to `parse_s3_list_objects_result` (they alias the request body
+// buffer). Represented with an explicit `'a` —
 // the borrow is unambiguous and any other encoding (Box / raw ptr) would
 // misrepresent ownership. The caller keeps `xml` alive for the result's
 // lifetime (result is consumed by toJS before the response body is freed).
@@ -45,15 +33,9 @@ struct ObjectOwner<'a> {
     display_name: Option<&'a [u8]>,
 }
 
-struct ObjectRestoreStatus<'a> {
-    is_restore_in_progress: Option<bool>,
-    restore_expiry_date: Option<&'a [u8]>,
-}
-
 pub struct S3ListObjectsContents<'a> {
     key: &'a [u8],
-    // Zig: ?bun.ptr.OwnedIn([]const u8, MaybeOwned(DefaultAllocator)) —
-    // i.e. a maybe-owned slice. Cow<'a, [u8]> is the direct equivalent.
+    // a maybe-owned slice.
     etag: Option<Cow<'a, [u8]>>,
     checksum_type: Option<&'a [u8]>,
     checksum_algorithme: Option<&'a [u8]>,
@@ -61,10 +43,7 @@ pub struct S3ListObjectsContents<'a> {
     object_size: Option<i64>,
     storage_class: Option<&'a [u8]>,
     owner: Option<ObjectOwner<'a>>,
-    restore_status: Option<ObjectRestoreStatus<'a>>,
 }
-
-// Zig deinit only freed `etag` when owned; Cow handles that in Drop.
 
 pub struct S3ListObjectsV2Result<'a> {
     pub name: Option<&'a [u8]>,
@@ -81,11 +60,11 @@ pub struct S3ListObjectsV2Result<'a> {
     pub contents: Option<Vec<S3ListObjectsContents<'a>>>,
 }
 
-// Zig deinit freed `contents` items (etag) + the two ArrayLists. All handled
-// by Drop on Vec / Cow; no explicit Drop impl needed.
+// `contents` items (etag) + the two Vecs are all handled by Drop on
+// Vec / Cow; no explicit Drop impl needed.
 
 impl<'a> S3ListObjectsV2Result<'a> {
-    pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
         let js_result = JSValue::create_empty_object(global_object, 0);
 
         js_result.put_optional_utf8(global_object, b"name", self.name)?;
@@ -191,9 +170,8 @@ impl<'a> S3ListObjectsV2Result<'a> {
     }
 }
 
-// PORT NOTE: Zig signature was `!S3ListObjectsV2Result` but the only `try`
-// sites were allocations (Vec::push / alloc) which abort on OOM in Rust, so
-// this is now infallible.
+// Infallible: the only fallible operations are allocations
+// (Vec::push / alloc), which abort on OOM.
 pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
     let mut result = S3ListObjectsV2Result {
         contents: None,
@@ -223,7 +201,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
             }
 
             if let Some(end) = strings::index_of(&xml[i + 1..], b">") {
-                i = i + 1;
+                i += 1;
                 let tag_name_end_pos = i + end; // +1 for <
 
                 let tag_name = &xml[i..tag_name_end_pos];
@@ -242,8 +220,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                     let mut checksum_algorithme: Option<&[u8]> = None;
                     let mut owner_id: Option<&[u8]> = None;
                     let mut owner_display_name: Option<&[u8]> = None;
-                    let mut is_restore_in_progress: Option<bool> = None;
-                    let mut restore_expiry_date: Option<&[u8]> = None;
 
                     while looking_for_end_tag {
                         if i >= xml.len() {
@@ -263,6 +239,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         object_key = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 6;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"LastModified" {
                                     if let Some(__tag_end) =
@@ -270,6 +248,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         last_modified = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 15;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"Size" {
                                     if let Some(__tag_end) =
@@ -279,6 +259,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
 
                                         object_size = bun_core::fmt::parse_decimal::<i64>(size);
                                         i = i + __tag_end + 7;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"StorageClass" {
                                     if let Some(__tag_end) =
@@ -286,6 +268,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         storage_class = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 15;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"ChecksumType" {
                                     if let Some(__tag_end) =
@@ -293,6 +277,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         checksum_type = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 15;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"ChecksumAlgorithm" {
                                     if let Some(__tag_end) =
@@ -300,6 +286,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         checksum_algorithme = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 20;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"ETag" {
                                     if let Some(__tag_end) =
@@ -307,8 +295,7 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         let input = &xml[i..i + __tag_end];
 
-                                        // std.mem.replacementSize / std.mem.replace
-                                        // for "&quot;" → "\""
+                                        // unescape "&quot;" → "\""
                                         let output =
                                             strings::replace_owned(input, b"&quot;", b"\"");
                                         if output.len() != input.len() {
@@ -319,6 +306,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                         }
 
                                         i = i + __tag_end + 7;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"Owner" {
                                     if let Some(__tag_end) =
@@ -352,60 +341,20 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                                 }
                                             }
                                         }
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"RestoreStatus" {
                                     if let Some(__tag_end) =
                                         strings::index_of(&xml[i..], b"</RestoreStatus>")
                                     {
-                                        let restore_status = &xml[i..i + __tag_end];
                                         i = i + __tag_end + 16;
-
-                                        if let Some(start) = strings::index_of(
-                                            restore_status,
-                                            b"<IsRestoreInProgress>",
-                                        ) {
-                                            let start_pos = start + 21;
-                                            if let Some(_end) = strings::index_of(
-                                                restore_status,
-                                                b"</IsRestoreInProgress>",
-                                            ) {
-                                                let is_not_empty = start_pos < _end;
-                                                if is_not_empty {
-                                                    let is_restore_in_progress_string =
-                                                        &restore_status[start_pos.._end];
-
-                                                    if is_restore_in_progress_string == b"true" {
-                                                        is_restore_in_progress = Some(true);
-                                                    } else if is_restore_in_progress_string
-                                                        == b"false"
-                                                    {
-                                                        is_restore_in_progress = Some(false);
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        if let Some(start) = strings::index_of(
-                                            restore_status,
-                                            b"<RestoreExpiryDate>",
-                                        ) {
-                                            let start_pos = start + 19;
-                                            if let Some(_end) = strings::index_of(
-                                                restore_status,
-                                                b"</RestoreExpiryDate>",
-                                            ) {
-                                                let is_not_empty = start_pos < _end;
-                                                if is_not_empty {
-                                                    restore_expiry_date =
-                                                        Some(&restore_status[start_pos.._end]);
-                                                }
-                                            }
-                                        }
+                                    } else {
+                                        i = xml.len();
                                     }
                                 }
                             } else {
-                                // char is not >
-                                i += 1;
+                                i = xml.len();
                             }
                         } else {
                             // char is not <
@@ -423,15 +372,6 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             });
                         }
 
-                        let mut restore_status: Option<ObjectRestoreStatus<'_>> = None;
-
-                        if is_restore_in_progress.is_some() || restore_expiry_date.is_some() {
-                            restore_status = Some(ObjectRestoreStatus {
-                                is_restore_in_progress,
-                                restore_expiry_date,
-                            });
-                        }
-
                         contents.push(S3ListObjectsContents {
                             key: object_key_val,
                             etag: match (etag_owned, etag) {
@@ -445,52 +385,67 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             object_size,
                             storage_class,
                             owner,
-                            restore_status,
                         });
                     }
                 } else if tag_name == b"Name" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Name>") {
                         result.name = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"Delimiter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Delimiter>") {
                         result.delimiter = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"NextContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</NextContinuationToken>") {
                         result.next_continuation_token = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"ContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</ContinuationToken>") {
                         result.continuation_token = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"StartAfter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</StartAfter>") {
                         result.start_after = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"EncodingType" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</EncodingType>") {
                         result.encoding_type = Some(&xml[i..i + _end]);
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"KeyCount" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</KeyCount>") {
                         let key_count = &xml[i..i + _end];
                         result.key_count = bun_core::fmt::parse_decimal::<i64>(key_count);
 
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"MaxKeys" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</MaxKeys>") {
                         let max_keys = &xml[i..i + _end];
                         result.max_keys = bun_core::fmt::parse_decimal::<i64>(max_keys);
 
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"Prefix" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Prefix>") {
@@ -500,7 +455,9 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             result.prefix = Some(prefix);
                         }
 
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"IsTruncated" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</IsTruncated>") {
@@ -512,12 +469,14 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                             result.is_truncated = Some(false);
                         }
 
-                        i = i + _end;
+                        i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"CommonPrefixes" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</CommonPrefixes>") {
                         let common_prefixes_string = &xml[i..i + _end];
-                        i = i + _end;
+                        i += _end;
 
                         let mut j: usize = 0;
                         while j < common_prefixes_string.len() {
@@ -530,23 +489,27 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     strings::index_of(&common_prefixes_string[j..], b"</Prefix>")
                                 {
                                     common_prefixes.push(&common_prefixes_string[j..j + __end]);
-                                    j = j + __end;
+                                    j += __end;
+                                } else {
+                                    break;
                                 }
                             } else {
                                 break;
                             }
                         }
+                    } else {
+                        break;
                     }
                 }
             } else {
-                i += 1;
+                break;
             }
         }
 
         if !contents.is_empty() {
             result.contents = Some(contents);
         }
-        // else branch: Vec drops itself (Zig: contents.deinit())
+        // else branch: Vec drops itself
 
         if !common_prefixes.is_empty() {
             result.common_prefixes = Some(common_prefixes);
@@ -569,12 +532,6 @@ pub fn get_list_objects_options_from_js(
         max_keys: None,
         prefix: None,
         start_after: None,
-
-        _continuation_token: None,
-        _delimiter: None,
-        _encoding_type: None,
-        _prefix: None,
-        _start_after: None,
     };
 
     if !list_options.is_object() {
@@ -584,23 +541,20 @@ pub fn get_list_objects_options_from_js(
     if let Some(slice) =
         get_truthy_string_utf8(list_options, global_this, b"continuationToken", false)?
     {
-        list_objects_options.continuation_token = Some(RawSlice::new(slice.slice()));
-        list_objects_options._continuation_token = Some(slice);
+        list_objects_options.continuation_token = Some(slice);
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"delimiter", false)? {
-        list_objects_options.delimiter = Some(RawSlice::new(slice.slice()));
-        list_objects_options._delimiter = Some(slice);
+        list_objects_options.delimiter = Some(slice);
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"encodingType", false)?
     {
-        list_objects_options.encoding_type = Some(RawSlice::new(slice.slice()));
-        list_objects_options._encoding_type = Some(slice);
+        list_objects_options.encoding_type = Some(slice);
     }
 
-    // PORT NOTE: `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
-    // `get_truthy` + `to_boolean()` (matches Zig getBooleanLoose semantics for truthy values).
+    // `JSValue::get_boolean_loose` is not yet exposed in bun_jsc; emulate via
+    // `get_truthy` + `to_boolean()`.
     if let Some(val) = list_options.get_truthy(global_this, b"fetchOwner")? {
         list_objects_options.fetch_owner = Some(val.to_boolean());
     }
@@ -612,16 +566,12 @@ pub fn get_list_objects_options_from_js(
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"prefix", false)? {
-        list_objects_options.prefix = Some(RawSlice::new(slice.slice()));
-        list_objects_options._prefix = Some(slice);
+        list_objects_options.prefix = Some(slice);
     }
 
     if let Some(slice) = get_truthy_string_utf8(list_options, global_this, b"startAfter", false)? {
-        list_objects_options.start_after = Some(RawSlice::new(slice.slice()));
-        list_objects_options._start_after = Some(slice);
+        list_objects_options.start_after = Some(slice);
     }
 
     Ok(list_objects_options)
 }
-
-// ported from: src/runtime/webcore/s3/list_objects.zig

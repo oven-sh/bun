@@ -2,7 +2,7 @@
 
 const EE = require("node:events");
 const { Stream, prependListener } = require("internal/streams/legacy");
-const { addAbortSignal } = require("internal/streams/add-abort-signal");
+const { addAbortSignal, addAbortSignalNoValidate } = require("internal/streams/add-abort-signal");
 const eos = require("internal/streams/end-of-stream");
 const destroyImpl = require("internal/streams/destroy");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
@@ -21,7 +21,7 @@ const {
   kConstructed,
 } = require("internal/streams/utils");
 const { aggregateTwoErrors } = require("internal/errors");
-const { validateObject } = require("internal/validators");
+const { validateAbortSignal, validateObject } = require("internal/validators");
 const { StringDecoder } = require("node:string_decoder");
 const from = require("internal/streams/from");
 const { SafeSet } = require("internal/primordials");
@@ -280,13 +280,14 @@ function Readable(options): void {
   this._readableState = new ReadableState(options, this, false);
 
   if (options) {
-    if (typeof options.read === "function") this._read = options.read;
+    const { read, destroy, construct, signal } = options;
+    if (typeof read === "function") this._read = read;
 
-    if (typeof options.destroy === "function") this._destroy = options.destroy;
+    if (typeof destroy === "function") this._destroy = destroy;
 
-    if (typeof options.construct === "function") this._construct = options.construct;
+    if (typeof construct === "function") this._construct = construct;
 
-    if (options.signal) addAbortSignal(options.signal, this);
+    if (signal) addAbortSignal(signal, this);
   }
 
   Stream.$call(this, options);
@@ -352,11 +353,12 @@ function readableAddChunkUnshiftByteMode(stream, state, chunk, encoding) {
 
   if (typeof chunk === "string") {
     encoding ||= state.defaultEncoding;
-    if (state.encoding !== encoding) {
-      if (state.encoding) {
+    const stateEncoding = state.encoding;
+    if (stateEncoding !== encoding) {
+      if (stateEncoding) {
         // When unshifting, if state.encoding is set, we have to save
         // the string in the BufferList with the state encoding.
-        chunk = Buffer.from(chunk, encoding).toString(state.encoding);
+        chunk = Buffer.from(chunk, encoding).toString(stateEncoding);
       } else {
         chunk = Buffer.from(chunk, encoding);
       }
@@ -561,8 +563,12 @@ function howMuchToRead(n, state) {
   if (n <= 0 || (state.length === 0 && (state[kState] & kEnded) !== 0)) return 0;
   if ((state[kState] & kObjectMode) !== 0) return 1;
   if (NumberIsNaN(n)) {
+    // Fast path for buffers.
+    if ((state[kState] & kDecoder) === 0 && state.length) return state.buffer[state.bufferIndex].length;
+
     // Only flow one buffer at a time.
     if ((state[kState] & kFlowing) !== 0 && state.length) return state.buffer[state.bufferIndex].length;
+
     return state.length;
   }
   if (n <= state.length) return n;
@@ -590,14 +596,15 @@ Readable.prototype.read = function (n) {
   // If we're doing read(0) to trigger a readable event, but we
   // already have a bunch of data in the buffer, then just trigger
   // the 'readable' event and move on.
+  const stateLength = state.length;
   if (
     n === 0 &&
     (state[kState] & kNeedReadable) !== 0 &&
-    ((state.highWaterMark !== 0 ? state.length >= state.highWaterMark : state.length > 0) ||
+    ((state.highWaterMark !== 0 ? stateLength >= state.highWaterMark : stateLength > 0) ||
       (state[kState] & kEnded) !== 0)
   ) {
     $debug("read: emitReadable");
-    if (state.length === 0 && (state[kState] & kEnded) !== 0) endReadable(this);
+    if (stateLength === 0 && (state[kState] & kEnded) !== 0) endReadable(this);
     else emitReadable(this);
     return null;
   }
@@ -768,7 +775,7 @@ function emitReadable_(stream) {
 // However, if we're not ended, or reading, and the length < hwm,
 // then go ahead and try to read some more preemptively.
 function maybeReadMore(stream, state) {
-  if ((state[kState] & (kReadingMore | kConstructed)) === kConstructed) {
+  if ((state[kState] & (kReadingMore | kReading | kConstructed)) === kConstructed) {
     state[kState] |= kReadingMore;
     process.nextTick(maybeReadMore_, stream, state);
   }
@@ -1128,6 +1135,15 @@ function nReadingNextTick(self) {
 // If the user uses them, then switch into old mode.
 Readable.prototype.resume = function () {
   const state = this._readableState;
+  // Node 26 (nodejs/node#62557) early-returns on kDestroyed. We narrow it to
+  // kDestroyed && kEndEmitted: fd-slicer-style readables set `destroyed` right
+  // before push(null), and the full guard strands their buffered tail when a
+  // piped dest drains (yauzl/extract-zip). Once 'end' has fired there is
+  // nothing left to flush, so becoming a no-op restores readableFlowing /
+  // isPaused() parity for consumers that resume() past EOF (Readable.toWeb).
+  if ((state[kState] & (kDestroyed | kEndEmitted)) === (kDestroyed | kEndEmitted)) {
+    return this;
+  }
   if ((state[kState] & kFlowing) === 0) {
     $debug("resume");
     // We flow only if there is no one listening
@@ -1167,6 +1183,9 @@ function resume_(stream, state) {
 
 Readable.prototype.pause = function () {
   const state = this._readableState;
+  if ((state[kState] & kDestroyed) !== 0) {
+    return this;
+  }
   $debug("call pause");
   if ((state[kState] & (kHasFlowing | kFlowing)) !== kHasFlowing) {
     $debug("pause");
@@ -1247,6 +1266,56 @@ Readable.prototype.iterator = function (options) {
   return streamToAsyncIterator(this, options);
 };
 
+// The flag cannot be checked at module load time (readable loads during
+// bootstrap before options are available). Instead, toAsyncStreamable is
+// always defined but lazily initializes on first call -- throwing if the
+// flag is not set.
+{
+  const toAsyncStreamable = Symbol.for("Stream.toAsyncStreamable");
+  let createBatchedAsyncIterator;
+  let normalizeBatch;
+  let kValidatedSource;
+
+  Readable.prototype[toAsyncStreamable] = function () {
+    if (createBatchedAsyncIterator === undefined) {
+      // Write-once CLI bit set during argument parsing - unlike
+      // process.execArgv this cannot be mutated by user code.
+      if (!$cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag")) {
+        throw $ERR_STREAM_ITER_MISSING_FLAG();
+      }
+      ({ createBatchedAsyncIterator, normalizeBatch } = require("internal/streams/iter/classic"));
+      ({ kValidatedSource } = require("internal/streams/iter/types"));
+    }
+    const state = this._readableState;
+    const normalize = state.objectMode || state.encoding ? normalizeBatch : null;
+    const iter = createBatchedAsyncIterator(this, normalize);
+    iter[kValidatedSource] = true;
+    iter.stream = this;
+    return iter;
+  };
+}
+
+let composeImpl;
+
+Readable.prototype.compose = function compose(stream, options) {
+  if (options != null) {
+    validateObject(options, "options");
+  }
+  if (options?.signal != null) {
+    validateAbortSignal(options.signal, "options.signal");
+  }
+
+  composeImpl ??= require("internal/streams/compose");
+  const composedStream = composeImpl(this, stream);
+
+  if (options?.signal) {
+    // Not validating as we already validated before
+    addAbortSignalNoValidate(options.signal, composedStream);
+  }
+
+  return composedStream;
+};
+
 function streamToAsyncIterator(stream, options?) {
   if (typeof stream.read !== "function") {
     stream = Readable.wrap(stream, { objectMode: true });
@@ -1320,8 +1389,9 @@ ObjectDefineProperties(Readable.prototype, {
     },
     set(val) {
       // Backwards compat.
-      if (this._readableState) {
-        this._readableState.readable = !!val;
+      const state = this._readableState;
+      if (state) {
+        state.readable = !!val;
       }
     },
   },
@@ -1369,8 +1439,9 @@ ObjectDefineProperties(Readable.prototype, {
       return this._readableState.flowing;
     },
     set: function (state) {
-      if (this._readableState) {
-        this._readableState.flowing = state;
+      const readableState = this._readableState;
+      if (readableState) {
+        readableState.flowing = state;
       }
     },
   },
@@ -1485,10 +1556,11 @@ function fromList(n, state) {
   const buf = state.buffer;
   const len = buf.length;
 
+  let stateLength;
   if ((state[kState] & kObjectMode) !== 0) {
     ret = buf[idx];
     buf[idx++] = null;
-  } else if (!n || n >= state.length) {
+  } else if (!n || n >= (stateLength = state.length)) {
     // Read it all, truncate the list.
     if ((state[kState] & kDecoder) !== 0) {
       ret = "";
@@ -1502,7 +1574,7 @@ function fromList(n, state) {
       ret = buf[idx];
       buf[idx++] = null;
     } else {
-      ret = Buffer.allocUnsafe(state.length);
+      ret = Buffer.allocUnsafe(stateLength ?? state.length);
 
       let i = 0;
       while (idx < len) {
@@ -1523,12 +1595,13 @@ function fromList(n, state) {
     ret = "";
     while (idx < len) {
       const str = buf[idx];
-      if (n > str.length) {
+      const strLength = str.length;
+      if (n > strLength) {
         ret += str;
-        n -= str.length;
+        n -= strLength;
         buf[idx++] = null;
       } else {
-        if (n === buf.length) {
+        if (n === strLength) {
           ret += str;
           buf[idx++] = null;
         } else {
@@ -1544,17 +1617,18 @@ function fromList(n, state) {
     const retLen = n;
     while (idx < len) {
       const data = buf[idx];
-      if (n > data.length) {
+      const dataLength = data.length;
+      if (n > dataLength) {
         TypedArrayPrototypeSet.$call(ret, data, retLen - n);
-        n -= data.length;
+        n -= dataLength;
         buf[idx++] = null;
       } else {
-        if (n === data.length) {
+        if (n === dataLength) {
           TypedArrayPrototypeSet.$call(ret, data, retLen - n);
           buf[idx++] = null;
         } else {
           TypedArrayPrototypeSet.$call(ret, new $Buffer(data.buffer, data.byteOffset, n), retLen - n);
-          buf[idx] = new $Buffer(data.buffer, data.byteOffset + n, data.length - n);
+          buf[idx] = new $Buffer(data.buffer, data.byteOffset + n, dataLength - n);
         }
         break;
       }

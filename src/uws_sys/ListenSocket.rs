@@ -1,5 +1,4 @@
 use core::ffi::{c_char, c_int, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use bun_core::Fd;
@@ -16,11 +15,7 @@ impl ListenSocket {
         us_listen_socket_close(self)
     }
 
-    pub fn get_local_address<'a>(
-        &mut self,
-        buf: &'a mut [u8],
-    ) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn get_local_address<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
         self.get_socket().local_address(buf)
     }
 
@@ -30,7 +25,7 @@ impl ListenSocket {
 
     pub fn get_socket(&mut self) -> &mut us_socket_t {
         // SAFETY: ListenSocket is layout-compatible with us_socket_t on the C side
-        // (a listen socket IS a us_socket_t); Zig does `@ptrCast(this)`. The returned
+        // (a listen socket IS a us_socket_t). The returned
         // borrow reborrows `&mut self` exclusively — no alias is live while it exists.
         unsafe { &mut *std::ptr::from_mut::<ListenSocket>(self).cast::<us_socket_t>() }
     }
@@ -50,7 +45,7 @@ impl ListenSocket {
 
     pub fn ext<T>(&mut self) -> &mut T {
         // SAFETY: caller guarantees the ext storage was sized/aligned for T at
-        // group creation time (mirrors Zig `@ptrCast(@alignCast(...))`).
+        // group creation time.
         unsafe { &mut *us_listen_socket_ext(self).cast::<T>() }
     }
 
@@ -101,19 +96,21 @@ impl ListenSocket {
     /// Returns the raw userdata pointer registered via `add_server_name` for
     /// `hostname`, cast to `*mut T`. Returned as `NonNull<T>` (not `&mut T`)
     /// because the pointee is caller-owned external storage — materializing a
-    /// `&mut T` here could alias the caller's own live reference to it. Mirrors
-    /// Zig's `?*T` return (Zig pointers freely alias).
+    /// `&mut T` here could alias the caller's own live reference to it.
     pub fn find_server_name_userdata<T>(
         &mut self,
         hostname: &core::ffi::CStr,
     ) -> Option<NonNull<T>> {
         // SAFETY: self and hostname valid; caller guarantees the stored userdata
-        // is a *T (mirrors Zig `@ptrCast(@alignCast(...))`).
+        // is a *T.
         let p = unsafe { us_listen_socket_find_server_name_userdata(self, hostname.as_ptr()) };
         NonNull::new(p.cast::<T>())
     }
 
-    pub fn on_server_name(&mut self, cb: extern "C" fn(*mut ListenSocket, *const c_char)) {
+    pub fn on_server_name(
+        &mut self,
+        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
+    ) {
         us_listen_socket_on_server_name(self, cb)
     }
 }
@@ -127,8 +124,6 @@ unsafe extern "C" {
     safe fn us_listen_socket_group(ls: &mut ListenSocket) -> *mut SocketGroup;
     safe fn us_listen_socket_ext(ls: &mut ListenSocket) -> *mut c_void;
     safe fn us_listen_socket_get_fd(ls: &mut ListenSocket) -> LIBUS_SOCKET_DESCRIPTOR;
-    #[allow(dead_code)]
-    safe fn us_listen_socket_port(ls: &mut ListenSocket) -> c_int;
     fn us_listen_socket_add_server_name(
         ls: *mut ListenSocket,
         hostname: *const c_char,
@@ -142,8 +137,6 @@ unsafe extern "C" {
     ) -> *mut c_void;
     safe fn us_listen_socket_on_server_name(
         ls: &mut ListenSocket,
-        cb: extern "C" fn(*mut ListenSocket, *const c_char),
+        cb: extern "C" fn(*mut ListenSocket, *const c_char, *mut c_int, *mut c_void) -> *mut c_void,
     );
 }
-
-// ported from: src/uws_sys/ListenSocket.zig

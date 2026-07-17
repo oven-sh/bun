@@ -14,7 +14,7 @@
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
 #include "IDLTypes.h"
-#include "mimalloc.h"
+#include "MimallocWTFMalloc.h"
 
 #include <limits>
 #include <wtf/Seconds.h>
@@ -112,37 +112,42 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__createUT
     return JSValue::encode(jsString(vm, WTF::move(str)));
 }
 
-extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
+JSC::JSValue BunString::transferToJS(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (bunString->tag == BunStringTag::Empty) [[unlikely]] {
-        return JSValue::encode(JSC::jsEmptyString(vm));
+    if (this->tag == BunStringTag::Empty) [[unlikely]] {
+        return JSC::jsEmptyString(vm);
     }
 
-    if (bunString->tag == BunStringTag::Dead) [[unlikely]] {
+    if (this->tag == BunStringTag::Dead) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        return Bun::ERR::STRING_TOO_LONG(scope, globalObject);
+        return JSValue::decode(Bun::ERR::STRING_TOO_LONG(scope, globalObject));
     }
 
-    if (bunString->tag == BunStringTag::WTFStringImpl) [[likely]] {
+    if (this->tag == BunStringTag::WTFStringImpl) [[likely]] {
 #if ASSERT_ENABLED
-        unsigned refCount = bunString->impl.wtf->refCount();
-        ASSERT(refCount > 0 && !bunString->impl.wtf->isEmpty());
+        unsigned refCount = this->impl.wtf->refCount();
+        ASSERT(refCount > 0 && !this->impl.wtf->isEmpty());
 #endif
-        auto str = bunString->toWTFString();
+        auto str = this->toWTFString();
 #if ASSERT_ENABLED
-        unsigned newRefCount = bunString->impl.wtf->refCount();
+        unsigned newRefCount = this->impl.wtf->refCount();
         ASSERT(newRefCount == refCount + 1);
 #endif
-        bunString->impl.wtf->deref();
-        *bunString = { .tag = BunStringTag::Dead };
-        return JSValue::encode(jsString(vm, WTF::move(str)));
+        this->impl.wtf->deref();
+        *this = { .tag = BunStringTag::Dead };
+        return jsString(vm, WTF::move(str));
     }
 
-    WTF::String str = bunString->toWTFString();
-    *bunString = { .tag = BunStringTag::Dead };
-    return JSValue::encode(jsString(vm, WTF::move(str)));
+    WTF::String str = this->toWTFString();
+    *this = { .tag = BunStringTag::Dead };
+    return jsString(vm, WTF::move(str));
+}
+
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue BunString__transferToJS(BunString* bunString, JSC::JSGlobalObject* globalObject)
+{
+    return JSValue::encode(bunString->transferToJS(globalObject));
 }
 
 // int64_t max to say "not a number"
@@ -330,16 +335,33 @@ bool isCrossThreadShareable(const WTF::String& string)
     return true;
 }
 
+// An isolated copy still gets handed to (possibly several) receiving threads —
+// BroadcastChannel fans a single SerializedScriptValue out to N contexts, each
+// of which deserializes the same stored string — so the copy needs the same
+// pre-hash + never-atomize treatment as a directly-shared original. Otherwise
+// the receivers race the lazy m_hashAndFlags update (debug: ASSERT(!hasHash())
+// in setHash; e.g. two workers switch()ing on the same BroadcastChannel
+// message). Static strings are immortal, pre-hashed and safe to share as-is.
+static Ref<WTF::StringImpl> isolatedCopyForSharing(WTF::StringImpl& impl)
+{
+    Ref<WTF::StringImpl> copy = impl.isolatedCopy();
+    if (!copy->isStatic()) {
+        copy->hash();
+        copy->setNeverAtomize();
+    }
+    return copy;
+}
+
 Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 {
     if (impl->isAtom() || impl->isSymbol())
-        return impl->isolatedCopy();
+        return isolatedCopyForSharing(impl);
 
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return impl->isolatedCopy();
+        return isolatedCopyForSharing(impl);
 
     if (impl->length() < kMinCrossThreadShareableLength)
-        return impl->isolatedCopy();
+        return isolatedCopyForSharing(impl);
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
     // Force hash computation on this thread before sharing
@@ -351,18 +373,20 @@ Ref<WTF::StringImpl> toCrossThreadShareable(Ref<WTF::StringImpl> impl)
 
 WTF::String toCrossThreadShareable(const WTF::String& string)
 {
-    if (string.length() < kMinCrossThreadShareableLength)
-        return string.isolatedCopy();
-
     auto* impl = string.impl();
+    if (!impl)
+        return string;
+
+    if (string.length() < kMinCrossThreadShareableLength)
+        return isolatedCopyForSharing(*impl);
 
     // 1) Never share AtomStringImpl/symbols - they have special thread-unsafe behavior
     if (impl->isAtom() || impl->isSymbol())
-        return string.isolatedCopy();
+        return isolatedCopyForSharing(*impl);
 
     // 2) Don't share slices
     if (impl->bufferOwnership() == StringImpl::BufferSubstring)
-        return string.isolatedCopy();
+        return isolatedCopyForSharing(*impl);
 
     // 3) Ensure we won't lazily touch hash/flags on the consumer thread
     // Force hash computation on this thread before sharing
@@ -414,7 +438,7 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     if (simdutf::validate_utf8(bytes, length)) {
         size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
         std::span<char16_t> ptr;
-        auto impl = WTF::StringImpl::tryCreateUninitialized(static_cast<unsigned int>(u16Length), ptr);
+        auto impl = WTF::StringImpl::tryCreateUninitialized(u16Length, ptr);
         if (!impl) [[unlikely]] {
             return { .tag = BunStringTag::Dead };
         }
@@ -863,7 +887,9 @@ extern "C" BunString BunString__createExternalGloballyAllocatedLatin1(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        // `bytes` came from a Rust `Vec` (the global allocator); free with
+        // `defaultAllocatorFree` so it agrees with the `#[global_allocator]`.
+        Bun::defaultAllocatorFree(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }
@@ -874,7 +900,9 @@ extern "C" BunString BunString__createExternalGloballyAllocatedUTF16(
 {
     ASSERT(length > 0);
     Ref<WTF::ExternalStringImpl> impl = WTF::ExternalStringImpl::create({ bytes, length }, nullptr, [](void*, void* ptr, size_t) {
-        mi_free(ptr);
+        // `bytes` came from a Rust `Vec` (the global allocator); free with
+        // `defaultAllocatorFree` so it agrees with the `#[global_allocator]`.
+        Bun::defaultAllocatorFree(ptr);
     });
     return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
 }

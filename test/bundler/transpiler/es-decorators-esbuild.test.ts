@@ -1,13 +1,17 @@
-import { describe, test } from "bun:test";
+import { beforeAll, describe, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
 
 // This test file programmatically runs esbuild's decorator test suite
 // (vendor/esbuild/scripts/decorator-tests.ts) against Bun's transpiler.
-// Each test is run as a standalone .ts file in a temp directory with
-// a tsconfig that does NOT have experimentalDecorators, so standard
-// decorators are used.
+//
+// To keep this file fast, we spawn ONE bun subprocess that imports each
+// test case (written to its own .ts file in a temp directory so a syntax
+// error in one test doesn't take down the rest). The runner prints a
+// machine-readable PASS/FAIL line per test, which we parse back into
+// per-test bun:test assertions so failures are still attributed to the
+// correct decorator test name.
 
 const testBoilerplate = `
 // Polyfill Symbol.metadata (not natively available in JSC)
@@ -53,24 +57,6 @@ function filterStderr(stderr: string) {
     .filter(line => !line.startsWith("WARNING: ASAN"))
     .join("\n")
     .trim();
-}
-
-async function runDecoratorTest(code: string) {
-  using dir = tempDir("es-dec-esbuild", {
-    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
-    "test.ts": testBoilerplate + "\n" + code,
-  });
-
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-
-  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr: filterStderr(rawStderr), exitCode };
 }
 
 // Read the esbuild decorator test source and extract individual tests
@@ -173,25 +159,110 @@ function shouldTodo(name: string): boolean {
   return todoPatterns.some(p => p.test(name));
 }
 
-describe("ES Decorators (esbuild test suite)", () => {
-  for (const entry of allTests) {
-    const { name, body, isAsync } = entry;
+interface TestResult {
+  ok: boolean;
+  error?: string;
+}
 
-    const testCode = isAsync
-      ? `(async () => {${body}})().catch(e => { console.error(e); process.exit(1); });`
-      : `(() => {${body}})();`;
+// Spawn a single bun process that imports every decorator test file in
+// sequence and reports per-test PASS/FAIL on stdout.
+async function runAllDecoratorTests(): Promise<Map<number, TestResult>> {
+  const files: Record<string, string> = {
+    "tsconfig.json": JSON.stringify({ compilerOptions: {} }),
+  };
+
+  const fileNames: string[] = [];
+  for (let i = 0; i < allTests.length; i++) {
+    const { body, isAsync } = allTests[i];
+    const fileName = `test-${i}.ts`;
+    fileNames.push(fileName);
+    // Each test is its own module so a parse/transpile error in one test
+    // doesn't prevent the others from running. Async tests use top-level
+    // await so a rejection turns into an import error caught by the runner.
+    const wrapped = isAsync ? `await (async () => {${body}})();` : `(() => {${body}})();`;
+    files[fileName] = testBoilerplate + "\n" + wrapped;
+  }
+
+  files["_runner.ts"] = [
+    `const files = ${JSON.stringify(fileNames)};`,
+    `for (let i = 0; i < files.length; i++) {`,
+    `  try {`,
+    `    await import("./" + files[i]);`,
+    `    console.log("PASS " + i);`,
+    `  } catch (e) {`,
+    `    const raw = e && e.stack ? String(e.stack) : String(e);`,
+    `    console.log("FAIL " + i + " " + JSON.stringify(raw));`,
+    `  }`,
+    `}`,
+    ``,
+  ].join("\n");
+
+  using dir = tempDir("es-dec-esbuild", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "_runner.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const stderr = filterStderr(rawStderr);
+
+  const results = new Map<number, TestResult>();
+  for (const line of stdout.split("\n")) {
+    const match = line.match(/^(PASS|FAIL) (\d+)(?: (.*))?$/);
+    if (!match) continue;
+    const idx = parseInt(match[2], 10);
+    if (match[1] === "PASS") {
+      results.set(idx, { ok: true });
+    } else {
+      let error = match[3] ?? "";
+      try {
+        error = JSON.parse(error);
+      } catch {}
+      results.set(idx, { ok: false, error });
+    }
+  }
+
+  if (exitCode !== 0 || results.size !== allTests.length) {
+    throw new Error(
+      `Decorator test runner did not complete cleanly.\n` +
+        `Reported ${results.size}/${allTests.length} results, exit code ${exitCode}.\n` +
+        `stderr:\n${stderr}\n` +
+        `stdout:\n${stdout}`,
+    );
+  }
+
+  return results;
+}
+
+describe("ES Decorators (esbuild test suite)", () => {
+  let results: Map<number, TestResult>;
+
+  // The default 5s hook timeout is too short for 147 sequential transpiles
+  // in a debug/ASAN build, so give the single setup spawn a generous budget.
+  beforeAll(async () => {
+    results = await runAllDecoratorTests();
+  }, 120_000);
+
+  for (let i = 0; i < allTests.length; i++) {
+    const { name } = allTests[i];
 
     if (shouldTodo(name)) {
       test.todo(name);
-    } else {
-      test.concurrent(name, async () => {
-        const { stdout, stderr, exitCode } = await runDecoratorTest(testCode);
-        if (exitCode !== 0) {
-          throw new Error(
-            `Test "${name}" failed with exit code ${exitCode}\n` + `stdout: ${stdout}\n` + `stderr: ${stderr}`,
-          );
-        }
-      });
+      continue;
     }
+
+    test(name, () => {
+      const result = results.get(i);
+      if (!result) {
+        throw new Error(`No result reported for decorator test #${i} ("${name}")`);
+      }
+      if (!result.ok) {
+        throw new Error(result.error || `Decorator test "${name}" failed without an error message`);
+      }
+    });
   }
 });

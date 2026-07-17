@@ -2,9 +2,7 @@
 
 #![allow(non_camel_case_types, non_snake_case)]
 
-use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 
 pub type brotli_alloc_func =
     Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize) -> *mut c_void>;
@@ -18,9 +16,8 @@ pub const BROTLI_SHARED_DICTIONARY_SERIALIZED: c_int = 1;
 pub type enum_BrotliSharedDictionaryType = c_uint;
 pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 
-// pub extern fn BrotliSharedDictionaryCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: ?*anyopaque) ?*BrotliSharedDictionary;
-// pub extern fn BrotliSharedDictionaryDestroyInstance(dict: ?*BrotliSharedDictionary) void;
-// pub extern fn BrotliSharedDictionaryAttach(dict: ?*BrotliSharedDictionary, type: BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) c_int;
+// Not bound: BrotliSharedDictionaryCreateInstance, BrotliSharedDictionaryDestroyInstance,
+// BrotliSharedDictionaryAttach (unused).
 
 unsafe extern "C" {
     // Opaque handle by reference + scalars only.
@@ -72,20 +69,6 @@ bun_opaque::opaque_ffi! {
     pub struct BrotliDecoder;
 }
 
-#[allow(dead_code)]
-type BrotliDecoderSetMetadataCallbacks = unsafe extern "C" fn(
-    state: *mut BrotliDecoder,
-    start_func: brotli_decoder_metadata_start_func,
-    chunk_func: brotli_decoder_metadata_chunk_func,
-    opaque: *mut c_void,
-);
-#[allow(dead_code)]
-type brotli_decoder_metadata_start_func =
-    Option<unsafe extern "C" fn(opaque: *mut c_void, size: usize)>;
-#[allow(dead_code)]
-type brotli_decoder_metadata_chunk_func =
-    Option<unsafe extern "C" fn(opaque: *mut c_void, data: *const u8, size: usize)>;
-
 impl BrotliDecoder {
     pub fn set_parameter(
         state: &mut BrotliDecoder,
@@ -95,16 +78,11 @@ impl BrotliDecoder {
         BrotliDecoderSetParameter(state, param as c_uint, value) > 0
     }
 
-    pub fn attach_dictionary(
-        state: &mut BrotliDecoder,
-        type_: BrotliSharedDictionaryType,
-        data: &[u8],
-    ) -> c_int {
-        // SAFETY: state is a valid &mut BrotliDecoder; data.ptr/len are a valid slice
-        unsafe { BrotliDecoderAttachDictionary(state, type_, data.len(), data.as_ptr()) }
-    }
-
-    pub fn create_instance(
+    /// # Safety
+    /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
+    /// every `alloc_func`/`free_func` invocation for the lifetime of the
+    /// returned decoder (or null when the default allocator is used).
+    pub unsafe fn create_instance(
         alloc_func: brotli_alloc_func,
         free_func: brotli_free_func,
         opaque: *mut c_void,
@@ -130,7 +108,6 @@ impl BrotliDecoder {
                 decoded_ptr,
             )
         };
-        // PORT NOTE: reshaped for borrowck — Zig mutated `decoded.len` in place via `*[]u8`
         // SAFETY: decoded_ptr points to the same allocation; decoded_size <= original len per brotli contract
         *decoded = unsafe { core::slice::from_raw_parts_mut(decoded_ptr, decoded_size) };
         result
@@ -153,7 +130,7 @@ impl BrotliDecoder {
                 available_out,
                 next_out,
                 total_out
-                    .map(|p| std::ptr::from_mut::<usize>(p))
+                    .map(std::ptr::from_mut::<usize>)
                     .unwrap_or(core::ptr::null_mut()),
             )
         }
@@ -204,7 +181,7 @@ impl BrotliDecoder {
     }
 }
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderResult {
     err = 0,
@@ -213,14 +190,12 @@ pub enum BrotliDecoderResult {
     needs_more_output = 3,
 }
 
-// NOTE: brotli_c.zig (translate-c output) defines this error-code table three times
-// (loose `BROTLI_DECODER_*` consts, a subset `BrotliDecoderErrorCode` enum, and the
-// full `BrotliDecoderErrorCode2` enum). They are intentionally collapsed here into the
-// single complete enum below; `BrotliDecoderErrorCode` is kept as an alias for FFI
-// signatures. Do not re-add the duplicates on a mechanical re-port.
+// NOTE: the duplicate error-code tables the upstream brotli headers define are
+// intentionally collapsed into the single enum below; `BrotliDecoderErrorCode`
+// is kept as an alias so FFI signatures keep their upstream names.
 pub type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
 
-#[repr(i32)] // Zig: enum(c_int)
+#[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderErrorCode2 {
     NO_ERROR = 0,
@@ -258,7 +233,7 @@ pub enum BrotliDecoderErrorCode2 {
 pub const BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: c_int = 0;
 pub const BROTLI_DECODER_PARAM_LARGE_WINDOW: c_int = 1;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderParameter {
     DISABLE_RING_BUFFER_REALLOCATION = 0,
@@ -273,26 +248,11 @@ pub type BrotliSharedDictionaryStruct = struct_BrotliSharedDictionaryStruct;
 bun_opaque::opaque_ffi! { pub struct struct_BrotliEncoderPreparedDictionaryStruct; }
 pub type BrotliEncoderPreparedDictionary = struct_BrotliEncoderPreparedDictionaryStruct;
 
-unsafe extern "C" {
-    fn BrotliSharedDictionaryCreateInstance(
-        alloc_func: brotli_alloc_func,
-        free_func: brotli_free_func,
-        opaque: *mut c_void,
-    ) -> *mut BrotliSharedDictionary;
-    fn BrotliSharedDictionaryDestroyInstance(dict: *mut BrotliSharedDictionary);
-    fn BrotliSharedDictionaryAttach(
-        dict: *mut BrotliSharedDictionary,
-        type_: BrotliSharedDictionaryType,
-        data_size: usize,
-        data: *const u8,
-    ) -> c_int;
-}
-
 pub const BROTLI_MODE_GENERIC: c_int = 0;
 pub const BROTLI_MODE_TEXT: c_int = 1;
 pub const BROTLI_MODE_FONT: c_int = 2;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderMode {
     generic = 0,
@@ -316,7 +276,7 @@ pub const BROTLI_PARAM_NPOSTFIX: c_int = 7;
 pub const BROTLI_PARAM_NDIRECT: c_int = 8;
 pub const BROTLI_PARAM_STREAM_OFFSET: c_int = 9;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderParameter {
     mode = 0,
@@ -393,11 +353,13 @@ unsafe extern "C" {
     pub safe fn BrotliEncoderVersion() -> u32;
 }
 
-/// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
-/// `&BrotliEncoder` does not assert immutability of the C-owned state.
-bun_opaque::opaque_ffi! { pub struct BrotliEncoder; }
+bun_opaque::opaque_ffi! {
+    /// Opaque brotli encoder state. `UnsafeCell` makes the type `!Freeze` so a
+    /// `&BrotliEncoder` does not assert immutability of the C-owned state.
+    pub struct BrotliEncoder;
+}
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderOperation {
     process = 0,
@@ -423,12 +385,16 @@ impl<'a> Default for CompressionResult<'a> {
     }
 }
 
-// PORT NOTE: Zig's `BrotliEncoder.Operation` flattened to module-level alias
-// (inherent associated types are unstable in Rust).
+// `BrotliEncoder.Operation` is a module-level alias because inherent
+// associated types are unstable in Rust.
 pub type Operation = BrotliEncoderOperation;
 
 impl BrotliEncoder {
-    pub fn create_instance(
+    /// # Safety
+    /// `opaque` is forwarded to brotli's allocator hooks; it must be valid for
+    /// every `alloc_func`/`free_func` invocation for the lifetime of the
+    /// returned encoder (or null when the default allocator is used).
+    pub unsafe fn create_instance(
         alloc_func: brotli_alloc_func,
         free_func: brotli_free_func,
         opaque: *mut c_void,
@@ -440,10 +406,6 @@ impl BrotliEncoder {
     pub fn destroy_instance(state: &mut BrotliEncoder) {
         // SAFETY: state is a valid &mut BrotliEncoder allocated by create_instance
         unsafe { BrotliEncoderDestroyInstance(state) }
-    }
-
-    pub fn has_more_output(state: &mut BrotliEncoder) -> bool {
-        BrotliEncoderHasMoreOutput(state) > 0
     }
 
     pub fn take_output(state: &mut BrotliEncoder) -> &[u8] {
@@ -469,11 +431,9 @@ impl BrotliEncoder {
 
         let mut available_out: usize = 0;
 
-        let mut result = CompressionResult::default();
-
         // SAFETY: state is a valid &mut BrotliEncoder; in/out pointers are valid;
         // next_out is null (we use take_output below); total_out is null (unused)
-        result.success = unsafe {
+        let success = unsafe {
             BrotliEncoderCompressStream(
                 state,
                 op,
@@ -485,19 +445,22 @@ impl BrotliEncoder {
             ) > 0
         };
 
-        if result.success {
+        let mut output: &'a [u8] = &[];
+        if success {
             let mut size: usize = 0;
             let ptr = BrotliEncoderTakeOutput(state, &mut size);
             if !ptr.is_null() {
                 // SAFETY: brotli returns a pointer to an internal buffer of `size` bytes,
                 // valid until the next encoder call (bounded by 'a)
-                result.output = unsafe { core::slice::from_raw_parts::<'a>(ptr, size) };
+                output = unsafe { core::slice::from_raw_parts::<'a>(ptr, size) };
             }
         }
 
-        result.has_more = BrotliEncoderHasMoreOutput(state) > 0;
-
-        result
+        CompressionResult {
+            success,
+            output,
+            has_more: BrotliEncoderHasMoreOutput(state) > 0,
+        }
     }
 
     pub fn set_parameter(
@@ -523,5 +486,3 @@ pub const BROTLI_MAX_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;
 pub const BROTLI_DEFAULT_MODE: c_int = BROTLI_MODE_GENERIC;
-
-// ported from: src/brotli_sys/brotli_c.zig

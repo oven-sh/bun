@@ -1,33 +1,26 @@
 // Auth switch response packet
 
-use crate::mysql::protocol::new_writer::{NewWriter, write_wrap};
+use crate::mysql::protocol::new_writer::NewWriter;
 use crate::shared::Data;
 
 #[derive(Default)]
 pub struct AuthSwitchResponse {
-    pub auth_response: Data, // = .{ .empty = {} } → Data::default()
+    pub auth_response: Data,
 }
 
-// Zig `deinit` only forwarded to `self.auth_response.deinit()`; `Data: Drop` handles
-// that automatically, so no explicit `impl Drop` is needed here.
+// `Data: Drop` cleans up `auth_response` automatically, so no explicit
+// `impl Drop` is needed here.
 
 impl AuthSwitchResponse {
     pub fn write_internal<C: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<C>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<()> {
         writer.write(self.auth_response.slice())?;
         Ok(())
     }
 
-    // Zig: `pub const write = writeWrap(AuthSwitchResponse, writeInternal).write;`
-    pub fn write<C: super::new_writer::WriterContext>(
-        &self,
-        context: C,
-    ) -> Result<(), bun_core::Error> {
+    pub fn write<C: super::new_writer::WriterContext>(&self, context: C) -> crate::Result<()> {
         self.write_internal(NewWriter { wrapped: context })
     }
 }
-
-// ported from: src/sql/mysql/protocol/AuthSwitchResponse.zig

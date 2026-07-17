@@ -79,6 +79,10 @@ describe("BUN_OPTIONS environment variable", () => {
     expect(cpuProfiles.length).toBeGreaterThanOrEqual(1);
   });
 
+  // `bun build --compile` plus running the resulting standalone executable
+  // means two full Bun process lifecycles. Under sanitizer builds (ASAN/LSan)
+  // each exit pass + symbolization is slow enough that the pair blows past the
+  // default 5s test timeout, so give this test extra headroom.
   test("bare flag before flag with value is recognized (standalone executable)", () => {
     // Same test as above but with a compiled standalone executable.
     using dir = tempDir("bun-options-cpu-prof-compile", {
@@ -110,7 +114,7 @@ describe("BUN_OPTIONS environment variable", () => {
     const files = readdirSync(profDir);
     const cpuProfiles = files.filter((f: string) => f.endsWith(".cpuprofile"));
     expect(cpuProfiles.length).toBeGreaterThanOrEqual(1);
-  });
+  }, 60_000);
 
   test("empty BUN_OPTIONS - should work normally", () => {
     const result = spawnSync({

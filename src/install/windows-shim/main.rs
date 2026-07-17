@@ -12,8 +12,7 @@
 //!     no `#[no_mangle]` exports). Depending on the real crates would make
 //!     their `#[no_mangle]` C-ABI surface (`Bun__*`, `__bun_dispatch__*`) a
 //!     link root referencing libuv/simdutf/highway/ICU; the shim can't
-//!     satisfy those and shouldn't carry them. Zig's original
-//!     (`bun_shim_impl.zig`) was self-contained for the same reason.
+//!     satisfy those and shouldn't carry them.
 //!
 //! `BinLinkingShim.rs` is path-included for `Flags`/`VersionFlag` only; its
 //! encoder side (Shebang, `encode_into`, `include_bytes!` of this crate's own
@@ -23,27 +22,30 @@
 // modules assume these are set at the crate root.
 //
 // Freestanding: `no_std` + `no_main` so the link contains only the launcher
-// + Win32 externs — no Rust runtime, no CRT, no `std::sys` init. Matches
-// Zig's build (build.zig built `bun_shim_impl.zig` as a freestanding
-// ReleaseFast exe with `link_libc = false`, `single_threaded = true`).
+// + Win32 externs — no Rust runtime, no CRT, no `std::sys` init.
 // `scripts/build/rust.ts` supplies `/ENTRY:shim_main` and rebuilds `core`
 // with `panic_immediate_abort` so the panic/fmt machinery is dead code.
 #![no_std]
 #![no_main]
 #![allow(
-    unused,
     nonstandard_style,
     ambiguous_glob_reexports,
-    incomplete_features
+    incomplete_features,
+    dead_code
 )]
 #![feature(adt_const_params)]
 
+// `unreachable_pub`: these files are shared with `bun_install`, where their
+// `pub` items are cross-crate API (`bun_install::windows_shim::*`). Compiled
+// here as private modules of a binary, every `pub` is trivially unreachable.
 #[cfg(windows)]
 #[path = "BinLinkingShim.rs"]
+#[allow(unreachable_pub)]
 mod _bin_linking_shim;
 
 #[cfg(windows)]
 #[path = "bun_shim_impl.rs"]
+#[allow(unreachable_pub)]
 mod _bun_shim_impl;
 
 // ── /NODEFAULTLIB CRT stubs ────────────────────────────────────────────────
@@ -55,7 +57,7 @@ mod _bun_shim_impl;
 /// the symbol to exist.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub static _fltused: i32 = 0;
+pub(crate) static _fltused: i32 = 0;
 
 /// `__chkstk` — MSVC's stack-probe; LLVM inserts a call before any frame
 /// allocating >4 KiB (the launcher's path/cmdline buffers are ~128 KiB). The
@@ -65,9 +67,7 @@ pub static _fltused: i32 = 0;
 /// `compiler_builtins` *has* this routine but hard-gates it on
 /// `cfg(target_env = "gnu")` (`src/x86_64.rs` / `src/aarch64.rs`) because on
 /// `*-msvc` it expects the CRT to provide it; there is no feature flag to
-/// opt in. Zig is in the same position and ships the probe in its own
-/// compiler-rt for `windows && !link_libc` (see
-/// `vendor/zig/lib/compiler_rt/stack_probe.zig`). We do likewise: the bodies
+/// opt in. So we ship the probe ourselves: the bodies
 /// below are taken verbatim from `compiler_builtins` (which in turn mirrors
 /// LLVM `compiler-rt/lib/builtins/{x86_64,aarch64}/chkstk.S`), so they are
 /// the upstream-tested instruction sequences rather than a local rewrite.
@@ -81,7 +81,7 @@ pub static _fltused: i32 = 0;
 #[cfg(all(windows, target_arch = "x86_64"))]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
-pub extern "C" fn __chkstk() {
+pub(crate) extern "C" fn __chkstk() {
     // Verbatim: compiler_builtins `src/x86_64.rs` `___chkstk_ms` (the MS-x64
     // probe-only variant — same contract as MSVC `__chkstk`).
     core::arch::naked_asm!(
@@ -110,7 +110,7 @@ pub extern "C" fn __chkstk() {
 #[cfg(all(windows, target_arch = "aarch64"))]
 #[unsafe(no_mangle)]
 #[unsafe(naked)]
-pub extern "C" fn __chkstk() {
+pub(crate) extern "C" fn __chkstk() {
     // Verbatim: compiler_builtins `src/aarch64.rs` `__chkstk`.
     core::arch::naked_asm!(
         ".p2align 2",
@@ -131,7 +131,7 @@ pub extern "C" fn __chkstk() {
 /// parameters, so no CRT argv parsing is needed.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-pub extern "C" fn shim_main() -> ! {
+pub(crate) extern "C" fn shim_main() -> ! {
     _bun_shim_impl::main()
 }
 
@@ -139,7 +139,7 @@ pub extern "C" fn shim_main() -> ! {
 /// panics are debug assertions; in release the build script enables `core`'s
 /// `panic_immediate_abort` so they compile to a bare trap and never reach
 /// this. If one does (debug `--profile shim` build), exit 255 — same code
-/// `fail_and_exit_with_reason` uses, and matching Zig's `panic = abort`.
+/// `fail_and_exit_with_reason` uses.
 #[cfg(windows)]
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo<'_>) -> ! {
@@ -200,7 +200,7 @@ pub mod bun_core {
     pub use crate::w_lit as w;
     /// Mirrors `bun_core::RacyCell` (src/bun_core/util.rs) — `static`-safe
     /// interior-mutability cell with no synchronization. The shim is
-    /// single-threaded (Zig built it `single_threaded = true`), so the
+    /// single-threaded (it never spawns a thread), so the
     /// unconditional `Sync` is trivially upheld.
     ///
     /// Internally backed by `Cell<T>` (not `UnsafeCell<T>`): `Cell` is
@@ -209,16 +209,16 @@ pub mod bun_core {
     /// deref. The only remaining `unsafe` is the `impl Sync` below — the
     /// irreducible single-thread invariant.
     #[repr(transparent)]
-    pub struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
+    pub(crate) struct RacyCell<T: ?Sized>(core::cell::Cell<T>);
     // SAFETY: standalone shim is single-threaded.
     unsafe impl<T: ?Sized> Sync for RacyCell<T> {}
     impl<T> RacyCell<T> {
         #[inline]
-        pub const fn new(value: T) -> Self {
+        pub(crate) const fn new(value: T) -> Self {
             Self(core::cell::Cell::new(value))
         }
         #[inline]
-        pub const fn get(&self) -> *mut T {
+        pub(crate) const fn get(&self) -> *mut T {
             self.0.as_ptr()
         }
         /// Body is safe `Cell::get()`; the single-thread invariant is
@@ -226,7 +226,7 @@ pub mod bun_core {
         /// `bun_shim_impl.rs` only uses `.new()`/`.get()`, so signature
         /// parity with `bun_core::RacyCell::read` is unneeded here.
         #[inline]
-        pub fn read(&self) -> T
+        pub(crate) fn read(&self) -> T
         where
             T: Copy,
         {
@@ -234,7 +234,7 @@ pub mod bun_core {
         }
         /// Body is safe `Cell::set()`; see [`Self::read`].
         #[inline]
-        pub fn write(&self, value: T) {
+        pub(crate) fn write(&self, value: T) {
             self.0.set(value)
         }
     }
@@ -254,7 +254,7 @@ pub mod bun_core {
         ///
         /// # Safety
         /// `Self` must be inhabited at the all-zero bit pattern.
-        pub unsafe trait Zeroable: Sized {}
+        pub(crate) unsafe trait Zeroable: Sized {}
         // SAFETY: `#[repr(C)]` POD — all integer / raw-pointer fields.
         unsafe impl Zeroable for bun_windows_sys::IO_STATUS_BLOCK {}
         // SAFETY: two raw-pointer HANDLEs (null-valid) + two u32.
@@ -262,7 +262,7 @@ pub mod bun_core {
 
         /// Mirrors `bun_core::ffi::zeroed`.
         #[inline(always)]
-        pub const fn zeroed<T: Zeroable>() -> T {
+        pub(crate) const fn zeroed<T: Zeroable>() -> T {
             // SAFETY: `T: Zeroable` asserts all-zero is valid for `T`.
             unsafe { core::mem::zeroed() }
         }
@@ -282,8 +282,8 @@ pub mod compat {
     pub use bun_windows_sys::ntdll;
 
     // ── aliases / consts not yet in bun_windows_sys ──
-    pub type PVOID = *mut c_void;
-    pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
+    pub(crate) type PVOID = *mut c_void;
+    pub(crate) const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
 
     // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
     //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──

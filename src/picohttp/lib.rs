@@ -1,24 +1,20 @@
-#![allow(unused, non_camel_case_types, non_snake_case)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::ffi::c_int;
 use core::fmt;
 
 use bstr::BStr;
 
-use bun_core::output as Output;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
-// PORT NOTE: `Header::clone` / `Request::clone` / `Response::clone` need the
+// `Header::clone` / `Request::clone` / `Response::clone` need the
 // unbound-lifetime `append_raw` so they can interleave appends and stash the
-// raw ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
-// lifetime tracking. The buffer is heap-owned; callers keep the builder (or
+// raw ptr/len pairs. The buffer is heap-owned; callers keep the builder (or
 // its moved-out buffer) alive while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
-// TODO(port): bun_picohttp_sys crate missing — local FFI stub surface.
-// Real bindings would come from bindgen over vendor/picohttpparser.
+// FFI surface over vendor/picohttpparser. Hand-written (three functions, two
+// structs) rather than bindgen-generated.
 #[allow(non_camel_case_types)]
 mod c {
     use core::ffi::{c_char, c_int};
@@ -90,8 +86,7 @@ use bun_core::strings;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// NOTE: layout MUST match `c::phr_header` exactly (see static asserts below).
-/// Zig used `name: []const u8` / `value: []const u8` and relied on Zig's slice
-/// ABI being `{ptr, len}`. Rust `&[u8]` has no guaranteed field order in
+/// Rust `&[u8]` has no guaranteed field order in
 /// `#[repr(C)]`, so we spell the fields out and expose `.name()` / `.value()`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -114,9 +109,8 @@ impl Header {
     /// initialize fixed-size header arrays before filling them.
     ///
     /// Uses `null()` (not `b"".as_ptr()`) so the const evaluates to all-zero
-    /// bytes — `[Header::ZERO; N]` statics land in `.bss` instead of `.data`,
-    /// matching Zig's `var buf: [N]Header = undefined`. `name()`/`value()` go
-    /// through `ffi::slice`, which tolerates `(null, 0)`.
+    /// bytes — `[Header::ZERO; N]` statics land in `.bss` instead of `.data`.
+    /// `name()`/`value()` go through `ffi::slice`, which tolerates `(null, 0)`.
     pub const ZERO: Self = Self {
         name_ptr: core::ptr::null(),
         name_len: 0,
@@ -126,7 +120,7 @@ impl Header {
 
     /// Construct a `Header` from borrowed name/value slices. The caller is
     /// responsible for keeping the backing storage alive for as long as the
-    /// `Header` is read (matches the Zig `[]const u8` field semantics).
+    /// `Header` is read.
     #[inline]
     pub const fn new(name: &[u8], value: &[u8]) -> Self {
         Self {
@@ -166,8 +160,9 @@ impl Header {
     pub fn clone(&self, builder: &mut StringBuilder) -> Header {
         // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
-        // the lifetime of the cloned `Header` (see PORT NOTE on `StringBuilder`).
+        // the lifetime of the cloned `Header` (see the comment on `StringBuilder`).
         let name = unsafe { builder.append_raw(self.name()) };
+        // SAFETY: same buffer-lifetime invariant as `name` above.
         let value = unsafe { builder.append_raw(self.value()) };
         Header {
             name_ptr: name.as_ptr(),
@@ -184,9 +179,8 @@ impl Header {
 
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // NOTE: pretty_fmt! is the comptime ANSI-tag expander (`<r><cyan>` → escape
-        // codes). bun_core's current impl is a passthrough TODO(port) until the
-        // proc-macro lands; output will contain literal `<r>` tags until then.
+        // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
+        // codes).
         if enable_ansi_colors_stderr() {
             if self.is_multiline() {
                 write!(f, pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
@@ -247,9 +241,6 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
 #[derive(Clone, Copy, Default)]
 pub struct HeaderList<'a> {
     pub list: &'a [Header],
-    // TODO(port): Zig field is `[]Header` (mutable slice) but only ever read
-    // through `*const List`; using `&'a [Header]` here. Revisit if a caller
-    // mutates through it.
 }
 
 impl<'a> HeaderList<'a> {
@@ -288,14 +279,12 @@ impl<'a> HeaderList<'a> {
 // Request
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): thiserror not in workspace deps — manual Display/Error impl.
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseRequestError {
     BadRequest,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseRequestError);
-bun_core::named_error_set!(ParseRequestError);
 
 pub struct Request<'a> {
     pub method: &'a [u8],
@@ -322,6 +311,7 @@ impl<'a> Request<'a> {
         Request {
             // SAFETY: see `Header::clone` — caller keeps `builder` alive.
             method: unsafe { builder.append_raw(self.method) },
+            // SAFETY: see `Header::clone` — caller keeps `builder` alive.
             path: unsafe { builder.append_raw(self.path) },
             minor_version: self.minor_version,
             headers,
@@ -343,8 +333,10 @@ impl<'a> Request<'a> {
         Request {
             // SAFETY: caller contract.
             method: unsafe { &*core::ptr::from_ref::<[u8]>(self.method) },
+            // SAFETY: caller contract.
             path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
             minor_version: self.minor_version,
+            // SAFETY: caller contract.
             headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
             bytes_read: self.bytes_read,
         }
@@ -379,7 +371,7 @@ impl<'a> Request<'a> {
         if rc > -1 {
             // SAFETY: path_ptr points into buf; the byte after the path is the
             // space before "HTTP/1.x" which picohttpparser has already consumed,
-            // so writing a NUL there is in-bounds. Zig casts away const here too.
+            // so writing a NUL there is in-bounds.
             unsafe { path_ptr.cast_mut().add(path_len).write(0) };
         }
 
@@ -389,6 +381,7 @@ impl<'a> Request<'a> {
             _ => Ok(Request {
                 // SAFETY: on success, ptr/len point into `buf`.
                 method: unsafe { bun_core::ffi::slice(method_ptr, method_len) },
+                // SAFETY: on success, ptr/len point into `buf`.
                 path: unsafe { bun_core::ffi::slice(path_ptr, path_len) },
                 minor_version: usize::try_from(minor_version).expect("int cast"),
                 headers: &src[0..num_headers],
@@ -403,9 +396,9 @@ impl fmt::Display for Request<'_> {
         if enable_ansi_colors_stderr() {
             f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
-        write!(
+        writeln!(
             f,
-            "> HTTP/1.1 {} {}\n",
+            "> HTTP/1.1 {} {}",
             BStr::new(self.method),
             BStr::new(self.path)
         )?;
@@ -414,7 +407,7 @@ impl fmt::Display for Request<'_> {
                 f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
             }
             f.write_str("> ")?;
-            write!(f, "{}\n", header)?;
+            writeln!(f, "{}", header)?;
         }
         Ok(())
     }
@@ -481,9 +474,9 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            // Zig: bun.js_printer.writeJSONString — bun_core re-exports the
-            // tier-0 minimal impl as `js_printer::write_json_string`; the full
-            // encoding-aware printer in bun_js_printer overrides at link time.
+            // bun_core re-exports the tier-0 minimal impl as
+            // `js_printer::write_json_string`; the full encoding-aware printer
+            // in bun_js_printer overrides at link time.
             bun_core::js_printer::write_json_string(
                 self.body,
                 f,
@@ -521,13 +514,13 @@ impl fmt::Display for StatusCodeFormatter {
 // Response
 // ──────────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, strum::IntoStaticStr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParseResponseError {
-    Malformed_HTTP_Response,
+    #[strum(serialize = "Malformed_HTTP_Response")]
+    MalformedHttpResponse,
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseResponseError);
-bun_core::named_error_set!(ParseResponseError);
 
 #[derive(Clone, Copy)]
 pub struct Response<'a> {
@@ -565,6 +558,7 @@ impl<'a> Response<'a> {
             // SAFETY: caller contract.
             status: unsafe { &*core::ptr::from_ref::<[u8]>(self.status) },
             headers: HeaderList {
+                // SAFETY: caller contract.
                 list: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
             },
             bytes_read: self.bytes_read,
@@ -624,29 +618,38 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
-                // NOTE: `bun_core::debug!` macro is currently broken (it forwards
-                // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
-                // Use the function-form `output::debug` until the macro is fixed.
-                Output::debug(&format_args!(
-                    "Malformed HTTP response:\n{}",
-                    BStr::new(buf)
-                ));
-                Err(ParseResponseError::Malformed_HTTP_Response)
+                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
+                Err(ParseResponseError::MalformedHttpResponse)
             }
             -2 => {
                 *offset += buf.len();
                 Err(ParseResponseError::ShortRead)
             }
-            _ => Ok(Response {
-                minor_version: usize::try_from(minor_version).expect("int cast"),
-                status_code: u32::try_from(status_code).expect("int cast"),
-                // SAFETY: on success, ptr/len point into `buf`.
-                status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
-                headers: HeaderList {
-                    list: &src[0..num_headers.min(src.len())],
-                },
-                bytes_read: rc,
-            }),
+            _ => {
+                // RFC 9112 section 5.2: picohttpparser surfaces an obs-fold
+                // continuation line as a separate entry with an empty name.
+                // `Response` has no way to splice it back into the preceding
+                // field value, and silently dropping it corrupts the value
+                // (and, for Transfer-Encoding / Content-Length, the message
+                // framing). Treat the fold as malformed; Node does the same.
+                if src[0..num_headers.min(src.len())]
+                    .iter()
+                    .any(Header::is_multiline)
+                {
+                    bun_core::debug!("obs-fold in HTTP response:\n{}", BStr::new(buf));
+                    return Err(ParseResponseError::MalformedHttpResponse);
+                }
+                Ok(Response {
+                    minor_version: usize::try_from(minor_version).expect("int cast"),
+                    status_code: u32::try_from(status_code).expect("int cast"),
+                    // SAFETY: on success, ptr/len point into `buf`.
+                    status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
+                    headers: HeaderList {
+                        list: &src[0..num_headers.min(src.len())],
+                    },
+                    bytes_read: rc,
+                })
+            }
         }
     }
 
@@ -663,9 +666,9 @@ impl fmt::Display for Response<'_> {
             f.write_str(pretty_fmt!("<r><d>[fetch]<r> ", true))?;
         }
 
-        write!(
+        writeln!(
             f,
-            "< {} {}\n",
+            "< {} {}",
             StatusCodeFormatter {
                 code: self.status_code as usize
             },
@@ -677,7 +680,7 @@ impl fmt::Display for Response<'_> {
             }
 
             f.write_str("< ")?;
-            write!(f, "{}\n", header)?;
+            writeln!(f, "{}", header)?;
         }
         Ok(())
     }
@@ -693,7 +696,6 @@ pub enum ParseHeadersError {
     ShortRead,
 }
 bun_core::impl_tag_error!(ParseHeadersError);
-bun_core::named_error_set!(ParseHeadersError);
 
 pub struct Headers<'a> {
     pub headers: &'a [Header],
@@ -751,5 +753,3 @@ pub use c::phr_parse_request;
 pub use c::phr_parse_response;
 pub use c::struct_phr_chunked_decoder;
 pub use c::struct_phr_header;
-
-// ported from: src/picohttp/picohttp.zig

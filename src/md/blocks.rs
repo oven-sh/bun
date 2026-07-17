@@ -3,7 +3,6 @@ use crate::helpers;
 use crate::parser::{self, Parser};
 use crate::types::{self, BlockType, Container, Line, OFF, VerbatimLine};
 
-use bun_collections::VecExt as _;
 use core::mem::{align_of, size_of};
 
 type BlockHeader = parser::BlockHeader;
@@ -22,11 +21,10 @@ impl Parser<'_> {
         self.enter_block(BlockType::Doc, 0, 0)?;
 
         while off < self.size {
-            // PORT NOTE: reshaped for borrowck — index into line_buf via raw idx
             let line = &mut line_buf[line_idx];
 
             self.analyze_line(off, &mut off, &pivot_line, line)?;
-            // PORT NOTE: reshaped for borrowck — pass whole buf + idx so process_line can swap
+            // Pass the whole buf + idx so process_line can swap lines.
             self.process_line(&mut pivot_line, line_idx, &mut line_buf, &mut line_idx)?;
         }
 
@@ -49,7 +47,7 @@ impl Parser<'_> {
         p_end: &mut OFF,
         pivot_line: &Line,
         line: &mut Line,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), parser::Error> {
         let mut off = off_start;
         let mut total_indent: u32 = 0;
         let mut n_parents: u32 = 0;
@@ -220,15 +218,9 @@ impl Parser<'_> {
                             + align_mask_)
                             & !align_mask_;
                         if top_off + size_of::<BlockHeader>() <= self.block_bytes.len() {
-                            // SAFETY: block_bytes stores BlockHeader-aligned records; top_off computed above
-                            let top_hdr: &BlockHeader = unsafe {
-                                &*(self
-                                    .block_bytes
-                                    .as_ptr()
-                                    .add(self.block_bytes.len() - size_of::<BlockHeader>())
-                                    .cast::<BlockHeader>())
-                            };
-                            if top_hdr.block_type == BlockType::Li {
+                            let top_type =
+                                self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
+                            if top_type == BlockType::Li as u8 {
                                 self.last_list_item_starts_with_two_blank_lines = true;
                             }
                         }
@@ -246,15 +238,9 @@ impl Parser<'_> {
                         && self.current_block.is_none()
                         && self.block_bytes.len() > size_of::<BlockHeader>()
                     {
-                        // SAFETY: block_bytes stores BlockHeader-aligned records at len - sizeof
-                        let top_hdr: &BlockHeader = unsafe {
-                            &*(self
-                                .block_bytes
-                                .as_ptr()
-                                .add(self.block_bytes.len() - size_of::<BlockHeader>())
-                                .cast::<BlockHeader>())
-                        };
-                        if top_hdr.block_type == BlockType::Li {
+                        let top_type =
+                            self.block_bytes[self.block_bytes.len() - size_of::<BlockHeader>()];
+                        if top_type == BlockType::Li as u8 {
                             n_parents -= 1;
                             line.indent = total_indent;
                             if n_parents > 0 {
@@ -705,9 +691,9 @@ impl Parser<'_> {
         cur_line_idx: usize,
         line_buf: &mut [Line; 2],
         line_idx: &mut usize,
-    ) -> Result<(), bun_alloc::AllocError> {
-        // PORT NOTE: reshaped for borrowck — Zig passed `line: *Line` aliasing into line_buf;
-        // here we index into line_buf via cur_line_idx.
+    ) -> Result<(), parser::Error> {
+        // Index into line_buf via cur_line_idx instead of taking a `&mut Line`
+        // parameter, which would alias line_buf.
         let line = &mut line_buf[cur_line_idx];
 
         // Blank line ends current leaf block.
@@ -845,7 +831,7 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn start_new_block(&mut self, line: &Line) -> Result<(), bun_alloc::AllocError> {
+    pub fn start_new_block(&mut self, line: &Line) -> Result<(), parser::Error> {
         let block_type: BlockType = match line.r#type {
             LineType::Hr => BlockType::Hr,
             LineType::Atxheader => BlockType::H,
@@ -855,24 +841,13 @@ impl Parser<'_> {
             _ => BlockType::P,
         };
 
-        // Align block_bytes for Block alignment
-        let align_mask: usize = align_of::<BlockHeader>() - 1;
-        let cur_len = self.block_bytes.len();
-        let aligned = (cur_len + align_mask) & !align_mask;
-        let needed = aligned + size_of::<BlockHeader>();
-        self.block_bytes.ensure_total_capacity(needed);
-        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
-        // overwritten by the BlockHeader write below.
-        self.block_bytes.resize(needed, 0);
-
-        let hdr = self.get_block_header_at(aligned);
-        *hdr = BlockHeader {
+        let aligned = self.append_block_header(BlockHeader {
             block_type,
             _pad: [0; 3],
             flags: 0,
             data: line.data,
             n_lines: 0,
-        };
+        })?;
 
         self.current_block = Some(aligned);
         self.current_block_lines.clear();
@@ -892,10 +867,10 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn end_current_block(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub fn end_current_block(&mut self) -> Result<(), parser::Error> {
         if let Some(cb_off) = self.current_block {
-            // PORT NOTE: reshaped for borrowck — capture header fields, drop the &mut borrow,
-            // then access other &self fields.
+            // Capture the header fields, drop the &mut borrow, then access
+            // other &self fields.
             let (is_setext, hdr_n_lines) = {
                 let hdr = self.get_block_header_at(cb_off);
                 (
@@ -911,7 +886,7 @@ impl Parser<'_> {
             {
                 self.consume_ref_defs_from_current_block();
             }
-            let mut hdr = self.get_block_header_at(cb_off);
+            let hdr = self.get_block_header_at(cb_off);
 
             // Handle setext heading after ref def consumption
             if hdr.block_type == BlockType::H && (hdr.flags & types::BLOCK_SETEXT_HEADER) != 0 {
@@ -923,7 +898,7 @@ impl Parser<'_> {
                     // Only underline left after eating ref defs → convert to paragraph,
                     // keep block open so subsequent lines join this paragraph (md4c behavior)
                     hdr.block_type = BlockType::P;
-                    hdr.flags &= !(types::BLOCK_SETEXT_HEADER as u32);
+                    hdr.flags &= !types::BLOCK_SETEXT_HEADER;
                     return Ok(()); // Don't close the block!
                 } else {
                     // All lines consumed (shouldn't normally happen)
@@ -939,6 +914,9 @@ impl Parser<'_> {
                     self.current_block_lines.len() * size_of::<VerbatimLine>(),
                 )
             };
+            // The block's lines land in `block_bytes` too (12 bytes per
+            // line), not just its header, so this growth needs the same cap.
+            parser::check_block_bytes_len(self.block_bytes.len() + line_bytes.len())?;
             self.block_bytes.extend_from_slice(line_bytes);
             self.current_block = None;
         }
@@ -952,7 +930,6 @@ impl Parser<'_> {
 
         // Merge lines into buffer for ref def parsing
         self.buffer.clear();
-        // PORT NOTE: reshaped for borrowck — index instead of borrowing items slice.
         for idx in 0..self.current_block_lines.len() {
             let vline = self.current_block_lines[idx];
             if vline.beg > vline.end || vline.end > self.size {
@@ -965,8 +942,8 @@ impl Parser<'_> {
                 .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
         }
 
-        // PORT NOTE: reshaped for borrowck — move merged buffer out of self so
-        // parse_ref_def/normalize_label can borrow &self/&mut self.
+        // Move the merged buffer out of self so parse_ref_def/normalize_label
+        // can borrow &self/&mut self.
         let merged = core::mem::take(&mut self.buffer);
         let mut pos: usize = 0;
         let mut lines_consumed: u32 = 0;
@@ -989,13 +966,13 @@ impl Parser<'_> {
 
             // First definition wins
             let label = norm_label.into_boxed_slice();
-            if self.ref_def_labels.insert(label.clone()) {
+            if !self.ref_def_labels.contains(&label) {
+                let _ = self.ref_def_labels.insert(&label);
                 self.ref_defs.push(crate::ref_defs::RefDef {
                     label,
                     dest: dest_dupe,
                     title: title_dupe,
                 });
-                // TODO(port): Zig used `catch return` on push; Vec::push is infallible here
             }
 
             let mut newlines: u32 = 0;
@@ -1016,7 +993,6 @@ impl Parser<'_> {
 
         if lines_consumed > 0 {
             if let Some(cb_off) = self.current_block {
-                // PORT NOTE: reshaped for borrowck — capture n_lines, mutate, then write back.
                 let hdr_n_lines = self.get_block_header_at(cb_off).n_lines;
                 if lines_consumed >= hdr_n_lines {
                     // All lines consumed
@@ -1039,8 +1015,4 @@ impl Parser<'_> {
     // get_block_header_at / get_block_at moved to parser.rs (shared by containers.rs).
 }
 
-// TODO(port): `Line.type` field — Zig uses `.type`; Rust uses `r#type`. The variant
-// type is assumed to be `types::LineType` re-exported here for brevity.
 use crate::types::LineType;
-
-// ported from: src/md/blocks.zig

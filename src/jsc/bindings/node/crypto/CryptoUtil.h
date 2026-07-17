@@ -26,6 +26,7 @@ void destroy(Hasher* hasher);
 bool update(Hasher* hasher, std::span<const uint8_t> data);
 uint32_t digest(Hasher* hasher, Zig::GlobalObject* globalObject, std::span<uint8_t> out);
 uint32_t getDigestSize(Hasher* hasher);
+bool isXof(Hasher* hasher);
 
 }; // namespace ExternZigHash
 

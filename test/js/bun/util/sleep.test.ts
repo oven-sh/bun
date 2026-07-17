@@ -17,7 +17,10 @@ test("sleep should saturate timeout values", async () => {
     "-999999999999999",
     "-999999999999999.999999999999999",
   ];
-  const ASAN_MULTIPLIER = isASAN ? 2 : 1;
+  // ASAN with the system allocator makes subprocess startup dramatically
+  // slower; spawning ~11 children can take well over 10s, so the "completes
+  // instantly" bound needs much more headroom.
+  const ASAN_MULTIPLIER = isASAN ? 60 : 1;
 
   const toKill = fixturesThatShouldTimeout.map(timeout => {
     const proc = Bun.spawn({
@@ -58,7 +61,7 @@ test("sleep should saturate timeout values", async () => {
   toKill.forEach(proc => proc.kill());
 
   await allExited;
-});
+}, 120_000);
 
 test("sleep should keep the event loop alive", async () => {
   const proc = Bun.spawn({

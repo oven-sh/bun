@@ -1,5 +1,5 @@
 use crate::Command;
-use bun_core::{Global, Output, err};
+use bun_core::{Global, Output};
 use bun_install::lockfile::LoadResult;
 use bun_install::package_manager::{self, security_scanner};
 use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
@@ -7,22 +7,22 @@ use bun_install::{CommandLineArguments, Lockfile, PackageManager, Subcommand};
 pub struct ScanCommand;
 
 impl ScanCommand {
-    pub fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
+    pub fn exec(ctx: Command::Context) -> crate::Result<()> {
         let cli = CommandLineArguments::parse(Subcommand::Scan)?;
 
         let (manager, original_cwd) = match package_manager::init(&mut *ctx, cli, Subcommand::Scan)
         {
             Ok(v) => v,
             Err(e) => {
-                if e == err!("MissingPackageJSON") {
+                if e == bun_install::Error::MissingPackageJSON {
                     Output::err_generic(
                         "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
                         (),
                     );
-                    Output::note("Run \"bun install\" first to generate a lockfile");
+                    bun_core::note!("Run \"bun install\" first to generate a lockfile");
                     Global::exit(1);
                 }
-                return Err(e);
+                return Err(e.into());
             }
         };
         // `defer ctx.allocator.free(cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
@@ -34,31 +34,27 @@ impl ScanCommand {
         ctx: Command::Context,
         manager: &mut PackageManager,
         original_cwd: &[u8],
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if manager.options.security_scanner.is_none() {
-            Output::pretty_errorln(format_args!(
-                "<r><red>error<r>: no security scanner configured"
-            ));
-            Output::pretty(format_args!(
+            bun_core::pretty_errorln!("<r><red>error<r>: no security scanner configured");
+            bun_core::pretty!(
                 "\n\
                  To use 'bun pm scan', configure a security scanner in bunfig.toml:\n  \
                  [install.security]\n  \
                  scanner = \"<cyan>package_name<r>\"\n\
                  \n\
                  Security scanners can be npm packages that export a scanner object.\n"
-            ));
+            );
             Global::exit(1);
         }
 
-        // Zig: `Output.prettyError(comptime Output.prettyFmt(..., true), .{})` — the
-        // comptime ANSI expansion is folded into `pretty_error`'s runtime tag rewrite.
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><b>bun pm scan <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
+        // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
         // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
         // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
         // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
@@ -70,8 +66,8 @@ impl ScanCommand {
             // no other live `&mut Lockfile` exists at this point.
             let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
             match lockfile.load_from_cwd::<true>(
-                // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
-                // fields disjoint from `lockfile` (Zig invariant).
+                // SAFETY: see comment above — `load_from_cwd` accesses `manager`
+                // fields disjoint from `lockfile`.
                 Some(unsafe { &mut *pm_ptr }),
                 log,
             ) {
@@ -108,12 +104,10 @@ impl ScanCommand {
             if results.has_advisories() {
                 Global::exit(1);
             } else {
-                Output::pretty(format_args!("<green>No advisories found<r>\n"));
+                bun_core::pretty!("<green>No advisories found<r>\n");
             }
         }
 
         Global::exit(0);
     }
 }
-
-// ported from: src/cli/scan_command.zig

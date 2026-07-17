@@ -2,7 +2,6 @@ use bstr::BStr;
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
 use bun_collections::StringArrayHashMap;
-use bun_collections::VecExt;
 use bun_core::{ZStr, strings};
 use bun_glob as glob;
 use bun_paths as path;
@@ -16,7 +15,7 @@ use crate::package_manager::workspace_package_json_cache::{
 
 bun_output::declare_scope!(Lockfile, hidden);
 
-pub struct WorkspaceMap {
+pub(crate) struct WorkspaceMap {
     map: Map,
 }
 
@@ -30,31 +29,31 @@ pub struct Entry {
 }
 
 impl WorkspaceMap {
-    pub fn init() -> WorkspaceMap {
+    pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
         }
     }
 
-    pub fn keys(&self) -> &[Box<[u8]>] {
+    pub(crate) fn keys(&self) -> &[Box<[u8]>] {
         self.map.keys()
     }
 
-    pub fn values(&self) -> &[Entry] {
+    pub(crate) fn values(&self) -> &[Entry] {
         self.map.values()
     }
 
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.map.count()
     }
 
     #[inline]
-    pub fn get(&self, key: &[u8]) -> Option<&Entry> {
+    pub(crate) fn get(&self, key: &[u8]) -> Option<&Entry> {
         self.map.get(key)
     }
 
-    pub fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
-        // Zig has a debug-only `bun.sys.exists(key)` check here, but `key` is
+    pub(crate) fn insert(&mut self, key: &[u8], value: Entry) -> Result<(), bun_alloc::AllocError> {
+        // No `bun.sys.exists(key)` debug check here: `key` is
         // relative to the workspace root while `exists` resolves against process
         // cwd — false positive whenever the two differ (e.g. `bun unlink` from a
         // workspace package). Existence is already verified by the caller via
@@ -71,22 +70,56 @@ impl WorkspaceMap {
         };
         Ok(())
     }
-
-    pub fn sort(&mut self, mut sort_ctx: impl FnMut(usize, usize) -> bool) {
-        // ArrayHashMap::sort hands us key/value slices; this wrapper exposes the
-        // Zig-shaped (a_idx, b_idx) -> bool surface.
-        self.map.sort(|_keys, _values, a, b| sort_ctx(a, b));
-    }
 }
 
 // Drop: all fields are owned (Box<[u8]> keys, Entry { Box<[u8]>, Option<Box<[u8]>> })
 // — Rust drops them automatically; no explicit `deinit` body needed.
 
+#[derive(Clone, Copy)]
+pub(crate) enum NamesArray<'a> {
+    Mutable(&'a js_ast::E::Array),
+    Immutable(&'a js_ast::E::ArrayJSON, bun_ast::Loc),
+}
+
+impl<'a> NamesArray<'a> {
+    pub(crate) fn from_expr(expr: &'a js_ast::Expr, value_loc: bun_ast::Loc) -> Option<Self> {
+        match &expr.data {
+            js_ast::ExprData::EArray(arr) => Some(NamesArray::Mutable(arr.get())),
+            js_ast::ExprData::EArrayJSON(arr) => Some(NamesArray::Immutable(arr.get(), value_loc)),
+            _ => None,
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            NamesArray::Mutable(arr) => arr.items.len(),
+            NamesArray::Immutable(arr, _) => arr.items().len(),
+        }
+    }
+
+    fn item_str<'s>(&'s self, i: usize, scratch: &'s Arena) -> Option<&'s [u8]> {
+        match self {
+            NamesArray::Mutable(arr) => arr.slice()[i].as_string(scratch),
+            NamesArray::Immutable(arr, _) => arr.items()[i].as_str(),
+        }
+    }
+
+    fn item_loc(&self, source: &bun_ast::Source, i: usize) -> bun_ast::Loc {
+        match self {
+            NamesArray::Mutable(arr) => arr.slice()[i].loc,
+            NamesArray::Immutable(_, array_loc) => {
+                crate::bun_json::array_item_loc(&source.contents, *array_loc, i)
+                    .unwrap_or(*array_loc)
+            }
+        }
+    }
+}
+
 fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &ZStr,
     log: &mut bun_ast::Log,
-) -> Result<Entry, bun_core::Error> {
+) -> crate::Result<Entry> {
     let workspace_json = json_cache
         .get_with_path(
             log,
@@ -99,17 +132,17 @@ fn process_workspace_name(
         )
         .unwrap()?;
 
-    // Scratch arena for `as_string_cloned` (Zig threaded the heap allocator);
+    // Scratch arena for `as_string_cloned`;
     // results are immediately boxed so the bump can drop at scope exit.
     let scratch = Arena::new();
 
     let name_expr = workspace_json
         .root
         .get(b"name")
-        .ok_or(bun_core::err!("MissingPackageName"))?;
+        .ok_or(crate::Error::MissingPackageName)?;
     let name = name_expr
         .as_string_cloned(&scratch)?
-        .ok_or(bun_core::err!("MissingPackageName"))?;
+        .ok_or(crate::Error::MissingPackageName)?;
 
     let entry = Entry {
         name: Box::<[u8]>::from(name),
@@ -134,17 +167,18 @@ fn process_workspace_name(
 }
 
 impl WorkspaceMap {
-    pub fn process_names_array(
+    pub(crate) fn process_names_array(
         &mut self,
         json_cache: &mut WorkspacePackageJSONCache,
         log: &mut bun_ast::Log,
-        arr: &js_ast::E::Array,
+        arr: NamesArray<'_>,
         source: &bun_ast::Source,
         loc: bun_ast::Loc,
         mut string_builder: Option<&mut StringBuilder<'_>>,
-    ) -> Result<u32, bun_core::Error> {
+    ) -> crate::Result<u32> {
         let workspace_names = self;
-        if arr.items.len_u32() == 0 {
+        let item_count = arr.len();
+        if item_count == 0 {
             return Ok(0);
         }
 
@@ -152,49 +186,46 @@ impl WorkspaceMap {
 
         let mut workspace_globs: Vec<Box<[u8]>> = Vec::new();
         let mut filepath_buf_os: Box<PathBuffer> = Box::new(PathBuffer::uninit());
-        // PERF(port): Zig used allocator.create(PathBuffer) to avoid large stack frame
+        // Boxed to avoid a large stack frame.
         let filepath_buf: &mut [u8] = &mut filepath_buf_os.0[..];
 
-        // Scratch arena for `as_string_z` (Zig threaded the heap allocator).
         let scratch = Arena::new();
 
-        for item in arr.slice() {
-            // TODO: when does this get deallocated?
-            let Some(input_path) = item.as_string_z(&scratch)? else {
-                let _ = log.add_error_fmt(
+        for i in 0..item_count {
+            let Some(input_path) = arr.item_str(i, &scratch) else {
+                let _ = bun_ast::add_error_pretty!(
+                    log,
                     Some(source),
-                    item.loc,
-                    format_args!(
-                        "Workspaces expects an array of strings, like:\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
-                    ),
+                    arr.item_loc(source, i),
+                    "Workspaces expects an array of strings, like:\n  <r><green>\"workspaces\"<r>: [\n    <green>\"path/to/package\"<r>\n  ]"
                 );
-                return Err(bun_core::err!("InvalidPackageJSON"));
+                return Err(crate::Error::InvalidPackageJSON);
             };
 
-            if input_path.len() == 0
-                || (input_path.len() == 1 && input_path.as_bytes()[0] == b'.')
-                || input_path.as_bytes() == b"./"
-                || input_path.as_bytes() == b".\\"
+            if input_path.is_empty()
+                || input_path == b"."
+                || input_path == b"./"
+                || input_path == b".\\"
             {
                 continue;
             }
 
-            if glob::detect_glob_syntax(input_path.as_bytes()) {
-                workspace_globs.push(Box::<[u8]>::from(input_path.as_bytes()));
+            if glob::detect_glob_syntax(input_path) {
+                workspace_globs.push(Box::<[u8]>::from(input_path));
                 continue;
             }
 
             let abs_package_json_path: &ZStr =
                 resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
-                    source.path.name.dir,
+                    source.path.name().dir,
                     filepath_buf,
-                    &[input_path.as_bytes(), b"package.json"],
+                    &[input_path, b"package.json"],
                 );
 
             // skip root package.json
             if strings::eql_long(
                 resolve_path::dirname::<path::platform::Auto>(abs_package_json_path.as_bytes()),
-                source.path.name.dir,
+                source.path.name().dir,
                 true,
             ) {
                 continue;
@@ -204,29 +235,22 @@ impl WorkspaceMap {
                 match process_workspace_name(json_cache, abs_package_json_path, log) {
                     Ok(e) => e,
                     Err(err) => {
-                        // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent (Zig error return traces)
-                        if err == bun_core::err!("EISNOTDIR")
-                            || err == bun_core::err!("EISDIR")
-                            || err == bun_core::err!("EACCESS")
-                            || err == bun_core::err!("EPERM")
-                            || err == bun_core::err!("ENOENT")
-                            || err == bun_core::err!("FileNotFound")
+                        if err == crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
+                            || err == crate::Error::Sys(bun_errno::SystemErrno::EPERM)
+                            || err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                         {
                             let _ = log.add_error_fmt(
                                 Some(source),
-                                item.loc,
-                                format_args!(
-                                    "Workspace not found \"{}\"",
-                                    BStr::new(input_path.as_bytes())
-                                ),
+                                arr.item_loc(source, i),
+                                format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
                             );
-                        } else if err == bun_core::err!("MissingPackageName") {
+                        } else if err == crate::Error::MissingPackageName {
                             let _ = log.add_error_fmt(
                                 Some(source),
                                 loc,
                                 format_args!(
                                     "Missing \"name\" from package.json in {}",
-                                    BStr::new(input_path.as_bytes())
+                                    BStr::new(input_path)
                                 ),
                             );
                         } else {
@@ -234,11 +258,11 @@ impl WorkspaceMap {
                             let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
                             let _ = log.add_error_fmt(
                             Some(source),
-                            item.loc,
+                            arr.item_loc(source, i),
                             format_args!(
                                 "{} reading package.json for workspace package \"{}\" from \"{}\"",
                                 err.name(),
-                                BStr::new(input_path.as_bytes()),
+                                BStr::new(input_path),
                                 BStr::new(&cwd_buf[..cwd_len]),
                             ),
                         );
@@ -252,7 +276,7 @@ impl WorkspaceMap {
             }
 
             let rel_input_path = resolve_path::relative_platform::<path::platform::Auto, true>(
-                source.path.name.dir,
+                source.path.name().dir,
                 strings::without_suffix_comptime(
                     abs_package_json_path.as_bytes(),
                     const_format::concatcp!(SEP_STR, "package.json").as_bytes(),
@@ -298,13 +322,11 @@ impl WorkspaceMap {
 
         if workspace_globs.len() > 0 {
             let mut arena = Arena::new();
-            // PERF(port): was arena bulk-free per-iteration via reset(.retain_capacity)
             for (i, user_pattern) in workspace_globs.iter().enumerate() {
-                // PORT NOTE: Zig `defer arena.reset()` ran *after* iter.deinit()/walker.deinit() at
-                // end of each iter. In Rust, walker/iter borrow `&arena` and Drop at scope exit,
+                // walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
-                // Spec is `.reset(.retain_capacity)` — keep the `mi_heap` warm
+                // Capacity is retained to keep the `mi_heap` warm
                 // across glob patterns × matched dirs.
                 arena.reset_retain_with_limit(8 * 1024 * 1024);
                 let glob_pattern: &[u8] = if user_pattern.len() == 0 {
@@ -314,13 +336,13 @@ impl WorkspaceMap {
                     arena.alloc_slice_copy(resolve_path::join::<path::platform::Auto>(&parts))
                 };
 
-                let mut cwd = resolve_path::dirname::<path::platform::Auto>(&source.path.text);
+                let mut cwd = resolve_path::dirname::<path::platform::Auto>(source.path.text);
                 if cwd.is_empty() {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
-                // PORT NOTE: GlobWalker::init_with_cwd is now an associated constructor
+                // GlobWalker::init_with_cwd is now an associated constructor
                 // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
-                // ignore filter supplied as final arg (was comptime fn param in Zig).
+                // ignore filter supplied as final arg.
                 let mut walker = match GlobWalker::init_with_cwd(
                     glob_pattern,
                     cwd,
@@ -333,33 +355,31 @@ impl WorkspaceMap {
                 )? {
                     Ok(w) => w,
                     Err(e) => {
-                        let _ = log.add_error_fmt(
+                        let _ = bun_ast::add_error_pretty!(
+                            log,
                             Some(source),
                             loc,
-                            format_args!(
-                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                BStr::new(user_pattern),
-                                <&'static str>::from(e.get_errno()),
-                            ),
-                        );
-                        return Err(bun_core::err!("GlobError"));
-                    }
-                };
-                // walker dropped at end of loop iter (Drop impl handles deinit(false))
-                // TODO(port): GlobWalker::deinit(false) — Drop cannot take params; assume default Drop matches `false`
-
-                let mut iter = glob::walk::Iterator::new(&mut walker);
-                if let Err(e) = iter.init()? {
-                    let _ = log.add_error_fmt(
-                        Some(source),
-                        loc,
-                        format_args!(
                             "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
                             BStr::new(user_pattern),
                             <&'static str>::from(e.get_errno()),
-                        ),
+                        );
+                        return Err(crate::Error::GlobError);
+                    }
+                };
+                // walker dropped at end of loop iter; GlobWalker is heap-backed with no
+                // arena, and its Drop only logs + frees owned Vec/Box fields.
+
+                let mut iter = glob::walk::Iterator::new(&mut walker);
+                if let Err(e) = iter.init()? {
+                    let _ = bun_ast::add_error_pretty!(
+                        log,
+                        Some(source),
+                        loc,
+                        "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                        BStr::new(user_pattern),
+                        <&'static str>::from(e.get_errno()),
                     );
-                    return Err(bun_core::err!("GlobError"));
+                    return Err(crate::Error::GlobError);
                 }
 
                 'next_match: loop {
@@ -367,16 +387,15 @@ impl WorkspaceMap {
                         Ok(Some(r)) => r,
                         Ok(None) => break,
                         Err(e) => {
-                            let _ = log.add_error_fmt(
+                            let _ = bun_ast::add_error_pretty!(
+                                log,
                                 Some(source),
                                 loc,
-                                format_args!(
-                                    "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
-                                    BStr::new(user_pattern),
-                                    <&'static str>::from(e.get_errno()),
-                                ),
+                                "Failed to run workspace pattern <b>{}<r> due to error <b>{}<r>",
+                                BStr::new(user_pattern),
+                                <&'static str>::from(e.get_errno()),
                             );
-                            return Err(bun_core::err!("GlobError"));
+                            return Err(crate::Error::GlobError);
                         }
                     };
                     let matched_path: &[u8] = &matched_path_owned;
@@ -438,19 +457,14 @@ impl WorkspaceMap {
                     ) {
                         Ok(e) => e,
                         Err(err) => {
-                            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
-
                             let entry_base: &[u8] = path::basename(matched_path);
-                            if err == bun_core::err!("FileNotFound")
-                                || err == bun_core::err!("PermissionDenied")
-                            {
+                            if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 continue;
-                            } else if err == bun_core::err!("MissingPackageName") {
+                            } else if err == crate::Error::MissingPackageName {
                                 let _ = log.add_error_fmt(
                                     Some(source),
                                     bun_ast::Loc::EMPTY,
                                     format_args!(
-                                        // TODO(port): comptime concat with sep_str — using runtime sep
                                         "Missing \"name\" from package.json in {}{}{}",
                                         BStr::new(entry_dir),
                                         SEP_STR,
@@ -480,7 +494,7 @@ impl WorkspaceMap {
 
                     let workspace_path: &[u8] =
                         resolve_path::relative_platform::<path::platform::Auto, true>(
-                            source.path.name.dir,
+                            source.path.name().dir,
                             abs_workspace_dir_path,
                         );
                     #[cfg(windows)]
@@ -526,12 +540,11 @@ impl WorkspaceMap {
         }
 
         if orig_msgs_len != log.msgs.len() {
-            return Err(bun_core::err!("InstallFailed"));
+            return Err(crate::Error::InstallFailed);
         }
 
         // Sort the names for determinism
-        // PORT NOTE: reshaped for borrowck — Zig captured `values()` slice in sort ctx;
-        // here ArrayHashMap::sort provides values internally to the comparator.
+        // ArrayHashMap::sort provides values internally to the comparator.
         workspace_names
             .map
             .sort(|_keys, values: &[Entry], a: usize, b: usize| {
@@ -553,10 +566,7 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false)` —
-// the comptime ignore-filter fn param was lowered to a runtime fn-pointer field on
+// The ignore-filter is a runtime fn-pointer field on
 // `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
 // `init_with_cwd(..., Some(ignored_workspace_paths))`.
 type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;
-
-// ported from: src/install/lockfile/Package/WorkspaceMap.zig

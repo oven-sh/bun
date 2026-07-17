@@ -1,12 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 
 use super::DiffFormatter;
 use super::{Expect, get_signature};
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_been_last_called_with(
+pub(crate) fn to_have_been_last_called_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -94,5 +91,3 @@ pub fn to_have_been_last_called_with(
     };
     this.throw(global, signature, format_args!("\n\n{}\n", diff_format))
 }
-
-// ported from: src/test_runner/expect/toHaveBeenLastCalledWith.zig

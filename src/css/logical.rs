@@ -1,13 +1,8 @@
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PropertyCategory {
     Logical,
+    #[default]
     Physical,
-}
-
-impl Default for PropertyCategory {
-    fn default() -> Self {
-        PropertyCategory::Physical
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,5 +20,3 @@ pub enum LogicalGroup {
     MinSize,
     MaxSize,
 }
-
-// ported from: src/css/logical.zig

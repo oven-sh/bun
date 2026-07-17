@@ -1,4 +1,3 @@
-use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_alloc::Arena;
@@ -10,23 +9,23 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 use crate::JsResult;
 
 #[derive(Copy, Clone, PartialEq, Eq)]
-pub enum OutputColorFormat {
+pub(crate) enum OutputColorFormat {
     Ansi,
     Ansi16,
     Ansi16m,
     Ansi256,
     Css,
     Hex,
-    HexUpper, // Zig: `HEX`
+    HexUpper,
     Hsl,
     Lab,
     Number,
     Rgb,
     Rgba,
-    RgbArray,   // Zig: `@"[rgb]"`
-    RgbaArray,  // Zig: `@"[rgba]"`
-    RgbObject,  // Zig: `@"{rgb}"`
-    RgbaObject, // Zig: `@"{rgba}"`
+    RgbArray,
+    RgbaArray,
+    RgbObject,
+    RgbaObject,
 }
 
 impl bun_jsc::FromJsEnum for OutputColorFormat {
@@ -36,7 +35,7 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
         property_name: &'static str,
     ) -> JsResult<Self> {
         use bun_jsc::ComptimeStringMapExt as _;
-        match Self::MAP.from_js(global, v)? {
+        match OUTPUT_COLOR_FORMAT_MAP.from_js(global, v)? {
             Some(e) => Ok(e),
             None => Err(global.throw_invalid_argument_type(
                 "color",
@@ -47,8 +46,8 @@ impl bun_jsc::FromJsEnum for OutputColorFormat {
     }
 }
 
-impl OutputColorFormat {
-    pub const MAP: phf::Map<&'static [u8], OutputColorFormat> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub(crate) static OUTPUT_COLOR_FORMAT_MAP: OutputColorFormat = {
         b"[r,g,b,a]" => OutputColorFormat::RgbaArray,
         b"[rgb]" => OutputColorFormat::RgbArray,
         b"[rgba]" => OutputColorFormat::RgbaArray,
@@ -130,20 +129,22 @@ pub mod ansi256 {
         let grey_idx = if grey_avg > 238 {
             23
         } else {
-            (grey_avg.wrapping_sub(3)) / 10
+            // tmux does this in signed int, where (2 - 3) / 10 truncates to 0.
+            // Wrapping on u32 would send the palette index into the hundreds of
+            // millions for any average below 3.
+            grey_avg.saturating_sub(3) / 10
         };
         let grey = 8u32.wrapping_add(10u32.wrapping_mul(grey_idx));
 
         let d = sqdist(cr, cg, cb, r, g, b);
-        let idx = if sqdist(grey, grey, grey, r, g, b) < d {
+        if sqdist(grey, grey, grey, r, g, b) < d {
             232u32.wrapping_add(grey_idx)
         } else {
             16u32
                 .wrapping_add(36u32.wrapping_mul(qr))
                 .wrapping_add(6u32.wrapping_mul(qg))
                 .wrapping_add(qb)
-        };
-        idx
+        }
     }
 
     const TABLE_256: [u8; 256] = [
@@ -159,16 +160,16 @@ pub mod ansi256 {
         0, 0, 8, 8, 8, 8, 8, 8, 7, 7, 7, 7, 7, 7, 15, 15, 15, 15, 15, 15,
     ];
 
-    pub fn get16(r: u32, g: u32, b: u32) -> u8 {
+    pub(crate) fn get16(r: u32, g: u32, b: u32) -> u8 {
         let val = get(r, g, b);
         TABLE_256[(val & 0xff) as usize]
     }
 
-    pub type Buffer = [u8; 24];
+    pub(crate) type Buffer = [u8; 24];
 
-    /// Zig signature took `RGBA`; here we take the channels directly so the
-    /// pure escape-sequence builder doesn't depend on `bun_css::values::color`.
-    pub fn from(red: u8, green: u8, blue: u8, buf: &mut Buffer) -> &[u8] {
+    /// Takes the channels directly so the pure escape-sequence builder
+    /// doesn't depend on `bun_css::values::color`.
+    pub(crate) fn from(red: u8, green: u8, blue: u8, buf: &mut Buffer) -> &[u8] {
         let val = get(red as u32, green as u32, blue as u32);
         // 0x1b is the escape character
         buf[0] = 0x1b;
@@ -188,6 +189,13 @@ pub mod ansi256 {
     }
 }
 
+/// A missing color component (CSS Color 4's `none`, or the hue of an achromatic
+/// color) is stored as NaN, and behaves as zero outside of interpolation. Printing
+/// it as `NaN` would produce a string no CSS parser accepts.
+fn zero_if_none(component: f32) -> f32 {
+    if component.is_nan() { 0.0 } else { component }
+}
+
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_core::ZigStringSlice;
@@ -205,7 +213,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         ));
     }
 
-    let mut log = Log::init();
+    let log = Log::init();
 
     let unresolved_format: OutputColorFormat = 'brk: {
         if !args[1].is_empty_or_undefined_or_null() {
@@ -218,17 +226,24 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         break 'brk OutputColorFormat::Css;
     };
-    let mut input = ZigStringSlice::EMPTY;
+    let input: ZigStringSlice;
 
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {
             let number: i64 = args[0].to_int64();
-            // Zig: packed struct(u32) { blue: u8, green: u8, red: u8, alpha: u8 }
-            let int: u32 = number.rem_euclid(u32::MAX as i64).unsigned_abs() as u32;
+            // The color is the low 32 bits, LSB-first: blue, green, red,
+            // alpha (one byte each).
+            let int: u32 = number as u32;
             let blue = (int & 0xff) as u8;
             let green = ((int >> 8) & 0xff) as u8;
             let red = ((int >> 16) & 0xff) as u8;
-            let alpha = ((int >> 24) & 0xff) as u8;
+            // A 24-bit 0xRRGGBB number has no alpha byte and means an opaque
+            // color; only values wider than 24 bits carry alpha in the top byte.
+            let alpha = if int > 0x00ff_ffff {
+                (int >> 24) as u8
+            } else {
+                255
+            };
 
             break 'brk Ok(CssColor::Rgba(RGBA {
                 alpha,
@@ -285,8 +300,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                 'brk2: {
                     if a_value.is_number() {
+                        // CSS spec says to clamp values to their valid range so we'll respect that here
                         break 'brk2 Some(
-                            u8::try_from(((a_value.as_number() * 255.0) as i64).rem_euclid(256))
+                            u8::try_from(((a_value.as_number() * 255.0) as i64).clamp(0, 255))
                                 .unwrap(),
                         );
                     }
@@ -300,7 +316,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             }
 
             break 'brk Ok(CssColor::Rgba(RGBA {
-                alpha: if let Some(a) = a { a } else { 255 },
+                alpha: a.unwrap_or(255),
                 red: u8::try_from(r).expect("int cast"),
                 green: u8::try_from(g).expect("int cast"),
                 blue: u8::try_from(b).expect("int cast"),
@@ -309,8 +325,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         input = args[0].to_slice(global)?;
 
-        // Zig used ArenaAllocator + stackFallback(4096) (free init); MimallocArena::new()
-        // calls mi_heap_new(), so defer creation to the paths that actually allocate.
+        // MimallocArena::new() calls mi_heap_new(), so defer creation to the
+        // paths that actually allocate.
         let arena = Arena::new();
         let mut parser_input = css::ParserInput::new(input.slice(), &arena);
         let mut parser = css::Parser::new(
@@ -328,10 +344,14 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 return Ok(JSValue::NULL);
             }
 
-            // TODO(port): Zig used `@tagName(err.basic().kind)`; `BasicParseErrorKind`
-            // currently lacks `IntoStaticStr` in bun_css — falls back to Display until
-            // the derive lands.
-            return Err(global.throw(format_args!("color() failed to parse {}", err.basic().kind)));
+            let kind_name = match err.basic().kind {
+                css::BasicParseErrorKind::unexpected_token(_) => "unexpected_token",
+                css::BasicParseErrorKind::end_of_input => "end_of_input",
+                css::BasicParseErrorKind::at_rule_invalid(_) => "at_rule_invalid",
+                css::BasicParseErrorKind::at_rule_body_invalid => "at_rule_body_invalid",
+                css::BasicParseErrorKind::qualified_rule_invalid => "qualified_rule_invalid",
+            };
+            return Err(global.throw(format_args!("color() failed to parse {}", kind_name)));
         }
         Ok(result) => {
             let format: OutputColorFormat = if unresolved_format == OutputColorFormat::Ansi {
@@ -370,14 +390,10 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             let srgba: SRGB = match &result {
                                 CssColor::Float(float) => match &**float {
                                     css::FloatColor::Rgb(rgb) => *rgb,
-                                    // TODO(port): inline else over FloatColor variants → trait `IntoColor<SRGB>`
                                     other => other.into_srgb(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_srgb(),
-                                CssColor::Lab(lab) => {
-                                    // TODO(port): inline else over LabColor variants → trait `IntoColor<SRGB>`
-                                    lab.into_srgb()
-                                }
+                                CssColor::Lab(lab) => lab.into_srgb(),
                                 _ => break 'formatted,
                             };
                             let rgba = srgba.into_rgba();
@@ -479,27 +495,24 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                     ));
                                 }
                                 OutputColorFormat::Ansi16 => {
-                                    let ansi_16_color = ansi256::get16(
+                                    let index = ansi256::get16(
                                         rgba.red as u32,
                                         rgba.green as u32,
                                         rgba.blue as u32,
                                     );
-                                    // 16-color ansi, foreground text color
-                                    break 'color BunString::clone_latin1(&[
-                                        // 0x1b is the escape character
-                                        // 38 is the foreground color code
-                                        // 5 is the 16-color mode
-                                        // {d} is the color index
-                                        0x1b,
-                                        b'[',
-                                        b'3',
-                                        b'8',
-                                        b';',
-                                        b'5',
-                                        b';',
-                                        ansi_16_color,
-                                        b'm',
-                                    ]);
+                                    // 16-color SGR: 30..=37 for the first eight, 90..=97
+                                    // for their bright variants. The 38;5;{index} form
+                                    // only a 256-color terminal reads is ansi-256's job.
+                                    let sgr = if index < 8 { 30 + index } else { 82 + index };
+                                    let mut buf = [0u8; 8];
+                                    buf[0..2].copy_from_slice(b"\x1b[");
+                                    let extra_len = {
+                                        let mut cursor = &mut buf[2..];
+                                        let before = cursor.len();
+                                        write!(cursor, "{}m", sgr).expect("unreachable");
+                                        before - cursor.len()
+                                    };
+                                    break 'color BunString::clone_latin1(&buf[0..2 + extra_len]);
                                 }
                                 OutputColorFormat::Ansi16m => {
                                     // true color ansi
@@ -543,40 +556,41 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             let hsl: HSL = match &result {
                                 CssColor::Float(float) => match &**float {
                                     css::FloatColor::Hsl(hsl) => *hsl,
-                                    // TODO(port): inline else over FloatColor variants → trait `IntoColor<HSL>`
                                     other => other.into_hsl(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                CssColor::Lab(lab) => {
-                                    // TODO(port): inline else over LabColor variants → trait `IntoColor<HSL>`
-                                    lab.into_hsl()
-                                }
+                                CssColor::Lab(lab) => lab.into_hsl(),
                                 _ => break 'formatted,
                             };
 
+                            // Saturation and lightness are stored as 0..1 but hsl()
+                            // takes percentages. A missing component (an achromatic
+                            // hue, or `none`) is a zero value in a concrete color.
                             break 'color BunString::create_format(format_args!(
-                                "hsl({}, {}, {})",
-                                hsl.h, hsl.s, hsl.l
+                                "hsl({}, {}%, {}%)",
+                                zero_if_none(hsl.h),
+                                zero_if_none(hsl.s) * 100.0,
+                                zero_if_none(hsl.l) * 100.0
                             ));
                         }
                         OutputColorFormat::Lab => {
                             let lab: LAB = match &result {
-                                CssColor::Float(float) => {
-                                    // TODO(port): inline else over FloatColor variants → trait `IntoColor<LAB>`
-                                    float.into_lab()
-                                }
+                                CssColor::Float(float) => float.into_lab(),
                                 CssColor::Lab(lab) => match &**lab {
                                     css::LabColor::Lab(lab_) => *lab_,
-                                    // TODO(port): inline else over LabColor variants → trait `IntoColor<LAB>`
                                     other => other.into_lab(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_lab(),
                                 _ => break 'formatted,
                             };
 
+                            // lab() is space-separated and takes lightness as a
+                            // percentage, matching what the CSS printer emits.
                             break 'color BunString::create_format(format_args!(
-                                "lab({}, {}, {})",
-                                lab.l, lab.a, lab.b
+                                "lab({}% {} {})",
+                                zero_if_none(lab.l) * 100.0,
+                                zero_if_none(lab.a),
+                                zero_if_none(lab.b)
                             ));
                         }
                     }
@@ -590,12 +604,11 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let mut dest: Vec<u8> = Vec::new();
 
             let symbols = SymbolMap::init_list(Default::default());
-            // TODO(port): css::Printer::new signature — Zig passes (allocator, ArrayList, writer, opts, null, null, &symbols)
             let mut printer = css::Printer::new(
                 &arena,
                 bun_alloc::ArenaVec::<u8>::new_in(&arena),
                 &mut dest,
-                css::PrinterOptions::default(),
+                &css::PrinterOptions::default(),
                 None,
                 None,
                 &symbols,
@@ -610,5 +623,3 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         }
     }
 }
-
-// ported from: src/css_jsc/color_js.zig

@@ -110,7 +110,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
     };
 
     // Read BIT STRING
-    if (keyData.size() < index + 1)
+    if (keyData.size() < index + 2)
         return nullptr;
     if (keyData[index++] != 3)
         return nullptr;
@@ -217,7 +217,7 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
 
     // Read length
     index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 1)
+    if (keyData.size() < index + 5)
         return nullptr;
 
     // Read OID
@@ -236,14 +236,14 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
     };
 
     // Read OCTET STRING
-    if (keyData.size() < index + 1)
+    if (keyData.size() < index + 2)
         return nullptr;
 
     if (keyData[index++] != 4)
         return nullptr;
 
     index += bytesUsedToEncodedLength(keyData[index]);
-    if (keyData.size() < index + 1)
+    if (keyData.size() < index + 2)
         return nullptr;
 
     // Read OCTET STRING

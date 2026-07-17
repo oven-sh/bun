@@ -18,48 +18,47 @@ describe.concurrent(
       );
     });
 
+    async function testCompile(outfile: string) {
+      const { exited } = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          path.join(import.meta.dir, "./fixtures/trivial/index.js"),
+          "--compile",
+          "--outfile",
+          outfile,
+        ],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      expect(await exited).toBe(0);
+    }
+    async function testExec(outfile: string) {
+      const { exited, stderr } = Bun.spawn({
+        cmd: [outfile],
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "pipe",
+      });
+      expect(await stderr.text()).toBeEmpty();
+      expect(await exited).toBe(0);
+    }
+    async function testCompileAndExec(relativeOutfile: string) {
+      const baseDir = tmpdirSync();
+      const outfile = path.join(baseDir, relativeOutfile);
+      await testCompile(outfile);
+      await testExec(outfile);
+      fs.rmSync(baseDir, { recursive: true, force: true });
+    }
+
+    test("generating a standalone binary with --outfile", async () => {
+      await testCompileAndExec(path.join("bun-build-outfile", "index.exe"));
+    });
+
+    // https://github.com/oven-sh/bun/issues/4195
     test("generating a standalone binary in nested path, issue #4195", async () => {
-      async function testCompile(outfile: string) {
-        const { exited } = Bun.spawn({
-          cmd: [
-            bunExe(),
-            "build",
-            path.join(import.meta.dir, "./fixtures/trivial/index.js"),
-            "--compile",
-            "--outfile",
-            outfile,
-          ],
-          env: bunEnv,
-          stdout: "inherit",
-          stderr: "inherit",
-        });
-        expect(await exited).toBe(0);
-      }
-      async function testExec(outfile: string) {
-        const { exited, stderr } = Bun.spawn({
-          cmd: [outfile],
-          env: bunEnv,
-          stdout: "inherit",
-          stderr: "pipe",
-        });
-        expect(await stderr.text()).toBeEmpty();
-        expect(await exited).toBe(0);
-      }
-      const tmpdir = tmpdirSync();
-      {
-        const baseDir = `${tmpdir}/bun-build-outfile-${Date.now()}`;
-        const outfile = path.join(baseDir, "index.exe");
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
-      }
-      {
-        const baseDir = `${tmpdir}/bun-build-outfile2-${Date.now()}`;
-        const outfile = path.join(baseDir, "b/u/n", "index.exe");
-        await testCompile(outfile);
-        await testExec(outfile);
-        fs.rmSync(baseDir, { recursive: true, force: true });
-      }
+      await testCompileAndExec(path.join("bun-build-outfile2", "b/u/n", "index.exe"));
     });
 
     test("works with utf8 bom", async () => {
@@ -419,4 +418,102 @@ test("log case 2", async () => {
 
     "
   `);
+});
+
+test("--outdir build succeeds when the output directory already exists with prior output", async () => {
+  using dir = tempDir("build-outdir-reuse", {
+    "entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
+    "dist/entry.js": `console.log("stale");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("EBADF");
+  expect(stderr).not.toContain("could not open output directory");
+  expect(exitCode).toBe(0);
+
+  const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
+  expect(out).toContain("built");
+  expect(out).not.toContain("stale");
+});
+
+test("multi-entry build writes each entry point into the output directory", async () => {
+  using dir = tempDir("build-multi-entry-outdir", {
+    "a.ts": `export const a: number = 1;\nconsole.log("A" + a);`,
+    "b.ts": `export const b: number = 2;\nconsole.log("B" + b);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "a.ts", "b.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("EBADF");
+  expect(exitCode).toBe(0);
+
+  const a = await Bun.file(path.join(String(dir), "dist", "a.js")).text();
+  const b = await Bun.file(path.join(String(dir), "dist", "b.js")).text();
+  expect(a).toContain('"A"');
+  expect(b).toContain('"B"');
+});
+
+describe("CLI argument error messages", () => {
+  test("--format with an unrecognized value echoes the value back", async () => {
+    using dir = tempDir("build-format-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--format=commonjs", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining('--format: "commonjs"'),
+    });
+    expect(stderr).toContain("'esm', 'cjs', or 'iife'");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--loader without a ':' separator names the flag and the bad token", async () => {
+    using dir = tempDir("build-loader-err", { "in.js": "console.log(1)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--loader", "text", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--loader");
+    expect(stderr).toContain('"text"');
+    expect(stderr).toContain(".ext:loader");
+    expect(exitCode).toBe(1);
+  });
+
+  test("--define without a separator names the flag and shows an example", async () => {
+    using dir = tempDir("build-define-err", { "in.js": "console.log(FOO)" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--define", "FOO", "in.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("--define");
+    expect(stderr).toContain('"FOO"');
+    expect(stderr).toContain("key=value");
+    expect(exitCode).toBe(1);
+  });
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tls as validTls } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tls as validTls } from "harness";
 import { join } from "node:path";
 
 // SSLConfig.readFromBlob() used to dupeZ the buffer returned by
@@ -41,6 +41,9 @@ test("passing Bun.file() as tls cert/key does not leak file contents", async () 
   console.log(`Bun.file() TLS config: ${result.iterations} iterations, growth: ${result.growthMB} MB`);
 
   // Without the fix this grows ~50MB; with the fix it should stay close to 0.
-  expect(result.growthMB).toBeLessThan(15);
+  // Under ASAN the system allocator's free quarantine (default 256 MB) plus
+  // redzone overhead and glibc page retention inflate RSS well past the
+  // non-ASAN margin even with no real leak, so use a much wider threshold.
+  expect(result.growthMB).toBeLessThan(isASAN ? 400 : 15);
   expect(exitCode).toBe(0);
 });

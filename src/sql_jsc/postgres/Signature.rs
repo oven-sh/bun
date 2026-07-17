@@ -19,30 +19,11 @@ impl Signature {
         }
     }
 
-    // PORT NOTE: Zig `deinit` only freed the four owned slices via
-    // `bun.default_allocator.free`. With `Box<[T]>` fields, Rust's `Drop`
-    // handles this automatically — no explicit `Drop` impl needed.
+    // No explicit `Drop` impl needed: the `Box<[T]>` fields free the four owned slices automatically.
 
-    pub fn hash(&self) -> u64 {
-        // PORT NOTE: Zig `std.hash.Wyhash.init(0)` + `update` + `final`. The
-        // `bun_wyhash` crate exposes the streaming API as `Wyhash11` (and a
-        // stateless `hash`); for now use the one-shot `bun_wyhash::hash` over
-        // a concatenated byte view.
-        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view (matches
-        // Zig `std.mem.sliceAsBytes`).
-        let fields_bytes: &[u8] = bun_core::cast_slice(&self.fields[..]);
-        // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
-        // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
-        // into a temp Vec until `bun_wyhash::Wyhash` (streaming, seed-0) lands.
-        // TODO(port): bun_wyhash::Wyhash (streaming std-compatible API)
-        let mut buf: Vec<u8> = Vec::with_capacity(self.name.len() + fields_bytes.len());
-        buf.extend_from_slice(&self.name);
-        buf.extend_from_slice(fields_bytes);
-        bun_wyhash::hash(&buf)
-    }
-
-    // TODO(port): narrow error set — Zig inferred set mixes JSError (from
-    // QueryBindingIterator / Tag::from_js), OOM, and error.InvalidQueryBinding.
+    // JSError (from QueryBindingIterator /
+    // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
+    // crate-wide `crate::Error`.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
@@ -50,7 +31,7 @@ impl Signature {
         columns: JSValue,
         prepared_statement_id: u64,
         unnamed: bool,
-    ) -> Result<Signature, bun_core::Error> {
+    ) -> crate::Result<Signature> {
         use crate::jsc::js_error_to_postgres;
         use crate::postgres::types::tag_jsc;
         use crate::shared::QueryBindingIterator;
@@ -60,9 +41,6 @@ impl Signature {
         let mut name: Vec<u8> = Vec::with_capacity(query.len());
 
         name.extend_from_slice(query);
-        // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
-
-        // (errdefer { fields.deinit(); name.deinit(); } — handled by Drop on `?`)
 
         let mut iter = QueryBindingIterator::init(array_value, columns, global_object)
             .map_err(js_error_to_postgres)?;
@@ -113,7 +91,7 @@ impl Signature {
         }
 
         if iter.any_failed() {
-            return Err(bun_core::err!("InvalidQueryBinding"));
+            return Err(crate::Error::InvalidQueryBinding);
         }
         // max u64 length is 20, max prepared_statement_name length is 63
         let prepared_statement_name: Box<[u8]> = if unnamed {
@@ -139,5 +117,3 @@ impl Signature {
         })
     }
 }
-
-// ported from: src/sql_jsc/postgres/Signature.zig

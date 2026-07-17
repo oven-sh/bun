@@ -30,7 +30,9 @@
 #include "MessageWithMessagePorts.h"
 #include "WorkerOptions.h"
 #include <JavaScriptCore/RuntimeFlags.h>
+#include <JavaScriptCore/Strong.h>
 #include <wtf/Deque.h>
+#include <wtf/HashMap.h>
 #include <wtf/text/AtomStringHash.h>
 #include "ContextDestructionObserver.h"
 #include "Event.h"
@@ -39,6 +41,7 @@ namespace JSC {
 class CallFrame;
 class JSObject;
 class JSValue;
+class JSPromise;
 }
 
 namespace WebCore {
@@ -49,9 +52,9 @@ struct WorkerOptions;
 
 /// Parent-side handle for a Web or Node worker thread.
 ///
-/// Lifetime / ownership (see also the header comment in web_worker.zig):
+/// Lifetime / ownership (see also the header comment in src/jsc/web_worker.rs):
 ///
-///   JSWorker (GC'd JSCell)  ──Ref──►  Worker  ──owns──►  Zig WebWorker
+///   JSWorker (GC'd JSCell)  ──Ref──►  Worker  ──owns──►  native WebWorker
 ///     parent thread                   ThreadSafeRefCounted   default_allocator
 ///
 /// Refs held on this object:
@@ -62,7 +65,7 @@ struct WorkerOptions;
 ///                            worker thread (EventListenerMap is single-threaded)
 ///   - transient Ref{*this} captured by posted tasks
 ///
-/// impl_ (Zig WebWorker*) is owned by this object and freed in ~Worker(), so
+/// impl_ (native WebWorker*) is owned by this object and freed in ~Worker(), so
 /// terminate()/ref()/unref() can never see a dangling pointer while JS holds
 /// the wrapper.
 ///
@@ -86,7 +89,7 @@ struct WorkerOptions;
 /// accepts and silently drops the message, matching browser/Node semantics.
 ///
 /// m_terminateRequested is orthogonal: set once by terminate(), gates
-/// dispatchEvent()/setKeepAlive(), and is mirrored into the Zig side via
+/// dispatchEvent()/setKeepAlive(), and is mirrored into the native side via
 /// WebWorker__notifyNeedTermination so the worker loop can observe it.
 class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_TZONE_ALLOCATED(Worker);
@@ -138,6 +141,14 @@ public:
     // middle thread has torn down). Callable from any thread.
     bool postTaskToParent(Function<void(ScriptExecutionContext&)>&&);
 
+    // Parent-thread registry for introspection promises (getHeapSnapshot etc).
+    // Captured by id across the cross-thread round-trip so the worker thread
+    // never touches the parent VM's HandleSet, and drained (rejected) by
+    // dispatchExit so a Running+terminate race settles instead of leaking.
+    uint64_t registerCrossVMRequest(JSC::VM&, JSC::JSPromise*);
+    JSC::Strong<JSC::JSPromise> takeCrossVMRequest(uint64_t id);
+    void rejectAllCrossVMRequests(JSC::JSGlobalObject*);
+
     // Coalesced cross-thread inbox for worker↔parent postMessage, mirroring
     // MessagePortPipe: a burst of N postMessage calls schedules one drain
     // task on the receiver, which loops dispatching + draining microtasks.
@@ -167,9 +178,15 @@ private:
 
     // Messages posted before the worker reaches Running are queued here and
     // flushed by fireEarlyMessages(). The Pending→Running transition happens
-    // under this lock so postTaskToWorkerGlobalScope never loses a task.
+    // under this lock so postTaskToWorkerGlobalScope never loses a task. If the
+    // worker never reaches Running (entry threw / failed to load / unsettled
+    // TLA), dispatchExit clears the queue on the parent thread and
+    // rejectAllCrossVMRequests() settles the callers' promises.
     Lock m_pendingTasksMutex;
     Deque<Function<void(ScriptExecutionContext&)>> m_pendingTasks WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
+    // Owned by the parent thread; guarded only for take() vs reject-all ordering.
+    HashMap<uint64_t, JSC::Strong<JSC::JSPromise>> m_pendingCrossVMRequests WTF_GUARDED_BY_LOCK(m_pendingTasksMutex);
+    std::atomic<uint64_t> m_nextRequestId { 1 };
 
     MessageInbox m_toWorker; // messages parent → worker, drained on the worker thread
     MessageInbox m_toParent; // messages worker → parent, drained on the parent thread
@@ -185,7 +202,7 @@ private:
     // once the worker VM is up).
     const ScriptExecutionContextIdentifier m_clientIdentifier;
 
-    // Owned Zig WebWorker*. Written once in create(), read only on the parent
+    // Owned native WebWorker*. Written once in create(), read only on the parent
     // thread (terminate/setKeepAlive) or in the close task (also parent thread).
     // Freed in ~Worker(). Never null once create() returns successfully.
     void* impl_ { nullptr };

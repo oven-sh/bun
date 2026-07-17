@@ -1048,8 +1048,9 @@ test('Additional asserts', () => {
     {
       code: 'ERR_INVALID_ARG_TYPE',
       name: 'TypeError',
-      // message: 'The "error" argument must be of type Object, Error, Function or RegExp. Received: "Error message"',
-      message: 'The "error" argument must be of type Object, Error, Function, or RegExp.' + invalidArgTypeHelper('Error message'),
+      message: 'The "error" argument must be of type function or ' +
+              'an instance of Error, RegExp, or Object. Received type string ' +
+              "('Error message')"
     }
   );
 
@@ -1059,7 +1060,9 @@ test('Additional asserts', () => {
       () => assert.throws(() => {}, input),
       {
         code: 'ERR_INVALID_ARG_TYPE',
-        message: 'The "error" argument must be of type Object, Error, Function, or RegExp.' + invalidArgTypeHelper(input)
+        message: 'The "error" argument must be of type function or ' +
+                'an instance of Error, RegExp, or Object.' +
+                invalidArgTypeHelper(input)
 
       }
     );
@@ -1140,8 +1143,8 @@ test('Throws accepts objects', () => {
     {
       name: 'TypeError',
       code: 'ERR_INVALID_ARG_TYPE',
-      message: 'The "expected" argument must be of type Function or ' +
-        'RegExp.' + invalidArgTypeHelper({foo: 'bar'})
+      message: 'The "expected" argument must be of type function or an ' +
+               'instance of RegExp. Received an instance of Object'
     }
   );
 

@@ -1,7 +1,6 @@
-use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_uint, c_void};
-use core::marker::{PhantomData, PhantomPinned};
 use core::mem::MaybeUninit;
+use core::ptr::NonNull;
 use std::sync::Once;
 
 #[repr(C)]
@@ -21,17 +20,24 @@ impl Default for Options {
     }
 }
 
+/// Valid `compression_level` range for `libdeflate_alloc_compressor`. Values
+/// outside this range make the allocator return NULL (indistinguishable from OOM),
+/// so callers must range-check first.
+pub const MIN_COMPRESSION_LEVEL: c_int = 0;
+pub const MAX_COMPRESSION_LEVEL: c_int = 12;
+
 unsafe extern "C" {
-    // Allocation: scalar arg, no preconditions; returns null on OOM.
-    pub safe fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
+    // Allocation: scalar arg, no preconditions; returns null on OOM or
+    // compression_level outside MIN..=MAX_COMPRESSION_LEVEL.
+    pub(crate) safe fn libdeflate_alloc_compressor(compression_level: c_int) -> *mut Compressor;
     // NOT safe: `Options` carries caller-supplied `malloc_func`/`free_func`
     // callbacks that libdeflate will invoke and write through. A bogus callback
     // (constructible in 100% safe code) would cause UB inside the C library.
-    pub fn libdeflate_alloc_compressor_ex(
+    pub(crate) fn libdeflate_alloc_compressor_ex(
         compression_level: c_int,
         options: *const Options,
     ) -> *mut Compressor;
-    pub fn libdeflate_deflate_compress(
+    pub(crate) fn libdeflate_deflate_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
         in_nbytes: usize,
@@ -41,33 +47,33 @@ unsafe extern "C" {
     // Bound queries: opaque handle + scalar. The C API documents `compressor`
     // may be NULL (returns a library-wide upper bound), so expose it as
     // `Option<&mut Compressor>` (NPO-ABI-compatible with `*mut Compressor`).
-    pub safe fn libdeflate_deflate_compress_bound(
+    pub(crate) safe fn libdeflate_deflate_compress_bound(
         compressor: Option<&mut Compressor>,
         in_nbytes: usize,
     ) -> usize;
-    pub fn libdeflate_zlib_compress(
+    pub(crate) fn libdeflate_zlib_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
         in_nbytes: usize,
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub safe fn libdeflate_zlib_compress_bound(
+    pub(crate) safe fn libdeflate_zlib_compress_bound(
         compressor: Option<&mut Compressor>,
         in_nbytes: usize,
     ) -> usize;
-    pub fn libdeflate_gzip_compress(
+    pub(crate) fn libdeflate_gzip_compress(
         compressor: *mut Compressor,
         in_: *const c_void,
         in_nbytes: usize,
         out: *mut c_void,
         out_nbytes_avail: usize,
     ) -> usize;
-    pub safe fn libdeflate_gzip_compress_bound(
+    pub(crate) safe fn libdeflate_gzip_compress_bound(
         compressor: Option<&mut Compressor>,
         in_nbytes: usize,
     ) -> usize;
-    pub fn libdeflate_free_compressor(compressor: *mut Compressor);
+    pub(crate) fn libdeflate_free_compressor(compressor: *mut Compressor);
 }
 
 fn load_once() {
@@ -244,6 +250,47 @@ impl Compressor {
             written: result,
             status: Status::Success,
         }
+    }
+}
+
+/// Owned RAII libdeflate compressor. Frees on drop.
+///
+/// `#[repr(transparent)]` over `NonNull` so `Option<OwnedCompressor>` has the
+/// same layout as `*mut Compressor` (all-zero = `None`).
+#[repr(transparent)]
+pub struct OwnedCompressor(NonNull<Compressor>);
+
+impl OwnedCompressor {
+    /// Allocate a compressor at `level` ([`MIN_COMPRESSION_LEVEL`]..=[`MAX_COMPRESSION_LEVEL`]).
+    /// Returns `None` on OOM or if `level` is out of range.
+    #[inline]
+    pub fn new(level: c_int) -> Option<Self> {
+        NonNull::new(Compressor::alloc(level)).map(Self)
+    }
+}
+
+impl core::ops::Deref for OwnedCompressor {
+    type Target = Compressor;
+    #[inline]
+    fn deref(&self) -> &Compressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for OwnedCompressor {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Compressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for OwnedCompressor {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: allocated by `libdeflate_alloc_compressor`; freed exactly once here.
+        unsafe { libdeflate_free_compressor(self.0.as_ptr()) }
     }
 }
 
@@ -450,6 +497,46 @@ impl Decompressor {
     }
 }
 
+/// Owned RAII libdeflate decompressor. Frees on drop.
+///
+/// `#[repr(transparent)]` over `NonNull` so `Option<OwnedDecompressor>` has the
+/// same layout as `*mut Decompressor` (all-zero = `None`).
+#[repr(transparent)]
+pub struct OwnedDecompressor(NonNull<Decompressor>);
+
+impl OwnedDecompressor {
+    /// Allocate a decompressor. Returns `None` on OOM.
+    #[inline]
+    pub fn new() -> Option<Self> {
+        NonNull::new(Decompressor::alloc()).map(Self)
+    }
+}
+
+impl core::ops::Deref for OwnedDecompressor {
+    type Target = Decompressor;
+    #[inline]
+    fn deref(&self) -> &Decompressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for OwnedDecompressor {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Decompressor {
+        // SAFETY: non-null, allocated by libdeflate, exclusively owned by `self`.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for OwnedDecompressor {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: allocated by `libdeflate_alloc_decompressor`; freed exactly once here.
+        unsafe { libdeflate_free_decompressor(self.0.as_ptr()) }
+    }
+}
+
 pub struct Result {
     pub read: usize,
     pub written: usize,
@@ -464,17 +551,16 @@ pub enum Encoding {
 }
 
 unsafe extern "C" {
-    pub safe fn libdeflate_alloc_decompressor() -> *mut Decompressor;
+    pub(crate) safe fn libdeflate_alloc_decompressor() -> *mut Decompressor;
     // NOT safe: `Options` carries allocator callbacks (see `libdeflate_alloc_compressor_ex`).
     pub fn libdeflate_alloc_decompressor_ex(options: *const Options) -> *mut Decompressor;
 }
 
-pub const LIBDEFLATE_SUCCESS: c_uint = 0;
-pub const LIBDEFLATE_BAD_DATA: c_uint = 1;
-pub const LIBDEFLATE_SHORT_OUTPUT: c_uint = 2;
-pub const LIBDEFLATE_INSUFFICIENT_SPACE: c_uint = 3;
+pub(crate) const LIBDEFLATE_SUCCESS: c_uint = 0;
+pub(crate) const LIBDEFLATE_BAD_DATA: c_uint = 1;
+pub(crate) const LIBDEFLATE_SHORT_OUTPUT: c_uint = 2;
+pub(crate) const LIBDEFLATE_INSUFFICIENT_SPACE: c_uint = 3;
 
-// TODO(port): Zig uses `enum(c_uint)`; Rust cannot write `#[repr(c_uint)]`.
 // `u32` matches `c_uint` on all Bun targets.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -494,7 +580,7 @@ unsafe extern "C" {
         out_nbytes_avail: usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub fn libdeflate_deflate_decompress_ex(
+    pub(crate) fn libdeflate_deflate_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,
         in_nbytes: usize,
@@ -511,7 +597,7 @@ unsafe extern "C" {
         out_nbytes_avail: usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub fn libdeflate_zlib_decompress_ex(
+    pub(crate) fn libdeflate_zlib_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,
         in_nbytes: usize,
@@ -528,7 +614,7 @@ unsafe extern "C" {
         out_nbytes_avail: usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub fn libdeflate_gzip_decompress_ex(
+    pub(crate) fn libdeflate_gzip_decompress_ex(
         decompressor: *mut Decompressor,
         in_: *const c_void,
         in_nbytes: usize,
@@ -537,20 +623,11 @@ unsafe extern "C" {
         actual_in_nbytes_ret: *mut usize,
         actual_out_nbytes_ret: *mut usize,
     ) -> Status;
-    pub fn libdeflate_free_decompressor(decompressor: *mut Decompressor);
+    pub(crate) fn libdeflate_free_decompressor(decompressor: *mut Decompressor);
     pub fn libdeflate_adler32(adler: u32, buffer: *const c_void, len: usize) -> u32;
     pub fn libdeflate_crc32(crc: u32, buffer: *const c_void, len: usize) -> u32;
-    pub fn libdeflate_set_memory_allocator(
+    pub(crate) fn libdeflate_set_memory_allocator(
         malloc_func: Option<unsafe extern "C" fn(usize) -> *mut c_void>,
         free_func: Option<unsafe extern "C" fn(*mut c_void)>,
     );
 }
-
-#[allow(non_camel_case_types)]
-pub type libdeflate_compressor = Compressor;
-#[allow(non_camel_case_types)]
-pub type libdeflate_options = Options;
-#[allow(non_camel_case_types)]
-pub type libdeflate_decompressor = Decompressor;
-
-// ported from: src/libdeflate_sys/libdeflate.zig

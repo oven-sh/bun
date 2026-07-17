@@ -2,7 +2,6 @@
 //! from `HTTPClient.buildRequest` and drain the request body (inline bytes or
 //! a JS streaming sink) onto the lsquic stream. Mirrors `h2_client/encode.rs`.
 
-use bun_core::err;
 use bun_core::strings;
 use bun_uws::quic;
 use bun_uws::quic::Qpack;
@@ -21,20 +20,23 @@ pub fn write_request(
     session: &ClientSession,
     stream: &mut Stream,
     qs: &mut quic::Stream,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let Some(client_ptr) = stream.client else {
-        return Err(err!(Aborted));
+        return Err(crate::Error::Aborted);
     };
     // `stream.client` is a live backref while attached — see `client_mut` doc.
     let client: &mut HTTPClient = super::client_session::client_mut(client_ptr);
-    // PORT NOTE: reshaped for borrowck — `build_request` returns a `Request<'_>`
+    // `build_request` returns a `Request<'_>`
     // that mutably borrows `client`; capture every field we need first.
     let verbose = client.verbose;
     let href: &[u8] = client.url.href;
     let host: &[u8] = client.url.host;
     let reject_unauthorized = client.flags.reject_unauthorized;
+    // h3 body bytes flow into lsquic's send buffer asynchronously — compress
+    // into the Vec so the cursor stays valid across event-loop ticks.
+    client.compress_body_for_send(false)?;
     let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
-    let body_len = client.state.original_request_body.len();
+    let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
     let is_bytes = matches!(
         client.state.original_request_body,
@@ -54,7 +56,6 @@ pub fn write_request(
         );
     }
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(2048)).
     let mut headers: Vec<quic::Header> = Vec::with_capacity(request.headers.len() + 4);
 
     // Names not in the QPACK static table get lowercased into one
@@ -110,7 +111,7 @@ pub fn write_request(
 
     let end_stream = !has_inline_body && !is_streaming;
     if qs.send_headers(&headers, end_stream) != 0 {
-        return Err(err!(HTTP3HeaderEncodingError));
+        return Err(crate::Error::HTTP3HeaderEncodingError);
     }
 
     // Keep `lower` alive until after send_headers (header pointers borrow it).
@@ -145,7 +146,7 @@ pub fn write_request(
 /// Push as much of the request body onto `qs` as flow control allows. Called
 /// from `write_request`, `callbacks.on_stream_writable`, and
 /// `ClientSession.stream_body_by_http_id` (when the JS sink delivers more bytes).
-pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
+pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
     if stream.request_body_done {
         return;
     }
@@ -212,5 +213,3 @@ pub fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         qs.want_write(true);
     }
 }
-
-// ported from: src/http/h3_client/encode.zig

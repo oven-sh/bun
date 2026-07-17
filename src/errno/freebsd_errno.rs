@@ -148,11 +148,7 @@ pub mod uv_e {
 }
 pub use uv_e as UV_E;
 
-use super::GetErrno;
-
 // FreeBSD has no raw-syscall return convention (unlike Linux's `-errno` in
 // `usize`); every kernel entry goes through libc, so all widths route to the
 // thread-local `__error()` slot.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
-
-// ported from: src/errno/freebsd_errno.zig

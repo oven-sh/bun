@@ -1,9 +1,9 @@
 // Authentication methods
 
-use core::ffi::{c_char, c_int};
+#[cfg(debug_assertions)]
+use core::ffi::c_char;
 
 use bun_boringssl as boringssl;
-use bun_core::{self, err};
 
 use bun_sha_hmac::{SHA1, SHA256};
 
@@ -16,8 +16,7 @@ bun_core::declare_scope!(Auth, hidden);
 pub mod mysql_native_password {
     use super::*;
 
-    // TODO(port): narrow error set
-    pub fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 20], bun_core::Error> {
+    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> crate::Result<[u8; 20]> {
         // SHA1( password ) XOR SHA1( nonce + SHA1( SHA1( password ) ) ) )
         let mut stage1 = [0u8; 20];
         let mut stage2 = [0u8; 20];
@@ -30,18 +29,20 @@ pub mod mysql_native_password {
         // short plugin_data; without this check the slicing below reads past
         // the end of the buffer.
         if nonce.len() < 20 {
-            return Err(err!("MissingAuthData"));
+            return Err(crate::Error::MissingAuthData);
         }
 
         // Stage 1: SHA1(password)
-        // TODO(port): Zig passed `jsc.VirtualMachine.get().rareData().boringEngine()`;
-        // engine is optional and bun_jsc is higher-tier — pass null (matches
-        // bun_install::integrity / bun_exe_format::macho precedent). Revisit if
-        // profiling shows the engine matters here (it accelerates HW SHA only).
-        SHA1::hash(password, &mut stage1, core::ptr::null_mut());
+        // The boringssl engine is optional and bun_jsc is higher-tier, so pass null
+        // (matches bun_install::integrity / bun_exe_format::macho precedent).
+        // The engine only accelerates hardware SHA; null is functionally
+        // identical.
+        // SAFETY: engine is null (default).
+        unsafe { SHA1::hash(password, &mut stage1, core::ptr::null_mut()) };
 
         // Stage 2: SHA1(SHA1(password))
-        SHA1::hash(&stage1, &mut stage2, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA1::hash(&stage1, &mut stage2, core::ptr::null_mut()) };
 
         // Stage 3: SHA1(nonce + SHA1(SHA1(password)))
         let mut sha1 = SHA1::init();
@@ -64,8 +65,7 @@ pub mod mysql_native_password {
 pub mod caching_sha2_password {
     use super::*;
 
-    // TODO(port): narrow error set
-    pub fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 32], bun_core::Error> {
+    pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> crate::Result<[u8; 32]> {
         // XOR(SHA256(password), SHA256(SHA256(SHA256(password)), nonce))
         let mut digest1 = [0u8; 32];
         let mut digest2 = [0u8; 32];
@@ -73,17 +73,22 @@ pub mod caching_sha2_password {
         let mut result: [u8; 32] = [0u8; 32];
 
         // SHA256(password)
-        // TODO(port): see note in mysql_native_password::scramble re: ENGINE*.
-        SHA256::hash(password, &mut digest1, core::ptr::null_mut());
+        // Null ENGINE — see note in mysql_native_password::scramble.
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(password, &mut digest1, core::ptr::null_mut()) };
 
         // SHA256(SHA256(password))
-        SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut());
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(&digest1, &mut digest2, core::ptr::null_mut()) };
 
-        // SHA256(SHA256(SHA256(password)) + nonce)
-        let mut combined = vec![0u8; nonce.len() + digest2.len()];
-        combined[0..nonce.len()].copy_from_slice(nonce);
-        combined[nonce.len()..].copy_from_slice(&digest2);
-        SHA256::hash(&combined, &mut digest3, core::ptr::null_mut());
+        // SHA256(SHA256(SHA256(password)) + nonce): the double hash comes FIRST.
+        // mysql_native_password concatenates the other way around; the server's
+        // Generate_scramble (sha2_password_common.cc) updates digest_stage2 then m_rnd.
+        let mut combined = vec![0u8; digest2.len() + nonce.len()];
+        combined[0..digest2.len()].copy_from_slice(&digest2);
+        combined[digest2.len()..].copy_from_slice(nonce);
+        // SAFETY: engine is null (default).
+        unsafe { SHA256::hash(&combined, &mut digest3, core::ptr::null_mut()) };
         // `defer bun.default_allocator.free(combined)` → Vec drops at scope exit
 
         // XOR(SHA256(password), digest3)
@@ -95,7 +100,7 @@ pub mod caching_sha2_password {
         Ok(result)
     }
 
-    // Zig: `enum(u8) { success = 0x03, continue_auth = 0x04, _ }` — non-exhaustive,
+    // Any wire byte is possible (success = 0x03, continue_auth = 0x04),
     // so represent as a transparent u8 newtype rather than a closed Rust enum.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -124,14 +129,13 @@ pub mod caching_sha2_password {
     }
 
     impl Response {
-        // Zig `deinit` only freed `self.data` — Data's own Drop handles that, so no
-        // explicit Drop impl needed here.
+        // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
+        // needed here.
 
-        // TODO(port): narrow error set
         pub fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             let status: u8 = reader.int::<u8>()?;
             bun_core::scoped_log!(Auth, "FastAuthStatus: {}", status);
             self.status = FastAuthStatus::from_raw(status);
@@ -144,11 +148,11 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+        // See the Decode trait in src/sql/mysql/protocol/NewReader.rs
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.decode_internal(reader)
         }
     }
@@ -169,11 +173,10 @@ pub mod caching_sha2_password {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
-        // TODO(port): narrow error set
         pub fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             // `RawSlice` invariant: backing storage outlives the holder (this
             // struct lives only for the single `write()` call its caller wraps it
             // in), so safe `Deref` recovers `&[u8]` without an `unsafe` block.
@@ -185,16 +188,15 @@ pub mod caching_sha2_password {
             // The XOR below does `nonce[i % nonce.len]`; an empty nonce from a
             // malicious server's AuthSwitchRequest would be a divide-by-zero.
             if nonce.is_empty() {
-                return Err(err!("MissingAuthData"));
+                return Err(crate::Error::MissingAuthData);
             }
             // `&this.public_key[0]` below would index past a zero-length
             // slice if the server answered the public-key request with an
             // empty payload.
             if public_key.is_empty() {
-                return Err(err!("InvalidPublicKey"));
+                return Err(crate::Error::InvalidPublicKey);
             }
             // 1024 is overkill but lets cover all cases
-            // PERF(port): was stack-fallback (1024-byte stack buf with heap overflow path) — profile if hot.
             let needed_len = password.len() + 1;
             let mut plain_password = vec![0u8; needed_len];
             plain_password[0..password.len()].copy_from_slice(password);
@@ -204,8 +206,7 @@ pub mod caching_sha2_password {
                 *c ^= nonce[i % nonce.len()];
             }
             boringssl::load();
-            // SAFETY: FFI call with no preconditions; clears thread-local error queue.
-            unsafe { boringssl::c::ERR_clear_error() };
+            boringssl::c::ERR_clear_error();
             // Decode public key
             // SAFETY: public_key is non-empty (checked above); BIO_new_mem_buf
             // borrows the buffer for the lifetime of `bio` and does not take ownership.
@@ -216,7 +217,7 @@ pub mod caching_sha2_password {
                 )
             };
             if bio.is_null() {
-                return Err(err!("InvalidPublicKey"));
+                return Err(crate::Error::InvalidPublicKey);
             }
             let bio = scopeguard::guard(bio, |bio| {
                 // SAFETY: bio is a valid non-null BIO* allocated by BIO_new_mem_buf above.
@@ -254,7 +255,7 @@ pub mod caching_sha2_password {
                         );
                     }
                 }
-                return Err(err!("InvalidPublicKey"));
+                return Err(crate::Error::InvalidPublicKey);
             }
             let rsa = scopeguard::guard(rsa, |rsa| {
                 // SAFETY: rsa is a valid non-null RSA* returned by PEM_read_bio_RSA_PUBKEY.
@@ -265,7 +266,6 @@ pub mod caching_sha2_password {
             // SAFETY: *rsa is a valid RSA*.
             let rsa_size = unsafe { boringssl::c::RSA_size(*rsa) } as usize;
             // should never ne bigger than 4096 but lets cover all cases
-            // PERF(port): was stack-fallback (4096-byte stack buf with heap overflow path) — profile if hot.
             let mut encrypted_password = vec![0u8; rsa_size];
 
             // SAFETY: plain_password and encrypted_password are valid for the given
@@ -280,7 +280,7 @@ pub mod caching_sha2_password {
                 )
             };
             if encrypted_password_len == -1 {
-                return Err(err!("FailedToEncryptPassword"));
+                return Err(crate::Error::FailedToEncryptPassword);
             }
             let encrypted_password_slice =
                 &encrypted_password[0..usize::try_from(encrypted_password_len).expect("int cast")];
@@ -291,11 +291,11 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
+        // See src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.write_internal(writer)
         }
     }
@@ -306,13 +306,12 @@ pub mod caching_sha2_password {
     }
 
     impl PublicKeyResponse {
-        // Zig `deinit` only freed `self.data` — Data's own Drop handles that.
+        // `Data`'s own Drop frees `self.data`.
 
-        // TODO(port): narrow error set
         pub fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             // get all the data
             let remaining = reader.peek();
             if !remaining.is_empty() {
@@ -321,11 +320,10 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // TODO(port): `pub const decode = decoderWrap(PublicKeyResponse, decodeInternal).decode;`
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.decode_internal(reader)
         }
     }
@@ -333,23 +331,20 @@ pub mod caching_sha2_password {
     pub struct PublicKeyRequest;
 
     impl PublicKeyRequest {
-        // TODO(port): narrow error set
         pub fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             writer.int1(0x02)?; // Request public key
             Ok(())
         }
 
-        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
+        // See src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
-        ) -> Result<(), bun_core::Error> {
+        ) -> crate::Result<()> {
             self.write_internal(writer)
         }
     }
 }
-
-// ported from: src/sql/mysql/protocol/Auth.zig

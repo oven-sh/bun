@@ -3,7 +3,7 @@
 use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
 use bun_sql::postgres::CommandTag;
 
-pub trait CommandTagJsc {
+pub(crate) trait CommandTagJsc {
     fn to_js_tag(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
     fn to_js_number(&self) -> JSValue;
 }
@@ -37,5 +37,3 @@ impl<'a> CommandTagJsc for CommandTag<'a> {
         }
     }
 }
-
-// ported from: src/sql_jsc/postgres/command_tag_jsc.zig

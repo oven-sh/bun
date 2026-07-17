@@ -1,6 +1,5 @@
 //! JS host entry points for the IPC module that need to name `bun_runtime`
-//! types (`Subprocess`, `Listener`). Spec: `src/jsc/ipc.zig:980-1088` +
-//! `VirtualMachine.zig` `Bun__Process__send_`.
+//! types (`Subprocess`, `Listener`).
 //!
 //! LAYERING: `bun_jsc::ipc` defines the protocol/queue (mode-agnostic) and the
 //! `SendQueueOwner` trait. The host fns here close over the concrete
@@ -28,7 +27,7 @@ unsafe extern "C" {
 }
 
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum FromEnum {
+pub(crate) enum FromEnum {
     SubprocessExited,
     Subprocess,
     Process,
@@ -71,7 +70,7 @@ fn do_send_err(
     Err(global_object.throw_value(ex))
 }
 
-pub fn do_send(
+pub(crate) fn do_send(
     ipc: Option<&mut SendQueue>,
     global_object: &JSGlobalObject,
     call_frame: &CallFrame,
@@ -88,7 +87,7 @@ pub fn do_send(
         global_object.validate_object("options", options_, Default::default())?;
     }
 
-    let connected = ipc.as_ref().map_or(false, |i| i.is_connected());
+    let connected = ipc.as_ref().is_some_and(|i| i.is_connected());
     if !connected {
         let msg = match from {
             FromEnum::Process => "process.send() can only be used if the IPC channel is open.",
@@ -192,13 +191,32 @@ pub fn emit_handle_ipc_message(
 ) -> JsResult<JSValue> {
     let [target, message, handle] = callframe.arguments_as_array::<3>();
     if target.is_null() {
+        // Cluster-internal replies that carried a descriptor (shared dgram
+        // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
+        // the cluster's internal-message dispatcher instead of emitting a
+        // process 'message' event, mirroring Node's NODE_-prefix routing.
+        if message.is_object() {
+            if let Some(cmd) = message.get(global_this, "cmd")? {
+                if cmd.is_string() {
+                    let cmd_str = bun_core::OwnedString::new(cmd.to_bun_string(global_this)?);
+                    if cmd_str.eql_comptime(b"NODE_CLUSTER") {
+                        crate::node::node_cluster_binding::handle_internal_message_child(
+                            global_this,
+                            message,
+                            handle,
+                        )?;
+                        return Ok(JSValue::UNDEFINED);
+                    }
+                }
+            }
+        }
         // mutable); `get_ipc_instance` writes `self.ipc` on first call.
         let vm = global_this.bun_vm().as_mut();
         let Some(ipc) = vm.get_ipc_instance() else {
             return Ok(JSValue::UNDEFINED);
         };
         // SAFETY: `get_ipc_instance` returns the live boxed IPCInstance.
-        unsafe { (*ipc).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*ipc).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
     } else {
         if !target.is_cell() {
             return Ok(JSValue::UNDEFINED);
@@ -208,20 +226,20 @@ pub fn emit_handle_ipc_message(
         };
         // SAFETY: `from_js_direct` returned a non-null `*mut Subprocess`; the JS
         // wrapper holds it alive for the call.
-        unsafe { (*subprocess).handle_ipc_message(DecodedIPCMessage::Data(message), handle) };
+        unsafe { (*subprocess).handle_ipc_message(&DecodedIPCMessage::Data(message), handle) };
     }
     Ok(JSValue::UNDEFINED)
 }
 
-// Zig: comptime { const Bun__Process__send = jsc.toJSHostFn(Bun__Process__send_); @export(...) }
-// The #[bun_jsc::host_fn] attribute emits the callconv(jsc.conv) shim and export.
+// The #[bun_jsc::host_fn] attribute emits the jsc-callconv shim and the
+// `Bun__Process__send` export.
 //
 // LAYERING: lives here (not in `bun_jsc::virtual_machine_exports`) because the
 // body — via `do_send` — names `Listener` (`bun_runtime`). The export is a
 // link-time `#[no_mangle]` symbol, so the defining crate does not matter to
 // the C++ caller.
 #[bun_jsc::host_fn(export = "Bun__Process__send")]
-pub fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn Bun__Process__send(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
     // mutable); `get_ipc_instance` writes `self.ipc` on first call.
     let vm = global.bun_vm().as_mut();

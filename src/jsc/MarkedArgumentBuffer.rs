@@ -1,7 +1,6 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use crate::JSValue;
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for JSC's `MarkedArgumentBuffer` (a GC-rooted argument list).
@@ -9,7 +8,6 @@ bun_opaque::opaque_ffi! {
     pub struct MarkedArgumentBuffer;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
@@ -24,7 +22,7 @@ unsafe extern "C" {
 impl MarkedArgumentBuffer {
     /// Stack-construct a `MarkedArgumentBuffer` and pass it to `f`. There is no
     /// heap-allocated owning form (the C++ type is non-movable); `new` is a
-    /// scoped-borrow constructor like Zig's `MarkedArgumentBuffer.run`.
+    /// scoped-borrow constructor.
     pub fn new<R>(f: impl FnOnce(&mut MarkedArgumentBuffer) -> R) -> R {
         struct Ctx<F, R> {
             f: Option<F>,
@@ -34,10 +32,11 @@ impl MarkedArgumentBuffer {
         where
             F: FnOnce(&mut MarkedArgumentBuffer) -> R,
         {
-            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below; `args` is the
-            // live stack-allocated buffer C++ hands us.
+            // SAFETY: `ctx` is the `&mut ctx` passed to `run` below.
             let ctx = unsafe { &mut *ctx };
             let f = ctx.f.take().unwrap();
+            // SAFETY: `args` is the live stack-allocated `MarkedArgumentBuffer` C++
+            // hands us for the duration of this callback.
             ctx.r = Some(f(unsafe { &mut *args }));
         }
         let mut ctx = Ctx {
@@ -53,8 +52,8 @@ impl MarkedArgumentBuffer {
     }
 
     pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
-        // Mirrors Zig `@ptrCast` of both ctx and func — `MarkedArgumentBuffer__run`
-        // round-trips `ctx` opaquely back to `func`, and `func`'s ABI is identical modulo the
+        // `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to `func`,
+        // and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
         MarkedArgumentBuffer__run(
             std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
@@ -70,19 +69,13 @@ impl MarkedArgumentBuffer {
     }
 }
 
-/// Port of `MarkedArgumentBuffer.wrap`.
-///
-/// Zig's `wrap` is a `comptime` fn that takes a
-/// `fn(*JSGlobalObject, *CallFrame, *MarkedArgumentBuffer) bun.JSError!JSValue`
-/// and returns a `jsc.JSHostFnZig`. Rust cannot parameterize a `fn` item by a const
+/// Rust cannot parameterize a `fn` item by a const
 /// fn-pointer, so this is a macro that expands to a `#[bun_jsc::host_fn]` wrapper.
-// TODO(port): consider a proc-macro attribute (`#[bun_jsc::with_marked_argument_buffer]`)
-// instead of `macro_rules!` once the host_fn codegen is settled.
 #[macro_export]
 macro_rules! marked_argument_buffer_wrap {
     ($function:path) => {{
         #[$crate::host_fn]
-        pub fn wrapper(
+        pub(crate) fn wrapper(
             global_this: &$crate::JSGlobalObject,
             callframe: &$crate::CallFrame,
         ) -> $crate::JsResult<$crate::JSValue> {
@@ -106,7 +99,7 @@ macro_rules! marked_argument_buffer_wrap {
             let mut ctx = Context {
                 global_this,
                 callframe,
-                // PORT NOTE: Zig used `undefined`; init with a placeholder since `run`
+                // Placeholder; `run`
                 // unconditionally overwrites it before we read.
                 result: ::core::result::Result::Ok($crate::JSValue::ZERO),
             };
@@ -116,5 +109,3 @@ macro_rules! marked_argument_buffer_wrap {
         wrapper
     }};
 }
-
-// ported from: src/jsc/MarkedArgumentBuffer.zig

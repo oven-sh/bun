@@ -191,6 +191,7 @@ pub struct Switch {
 ///    import * as ns from 'path'
 ///    import defaultItem, {item1, item2} from 'path'
 ///    import defaultItem, * as ns from 'path'
+///    import defer * as ns from 'path'
 ///
 /// Many parts are optional and can be combined in different ways. The only
 /// restriction is that you cannot have both a clause and a star namespace.
@@ -202,11 +203,15 @@ pub struct Import {
     /// the imported file. In this case StarLoc is nil. The NamespaceRef is used
     /// when converting this module to a CommonJS module.
     pub namespace_ref: Ref,
-    pub default_name: Option<LocRef>,      // = None
-    pub items: StoreSlice<ClauseItem>,     // arena-owned; = &[]
-    pub star_name_loc: Option<crate::Loc>, // = None
+    pub default_name: Option<LocRef>,  // = None
+    pub items: StoreSlice<ClauseItem>, // arena-owned; = &[]
+    pub star_name_loc: crate::Loc,     // = Loc::EMPTY
     pub import_record_index: u32,
     pub is_single_line: bool, // = false
+    /// "import defer * as ns from 'path'" — the TC39 Deferred Module Evaluation
+    /// proposal. Only valid with a namespace import (`star_name_loc` is set,
+    /// `default_name`/`items` are empty).
+    pub phase_defer: bool, // = false
 }
 
 impl Default for Import {
@@ -215,9 +220,10 @@ impl Default for Import {
             namespace_ref: Ref::NONE,
             default_name: None,
             items: StoreSlice::EMPTY,
-            star_name_loc: None,
+            star_name_loc: crate::Loc::EMPTY,
             import_record_index: u32::MAX,
             is_single_line: false,
+            phase_defer: false,
         }
     }
 }
@@ -285,13 +291,6 @@ pub enum Kind {
 }
 
 impl Kind {
-    // TODO(port): Zig `jsonStringify` hooks into std.json; wire to whatever
-    // JSON-serialize trait the AST uses in Rust (serde::Serialize or custom).
-    pub fn json_stringify(self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // TODO(port): narrow error set
-        writer.write_str(<&'static str>::from(self))
-    }
-
     pub fn is_using(self) -> bool {
         matches!(self, Kind::KUsing | Kind::KAwaitUsing)
     }
@@ -310,5 +309,3 @@ pub struct Break {
 pub struct Continue {
     pub label: Option<LocRef>, // = None
 }
-
-// ported from: src/js_parser/ast/S.zig

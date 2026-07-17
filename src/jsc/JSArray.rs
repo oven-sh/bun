@@ -5,9 +5,8 @@ bun_opaque::opaque_ffi! {
     pub struct JSArray;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
-    // TODO(@paperclover): this can throw
+    // TODO: this can throw
     fn JSArray__constructArray(
         global: *const JSGlobalObject,
         items: *const JSValue,
@@ -19,9 +18,8 @@ unsafe extern "C" {
 impl JSArray {
     #[track_caller]
     pub fn create(global: &JSGlobalObject, items: &[JSValue]) -> JsResult<JSValue> {
-        // PORT NOTE: `fromJSHostCall(global, @src(), fn, .{args})` is a comptime-reflection
-        // wrapper that calls `fn(args...)` then checks the VM for a pending exception.
-        // Modeled as a closure-taking helper here.
+        // `from_js_host_call` runs the closure, then checks the VM for a
+        // pending exception.
         crate::from_js_host_call(global, || unsafe {
             // SAFETY: items.ptr/len are a valid contiguous slice; global is a live &JSGlobalObject.
             JSArray__constructArray(global, items.as_ptr(), items.len())
@@ -37,5 +35,3 @@ impl JSArray {
         JSValue::from_cell(self).array_iterator(global)
     }
 }
-
-// ported from: src/jsc/JSArray.zig

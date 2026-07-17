@@ -1,7 +1,4 @@
-// PORT NOTE: Zig `u21` (codepoint) → `u32`; Zig `u2` (count) → `u8`.
-// Rust has no arbitrary-bit-width integers; the next natural width is used.
-
-pub struct FoldInfo {
+pub(crate) struct FoldInfo {
     pub codepoints: [u32; 3],
     pub n_codepoints: u8,
 }
@@ -309,7 +306,7 @@ static FOLD_MAP_3_DATA: &[u32] = &[
 /// Returns the original codepoint wrapped in a FoldInfo if no folding is needed.
 ///
 /// This is a direct port of md4c's `md_get_unicode_fold_info`.
-pub fn case_fold(codepoint: u32) -> FoldInfo {
+pub(crate) fn case_fold(codepoint: u32) -> FoldInfo {
     // Fast path for ASCII characters.
     if codepoint <= 0x7f {
         if codepoint >= b'A' as u32 && codepoint <= b'Z' as u32 {
@@ -350,10 +347,8 @@ fn case_fold_from_map<const N: u8>(
     };
 
     // Copy the base codepoints from the data table.
-    // PERF(port): was `inline for` (compile-time unrolled) — profile if hot.
-    for k in 0..(N as usize) {
-        result.codepoints[k] = data[data_offset + k];
-    }
+    result.codepoints[..(N as usize)]
+        .copy_from_slice(&data[data_offset..data_offset + (N as usize)]);
 
     // If the codepoint doesn't exactly match the map entry, we are
     // inside a range and need to adjust the first output codepoint.
@@ -526,5 +521,3 @@ mod tests {
         assert_eq!(1u8, info.n_codepoints);
     }
 }
-
-// ported from: src/md/unicode.zig

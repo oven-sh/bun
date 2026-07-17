@@ -6,13 +6,13 @@
 #include "wtf/DebugHeap.h"
 #include "ZigGlobalObject.h"
 
-extern "C" void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot)
+extern "C" __attribute__((__always_inline__)) void Bun__StrongRef__delete(JSC::JSValue* _Nonnull handleSlot)
 {
     // deallocate() will correctly remove the handle from the strong list if it's currently on it.
     JSC::HandleSet::heapFor(handleSlot)->deallocate(handleSlot);
 }
 
-extern "C" JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
+extern "C" __attribute__((__always_inline__)) JSC::JSValue* Bun__StrongRef__new(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue)
 {
     auto& vm = globalObject->vm();
     JSC::HandleSet* handleSet = vm.heap.handleSet();

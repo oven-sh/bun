@@ -10,13 +10,13 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bstr::BStr;
-use bun_core::err;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
 use super::client_session::{ClientSession, session_mut, stream_mut, stream_ref};
 use super::encode;
 use super::stream::Stream;
+use crate::h2_client::dispatch::{is_malformed_response_field, is_malformed_response_value};
 use crate::h3_client as H3;
 use bun_picohttp as picohttp;
 
@@ -73,7 +73,7 @@ fn stream_of<'a>(s: &mut quic::Stream) -> Option<&'a mut Stream> {
     (*s.ext::<Stream>()).map(|p| stream_mut(p.as_ptr()))
 }
 
-pub fn register(qctx: &mut quic::Context) {
+pub(crate) fn register(qctx: &mut quic::Context) {
     qctx.on_hsk_done(on_hsk_done);
     qctx.on_goaway(on_goaway);
     qctx.on_close(on_conn_close);
@@ -151,13 +151,17 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         session.retry_or_fail(
             stream,
             if session.handshake_done {
-                err!(ConnectionClosed)
+                crate::Error::ConnectionClosed
             } else {
-                err!(HTTP3HandshakeFailed)
+                crate::Error::HTTP3HandshakeFailed
             },
         );
     }
     let _ = H3::live_sessions.fetch_sub(1, Ordering::Relaxed);
+    // SAFETY: `session` is the live heap allocation recovered from the ext slot
+    // (see `session_of`); this releases the +1 ref `ClientContext::connect`
+    // installed via `ClientSession::new`. `on_conn_close` is lsquic's terminal
+    // callback for this socket, so no later callback dereferences `session`.
     unsafe { ClientSession::deref(session) };
 }
 
@@ -221,7 +225,12 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
             i += 1;
             continue;
         }
-        // PERF(port): was appendAssumeCapacity — Vec::push amortizes.
+        if stream.status_code == 0
+            && (is_malformed_response_field(name) || is_malformed_response_value(value))
+        {
+            session.fail(stream, crate::Error::HTTP3ProtocolError);
+            return;
+        }
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));
@@ -234,7 +243,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code != 0 {
             return;
         }
-        session.fail(stream, err!(HTTP3ProtocolError));
+        session.fail(stream, crate::Error::HTTP3ProtocolError);
         return;
     }
     if status >= 100 && status < 200 {
@@ -251,6 +260,19 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
     stream.session_mut().deliver(stream, fin != 0);
+
+    let Some(stream) = stream_of(s) else { return };
+    if fin != 0 || stream.read_paused {
+        return;
+    }
+    let Some(client) = stream.client else { return };
+    if super::client_session::client_mut(client)
+        .signals
+        .is_receive_paused()
+    {
+        stream.read_paused = true;
+        s.want_read(false);
+    }
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {
@@ -272,5 +294,3 @@ extern "C" fn on_stream_close(s: *mut quic::Stream) {
     );
     stream.session_mut().deliver(stream, true);
 }
-
-// ported from: src/http/h3_client/callbacks.zig

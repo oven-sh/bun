@@ -1,9 +1,11 @@
 // NOTE: not `thiserror::Error` — that derive requires a per-variant `#[error("...")]`
-// attr. We hand-roll Display via `IntoStaticStr` so the message == the variant name
-// (matching Zig `@errorName`), and impl `std::error::Error` manually below.
+// attr. We hand-roll Display via `IntoStaticStr` so the message == the variant name,
+// and impl `std::error::Error` manually below.
 #[derive(strum::IntoStaticStr, strum::EnumString, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Error {
     ConnectionClosed,
+    ConnectionFailed,
+    ConnectionRefused,
     ConnectionTimedOut,
     LifetimeTimeout,
     IdleTimeout,
@@ -12,6 +14,7 @@ pub enum Error {
     AuthenticationFailed,
     FailedToEncryptPassword,
     InvalidPublicKey,
+    PublicKeyRetrievalNotAllowed,
     UnsupportedAuthPlugin,
     UnsupportedProtocolVersion,
 
@@ -22,6 +25,7 @@ pub enum Error {
     Overflow,
 
     WrongNumberOfParametersProvided,
+    TooManyParameters,
 
     UnsupportedColumnType,
 
@@ -45,25 +49,20 @@ pub enum Error {
 
 bun_core::impl_tag_error!(Error);
 
-/// Zig callers name this `AnyMySQLError` (the file basename); the Rust enum is
-/// `Error` per convention. Re-export both spellings so cross-crate `use` lines
+/// The Rust enum is `Error` per convention; re-export the `AnyMySQLError`
+/// spelling as well so cross-crate `use` lines
 /// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
 pub type AnyMySQLError = Error;
 
-bun_core::named_error_set!(Error);
-
-// Reverse of the above: `bun_core::Error` is just an interned name; recover the
+// Reverse of the above: `crate::Error` is just an interned name; recover the
 // matching variant by name (or `UnknownError` as a catch-all). Needed because
-// helpers like `decode_binary_value` were widened to `bun_core::Error` while
+// helpers like `decode_binary_value` were widened to `crate::Error` while
 // callers (e.g. `ResultSet::Row::decode_binary`) still propagate `AnyMySQLError`.
-impl From<bun_core::Error> for Error {
-    fn from(e: bun_core::Error) -> Self {
+impl From<crate::Error> for Error {
+    fn from(e: crate::Error) -> Self {
         e.name().parse().unwrap_or(Error::UnknownError)
     }
 }
 
-// NOTE: `pub const mysqlErrorToJS = @import("../../../sql_jsc/...").mysqlErrorToJS;`
-// is a *_jsc alias — deleted per PORTING.md. `mysql_error_to_js` lives in
+// NOTE: `mysql_error_to_js` lives in
 // `bun_sql_jsc::mysql::protocol::any_mysql_error_jsc` as an extension fn.
-
-// ported from: src/sql/mysql/protocol/AnyMySQLError.zig

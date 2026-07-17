@@ -48,10 +48,7 @@ impl JSONLineBuffer {
 
         let unscanned = &slice[self.scanned_pos as usize..];
         if let Some(local_idx) = strings::index_of_char(unscanned, b'\n') {
-            debug_assert!((local_idx as u64) <= u32::MAX as u64);
-            let pos = self
-                .scanned_pos
-                .saturating_add(u32::try_from(local_idx).expect("int cast"));
+            let pos = self.scanned_pos.saturating_add(local_idx);
             self.newline_pos = Some(pos);
             self.scanned_pos = pos.saturating_add(1); // Only scanned up to (and including) the newline
         } else {
@@ -90,11 +87,7 @@ impl JSONLineBuffer {
         self.head = self.head.saturating_add(bytes);
 
         // Adjust scanned_pos (subtract consumed bytes, but don't go negative)
-        self.scanned_pos = if bytes >= self.scanned_pos {
-            0
-        } else {
-            self.scanned_pos - bytes
-        };
+        self.scanned_pos = self.scanned_pos.saturating_sub(bytes);
 
         // Adjust newline_pos
         if let Some(pos) = self.newline_pos {
@@ -146,5 +139,3 @@ impl JSONLineBuffer {
 }
 
 // `pub fn deinit` dropped: Vec<u8>'s Drop frees the backing allocation (global mimalloc).
-
-// ported from: src/jsc/JSONLineBuffer.zig

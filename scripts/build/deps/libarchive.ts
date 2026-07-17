@@ -106,8 +106,16 @@ export const libarchive: Dependency = {
     // Propagate ARCHIVE_RETRY from the client read callback up through
     // the gzip filter and tar reader so the worker-thread extract loop
     // in `bun install` can yield and resume as HTTP chunks arrive. See
-    // src/install/TarballStream.zig.
+    // src/install/TarballStream.rs.
     "patches/libarchive/nonblocking-read.patch",
+    // Windows: cache get_current_codepage()/get_current_oemcp() after the
+    // first call instead of querying setlocale(LC_CTYPE, NULL) once per
+    // created charset converter — `bun install` creates one per extracted
+    // archive across many worker threads at once, and the process never
+    // changes its locale, so the repeated trips through the UCRT locale
+    // machinery (and its heap) are pure overhead and needless cross-thread
+    // CRT-heap traffic.
+    "patches/libarchive/archive_string-codepage-cache.patch",
   ],
 
   // zlib-ng generates zlib.h during its own build; libarchive's gzip filter

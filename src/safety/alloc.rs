@@ -1,10 +1,8 @@
-//! Allocator-identity safety checks (Zig: `bun.safety.alloc`).
+//! Allocator-identity safety checks.
 //!
-//! Zig's `std.mem.Allocator` is a `{ ptr: *anyopaque, vtable: *const VTable }`
-//! pair; this module compares those two words to catch a single unmanaged
-//! container being driven by mismatched allocators. The Rust port uses
-//! [`bun_alloc::StdAllocator`] (the literal `{ptr, vtable}` struct) so the
-//! comparison semantics are identical — no fat-pointer transmutes.
+//! [`bun_alloc::StdAllocator`] is a literal `{ptr, vtable}` struct; this
+//! module compares those two words to catch a single unmanaged container
+//! being driven by mismatched allocators — no fat-pointer transmutes.
 //!
 //! Higher-tier `is_instance` checks (`MimallocArena`, `LinuxMemFdAllocator`,
 //! `CachedBytecode`, `bundle_v2`, `heap_breakdown::Zone`, arena vtable)
@@ -15,8 +13,12 @@
 
 use core::fmt;
 
-use bun_alloc::{NullableAllocator, StdAllocator, basic};
-use bun_core::{Output, StoredTrace};
+#[cfg(debug_assertions)]
+use bun_alloc::NullableAllocator;
+use bun_alloc::{StdAllocator, basic};
+use bun_core::Output;
+#[cfg(debug_assertions)]
+use bun_core::StoredTrace;
 
 /// Returns true if `alloc` definitely has a valid `.ptr`.
 fn has_ptr(alloc: StdAllocator) -> bool {
@@ -33,6 +35,7 @@ fn has_ptr(alloc: StdAllocator) -> bool {
 }
 
 /// Returns true if the allocators are definitely different.
+#[cfg(debug_assertions)]
 fn guaranteed_mismatch(alloc1: StdAllocator, alloc2: StdAllocator) -> bool {
     if !core::ptr::eq(alloc1.vtable, alloc2.vtable) {
         return true;
@@ -99,10 +102,8 @@ pub fn assert_eq_fmt(alloc1: StdAllocator, alloc2: StdAllocator, args: fmt::Argu
 /// methods). (Exception: methods like `clone` which explicitly accept any allocator should not call
 /// any methods on this type.)
 pub struct CheckedAllocator {
-    // Zig: `#allocator: if (enabled) NullableAllocator else void = if (enabled) .init(null)`
     #[cfg(debug_assertions)]
     allocator: NullableAllocator,
-    // Zig: `#trace: if (traces_enabled) StoredTrace else void = if (traces_enabled) StoredTrace.empty`
     #[cfg(debug_assertions)]
     trace: StoredTrace,
 }
@@ -128,6 +129,7 @@ impl CheckedAllocator {
     }
 
     pub fn set(&mut self, alloc: StdAllocator) {
+        let _ = alloc;
         if !ENABLED {
             return;
         }
@@ -136,9 +138,8 @@ impl CheckedAllocator {
             self.allocator = NullableAllocator::init(Some(alloc));
             #[cfg(debug_assertions)]
             {
-                // PORT NOTE: Zig passes `@returnAddress()`. Rust has no stable
-                // equivalent; `None` lets `StoredTrace::capture` start from the
-                // immediate caller frame instead.
+                // `None` lets `StoredTrace::capture` start from the
+                // immediate caller frame.
                 self.trace = StoredTrace::capture(None);
             }
         } else {
@@ -147,6 +148,7 @@ impl CheckedAllocator {
     }
 
     pub fn assert_eq(&self, alloc: StdAllocator) {
+        let _ = alloc;
         if !ENABLED {
             return;
         }
@@ -191,7 +193,8 @@ impl CheckedAllocator {
     ///
     /// If you only have a `StdAllocator`, see `MimallocArena::Borrowed::downcast`.
     #[inline]
-    pub fn transfer_ownership(&mut self, new_alloc: impl AsMimallocArenaAllocator) {
+    pub fn transfer_ownership(&mut self, new_alloc: &impl AsMimallocArenaAllocator) {
+        let _ = new_alloc;
         if !ENABLED {
             return;
         }
@@ -199,9 +202,9 @@ impl CheckedAllocator {
         {
             let new_std = new_alloc.allocator();
 
-            // PORT NOTE: Zig uses `defer self.* = .init(new_std)`. A scopeguard
-            // would need a `&mut self` capture overlapping the reads below, so
-            // the assignment is hoisted to both early returns instead.
+            // A scopeguard would need a `&mut self` capture overlapping the
+            // reads below, so the assignment is hoisted to both early returns
+            // instead.
             let Some(old_allocator) = self.allocator.get() else {
                 *self = Self::init(new_std);
                 return;
@@ -219,23 +222,16 @@ impl CheckedAllocator {
             }
             panic!(
                 "cannot transfer ownership from non-MimallocArena (old vtable is {:p})",
-                old_allocator.vtable as *const _,
+                std::ptr::from_ref(old_allocator.vtable),
             );
         }
     }
 }
 
-/// Zig's `transferOwnership` accepts `*MimallocArena | *const MimallocArena |
-/// MimallocArena.Borrowed` via `anytype` + comptime switch and calls
-/// `.allocator()` on the result. `MimallocArena` lives in `bun_runtime` (above
-/// this crate), so callers implement this trait there.
+/// `MimallocArena` lives in `bun_runtime` (above this crate), so callers
+/// implement this trait there.
 pub trait AsMimallocArenaAllocator {
     fn allocator(&self) -> StdAllocator;
 }
 
 pub const ENABLED: bool = cfg!(debug_assertions);
-
-#[allow(dead_code)]
-const TRACES_ENABLED: bool = cfg!(debug_assertions);
-
-// ported from: src/safety/alloc.zig

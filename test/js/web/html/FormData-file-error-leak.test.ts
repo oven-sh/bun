@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import { join } from "node:path";
 
 // Blob.fromDOMFormData pushes each FormData entry's bytes — including the
@@ -47,6 +47,8 @@ test("FormData serialization does not leak prior file buffers when a later file 
   // Without the fix: ~25 MB growth (256 KiB × 100). With the fix: ~0.
   // Threshold is well under half the expected leak to leave headroom for
   // unrelated allocator noise while still catching the regression.
-  expect(result.growthMB).toBeLessThan(10);
+  // Under ASAN the free quarantine (default 256 MB) plus redzones and glibc
+  // page retention inflate RSS even with no leak, so widen the threshold.
+  expect(result.growthMB).toBeLessThan(isASAN ? 400 : 10);
   expect(exitCode).toBe(0);
 });

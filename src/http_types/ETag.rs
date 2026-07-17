@@ -1,6 +1,5 @@
 use bun_core::strings;
 
-// PORT NOTE: Zig anonymous return struct `{ tag: []const u8, is_weak: bool }`.
 // Borrows from the input slice; not a persistent heap struct.
 struct Parsed<'a> {
     tag: &'a [u8],
@@ -16,8 +15,8 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
     if str.starts_with(b"W/") {
         is_weak = true;
         str = &str[2..];
-        // PORT NOTE: Zig `std.mem.trimLeft(u8, str, " \t")` — bun_string has no
-        // multi-char trim_left; inline it (trailing was already stripped above).
+        // bun_string has no multi-char trim_left; inline it (trailing
+        // whitespace was already stripped above).
         while let [b' ' | b'\t', rest @ ..] = str {
             str = rest;
         }
@@ -39,28 +38,73 @@ fn weak_match(tag1: &[u8], is_weak1: bool, tag2: &[u8], is_weak2: bool) -> bool 
     tag1 == tag2
 }
 
-pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
-    let hash: u64 = xxhash64(0, bytes);
+/// Buffer large enough to hold [`format`]'s output (18 bytes used).
+pub type FormatBuffer = [u8; 40];
 
-    let mut etag_buf = [0u8; 40];
+/// Format `hash` as a quoted RFC 9110 entity tag: `"` + 16 lowercase hex
+/// digits (zero-padded) + `"`. Returns the written prefix of `buf`.
+pub fn format(hash: u64, buf: &mut FormatBuffer) -> &[u8] {
     let len = {
         use std::io::Write;
-        let mut cursor = &mut etag_buf[..];
-        // Zig's `bun.fmt.hexIntLower(u64)` always emits exactly 16 hex chars
-        // (zero-padded). `{:x}` alone is variable-width.
+        let mut cursor = &mut buf[..];
+        // Always emit exactly 16 hex chars (zero-padded); `{:x}` alone is
+        // variable-width.
         write!(cursor, "\"{:016x}\"", hash).expect("unreachable");
         40 - cursor.len()
     };
-    let etag_str = &etag_buf[..len];
+    &buf[..len]
+}
+
+pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) {
+    let hash: u64 = xxhash64(0, bytes);
+    let mut etag_buf: FormatBuffer = [0; 40];
+    let etag_str = format(hash, &mut etag_buf);
     headers.append(b"etag", etag_str);
-    Ok(())
 }
 
 #[inline]
 fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-    // Zig: `std.hash.XxHash64.hash(0, bytes)`.
     bun_core::hash::xxhash64(seed, bytes)
+}
+
+/// Split an `If-None-Match` list into entity-tag fragments, honoring RFC 9110
+/// DQUOTE boundaries: a comma inside an opaque-tag (e.g. `"ab,cd"`) is part of
+/// the tag, not a list separator.
+struct EntityTagSplit<'a> {
+    rest: &'a [u8],
+    done: bool,
+}
+
+impl<'a> Iterator for EntityTagSplit<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<&'a [u8]> {
+        if self.done {
+            return None;
+        }
+        let bytes = self.rest;
+        let mut in_quotes = false;
+        for (i, &b) in bytes.iter().enumerate() {
+            match b {
+                b'"' => in_quotes = !in_quotes,
+                b',' if !in_quotes => {
+                    let (head, tail) = bytes.split_at(i);
+                    self.rest = &tail[1..];
+                    return Some(head);
+                }
+                _ => {}
+            }
+        }
+        self.done = true;
+        Some(bytes)
+    }
+}
+
+fn split_entity_tags(list: &[u8]) -> EntityTagSplit<'_> {
+    EntityTagSplit {
+        rest: list,
+        done: false,
+    }
 }
 
 pub fn if_none_match(
@@ -77,7 +121,7 @@ pub fn if_none_match(
     }
 
     // Parse comma-separated list of entity tags
-    for tag_str in if_none_match.split(|&b| b == b',') {
+    for tag_str in split_entity_tags(if_none_match) {
         let parsed = parse(tag_str);
         if weak_match(
             our_parsed.tag,
@@ -94,7 +138,6 @@ pub fn if_none_match(
 
 // ═══════════════════════════════════════════════════════════════════════
 // Headers — moved from bun_http.
-// Source: src/http/Headers.zig
 //
 // Core struct + tier-safe methods only. The following stay in `bun_http`
 // (T5) as they pull in higher-tier or sibling deps that http_types (T3)
@@ -119,7 +162,6 @@ pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
 /// Column accessors for `HeaderEntry` MultiArrayList storage.
 ///
-/// `header_entries.slice().items_name()` was a Zig MultiArrayList convenience.
 /// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
 /// that need to mutate `header_entries` afterwards copy the index out first.
 pub trait HeaderEntryColumns {
@@ -151,12 +193,11 @@ impl HeaderEntryColumns for HeaderEntryList {
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
-    // PORT NOTE: Zig stored `std.mem.Allocator param`; non-AST crate →
-    // global mimalloc, field dropped (PORTING.md §allocators).
+    // No allocator field: non-AST crate → global mimalloc (PORTING.md §allocators).
 }
 
 impl Clone for Headers {
-    // PORT NOTE: Zig `!Headers`; only fallible calls were allocations — abort on OOM.
+    // The only fallible calls are allocations — abort on OOM.
     fn clone(&self) -> Headers {
         Headers {
             entries: self
@@ -185,7 +226,7 @@ impl Headers {
         None
     }
 
-    // PORT NOTE: was `!void`; only `try` sites were allocations — abort on OOM.
+    // The only fallible calls are allocations — abort on OOM.
     pub fn append(&mut self, name: &[u8], value: &[u8]) {
         let mut offset: u32 = u32::try_from(self.buf.len()).unwrap();
         self.buf.reserve(name.len() + value.len());
@@ -193,7 +234,6 @@ impl Headers {
             offset,
             length: u32::try_from(name.len()).unwrap(),
         };
-        // PERF(port): was appendSliceAssumeCapacity.
         self.buf.extend_from_slice(name);
         offset = u32::try_from(self.buf.len()).unwrap();
         self.buf.extend_from_slice(value);
@@ -209,8 +249,6 @@ impl Headers {
             })
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
-
-    // PORT NOTE: Zig `deinit()` — handled by Drop on Vec/MultiArrayList.
 
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
         self.get(b"content-disposition")
@@ -232,9 +270,8 @@ impl Headers {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// wtf::writeHTTPDate — moved from bun_jsc.
-// Source: src/jsc/WTF.zig (writeHTTPDate only — the rest of `wtf` is
-// string-builder/date-parse machinery that stays jsc-side).
+// wtf::writeHTTPDate — moved from bun_jsc (writeHTTPDate only — the rest of
+// `wtf` is string-builder/date-parse machinery that stays jsc-side).
 // ═══════════════════════════════════════════════════════════════════════
 
 pub mod wtf {
@@ -265,5 +302,3 @@ pub mod wtf {
         &buffer[..res as usize]
     }
 }
-
-// ported from: src/http_types/ETag.zig

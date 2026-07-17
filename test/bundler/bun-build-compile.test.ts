@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "path";
 
@@ -519,5 +519,63 @@ if (process.platform === "android") {
     }, 60_000);
   });
 }
+
+// A standalone compiled binary bypasses `Arguments::parse` (no `--cwd`/global
+// flags, no baked exec-argv), so `absolute_working_dir` stays unset and the
+// FIRST `getcwd` of the whole startup is the one inside `Transpiler::init`.
+// When the cwd has been deleted that `getcwd` fails with ENOENT; the bug was
+// that the per-VM init hook swallowed the error and left `vm.transpiler`
+// zeroed, so the next read (`configure_defines` → `run_env_loader`) hit a null
+// deref and the binary crashed (the segfault users saw launching a compiled
+// CLI from a directory that had been removed). It must instead exit cleanly
+// with the ENOENT message.
+//
+// POSIX-only: a process can keep a deleted directory as its cwd until the last
+// fd to it closes, whereas Windows refuses to remove a directory that is any
+// process's cwd — so the scenario is unreachable there. The cwd has to be
+// removed AFTER the process starts, which `Bun.spawn`'s `cwd` can't do, so a
+// shell wrapper `cd`s in, `rmdir`s, then execs the binary (how a user hits it).
+describe("compiled binary in a deleted cwd", () => {
+  test.if(isPosix)(
+    "exits cleanly instead of crashing",
+    async () => {
+      using dir = tempDir("build-compile-deleted-cwd", {
+        "app.js": `console.log("should-not-run");`,
+      });
+      const outfile = join(String(dir), "app");
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      // A fresh directory to stand in and delete — NOT `dir`, which holds the
+      // compiled binary we still need to exec.
+      using cwdDir = tempDir("build-compile-gone-cwd", {});
+      const gone = String(cwdDir);
+
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${outfile}"`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The entry never runs (VM init aborts first), the ENOENT surfaces, and the
+      // process exits 1 — a crash would terminate via a signal, never exit 1.
+      expect(stdout).toBe("");
+      expect(stderr).toContain("ENOENT");
+      expect(exitCode).toBe(1);
+    },
+    60_000,
+  );
+});
 
 // file command test works well

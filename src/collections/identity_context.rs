@@ -1,7 +1,6 @@
 use core::marker::PhantomData;
 
-/// Trait covering the Zig `@typeInfo(Key)` switch in `IdentityContext.hash`:
-/// `.@"enum" => @intFromEnum(key)`, `.int => key`, `else => @compileError(...)`.
+/// Trait for keys usable with `IdentityContext`.
 /// Implement for any int (`self as u64`) or `#[repr(uN)]` enum (`self as uN as u64`).
 pub trait IdentityHash: Copy + Eq {
     fn identity_hash(self) -> u64;
@@ -21,12 +20,11 @@ identity_hash_int!(u8, u16, u32, u64, usize, i8, i16, i32, i64, isize);
 pub struct IdentityContext<Key>(PhantomData<Key>);
 
 impl<Key: IdentityHash> IdentityContext<Key> {
-    pub fn hash(&self, key: Key) -> u64 {
-        // Zig: switch (comptime @typeInfo(Key)) { .@"enum" => @intFromEnum(key), .int => key, else => @compileError }
+    pub fn hash(self, key: Key) -> u64 {
         key.identity_hash()
     }
 
-    pub fn eql(&self, a: Key, b: Key) -> bool {
+    pub fn eql(self, a: Key, b: Key) -> bool {
         a == b
     }
 }
@@ -37,11 +35,11 @@ impl<Key: IdentityHash> IdentityContext<Key> {
 pub struct ArrayIdentityContext;
 
 impl ArrayIdentityContext {
-    pub fn hash(&self, key: u32) -> u32 {
+    pub fn hash(self, key: u32) -> u32 {
         key
     }
 
-    pub fn eql(&self, a: u32, b: u32, _: usize) -> bool {
+    pub fn eql(self, a: u32, b: u32, _: usize) -> bool {
         a == b
     }
 }
@@ -50,17 +48,17 @@ impl ArrayIdentityContext {
 pub struct ArrayIdentityContextU64;
 
 impl ArrayIdentityContextU64 {
-    pub fn hash(&self, key: u64) -> u32 {
+    pub fn hash(self, key: u64) -> u32 {
         key as u32
     }
 
-    pub fn eql(&self, a: u64, b: u64, _: usize) -> bool {
+    pub fn eql(self, a: u64, b: u64, _: usize) -> bool {
         a == b
     }
 }
 
-// Zig's `ArrayIdentityContext.U64` nesting — inherent assoc types are unstable,
-// so expose as a free path alias instead. Callers: `identity_context::U64`.
+// Inherent assoc types are unstable, so expose this as a free path alias.
+// Callers: `identity_context::U64`.
 pub type U64 = ArrayIdentityContextU64;
 
 // ArrayHashMap requires `C: ArrayHashContext<K>`, so wire the inherent impls
@@ -88,5 +86,3 @@ impl crate::array_hash_map::ArrayHashContext<u64> for ArrayIdentityContextU64 {
         a == b
     }
 }
-
-// ported from: src/collections/identity_context.zig

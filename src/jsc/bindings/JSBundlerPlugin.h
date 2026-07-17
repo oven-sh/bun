@@ -118,7 +118,7 @@ public:
     };
 
 public:
-    bool anyMatchesCrossThread(JSC::VM&, const BunString* namespaceStr, const BunString* path, bool isOnLoad);
+    bool anyMatchesCrossThread(JSC::VM&, BunString* namespaceStr, BunString* path, bool isOnLoad);
     void tombstone() { tombstoned = true; }
 
     BundlerPlugin(void* config, BunPluginTarget target, JSBundlerPluginAddErrorCallback addError, JSBundlerPluginOnLoadAsyncCallback onLoadAsync, JSBundlerPluginOnResolveAsyncCallback onResolveAsync)
@@ -136,6 +136,9 @@ public:
     BunPluginTarget target { BunPluginTargetBrowser };
 
     WriteBarrierList<JSC::JSPromise> deferredPromises = {};
+    // The raw `NapiExternal*` stored in `NativePluginCallback` is dereferenced
+    // off the JS thread; this list keeps those cells alive for GC.
+    WriteBarrierList<NapiExternal> onBeforeParseExternals = {};
 
     JSBundlerPluginAddErrorCallback addError;
     JSBundlerPluginOnLoadAsyncCallback onLoadAsync;

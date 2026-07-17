@@ -9,11 +9,10 @@ pub fn to_js(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValu
     })
 }
 
-pub fn to_js_object(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
+pub(crate) fn to_js_object(cert: &mut X509, global_object: &JSGlobalObject) -> JsResult<JSValue> {
     Ok(Bun__X509__toJS(cert, global_object))
 }
 
-// TODO(port): move to runtime_sys (or bun_boringssl_sys)
 // `X509`/`JSGlobalObject` are opaque `repr(C)` handles; `&mut`/`&` are
 // ABI-identical to non-null pointers, so the validity proof is in the type.
 unsafe extern "C" {
@@ -23,5 +22,3 @@ unsafe extern "C" {
     ) -> JSValue;
     safe fn Bun__X509__toJS(cert: &mut X509, global_object: &JSGlobalObject) -> JSValue;
 }
-
-// ported from: src/runtime/api/bun/x509.zig

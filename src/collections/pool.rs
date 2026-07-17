@@ -1,6 +1,6 @@
 use core::cell::RefCell;
 use core::marker::PhantomData;
-use core::mem::{MaybeUninit, offset_of};
+use core::mem::MaybeUninit;
 use core::ptr;
 
 use bun_core::Error;
@@ -8,33 +8,20 @@ use bun_core::Error;
 // ──────────────────────────────────────────────────────────────────────────
 // SinglyLinkedList
 // ──────────────────────────────────────────────────────────────────────────
-//
-// PORT NOTE: Zig's `SinglyLinkedList(comptime T: type, comptime Parent: type)`
-// threads `Parent` only so that `Node.release()` can call `Parent.release(node)`.
-// In Rust the only `Parent` is `ObjectPool`, so `Node::release` is provided as
-// an inherent method on `ObjectPool` instead and the `Parent` type param is
-// dropped here. Diff readers: `node.release()` call sites become
-// `ObjectPool::<..>::release(node)`.
 
 /// Node inside the linked list wrapping the actual data.
 #[repr(C)]
 pub struct Node<T> {
-    // INTRUSIVE: pool.zig:7 — next link in singly-linked free list
+    // INTRUSIVE: next link in singly-linked free list
     pub next: *mut Node<T>,
-    // PORT NOTE: Zig stored `std.mem.Allocator param` here so `destroyNode`
-    // could free via the originating allocator. In Rust the global mimalloc
-    // allocator owns every `Box<Node<T>>`, so the field is dropped and
-    // `destroy_node` uses `heap::take`.
-    //
-    // PORT NOTE: `MaybeUninit<T>` not `T` — Zig's `else undefined` (pool.zig:203)
-    // is well-defined-until-read, but Rust's `assume_init()` on uninit bytes is
+    // `MaybeUninit<T>` not `T`: `assume_init()` on uninit bytes is
     // immediate UB for any `T` with validity invariants. Callers that use
     // `INIT == None` write `data` before reading, so we keep the bytes
     // uninitialized and only `assume_init_*` at access sites.
     pub data: MaybeUninit<T>,
 }
 
-// PORT NOTE: `pub const Data = T;` (inherent assoc type) is nightly-only;
+// `pub const Data = T;` (inherent assoc type) is nightly-only;
 // callers can write `T` directly.
 
 impl<T> Node<T> {
@@ -119,14 +106,10 @@ impl<T> Node<T> {
         }
         count
     }
-
-    // PORT NOTE: `pub inline fn release(node: *Node) void { Parent.release(node) }`
-    // is expressed as `ObjectPool::<T, ..>::release(node)` at call sites; see
-    // module-level note above.
 }
 
 pub struct SinglyLinkedList<T> {
-    // INTRUSIVE: pool.zig:59 — list head; popFirst hands node to caller
+    // INTRUSIVE: list head; pop_first hands node to caller
     pub first: *mut Node<T>,
 }
 
@@ -138,30 +121,46 @@ impl<T> Default for SinglyLinkedList<T> {
     }
 }
 
+impl<T> Drop for SinglyLinkedList<T> {
+    fn drop(&mut self) {
+        // The free list owns its nodes (each `release()` hands ownership back).
+        // Without this, the TLS-backed pool's `DataStruct` strands every cached
+        // node when the thread exits.
+        let mut next = core::mem::replace(&mut self.first, ptr::null_mut());
+        while !next.is_null() {
+            let node = next;
+            next = Node::next_of(node);
+            // SAFETY: free-list nodes always carry initialized `data`
+            // (`release()` only stores nodes that were used) and are
+            // exclusively owned by the list.
+            unsafe {
+                (*node).data.assume_init_drop();
+                drop(bun_core::heap::take(node));
+            }
+        }
+    }
+}
+
 impl<T> SinglyLinkedList<T> {
     /// Insert a new node at the head.
     ///
-    /// Arguments:
-    ///     new_node: Pointer to the new node to insert.
-    pub fn prepend(&mut self, new_node: *mut Node<T>) {
-        // SAFETY: caller guarantees new_node is a live, exclusively-owned Node
-        unsafe { (*new_node).next = self.first };
+    /// `new_node` must be live and exclusively owned by the caller until popped.
+    pub fn prepend(&mut self, new_node: &mut Node<T>) {
+        new_node.next = self.first;
         self.first = new_node;
     }
 
-    /// Remove a node from the list.
-    ///
-    /// Arguments:
-    ///     node: Pointer to the node to be removed.
-    pub fn remove(&mut self, node: *mut Node<T>) {
+    /// Remove a node from the list. `node` must currently be in this list.
+    pub fn remove(&mut self, node: &Node<T>) {
+        let node = std::ptr::from_ref(node).cast_mut();
         if self.first == node {
             self.first = Node::next_of(node);
         } else {
             // SAFETY: self.first is non-null (else the `==` above would have
             // matched the null `node`, which callers never pass)
             let mut current_elm = self.first;
-            // SAFETY: walk live list nodes; Zig's `.?` would panic on null —
-            // mirror that with an unchecked deref.
+            // SAFETY: `node` is in this list (caller contract), so the walk
+            // visits only live nodes and reaches `node` before hitting null.
             unsafe {
                 while (*current_elm).next != node {
                     current_elm = (*current_elm).next;
@@ -203,35 +202,28 @@ impl<T> SinglyLinkedList<T> {
 
 const LOG_ALLOCATIONS: bool = false;
 
-/// Behavior hooks the Zig version expressed via `comptime Init: ?fn(...)` and
-/// `std.meta.hasFn(Type, "reset")`. Per PORTING.md §Comptime reflection,
-/// optional-decl checks become a trait with default methods.
+/// Behavior hooks for pooled types: optional initialization and per-reuse
+/// reset.
 pub trait ObjectPoolType: Sized {
-    /// Mirrors `comptime Init: ?fn(allocator) anyerror!Type`. `None` ⇒ the
-    /// Zig path that left `data` as `undefined`.
+    /// Optional initializer for freshly allocated nodes. `None` ⇒ `data`
+    /// starts uninitialized.
     const INIT: Option<fn() -> Result<Self, Error>> = None;
 
-    /// Mirrors `if (std.meta.hasFn(Type, "reset")) node.data.reset()`.
-    /// Default is a no-op; types that had `.reset()` in Zig override this.
+    /// Called when a node is reused from the free list. Default is a no-op.
     #[inline]
     fn reset(&mut self) {}
 }
 
-/// Per-pool mutable state. Zig's `DataStruct`.
+/// Per-pool mutable state.
 pub struct DataStruct<T> {
     pub list: SinglyLinkedList<T>,
     pub loaded: bool,
-    // PORT NOTE: Zig used `MaxCountInt = std.math.IntFittingRange(0, max_count)`.
-    // Rust const generics cannot pick an integer type from a const value; use
-    // `usize` and accept the few extra bytes.
-    // PERF(port): was IntFittingRange — narrow if it shows up on a hot path.
     pub count: usize,
 }
 
 impl<T> Default for DataStruct<T> {
     fn default() -> Self {
         Self {
-            // PORT NOTE: Zig had `list: LinkedList = undefined` — we zero it.
             list: SinglyLinkedList::default(),
             loaded: false,
             count: 0,
@@ -252,7 +244,7 @@ pub struct ObjectPool<
     S = UnwiredStorage,
 >(core::marker::PhantomData<(T, S)>);
 
-// PORT NOTE: `pub const List = SinglyLinkedList(T)` / `pub const Node = Node(T)`
+// `pub const List = SinglyLinkedList(T)` / `pub const Node = Node(T)`
 // inherent assoc types are nightly-only; callers write `SinglyLinkedList<T>` /
 // `Node<T>` directly.
 
@@ -293,11 +285,10 @@ impl<T: ObjectPoolType, const TS: bool, const MAX: usize, S> ObjectPoolTrait
 }
 
 /// RAII handle for a pooled `T`. Derefs to the inner value; on `Drop`, the
-/// node is returned to its pool. Replaces the Zig `get()` + `defer release()`
-/// pair.
+/// node is returned to its pool.
 pub struct PoolGuard<'a, T: ObjectPoolType + 'static> {
     node: *mut Node<T>,
-    release: fn(*mut Node<T>),
+    release: unsafe fn(*mut Node<T>),
     _marker: PhantomData<&'a mut T>,
 }
 
@@ -322,7 +313,12 @@ impl<'a, T: ObjectPoolType> core::ops::DerefMut for PoolGuard<'a, T> {
 
 impl<'a, T: ObjectPoolType> Drop for PoolGuard<'a, T> {
     fn drop(&mut self) {
-        (self.release)(self.node);
+        // SAFETY: `self.node` was obtained from `ObjectPool::get_node` and is
+        // exclusively owned by this guard for its lifetime; ownership returns
+        // to the pool's free list. `data` is initialized: either `T::INIT` is
+        // `Some` (so `get_node` wrote it), or the guard's `DerefMut` already
+        // proved initialization to the borrow checker before any read.
+        unsafe { (self.release)(self.node) };
     }
 }
 
@@ -344,11 +340,11 @@ where
     // but we don't want to create 3 global variables per pool
     // instead, we create one global variable per pool
     //
-    // PORT NOTE: Rust cannot place a `static` / `thread_local!` inside a
+    // Rust cannot place a `static` / `thread_local!` inside a
     // generic `impl`; storage is supplied via the `S: PoolStorage<T>` type
     // parameter (see `object_pool!` for the usual declaration).
     #[inline]
-    pub fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
+    pub(crate) fn data<R>(f: impl FnOnce(&RefCell<DataStruct<T>>) -> R) -> R {
         S::with(f)
     }
 
@@ -362,17 +358,8 @@ where
         })
     }
 
-    pub fn has() -> bool {
-        Self::data(|cell| {
-            let d = cell.borrow();
-            d.loaded && !d.list.first.is_null()
-        })
-    }
-
     pub fn push(pooled: T) {
         if cfg!(debug_assertions) {
-            // PORT NOTE: Zig gated on `env.allow_assert`; that is
-            // `Environment.isDebug` ⇒ `cfg!(debug_assertions)`.
             debug_assert!(!Self::full());
         }
 
@@ -380,7 +367,9 @@ where
             next: ptr::null_mut(),
             data: MaybeUninit::new(pooled),
         }));
-        Self::release(new_node);
+        // SAFETY: `new_node` is a freshly heap-allocated `Node<T>` we exclusively
+        // own, and `data` was initialized to `pooled` just above.
+        unsafe { Self::release(new_node) };
     }
 
     pub fn get_if_exists() -> Option<*mut Node<T>> {
@@ -408,7 +397,11 @@ where
         unsafe { (*Self::get_node()).data.as_mut_ptr() }
     }
 
-    /// Zig `get()` — pop a node from the free list or allocate a fresh one.
+    /// Pop a node from the free list or allocate a fresh one.
+    ///
+    /// When `T::INIT == None` and a fresh node is allocated, the returned
+    /// node's `data` is **uninitialized**; the caller must write a valid `T`
+    /// to it before reading it or passing the node to [`Self::release`].
     pub fn get_node() -> *mut Node<T> {
         let reused = Self::data(|cell| {
             let mut d = cell.borrow_mut();
@@ -430,12 +423,13 @@ where
         }
 
         if LOG_ALLOCATIONS {
-            // PORT NOTE: Zig wrote to stderr via std.fs; banned here. Route
-            // through `bun_core::Output` if this is ever flipped on.
-            // TODO(port): log "Allocate {type_name} - {size} bytes"
+            let _ = bun_core::output::File::stderr().write_fmt(format_args!(
+                "Allocate {} - {} bytes\n",
+                core::any::type_name::<T>(),
+                core::mem::size_of::<T>()
+            ));
         }
 
-        // Matches Zig's `data = if (Init) |i| i(..) else undefined` (pool.zig:203).
         // For `INIT == None` the bytes stay uninitialized; the caller MUST write
         // `data` before any read (and before `release()`, since `destroy_node`
         // assumes it is initialized when dropping).
@@ -459,18 +453,58 @@ where
         }
     }
 
-    pub fn release_value(value: *mut T) {
-        // SAFETY: `value` points to the `data` field of a live `Node<T>`
+    /// Return the node owning `value` to the pool's free list (or free it if
+    /// the pool is full).
+    ///
+    /// Takes a raw `*mut T` for the same reason [`Self::release`] does: a full
+    /// pool frees the `Node<T>` that `value` points into, which would be UB
+    /// through a live `&mut` function argument. A `&mut value` reborrow also
+    /// does not carry whole-parent provenance, which `from_field_ptr!` requires.
+    ///
+    /// # Safety
+    ///
+    /// `value` must point to the initialized `data` field of a live,
+    /// exclusively-owned `Node<T>` previously handed out by this pool (e.g. via
+    /// [`Self::first`]), carrying that node's provenance. Ownership transfers
+    /// back to the pool.
+    pub unsafe fn release_value(value: *mut T) {
+        // SAFETY: caller contract — `value` is the `data` field of a live node
+        // and carries its provenance.
         let node = unsafe { bun_core::from_field_ptr!(Node<T>, data, value) };
-        Self::release(node);
+        // SAFETY: caller contract — `node` is live, exclusively owned, and its
+        // `data` is initialized.
+        unsafe { Self::release(node) };
     }
 
-    pub fn release(node: *mut Node<T>) {
+    /// Return a node to the pool's free list (or free it if the pool is full).
+    ///
+    /// Takes a raw `*mut Node<T>`, not `&mut Node<T>`: when the pool is already
+    /// at `MAX_COUNT` this frees the node, and freeing an allocation that a live
+    /// `&mut` **function argument** points into is UB (the reference is
+    /// protected for the whole call). Same reason
+    /// [`CellRefCounted::deref`](bun_ptr::CellRefCounted::deref) takes a raw
+    /// pointer.
+    ///
+    /// # Safety
+    ///
+    /// `node` must be a live, exclusively-owned `Node<T>` previously handed out
+    /// by this pool (e.g. via `get` / `get_node` / `first`), and `node.data`
+    /// must be initialized. The free list assumes every stored node carries a
+    /// valid `T` so it can `assume_init_mut().reset()` on reuse and
+    /// `assume_init_drop()` on teardown — releasing a node that was obtained
+    /// from `get_node()` with `T::INIT == None` and never written is UB.
+    /// Ownership transfers back to the pool's free list.
+    pub unsafe fn release(node: *mut Node<T>) {
+        debug_assert!(!node.is_null());
         let overflowed = Self::data(|cell| {
             let mut d = cell.borrow_mut();
             if MAX_COUNT > 0 && d.count >= MAX_COUNT {
                 if LOG_ALLOCATIONS {
-                    // TODO(port): log "Free {type_name} - {size} bytes"
+                    let _ = bun_core::output::File::stderr().write_fmt(format_args!(
+                        "Free {} - {} bytes\n",
+                        core::any::type_name::<T>(),
+                        core::mem::size_of::<T>()
+                    ));
                 }
                 return true;
             }
@@ -480,7 +514,9 @@ where
             }
 
             if d.loaded {
-                d.list.prepend(node);
+                // SAFETY: caller contract — `node` is live and exclusively
+                // owned; the list takes ownership of it here.
+                d.list.prepend(unsafe { &mut *node });
             } else {
                 d.list = SinglyLinkedList { first: node };
                 d.loaded = true;
@@ -512,12 +548,6 @@ where
     }
 
     fn destroy_node(node: *mut Node<T>) {
-        // TODO(port): Zig special-cased `Type != bun.Vec<u8>` here to skip
-        // `bun.memory.deinit(&node.data)` for `Vec<u8>` (a known leak the Zig
-        // comment calls out). In Rust, dropping `T` is the moral equivalent of
-        // `bun.memory.deinit`. If `Vec<u8>` (the `Vec<u8>` port) must keep
-        // leaking for compat, gate its `Drop` there — not here.
-        //
         // SAFETY: `node` was created via `heap::alloc` in `push`/`get` and
         // is exclusively owned by the caller. `data` is initialized: `destroy_node`
         // is only reached from `release()` (caller had a usable node, so `data`
@@ -546,7 +576,7 @@ where
 /// `pub type $Name = ObjectPool<$T, .., $Storage>` alias. `threadsafe` ⇒
 /// `thread_local!` (one free list per thread); `global` ⇒ a single
 /// process-wide `RefCell` (caller is responsible for not touching it from
-/// multiple threads — matches the Zig `threadsafe = false` mode).
+/// multiple threads).
 #[macro_export]
 macro_rules! object_pool {
     ($vis:vis $name:ident : $ty:ty, threadsafe, $max:expr) => {
@@ -599,11 +629,9 @@ macro_rules! __object_pool_storage {
             fn with<R>(
                 f: impl FnOnce(&::core::cell::RefCell<$crate::pool::DataStruct<$ty>>) -> R,
             ) -> R {
-                // PORT NOTE: Zig's `threadsafe = false` used a plain global
-                // `var data`; Rust forbids non-`Sync` statics, so this still
+                // Rust forbids non-`Sync` statics, so the "global" mode still
                 // expands to a thread-local. Single-threaded callers see the
-                // same one cell; cross-thread callers get per-thread pools
-                // (a slight behaviour difference, but safe).
+                // same one cell; cross-thread callers get per-thread pools.
                 ::std::thread_local! {
                     static __OBJECT_POOL_DATA: ::core::cell::RefCell<
                         $crate::pool::DataStruct<$ty>
@@ -633,8 +661,7 @@ macro_rules! __paste_storage {
 // is in `bun_core` (post `bun_string` merge).
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig: `Npm.Registry.BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8)`
-/// (src/install/npm.zig). Init = `init2048`; reuse = `.reset()`.
+/// Init = `init2048`; reuse = `.reset()`.
 impl ObjectPoolType for bun_core::MutableString {
     const INIT: Option<fn() -> Result<Self, Error>> =
         Some(|| bun_core::MutableString::init2048().map_err(Into::into));
@@ -644,4 +671,312 @@ impl ObjectPoolType for bun_core::MutableString {
     }
 }
 
-// ported from: src/collections/pool.zig
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+//
+// Run under Miri (`bun run rust:miri -p bun_collections`): the free list hands
+// raw `*mut Node<T>` back and forth across `Box::into_raw`/`heap::take`, so
+// Tree Borrows is what proves no node is reused after free or double-dropped.
+//
+// `object_pool!` names its storage struct `__ObjectPoolStorage` unconditionally,
+// so each pool needs its own module.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    static RESETS: AtomicUsize = AtomicUsize::new(0);
+
+    /// `DROPS`/`RESETS` are process-wide but libtest runs `#[test]`s on parallel
+    /// threads, so every test asserting on them holds this for its duration.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial() -> MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn drops() -> usize {
+        DROPS.load(Ordering::SeqCst)
+    }
+
+    fn resets() -> usize {
+        RESETS.load(Ordering::SeqCst)
+    }
+
+    /// Owns a heap allocation so a missed `assume_init_drop` leaks (Miri's
+    /// leak check catches it) and a double drop is a double free.
+    #[derive(Debug)]
+    struct Tracked(Box<u32>);
+
+    impl Drop for Tracked {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl ObjectPoolType for Tracked {
+        const INIT: Option<fn() -> Result<Self, Error>> = Some(|| Ok(Tracked(Box::new(0))));
+        fn reset(&mut self) {
+            RESETS.fetch_add(1, Ordering::SeqCst);
+            *self.0 = 0;
+        }
+    }
+
+    // ── SinglyLinkedList ──────────────────────────────────────────────────
+
+    #[test]
+    fn singly_linked_list_push_pop() {
+        let mut list: SinglyLinkedList<u32> = SinglyLinkedList::default();
+        assert_eq!(list.len(), 0);
+        assert!(list.pop_first().is_none());
+
+        let mut nodes: Vec<Box<Node<u32>>> = (0..3)
+            .map(|i| {
+                Box::new(Node {
+                    next: ptr::null_mut(),
+                    data: MaybeUninit::new(i),
+                })
+            })
+            .collect();
+        for n in nodes.iter_mut() {
+            list.prepend(n);
+        }
+        assert_eq!(list.len(), 3);
+
+        // LIFO: last prepended comes out first.
+        for expect in (0..3).rev() {
+            let node = list.pop_first().expect("node");
+            // SAFETY: `data` was initialized above; the node is still owned by
+            // the `nodes` vec, which outlives the list.
+            assert_eq!(unsafe { *(*node).data_ref() }, expect);
+        }
+        assert!(list.pop_first().is_none());
+        // Nothing was handed to the list's `Drop` (it is empty), so `nodes`
+        // still owns every allocation.
+        core::mem::forget(list);
+    }
+
+    #[test]
+    fn singly_linked_list_remove_and_walk() {
+        let mut list: SinglyLinkedList<u32> = SinglyLinkedList::default();
+        let mut nodes: Vec<Box<Node<u32>>> = (0..4)
+            .map(|i| {
+                Box::new(Node {
+                    next: ptr::null_mut(),
+                    data: MaybeUninit::new(i),
+                })
+            })
+            .collect();
+        for n in nodes.iter_mut() {
+            list.prepend(n);
+        }
+
+        // Head is node 3; remove a middle node (1) and the head.
+        list.remove(&nodes[1]);
+        assert_eq!(list.len(), 3);
+        let head = nodes[3].as_ref();
+        list.remove(head);
+        assert_eq!(list.len(), 2);
+
+        // SAFETY: list is non-empty, so `first` is live.
+        assert_eq!(unsafe { (*list.first).count_children() }, 1);
+        // SAFETY: `first` is live and in the list.
+        let last = unsafe { (*list.first).find_last() };
+        // SAFETY: `last` is the tail node, still owned by `nodes`.
+        assert_eq!(unsafe { *(*last).data_ref() }, 0);
+
+        core::mem::forget(list);
+    }
+
+    /// The list owns whatever is still on it at `Drop` — dropping it must run
+    /// each element's destructor exactly once and free each node.
+    #[test]
+    fn singly_linked_list_drop_frees_nodes() {
+        let _serial = serial();
+        let before = drops();
+        let mut list: SinglyLinkedList<Tracked> = SinglyLinkedList::default();
+        for i in 0..3 {
+            let node = bun_core::heap::into_raw(Box::new(Node {
+                next: ptr::null_mut(),
+                data: MaybeUninit::new(Tracked(Box::new(i))),
+            }));
+            // SAFETY: freshly allocated and exclusively owned; ownership moves
+            // to the list, whose `Drop` frees it.
+            list.prepend(unsafe { &mut *node });
+        }
+        drop(list);
+        assert_eq!(drops(), before + 3);
+    }
+
+    // ── ObjectPool: recycling ─────────────────────────────────────────────
+
+    // `object_pool!` emits a `pub` storage struct; unreachable from a
+    // private test module, which `unreachable_pub` would otherwise flag.
+    #[allow(unreachable_pub)]
+    mod recycle {
+        use super::*;
+        crate::object_pool!(pub Pool: Tracked, threadsafe, 0);
+
+        #[test]
+        fn pool_recycles_the_same_node() {
+            let _serial = serial();
+            let before = drops();
+            let resets_before = resets();
+
+            let first_ptr = {
+                let mut guard = Pool::get();
+                *guard.0 = 11;
+                guard.node_ptr()
+            }; // guard drop → node returns to the free list
+
+            // Reuse: same allocation, `reset()` ran, value cleared.
+            let mut guard = Pool::get();
+            assert_eq!(guard.node_ptr(), first_ptr);
+            assert_eq!(resets(), resets_before + 1);
+            assert_eq!(*guard.0, 0);
+            *guard.0 = 22;
+            assert_eq!(*guard.0, 22);
+            drop(guard);
+
+            // Nothing was destroyed: the free list still owns the node.
+            assert_eq!(drops(), before);
+
+            Pool::delete_all();
+            assert_eq!(drops(), before + 1);
+        }
+    }
+
+    // ── ObjectPool: MAX_COUNT overflow frees instead of caching ───────────
+
+    // `object_pool!` emits a `pub` storage struct; unreachable from a
+    // private test module, which `unreachable_pub` would otherwise flag.
+    #[allow(unreachable_pub)]
+    mod capped {
+        use super::*;
+        crate::object_pool!(pub Pool: Tracked, threadsafe, 1);
+
+        #[test]
+        fn pool_over_max_count_destroys_the_node() {
+            let _serial = serial();
+            let before = drops();
+
+            let a = Pool::get();
+            let b = Pool::get();
+            assert_ne!(a.node_ptr(), b.node_ptr());
+            assert!(!Pool::full());
+
+            drop(a); // cached (count 0 → 1)
+            assert!(Pool::full());
+            assert_eq!(drops(), before);
+
+            drop(b); // pool full → destroyed
+            assert_eq!(drops(), before + 1);
+
+            Pool::delete_all();
+            assert_eq!(drops(), before + 2);
+        }
+    }
+
+    // ── ObjectPool: push / get_if_exists ──────────────────────────────────
+
+    // `object_pool!` emits a `pub` storage struct; unreachable from a
+    // private test module, which `unreachable_pub` would otherwise flag.
+    #[allow(unreachable_pub)]
+    mod push_get {
+        use super::*;
+        crate::object_pool!(pub Pool: Tracked, threadsafe, 0);
+
+        #[test]
+        fn push_then_get_if_exists() {
+            let _serial = serial();
+            let before = drops();
+            // Nothing cached yet: `get_if_exists` must not allocate.
+            assert!(Pool::get_if_exists().is_none());
+
+            Pool::push(Tracked(Box::new(5)));
+            let node = Pool::get_if_exists().expect("pushed node");
+            // SAFETY: `node` was just popped; `push` initialized `data`, and
+            // `get_if_exists` already ran `reset()` on it.
+            assert_eq!(unsafe { *(*node).data_ref().0 }, 0);
+            // The pool is empty again — the node is ours.
+            assert!(Pool::get_if_exists().is_none());
+
+            // Hand it back, then tear the pool down. Miri's leak check is what
+            // proves `delete_all` actually frees the node it reclaimed.
+            // SAFETY: `node` came from this pool and `data` is initialized.
+            unsafe { Pool::release(node) };
+            assert_eq!(drops(), before);
+            Pool::delete_all();
+            assert_eq!(drops(), before + 1);
+        }
+    }
+
+    // ── ObjectPool: `first()` + `release_value()` container_of round-trip ──
+
+    // `object_pool!` emits a `pub` storage struct; unreachable from a
+    // private test module, which `unreachable_pub` would otherwise flag.
+    #[allow(unreachable_pub)]
+    mod field_ptr {
+        use super::*;
+        crate::object_pool!(pub Pool: Tracked, threadsafe, 0);
+
+        #[test]
+        fn first_then_release_value_round_trips_through_the_data_field() {
+            let _serial = serial();
+            let before = drops();
+            let value: *mut Tracked = Pool::first();
+            // SAFETY: `first()` hands out the `data` field of a live node whose
+            // `T::INIT` already wrote a valid `Tracked`.
+            unsafe { *(*value).0 = 7 };
+            // `release_value` recovers the node via `offset_of!(Node<T>, data)`.
+            // SAFETY: `value` is that node's `data` field, carrying its provenance.
+            unsafe { Pool::release_value(value) };
+
+            // The node is back on the free list, unharmed and reusable.
+            let guard = Pool::get();
+            assert_eq!(*guard.0, 0, "reset() ran on reuse");
+            drop(guard);
+
+            Pool::delete_all();
+            assert_eq!(drops(), before + 1);
+        }
+    }
+
+    // ── ObjectPool: `release_value()` on a full pool frees the node ────────
+
+    // `object_pool!` emits a `pub` storage struct; unreachable from a
+    // private test module, which `unreachable_pub` would otherwise flag.
+    #[allow(unreachable_pub)]
+    mod field_ptr_capped {
+        use super::*;
+        crate::object_pool!(pub Pool: Tracked, threadsafe, 1);
+
+        /// The overflow path frees the very `Node<T>` that `value` points into.
+        /// Taking `*mut T` is what makes that sound: a `&mut T` argument is
+        /// protected for the whole call, and Tree Borrows rejects deallocating
+        /// an allocation a protected reference points into.
+        #[test]
+        fn release_value_on_a_full_pool_frees_the_node() {
+            let _serial = serial();
+            let before = drops();
+
+            // Fill the pool (MAX_COUNT = 1), then overflow it through `first()`.
+            let cached = Pool::get();
+            let overflow: *mut Tracked = Pool::first();
+            drop(cached);
+            assert!(Pool::full());
+
+            // SAFETY: `overflow` is the `data` field of a live node this pool
+            // handed out, carrying its provenance.
+            unsafe { Pool::release_value(overflow) };
+            assert_eq!(drops(), before + 1, "the overflowing node was freed");
+
+            Pool::delete_all();
+            assert_eq!(drops(), before + 2);
+        }
+    }
+}

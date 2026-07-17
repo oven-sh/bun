@@ -160,7 +160,11 @@ static EncodedJSValue jsFunctionAppendVirtualModulePluginBody(JSC::JSGlobalObjec
     if (moduleIdValue.isString()) {
         auto idIdent = JSC::Identifier::fromString(vm, asString(moduleIdValue)->value(globalObject));
         RETURN_IF_EXCEPTION(scope, {});
-        global->moduleLoader()->removeEntry(idIdent);
+        auto* moduleLoader = global->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+        // under cellLock(); take the same lock so the removal can't race it.
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->removeEntry(idIdent);
     }
 
     return JSValue::encode(callframe->thisValue());
@@ -302,12 +306,13 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     auto targetValue = obj->getIfPropertyExists(globalObject, Identifier::fromString(vm, "target"_s));
     RETURN_IF_EXCEPTION(throwScope, {});
     if (targetValue) {
-        if (auto* targetJSString = targetValue.toStringOrNull(globalObject)) {
-            String targetString = targetJSString->value(globalObject);
-            if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
-                JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
-                return {};
-            }
+        auto* targetJSString = targetValue.toStringOrNull(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        String targetString = targetJSString->value(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (!(targetString == "node"_s || targetString == "bun"_s || targetString == "browser"_s)) {
+            JSC::throwTypeError(globalObject, throwScope, "plugin target must be one of 'node', 'bun' or 'browser'"_s);
+            return {};
         }
     }
 
@@ -696,7 +701,9 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
     }
 
     if (removeFromESM) {
-        globalObject->moduleLoader()->removeEntry(specifierIdent);
+        auto* moduleLoader = globalObject->moduleLoader();
+        WTF::Locker locker { moduleLoader->cellLock() };
+        moduleLoader->removeEntry(specifierIdent);
     }
 
     if (removeFromCJS) {
@@ -809,6 +816,12 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
     auto scope = DECLARE_THROW_SCOPE(vm);
     WTF::String pathString = path->toWTFString(BunString::ZeroCopy);
 
+    JSC::MarkedArgumentBuffer matchedCallbacks;
+    matchedCallbacks.ensureCapacity(filters.size());
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
     for (size_t i = 0; i < filters.size(); i++) {
         if (!filters[i].get()->match(globalObject, pathString, 0)) {
             continue;
@@ -817,6 +830,15 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
         if (!function) [[unlikely]] {
             continue;
         }
+        matchedCallbacks.append(function);
+    }
+    if (matchedCallbacks.hasOverflowed()) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    for (size_t i = 0; i < matchedCallbacks.size(); i++) {
+        auto* function = matchedCallbacks.at(i).getObject();
 
         JSC::MarkedArgumentBuffer arguments;
 
@@ -848,7 +870,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
                 return {};
             }
             case JSPromise::Status::Rejected: {
-                promise->internalField(JSC::JSPromise::Field::Flags).set(vm, promise, jsNumber(static_cast<unsigned>(JSC::JSPromise::Status::Fulfilled)));
+                promise->setFlags(static_cast<uint16_t>(JSC::JSPromise::Status::Fulfilled));
                 result = promise->result();
                 return JSValue::encode(result);
             }

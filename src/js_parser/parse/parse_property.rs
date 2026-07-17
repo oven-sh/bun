@@ -1,10 +1,7 @@
-#![allow(unused_imports, unused_variables, dead_code, unused_mut)]
 #![warn(unused_must_use)]
-use core::ptr::NonNull;
 
 use bun_collections::VecExt;
-use bun_core::strings;
-use bun_core::{self, err};
+use bun_core;
 
 use crate::lexer as js_lexer;
 use crate::p::P;
@@ -20,14 +17,10 @@ use bun_ast::scope::Kind as ScopeKind;
 use bun_ast::ts::Metadata as TsMetadata;
 use js_ast::{
     E, Expr, ExprNodeList,
-    G::{self, Property, PropertyKind},
+    G::{self, PropertyKind},
     Stmt, symbol,
 };
 use js_lexer::T;
-
-// Zig: `fn ParseProperty(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     fn parse_method_expression(
@@ -37,7 +30,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_computed: bool,
         key: &mut Expr,
         key_range: bun_ast::Range,
-    ) -> Result<Option<G::Property>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<G::Property>> {
         let p = self;
         if p.lexer.token == T::TOpenParen && kind != PropertyKind::Get && kind != PropertyKind::Set
         {
@@ -135,8 +128,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.pop_scope();
-        // PORT NOTE: G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate in place via the
-        // E::Function payload after boxing rather than copying `func`.
+        // G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate `func` in place.
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
@@ -147,7 +139,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             PropertyKind::Get => {
                 if args.len() > 0 {
                     let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
-                    // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
                         Some(p.source),
@@ -254,30 +245,24 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         kind_: PropertyKind,
         opts: &mut PropertyOpts,
         errors_: Option<&mut DeferredErrors>,
-    ) -> Result<Option<G::Property>, bun_core::Error> {
+    ) -> crate::CrateResult<Option<G::Property>> {
         let p = self;
         if !p.stack_check.is_safe_to_recurse() {
-            return Err(err!("StackOverflow"));
+            return Err(crate::Error::StackOverflow);
         }
         let mut kind = kind_;
         let mut errors = errors_;
         // This while loop exists to conserve stack space by reducing (but not completely eliminating) recursion.
         'restart: loop {
             // Every match arm below assigns `key` (or `continue 'restart` /
-            // `return`) before any read; Zig's `var key: Expr = undefined` pre-
-            // init is unnecessary here.
+            // `return`) before any read.
             let mut key: Expr;
             let key_range = p.lexer.range();
             let mut is_computed = false;
 
             match p.lexer.token {
                 T::TNumericLiteral => {
-                    key = p.new_expr(
-                        E::Number {
-                            value: p.lexer.number,
-                        },
-                        p.lexer.loc(),
-                    );
+                    key = p.new_expr(E::Number::new(p.lexer.number), p.lexer.loc());
                     // p.checkForLegacyOctalLiteral()
                     p.lexer.next()?;
                 }
@@ -339,7 +324,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 T::TAsterisk => {
                     if kind != PropertyKind::Normal || opts.is_generator {
                         p.lexer.unexpected()?;
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
 
                     p.lexer.next()?;
@@ -368,9 +353,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 T::TOpenBracket
                                     | T::TNumericLiteral
                                     | T::TStringLiteral
-                                    | T::TAsterisk
                                     | T::TPrivateIdentifier
-                            );
+                            )
+                            || (p.lexer.token == T::TAsterisk
+                                && (opts.is_async || (raw != b"get" && raw != b"set")));
 
                         // If so, check for a modifier keyword
                         if could_be_modifier_keyword {
@@ -432,6 +418,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         // https://github.com/oven-sh/bun/issues/1907
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && raw == b"declare"
                                         {
                                             let scope_index = p.scopes_in_order.len();
@@ -455,6 +442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     PropertyModifierKeyword::PAbstract => {
                                         if opts.is_class
                                             && Self::IS_TYPESCRIPT_ENABLED
+                                            && !p.lexer.has_newline_before
                                             && !opts.is_ts_abstract
                                             && raw == b"abstract"
                                         {
@@ -479,6 +467,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     PropertyModifierKeyword::PAccessor => {
                                         // "accessor" keyword for auto-accessor fields (TC39 standard decorators)
                                         if opts.is_class
+                                            && !p.lexer.has_newline_before
                                             && p.options.features.standard_decorators
                                             && PropertyModifierKeyword::find(raw)
                                                 == Some(PropertyModifierKeyword::PAccessor)
@@ -504,7 +493,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     }
                                 }
                             }
-                        } else if p.lexer.token == T::TOpenBrace && name == b"static" {
+                        } else if opts.is_class
+                            && p.lexer.token == T::TOpenBrace
+                            && name == b"static"
+                        {
                             let loc = p.lexer.loc();
                             p.lexer.next()?;
 
@@ -525,7 +517,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             p.fn_or_arrow_data_parse = old_fn_or_arrow_data_parse;
                             p.lexer.expect(T::TCloseBrace)?;
 
-                            // PERF(port): was arena arena.create — bump.alloc returns &'a mut T;
                             // Vec::from_slice copies the bump-backed StmtList into a heap-backed list.
                             // TODO(perf): route ClassStaticBlock.stmts through arena slice directly.
                             let stmt_list = bun_alloc::AstVec::<Stmt>::from_slice(stmts.as_slice());
@@ -550,7 +541,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             name_range,
                             format_args!("Unexpected {}", bun_core::fmt::quote(name)),
                         );
-                        return Err(err!("SyntaxError"));
+                        return Err(crate::Error::SyntaxError);
                     }
 
                     key = p.new_expr(E::EString::init(name), name_range.loc);
@@ -591,11 +582,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                         // Destructuring patterns have an optional default value
                         let mut initializer: Option<Expr> = None;
-                        if errors.is_some() && p.lexer.token == T::TEquals {
-                            errors.as_mut().unwrap().invalid_expr_default_value =
-                                Some(p.lexer.range());
-                            p.lexer.next()?;
-                            initializer = Some(p.parse_expr(Level::Comma)?);
+                        if let Some(errors) = errors.as_mut() {
+                            if p.lexer.token == T::TEquals {
+                                errors.invalid_expr_default_value = Some(p.lexer.range());
+                                p.lexer.next()?;
+                                initializer = Some(p.parse_expr(Level::Comma)?);
+                            }
                         }
 
                         return Ok(Some(G::Property {
@@ -764,7 +756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     key_range,
                     b"auto-accessor properties cannot have a method body",
                 );
-                return Err(err!("SyntaxError"));
+                return Err(crate::Error::SyntaxError);
             }
 
             // Parse a method expression
@@ -801,7 +793,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             };
 
-            // PORT NOTE: reshaped for borrowck — `errors` is Option<&mut _>, reborrow via as_deref_mut
+            // `errors` is Option<&mut _>; reborrow via as_deref_mut so the caller's binding stays usable
             p.parse_expr_or_bindings(
                 Level::Comma,
                 errors.as_deref_mut(),
@@ -811,5 +803,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 }
-
-// ported from: src/js_parser/ast/parseProperty.zig

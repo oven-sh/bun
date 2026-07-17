@@ -1,4 +1,4 @@
-//! Canonical byte-oriented `Write` trait — single port of Zig `std.Io.Writer`.
+//! Canonical byte-oriented `Write` trait.
 //!
 //! HOSTED IN `bun_string` so the trait sits *below* every consumer in the dep
 //! DAG: `bun_io → bun_string` already exists, and `bun_string` already depends
@@ -11,8 +11,8 @@
 //! (`FixedBufferStream`, `BufWriter`, `FmtAdapter`, `DiscardingWriter`) on top,
 //! so the existing `bun_io::Write` importers are unaffected.
 
-/// `Result<T>` over `crate::Error` so `?` composes everywhere.
-pub type Result<T = ()> = core::result::Result<T, crate::Error>;
+/// `Result<T>` over `core::fmt::Error` so `?` composes everywhere.
+pub type Result<T = ()> = core::result::Result<T, core::fmt::Error>;
 
 pub use crate::io::{IntLe, Write};
 

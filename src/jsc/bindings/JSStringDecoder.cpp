@@ -282,6 +282,7 @@ JSC::JSString* JSStringDecoder::write(JSC::VM& vm, JSC::JSGlobalObject* globalOb
                 RELEASE_AND_RETURN(throwScope, firstHalf);
             offset = m_lastNeed;
             m_lastNeed = 0;
+            m_lastTotal = 0;
             if (offset == length)
                 RELEASE_AND_RETURN(throwScope, firstHalf);
 
@@ -317,9 +318,10 @@ ResetScope::ResetScope(JSStringDecoder* decoder)
 
 ResetScope::~ResetScope()
 {
+    // Node's FlushData only clears MissingBytes/BufferedBytes; it leaves the
+    // incomplete-character buffer (lastChar) intact, so m_lastChar stays as-is.
     m_decoder->m_lastTotal = 0;
     m_decoder->m_lastNeed = 0;
-    memset(m_decoder->m_lastChar, 0, 4);
 }
 
 JSC::JSString*
@@ -459,7 +461,7 @@ static inline JSC::EncodedJSValue jsStringDecoderPrototypeFunction_textBody(JSC:
     int32_t offset = callFrame->uncheckedArgument(1).toInt32(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::jsUndefined()));
     uint32_t byteLength = view->byteLength();
-    if (offset > byteLength)
+    if (offset < 0 || static_cast<uint32_t>(offset) > byteLength)
         RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsEmptyString(vm)));
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(castedThis->write(vm, lexicalGlobalObject, reinterpret_cast<uint8_t*>(view->vector()) + offset, byteLength - offset)));
 }

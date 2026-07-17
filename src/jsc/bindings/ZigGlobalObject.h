@@ -29,6 +29,7 @@ class SubtleCrypto;
 class EventTarget;
 class Performance;
 class JSBuiltinInternalFunctions;
+class JSStreamsRuntime;
 } // namespace WebCore
 
 namespace Bun {
@@ -196,13 +197,13 @@ public:
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
-    static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&);
+    static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&, bool deferred);
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap);
     static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSValue sentValue, JSValue resumeMode);
-    static JSC::JSPromise* compileStreaming(JSGlobalObject*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
-    static JSC::JSPromise* instantiateStreaming(JSGlobalObject*, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&&);
+    static void compileStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
+    static void instantiateStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&&);
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
@@ -272,7 +273,7 @@ public:
     JSC::JSObject* NodeVMSyntheticModule() const { return m_NodeVMSyntheticModuleClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMSyntheticModulePrototype() const { return m_NodeVMSyntheticModuleClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
+    WebCore::JSStreamsRuntime* streamsRuntime() const { return m_streamsRuntime.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     // The JSC module loader registry is no longer a JS Map. Use
     // moduleLoader()->registryEntry(key) / moduleMap() / removeEntry(key) /
@@ -306,7 +307,6 @@ public:
     JSC::JSFunction* requireESMFromHijackedExtension() const { return m_commonJSRequireESMFromHijackedExtensionFunction.getInitializedOnMainThread(this); }
 
     Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
-    Structure* NodeVMSpecialSandboxStructure() const { return m_cachedNodeVMSpecialSandboxStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     Structure* CommonJSModuleObjectStructure() const { return m_commonJSModuleObjectStructure.getInitializedOnMainThread(this); }
@@ -362,7 +362,6 @@ public:
     JSObject* subtleCrypto() { return m_subtleCryptoObject.getInitializedOnMainThread(this); }
 
     JSC::EncodedJSValue assignToStream(JSValue stream, JSValue controller);
-    JSC::EncodedJSValue assignStreamToResumableSink(JSValue stream, JSValue sink);
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
@@ -484,14 +483,6 @@ public:
     V(public, Bun::BakeAdditionsToGlobalObject, m_bakeAdditions)                                             \
                                                                                                              \
     /* TODO: these should use LazyProperty */                                                                \
-    V(private, WriteBarrier<JSFunction>, m_assignToStream)                                                   \
-    V(private, WriteBarrier<JSFunction>, m_assignStreamToResumableSink)                                      \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToArrayBuffer)                                       \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToBytes)                                             \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToBlob)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToJSON)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToText)                                              \
-    V(public, WriteBarrier<JSFunction>, m_readableStreamToFormData)                                          \
                                                                                                              \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleResolveFilenameFunction)                           \
     V(public, LazyPropertyOfGlobalObject<JSCell>, m_moduleRunMainFunction)                                   \
@@ -520,6 +511,9 @@ public:
     /* Supports getEnvironmentData() and setEnvironmentData(), and is cloned into newly-created */           \
     /* Workers. Initialized in createNodeWorkerThreadsBinding. */                                            \
     V(private, WriteBarrier<JSMap>, m_nodeWorkerEnvironmentData)                                             \
+    /* setupMainThreadPort's drain callback; run once by WebWorker__dispatchOnline */                        \
+    /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -565,6 +559,12 @@ public:
     V(private, LazyClassStructure, m_JSH3ResponseSinkClassStructure)                                         \
                                                                                                              \
     V(private, LazyClassStructure, m_JSStringDecoderClassStructure)                                          \
+    V(public, LazyClassStructure, m_JSDatabaseSyncClassStructure)                                            \
+    V(public, LazyClassStructure, m_JSStatementSyncClassStructure)                                           \
+    V(public, LazyClassStructure, m_JSStatementSyncIteratorClassStructure)                                   \
+    V(public, LazyClassStructure, m_JSNodeSqliteSessionClassStructure)                                       \
+    V(public, LazyClassStructure, m_JSNodeSqliteLimitsClassStructure)                                        \
+    V(public, LazyClassStructure, m_JSNodeSqliteTagStoreClassStructure)                                      \
     V(private, LazyClassStructure, m_NapiClassStructure)                                                     \
     V(private, LazyClassStructure, m_callSiteStructure)                                                      \
     V(public, LazyClassStructure, m_JSBufferClassStructure)                                                  \
@@ -583,6 +583,7 @@ public:
     V(public, LazyClassStructure, m_JSCipherClassStructure)                                                  \
     V(public, LazyClassStructure, m_JSKeyObjectClassStructure)                                               \
     V(public, LazyClassStructure, m_JSSecretKeyObjectClassStructure)                                         \
+    V(public, LazyPropertyOfGlobalObject<JSObject>, m_JSAsymmetricKeyObjectPrototype)                        \
     V(public, LazyClassStructure, m_JSPublicKeyObjectClassStructure)                                         \
     V(public, LazyClassStructure, m_JSPrivateKeyObjectClassStructure)                                        \
     V(public, LazyClassStructure, m_JSMIMEParamsClassStructure)                                              \
@@ -595,6 +596,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pathParsedObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
+    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketHandlersStructure)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_performMicrotaskVariadicFunction)                   \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectFunction)                                \
@@ -602,7 +604,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeColorFunction)                    \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_wasmStreamingConsumeStreamFunction)                 \
-    V(private, LazyPropertyOfGlobalObject<JSMap>, m_lazyReadableStreamPrototypeMap)                          \
+    V(private, LazyPropertyOfGlobalObject<WebCore::JSStreamsRuntime>, m_streamsRuntime)                      \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSArrayBufferControllerPrototype)                     \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_JSHTTPSResponseControllerPrototype)                   \
@@ -618,7 +620,6 @@ public:
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_lazyTestModuleObject)                                 \
     V(public, LazyPropertyOfGlobalObject<JSObject>, m_testMatcherUtilsObject)                                \
     V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMGlobalObjectStructure)                    \
-    V(public, LazyPropertyOfGlobalObject<Structure>, m_cachedNodeVMSpecialSandboxStructure)                  \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_cachedGlobalProxyStructure)                          \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_commonJSModuleObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketAddressDTOStructure)                         \
@@ -734,6 +735,7 @@ public:
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
+    JSC::Structure* JSSocketHandlersStructure() { return m_JSSocketHandlersStructure.get(this); }
 
     // We need to know if the napi module registered itself or we registered it.
     // To do that, we count the number of times we register a module.
@@ -746,6 +748,8 @@ public:
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     void setNodeWorkerEnvironmentData(JSMap* data);
+    JSObject* nodeWorkerEntryEvaluatedHook() { return m_nodeWorkerEntryEvaluatedHook.get(); }
+    void setNodeWorkerEntryEvaluatedHook(JSObject* hook);
 
     Bun::CommonStrings& commonStrings() { return m_commonStrings; }
     Bun::Http2CommonStrings& http2CommonStrings() { return m_http2CommonStrings; }
@@ -772,6 +776,12 @@ public:
     // De-optimization once `require("module").runMain` is written to
     bool hasOverriddenModuleRunMain = false;
 
+    // node:crypto deprecation warnings are emitted at most once per realm, like Node, whose
+    // flags live in per-realm module state (lib/internal/crypto/keys.js). They must not be
+    // process-wide statics: each worker thread has its own realm and warns independently.
+    bool hasWarnedCryptoKeyDeprecation = false;
+    bool hasWarnedNonExtractableCryptoKeyDeprecation = false;
+
     // WeakGCMap<uint64_t, JSObject> — JS-level dedup of SecureContext by
     // config digest. WeakGCMap self-registers with the heap, so no
     // visitChildren wiring needed (and it must NOT keep its values alive).
@@ -788,6 +798,21 @@ private:
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     Bun::WriteBarrierList<JSC::JSPromise> m_aboutToBeNotifiedRejectedPromises;
+
+public:
+    // While handleRejectedPromises() is iterating its drained snapshot, this
+    // points at the not-yet-processed tail so promiseRejectionTracker(Handle)
+    // can suppress a spurious 'rejectionHandled' for a promise whose
+    // 'unhandledRejection' has not fired yet. Linked through `outer` to handle
+    // re-entrant handleRejectedPromises() calls.
+    struct InFlightRejections {
+        JSC::MarkedArgumentBuffer* buffer;
+        size_t index;
+        InFlightRejections* outer;
+    };
+
+private:
+    InFlightRejections* m_rejectedPromisesBeingProcessed { nullptr };
 };
 
 class EvalGlobalObject : public GlobalObject {

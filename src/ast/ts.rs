@@ -1,5 +1,7 @@
 use crate::Loc;
+use bun_alloc::AstAlloc;
 use bun_collections::StringArrayHashMap;
+use bun_collections::array_hash_map::StringContext;
 
 use crate::base::Ref;
 use crate::e::String as EString;
@@ -35,8 +37,8 @@ use crate::e::String as EString;
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-// PORT NOTE: 'arena lifetime dropped — `EnumString` payload is a `StoreRef<EString>`
-// rather than an arena-borrowed reference (see the TODO on that variant).
+// The `EnumString` payload is a `StoreRef<EString>` (AST-store back-pointer)
+// rather than an arena-borrowed reference, matching the rest of the AST crate.
 pub struct TSNamespaceScope {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is
@@ -81,8 +83,7 @@ pub struct TSNamespaceScope {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    // Zig default: `= .{}` — callers should init with `StringArrayHashMap::default()`.
-    pub property_accesses: StringArrayHashMap<Ref>,
+    pub property_accesses: StringArrayHashMap<Ref, StringContext, AstAlloc>,
 
     /// Even though enums are like namespaces and both enums and namespaces allow
     /// implicit references to properties of sibling scopes, they behave like
@@ -112,7 +113,7 @@ pub struct TSNamespaceScope {
     pub is_enum_scope: bool,
 }
 
-pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember>;
+pub type TSNamespaceMemberMap = StringArrayHashMap<TSNamespaceMember, StringContext, AstAlloc>;
 
 pub struct TSNamespaceMember {
     pub loc: Loc,
@@ -130,7 +131,6 @@ pub enum Data {
     EnumNumber(f64),
     /// "enum ns { it = 'it' }"
     // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload (AST Expr store).
-    // TODO(port): &'bump EString once 'bump threaded crate-wide.
     EnumString(crate::nodes::StoreRef<EString>),
     /// "enum ns { it = something() }"
     EnumProperty,
@@ -138,8 +138,6 @@ pub enum Data {
 
 impl Data {
     pub fn is_enum(&self) -> bool {
-        // PORT NOTE: Zig used `inline else` + comptime `@tagName` prefix check ("enum_").
-        // Expanded to an explicit match over the enum_* variants.
         matches!(
             self,
             Data::EnumNumber(_) | Data::EnumString(_) | Data::EnumProperty
@@ -152,8 +150,9 @@ impl Data {
 // Data-only; the parser-state predicates that depend on `P` stay in
 // `bun_js_parser::typescript`.
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub enum Metadata {
+    #[default]
     MNone,
 
     MNever,
@@ -172,16 +171,9 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // TODO(port): Zig used `std.ArrayListUnmanaged(Ref)`. This is an AST crate;
-    // if this list is arena-backed in practice, switch to
-    // `bun_alloc::ArenaVec<'bump, Ref>`.
+    // A heap `Vec` is used here because `Metadata` is lifetime-free.
+    // Decorator metadata is rare and the lists are tiny.
     MDot(Vec<Ref>),
-}
-
-impl Default for Metadata {
-    fn default() -> Self {
-        Metadata::MNone
-    }
 }
 
 impl Metadata {
@@ -227,7 +219,7 @@ impl Metadata {
                     _ => Metadata::MObject,
                 };
             } else {
-                // PORT NOTE: reshaped for borrowck — copy Ref out before reassigning *result
+                // Reshaped for borrowck — copy Ref out before reassigning *result
                 if let Metadata::MIdentifier(r) = result {
                     let r = *r;
                     if let Metadata::MIdentifier(l) = left {
@@ -286,7 +278,7 @@ impl Metadata {
                     _ => Metadata::MObject,
                 };
             } else {
-                // PORT NOTE: reshaped for borrowck — copy Ref out before reassigning *result
+                // Reshaped for borrowck — copy Ref out before reassigning *result
                 if let Metadata::MIdentifier(r) = result {
                     let r = *r;
                     if let Metadata::MIdentifier(l) = left {
@@ -306,7 +298,4 @@ impl Metadata {
     }
 }
 
-// Zig file ends with `pub const Class = G.Class;` — re-export.
 pub use crate::g::Class;
-
-// ported from: src/js_parser/ast/TS.zig

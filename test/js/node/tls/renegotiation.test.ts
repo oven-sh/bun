@@ -200,6 +200,86 @@ if (handshakes < 2) {
 console.log("ok");
 `;
 
+it("should terminate the connection when the peer exceeds the renegotiation limit over a duplex socket", async () => {
+  // tls.connect({ socket: <Duplex> }) is encrypted by the SSLWrapper path
+  // (UpgradedDuplex) rather than the uSockets C path. It must apply the same
+  // per-connection renegotiation cap: a malicious TLS 1.2 server that spams
+  // HelloRequest messages otherwise forces a full handshake each time
+  // (unbounded CPU per connection).
+  await using attacker = Bun.spawn({
+    cmd: [
+      "node",
+      "-e",
+      `
+        const tls = require("tls");
+        let renegs = 0;
+        const server = tls.createServer(
+          {
+            cert: process.env.SERVER_CERT,
+            key: process.env.SERVER_KEY,
+            minVersion: "TLSv1.2",
+            maxVersion: "TLSv1.2",
+          },
+          socket => {
+            socket.on("error", () => {});
+            const again = () => {
+              if (renegs >= 10) {
+                socket.write("DONE");
+                return;
+              }
+              socket.renegotiate({ rejectUnauthorized: false }, err => {
+                if (err) return;
+                renegs++;
+                again();
+              });
+            };
+            again();
+          },
+        );
+        server.listen(0, () => console.log(server.address().port));
+      `,
+    ],
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: { ...bunEnv, SERVER_CERT: tls.cert, SERVER_KEY: tls.key },
+  });
+  const { value } = await attacker.stdout.getReader().read();
+  const port = Number(new TextDecoder().decode(value).trim());
+
+  const net = require("net");
+  const { Duplex } = require("stream");
+  const raw = net.connect(port, "127.0.0.1");
+  const duplex = new Duplex({
+    read() {},
+    write(chunk, encoding, callback) {
+      raw.write(chunk, encoding, callback);
+    },
+    final(callback) {
+      raw.end();
+      callback();
+    },
+  });
+  raw.on("data", (chunk: Buffer) => duplex.push(chunk));
+  raw.on("end", () => duplex.push(null));
+  raw.on("close", () => duplex.destroy());
+
+  const { promise: outcome, resolve } = Promise.withResolvers<string>();
+  let received = "";
+  const socket = require("tls").connect({ socket: duplex, rejectUnauthorized: false });
+  socket.on("data", (chunk: Buffer) => {
+    received += chunk.toString();
+    if (received.includes("DONE")) resolve("got-response");
+  });
+  socket.on("error", () => {});
+  socket.on("close", () => resolve("closed"));
+
+  // The SSLWrapper must tear the connection down once the peer exceeds the
+  // renegotiation limit, before the attacker finishes its 10 renegotiations
+  // and delivers the response.
+  expect(await outcome).toBe("closed");
+});
+
 it("should fail if renegotiation fails using tls module", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
 

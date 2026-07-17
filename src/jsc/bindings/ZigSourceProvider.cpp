@@ -3,6 +3,7 @@
 #include "helpers.h"
 
 #include "ZigSourceProvider.h"
+#include "MimallocWTFMalloc.h"
 #include "BunAnalyzeTranspiledModule.h"
 
 #include <JavaScriptCore/BytecodeCacheError.h>
@@ -115,7 +116,10 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         if (resolvedSource.bytecode_cache != nullptr) {
             const auto destructorPtr = [](const void* ptr) {
-                mi_free(const_cast<void*>(ptr));
+                // `bytecode_cache` was `heap::into_raw`'d from a Rust `Box<[u8]>`
+                // (the global allocator); free with `defaultAllocatorFree` so
+                // it agrees with the `#[global_allocator]`.
+                Bun::defaultAllocatorFree(const_cast<void*>(ptr));
             };
             const auto destructorNoOp = [](const void* ptr) {
                 // no-op, for bun build --compile.
@@ -175,7 +179,7 @@ SourceProvider::~SourceProvider()
         zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));
         m_resolvedSource.module_info = nullptr;
     }
-    // The Rust/Zig side hands these as +1 (RuntimeTranspilerStore::run_from_js_thread:
+    // The Rust side hands these as +1 (RuntimeTranspilerStore::run_from_js_thread:
     // `out.dupeRef()` / `out.createIfDifferent(..)`; ModuleLoader paths likewise).
     // #9521 removed the early deref in `create()` because these strings are still
     // read after that point; the matching deref belongs here, once all uses are done.

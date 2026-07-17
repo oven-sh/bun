@@ -9,9 +9,9 @@
 //! which forwards to `WTF::parseES5Date` in
 //! vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
 //!
-//! PORT NOTE: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
+//! Note: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
 //! `Date` constructor can later apply the VM's tz offset. The C shim discards
-//! it (matching `src/jsc/WTF.zig`), so local-time inputs return their naive
+//! it, so local-time inputs return their naive
 //! UTC value here too.
 
 unsafe extern "C" {
@@ -38,12 +38,6 @@ impl core::fmt::Display for InvalidDate {
 }
 impl core::error::Error for InvalidDate {}
 
-impl From<InvalidDate> for crate::Error {
-    fn from(_: InvalidDate) -> Self {
-        crate::Error::from_name("InvalidDate")
-    }
-}
-
 /// `bun.jsc.wtf.parseES5Date` shape — `Err` on empty input or non-finite result.
 /// `2000-01-01T00:00:00.000Z` → `Ok(946684800000.0)`.
 pub fn parse_es5_date(buf: &[u8]) -> Result<f64, InvalidDate> {
@@ -65,5 +59,3 @@ pub use crate::string::wtf::{
     InvalidCharacter, RefPtr, StringImpl, WTFString, WTFStringImpl, WTFStringImplExt,
     WTFStringImplStruct, parse_double,
 };
-
-// ported from: src/jsc/WTF.zig

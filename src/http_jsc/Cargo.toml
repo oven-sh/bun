@@ -13,7 +13,6 @@ workspace = true
 bun_opaque.workspace = true
 strum.workspace = true
 thiserror.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true

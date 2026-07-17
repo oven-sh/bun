@@ -97,5 +97,3 @@ impl Binary {
         interp.as_binary_mut(this).base.end_scope();
     }
 }
-
-// ported from: src/shell/states/Binary.zig

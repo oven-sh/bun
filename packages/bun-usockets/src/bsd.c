@@ -21,6 +21,7 @@
 
 #include "libusockets.h"
 #include "internal/internal.h"
+#include "internal/fault_inject.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -553,8 +554,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
+    /* delay == 0 means "enable SO_KEEPALIVE, keep the kernel-default idle". */
     if (delay == 0)
-        return -1;
+        return 0;
 
 
 #ifdef TCP_KEEPIDLE
@@ -591,14 +593,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
-    if (delay < 1) {
-        #ifdef LIBUS_USE_LIBUV
-            return -4071; //UV_EINVAL;
-        #else
-            //TODO: revisit this when IOCP loop is implemented without libuv here
-            return 4071;
-        #endif
-    }
+    if (delay == 0)
+        return 0;
+
     if (setsockopt(fd,
                     IPPROTO_TCP,
                     TCP_KEEPALIVE,
@@ -609,6 +606,94 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
 
     return 0;
     #endif
+}
+
+/* IP type-of-service / traffic-class. The option level depends on the socket
+ * family (IP_TOS for IPv4, IPV6_TCLASS for IPv6), detected via getsockname.
+ * Returns 0 on success or a negative platform errno on failure (the negative
+ * convention matches what node:net's ErrnoException expects). */
+static int bsd_socket_tos_level(LIBUS_SOCKET_DESCRIPTOR fd, int *level, int *option) {
+    struct sockaddr_storage storage;
+    socklen_t addrlen = sizeof(storage);
+    if (getsockname(fd, (struct sockaddr *) &storage, &addrlen)) {
+#ifdef _WIN32
+        return -WSAGetLastError();
+#else
+        return -errno;
+#endif
+    }
+    if (storage.ss_family == AF_INET) {
+        *level = IPPROTO_IP;
+        *option = IP_TOS;
+    } else if (storage.ss_family == AF_INET6) {
+        *level = IPPROTO_IPV6;
+        *option = IPV6_TCLASS;
+    } else {
+        return -EINVAL;
+    }
+    return 0;
+}
+
+int bsd_socket_set_tos(LIBUS_SOCKET_DESCRIPTOR fd, int tos) {
+    int level, option;
+    int err = bsd_socket_tos_level(fd, &level, &option);
+    if (err) return err;
+#ifdef _WIN32
+    if (setsockopt(fd, level, option, (const char *) &tos, sizeof(tos))) {
+        return -WSAGetLastError();
+    }
+#else
+    if (setsockopt(fd, level, option, &tos, sizeof(tos))) {
+        return -errno;
+    }
+#endif
+    return 0;
+}
+
+int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd) {
+    int level, option;
+    int err = bsd_socket_tos_level(fd, &level, &option);
+    if (err) return err;
+    int tos = 0;
+    socklen_t len = sizeof(tos);
+#ifdef _WIN32
+    if (getsockopt(fd, level, option, (char *) &tos, (int *) &len)) {
+        return -WSAGetLastError();
+    }
+#else
+    if (getsockopt(fd, level, option, &tos, &len)) {
+        return -errno;
+    }
+#endif
+    return tos;
+}
+
+int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out) {
+    int option = is_recv ? SO_RCVBUF : SO_SNDBUF;
+    if (size != 0) {
+#ifdef _WIN32
+        int err = setsockopt(fd, SOL_SOCKET, option, (const char *) &size, sizeof(size));
+#else
+        int err = setsockopt(fd, SOL_SOCKET, option, &size, sizeof(size));
+#endif
+        if (err) {
+            return err;
+        }
+        *out = size;
+        return 0;
+    }
+    int value = 0;
+    socklen_t len = sizeof(value);
+#ifdef _WIN32
+    int err = getsockopt(fd, SOL_SOCKET, option, (char *) &value, (int *) &len);
+#else
+    int err = getsockopt(fd, SOL_SOCKET, option, &value, &len);
+#endif
+    if (err) {
+        return err;
+    }
+    *out = value;
+    return 0;
 }
 
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -729,6 +814,10 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
     LIBUS_SOCKET_DESCRIPTOR accepted_fd;
 
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_ACCEPT, fd, injected, unused)) return LIBUS_SOCKET_ERROR;
+    (void)injected; (void)unused;
+
     while (1) {
         addr->len = sizeof(addr->mem);
 
@@ -782,6 +871,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 }
 
 ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
+    ssize_t injected = 0;
+    if (US_FAULT_CHECK(US_FAULT_RECV, fd, injected, length)) return injected;
     while (1) {
         ssize_t ret = recv(fd, buf, length, flags);
 
@@ -806,6 +897,9 @@ ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
 
 #if !defined(_WIN32)
 ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_RECVMSG, fd, injected, unused)) return injected;
+    (void)unused;
     while (1) {
         ssize_t ret = recvmsg(fd, msg, flags);
 
@@ -821,7 +915,28 @@ ssize_t bsd_recvmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct msghdr *msg, int flags) {
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
+    (void)unused;
+    /* POSIX writev fails with EINVAL above IOV_MAX (1024 on Linux/macOS); cap and
+     * let the caller's partial-write handling carry the remainder. */
+    if (count > 1024) {
+        count = 1024;
+    }
+    while (1) {
+        ssize_t written = writev(fd, (const struct iovec *)iov, count);
+        if (UNLIKELY(IS_EINTR(written))) {
+            continue;
+        }
+        return written;
+    }
+}
+
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_WRITEV, fd, injected, unused)) return injected;
+    (void)unused;
     struct iovec chunks[2];
 
     chunks[0].iov_base = (char *)header;
@@ -840,6 +955,16 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
     }
 }
 #else
+ssize_t bsd_writev(LIBUS_SOCKET_DESCRIPTOR fd, const struct us_iovec_t *iov, int count) {
+    ssize_t total = 0;
+    for (int i = 0; i < count; i++) {
+        ssize_t written = bsd_send(fd, (const char *)iov[i].iov_base, (int)iov[i].iov_len);
+        if (written > 0) total += written;
+        if (written != (ssize_t)iov[i].iov_len) break;
+    }
+    return total > 0 ? total : -1;
+}
+
 ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     ssize_t written = bsd_send(fd, header, header_length);
     if (written == header_length) {
@@ -853,6 +978,8 @@ ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_le
 #endif
 
 ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
+    ssize_t injected = 0;
+    if (US_FAULT_CHECK(US_FAULT_SEND, fd, injected, length)) return injected;
     while (1) {
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
 
@@ -884,6 +1011,9 @@ ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length) {
 
 #if !defined(_WIN32)
 ssize_t bsd_sendmsg(LIBUS_SOCKET_DESCRIPTOR fd, const struct msghdr *msg, int flags) {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_SENDMSG, fd, injected, unused)) return injected;
+    (void)unused;
     while (1) {
         ssize_t rc = sendmsg(fd, msg, flags);
 
@@ -901,6 +1031,18 @@ int bsd_would_block() {
     return WSAGetLastError() == WSAEWOULDBLOCK;
 #else
     return errno == EWOULDBLOCK;// || errno == EAGAIN;
+#endif
+}
+
+/* Transient kernel resource exhaustion from send(): the connection is still
+ * healthy and a later retry can succeed. Kept distinct from bsd_would_block()
+ * so recv() callers that use that to mean EOF-vs-error do not start spinning
+ * on ENOBUFS. */
+int bsd_send_is_transient_error() {
+#ifdef _WIN32
+    return WSAGetLastError() == WSAENOBUFS;
+#else
+    return errno == ENOBUFS || errno == ENOMEM;
 #endif
 }
 
@@ -923,7 +1065,9 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
     return result;
 }
 
-static int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+/* libuv's uv__sock_reuseaddr: SO_REUSEPORT on the BSDs where that is what
+ * actually allows a second bind of the same address, SO_REUSEADDR elsewhere. */
+int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
     const int one = 1;
 #if defined(SO_REUSEPORT) && !defined(__linux__) && !defined(__GNU__)
     return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
@@ -1156,7 +1300,8 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
                 return LIBUS_SOCKET_ERROR;
             }
 
-            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%s", socket_dir_fd, path + dirname_len);
+            // `path` is a ptr+len pair (not NUL-terminated), so bound the basename copy with %.*s.
+            int sun_path_len = snprintf(server_address->sun_path, sizeof(server_address->sun_path), "/proc/self/fd/%d/%.*s", socket_dir_fd, (int)(path_len - dirname_len), path + dirname_len);
             if (sun_path_len >= sizeof(server_address->sun_path) || sun_path_len < 0) {
                 close(socket_dir_fd);
                 errno = ENAMETOOLONG;
@@ -1261,6 +1406,10 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     struct sockaddr_un server_address;
     size_t addrlen = 0;
     if (bsd_create_unix_socket_address(path, len, &dirfd_workaround_for_unix_path_len, &server_address, &addrlen)) {
+        /* The path could not be expressed as a sockaddr_un (the basename
+         * exceeds sun_path even with the dirfd workaround); surface the errno
+         * so the caller can report something better than a codeless failure. */
+        if (error && errno) *error = errno;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -1290,6 +1439,130 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
 #endif
 
     return listenFd;
+}
+
+
+/* Receive-path options every UDP socket needs, whether freshly created or
+ * adopted from an existing fd: destination-address and TOS reporting for
+ * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR. */
+static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
+    /* We need destination address for udp packets in both ipv6 and ipv4 */
+
+/* On FreeBSD this option seems to be called like so */
+#ifndef IPV6_RECVPKTINFO
+#define IPV6_RECVPKTINFO IPV6_PKTINFO
+#endif
+
+    int enabled = 1;
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+#if defined(IP_PKTINFO)
+            setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
+#elif defined(IP_RECVDSTADDR)
+            setsockopt(fd, IPPROTO_IP, IP_RECVDSTADDR, &enabled, sizeof(enabled));
+#endif
+        }
+    }
+
+    /* These are used for getting the ECN */
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+            setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
+        }
+    }
+
+#if defined(_WIN32)
+    /* By default Winsock reports ICMP "port unreachable" from a previous
+     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
+     * it, but disabling the report at the source means a queued ICMP can't
+     * race ahead of a real packet in WSARecvFrom either. */
+    {
+        DWORD off = 0, br;
+        WSAIoctl(fd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#ifdef SIO_UDP_NETRESET
+        WSAIoctl(fd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#endif
+    }
+#endif
+
+#if defined(__linux__)
+    /* IP_RECVERR/IPV6_RECVERR queues ICMP errors on the socket's error queue
+     * for on_recv_error to drain. libuv gates this on UV_UDP_LINUX_RECVERR
+     * (Node's dgram never passes it); Bun opts in for sockets it creates. */
+#ifdef IP_RECVERR
+    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+#endif
+#ifdef IPV6_RECVERR
+    if (family == AF_INET6) {
+        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
+    }
+#endif
+#endif
+}
+
+/* Prepares an externally created UDP fd for adoption, matching uv_udp_open:
+ * nonblock + SO_REUSEADDR only. Recv-path options (IP_RECVERR, PKTINFO,
+ * SIO_UDP_CONNRESET) are NOT applied — mutating the caller's fd is observable. */
+int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* Refuse to adopt anything that isn't a datagram socket. */
+    int sock_type = 0;
+    socklen_t type_len = sizeof(sock_type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &sock_type, (socklen_t *) &type_len)) {
+        return -1;
+    }
+    if (sock_type != SOCK_DGRAM) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    if (getsockname(fd, (struct sockaddr *) &ss, (socklen_t *) &len)) {
+        return -1;
+    }
+    /* Only INET datagram sockets: address getters and send destinations all
+     * assume AF_INET/AF_INET6. */
+    if (ss.ss_family != AF_INET && ss.ss_family != AF_INET6) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+    apple_no_sigpipe(fd);
+    if (bsd_set_nonblocking(fd) == LIBUS_SOCKET_ERROR) {
+        return -1;
+    }
+    /* uv_udp_open unconditionally sets SO_REUSEADDR (kept for backwards
+     * compat, libuv#4551); best-effort here so a bound-and-already-set fd
+     * doesn't fail adoption. */
+    (void) bsd_set_reuseaddr(fd);
+    return 0;
+}
+
+/* Binds a raw datagram descriptor. `flags` uses libuv's UV_UDP_* bits (bit 0
+ * IPV6ONLY, bit 2 REUSEADDR). Shared by internal/dgram so it doesn't fork
+ * bsd_set_reuseaddr's platform gate. Returns 0 or -1 with the error in errno. */
+int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags) {
+#ifdef IPV6_V6ONLY
+    if ((flags & 1) && addr->sa_family == AF_INET6) {
+        int on = 1;
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &on, sizeof(on)) != 0) {
+            return -1;
+        }
+    }
+#endif
+    if (flags & 4) {
+        if (bsd_set_reuseaddr(fd) != 0) {
+            return -1;
+        }
+    }
+    if (bind(fd, addr, (socklen_t) addrlen) != 0) {
+        return -1;
+    }
+    return 0;
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
@@ -1358,59 +1631,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 #endif
 
-    /* We need destination address for udp packets in both ipv6 and ipv4 */
-
-/* On FreeBSD this option seems to be called like so */
-#ifndef IPV6_RECVPKTINFO
-#define IPV6_RECVPKTINFO IPV6_PKTINFO
-#endif
-
-    int enabled = 1;
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
-        if (errno == ENOPROTOOPT || errno == EINVAL) {
-#if defined(IP_PKTINFO)
-            setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
-#elif defined(IP_RECVDSTADDR)
-            setsockopt(listenFd, IPPROTO_IP, IP_RECVDSTADDR, &enabled, sizeof(enabled));
-#endif
-        }
-    }
-
-    /* These are used for getting the ECN */
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
-        if (errno == ENOPROTOOPT || errno == EINVAL) {
-            setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
-        }
-    }
-
-#if defined(_WIN32)
-    /* By default Winsock reports ICMP "port unreachable" from a previous
-     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
-     * it, but disabling the report at the source means a queued ICMP can't
-     * race ahead of a real packet in WSARecvFrom either. */
-    {
-        DWORD off = 0, br;
-        WSAIoctl(listenFd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
-#ifdef SIO_UDP_NETRESET
-        WSAIoctl(listenFd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
-#endif
-    }
-#endif
-
-#if defined(__linux__)
-    /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL
-     * exceeded, etc.) on unconnected UDP sockets by default. Enabling
-     * IP_RECVERR/IPV6_RECVERR surfaces them as errors on the next send/recv,
-     * rather than silently dropping them. Matches libuv. */
-#ifdef IP_RECVERR
-    setsockopt(listenFd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
-#endif
-#ifdef IPV6_RECVERR
-    if (listenAddr->ai_family == AF_INET6) {
-        setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-    }
-#endif
-#endif
+    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family);
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {
@@ -1520,6 +1741,9 @@ int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 
 static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr, size_t namelen)
 {
+    ssize_t injected = 0; int unused = 0;
+    if (US_FAULT_CHECK(US_FAULT_CONNECT, fd, injected, unused)) return errno;
+    (void)injected; (void)unused;
 #ifdef _WIN32
     while (1) {
         if (connect(fd, (struct sockaddr *)addr, namelen) == 0) {
@@ -1599,10 +1823,37 @@ static int is_loopback(struct sockaddr_storage *sockaddr) {
 }
 #endif
 
-LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, int options) {
+LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options) {
     LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
     if (fd == LIBUS_SOCKET_ERROR) {
         return LIBUS_SOCKET_ERROR;
+    }
+
+    /* Bind to the requested local address/port before connecting (the
+     * `localAddress`/`localPort` connect options). A failure here - typically
+     * EADDRINUSE or EADDRNOTAVAIL - fails the connect with that errno. */
+    if (local_addr) {
+#ifndef _WIN32
+        /* Match libuv's uv__tcp_bind: set SO_REUSEADDR so binding the local
+         * port succeeds when earlier connections on that port are still in
+         * TIME_WAIT. Not set on Windows, where SO_REUSEADDR would allow
+         * stealing a port that is actively in use (see libuv win/tcp.c). */
+        int on = 1;
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+#endif
+        socklen_t local_len = local_addr->ss_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+        if (bind(fd, (struct sockaddr *) local_addr, local_len)) {
+#ifdef _WIN32
+            int bind_err = WSAGetLastError();
+            bsd_close_socket(fd);
+            WSASetLastError(bind_err);
+#else
+            int bind_err = errno;
+            bsd_close_socket(fd);
+            errno = bind_err;
+#endif
+            return LIBUS_SOCKET_ERROR;
+        }
     }
 
 #ifdef _WIN32

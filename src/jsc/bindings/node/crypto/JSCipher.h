@@ -100,6 +100,7 @@ public:
     char m_authTag[EVP_GCM_TLS_TAG_LEN];
     bool m_pendingAuthFailed;
     int32_t m_maxMessageSize;
+    size_t m_sizeForGC { 0 };
 
 private:
     JSCipher(JSC::VM& vm, JSC::Structure* structure, CipherKind kind, ncrypto::CipherCtxPointer&& ctx, std::optional<uint32_t> authTagLen, int32_t maxMessageSize)

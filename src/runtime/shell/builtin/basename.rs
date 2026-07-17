@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
@@ -20,7 +18,7 @@ enum State {
 }
 
 impl Basename {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let buf = {
             let bltn = Builtin::of(interp, cmd);
             let argc = bltn.args_slice().len();
@@ -53,7 +51,7 @@ impl Basename {
         Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
@@ -71,5 +69,3 @@ impl Basename {
         }
     }
 }
-
-// ported from: src/shell/builtin/basename.zig

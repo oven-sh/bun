@@ -8,14 +8,9 @@ use bun_jsc::{
 
 use crate::node::StringOrBuffer;
 
-use crate::crypto::create_crypto_error;
 use crate::crypto::evp::{self, Algorithm};
 
-// BoringSSL error code; not yet exported by `bun_boringssl_sys`
-// (Zig: src/boringssl_sys/boringssl.zig:6422).
-const EVP_R_MEMORY_LIMIT_EXCEEDED: u32 = 132;
-
-pub struct PBKDF2 {
+pub(crate) struct PBKDF2 {
     pub password: StringOrBuffer,
     pub salt: StringOrBuffer,
     pub iteration_count: u32,
@@ -30,15 +25,15 @@ impl Default for PBKDF2 {
             salt: StringOrBuffer::default(),
             iteration_count: 1,
             length: 0,
-            // PORT NOTE: Zig had no default for `algorithm` (callers always set it).
-            // Sha256 is an arbitrary placeholder so `Default` compiles.
+            // Callers always set `algorithm`; Sha256 is an arbitrary placeholder
+            // so `Default` compiles.
             algorithm: Algorithm::Sha256,
         }
     }
 }
 
 impl PBKDF2 {
-    pub fn run(&mut self, output: &mut [u8]) -> bool {
+    pub(crate) fn run(&mut self, output: &mut [u8]) -> bool {
         let password = self.password.slice();
         let salt = self.salt.slice();
         let algorithm = self.algorithm;
@@ -47,6 +42,10 @@ impl PBKDF2 {
 
         output.fill(0);
         debug_assert!(self.length <= i32::try_from(output.len()).expect("int cast"));
+        // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
+        if length == 0 {
+            return false;
+        }
         boringssl::ERR_clear_error();
         // SAFETY: password/salt point to valid slices for the given lengths;
         // algorithm.md() returns a non-null EVP_MD; output is writable for `length` bytes.
@@ -74,13 +73,13 @@ impl PBKDF2 {
         true
     }
 
-    // Zig `deinit()` only freed `password`/`salt`; both are `StringOrBuffer`
-    // whose `Drop` releases the slice/WTF ref, so the explicit hook is gone —
+    // `password`/`salt` are `StringOrBuffer` whose `Drop` releases the
+    // slice/WTF ref, so no explicit cleanup hook is needed —
     // dropping `PBKDF2` is sufficient for the sync path. The async path holds
     // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
     // buffers via the `Unprotect` impl below.
 
-    pub fn from_js(
+    pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
         is_async: bool,
@@ -93,7 +92,7 @@ impl PBKDF2 {
 
         let keylen_num = arg3.as_number();
 
-        if keylen_num.is_infinite() || keylen_num.is_nan() {
+        if !arg3.is_integer() {
             return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {
@@ -118,11 +117,7 @@ impl PBKDF2 {
 
         let keylen: i32 = keylen_num as i32;
 
-        if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
-        }
-
-        if !arg2.is_any_int() {
+        if !arg2.is_number() {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"iterations",
                 b"number",
@@ -130,25 +125,32 @@ impl PBKDF2 {
             ));
         }
 
-        let iteration_count = arg2.coerce_to_int64(global_this)?;
+        let iterations_num = arg2.as_number();
 
-        if !global_this.has_exception()
-            && (iteration_count < 1 || iteration_count > i32::MAX as i64)
-        {
+        if !arg2.is_integer() {
             return Err(global_this.throw_range_error(
-                iteration_count,
+                iterations_num,
                 bun_jsc::RangeErrorOptions {
                     field_name: b"iterations",
-                    min: 1,
-                    max: i32::MAX as i64 + 1,
+                    msg: b"an integer",
                     ..Default::default()
                 },
             ));
         }
 
-        if global_this.has_exception() {
-            return Err(bun_jsc::JsError::Thrown);
+        if iterations_num < 1.0 || iterations_num > i32::MAX as f64 {
+            return Err(global_this.throw_range_error(
+                iterations_num,
+                bun_jsc::RangeErrorOptions {
+                    field_name: b"iterations",
+                    min: 1,
+                    max: i32::MAX as i64,
+                    ..Default::default()
+                },
+            ));
         }
+
+        let iteration_count: i64 = iterations_num as i64;
 
         let algorithm = 'brk: {
             if !arg4.is_string() {
@@ -178,7 +180,7 @@ impl PBKDF2 {
                         format_args!("Invalid digest: {}", bstr::BStr::new(name)),
                     )
                     .throw());
-                // `slice` drops here (was `defer slice.deinit()`).
+                // `slice` drops here.
             }
             return Err(bun_jsc::JsError::Thrown);
         };
@@ -190,7 +192,6 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
-        // Zig: `defer { if (globalThis.hasException()) { if (is_async) out.deinitAndUnprotect() else out.deinit(); } }`
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
             if global_this.has_exception() && is_async {
@@ -255,8 +256,8 @@ impl PBKDF2 {
 }
 
 impl bun_jsc::Unprotect for PBKDF2 {
-    /// Zig `PBKDF2.deinitAndUnprotect`, JS-side half — owned slices are
-    /// released by `Drop for StringOrBuffer`.
+    /// JS-side half of cleanup — owned slices are released by
+    /// `Drop for StringOrBuffer`.
     #[inline]
     fn unprotect(&mut self) {
         self.password.unprotect();
@@ -264,31 +265,30 @@ impl bun_jsc::Unprotect for PBKDF2 {
     }
 }
 
-pub struct Pbkdf2Ctx {
+pub(crate) struct Pbkdf2Ctx {
     /// Wrapped in [`bun_jsc::ThreadSafe`] so the paired `unprotect()` runs on
     /// drop — `Job` is only constructed on the async path
     /// (`from_js(.., is_async=true)` already protected the buffers).
     pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
-    pub err: Option<u32>,
+    pub err: bool,
     pub promise: JSPromiseStrong,
 }
 
 impl AnyTaskJobCtx for Pbkdf2Ctx {
     fn run(&mut self, _global: *mut JSGlobalObject) {
         let len = usize::try_from(self.pbkdf2.length).expect("int cast");
-        // Zig: `bun.default_allocator.alloc(u8, len) catch { ... }`
-        // Rust `Vec` allocation aborts on OOM; mirror the error path with try_reserve.
+        // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
-            self.err = Some(EVP_R_MEMORY_LIMIT_EXCEEDED);
+            self.err = true;
             return;
         }
         buf.resize(len, 0);
         self.output = buf;
 
         if !self.pbkdf2.run(&mut self.output) {
-            self.err = Some(boringssl::ERR_get_error());
+            self.err = true;
             boringssl::ERR_clear_error();
 
             self.output = Vec::new();
@@ -296,10 +296,10 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
     }
 
     fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let mut promise = self.promise.swap();
-        if let Some(err) = self.err {
-            promise
-                .reject_with_async_stack(global_this, Ok(create_crypto_error(global_this, err)))?;
+        let promise = self.promise.swap();
+        if self.err {
+            let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
+            promise.reject_with_async_stack(global_this, Ok(err))?;
             return Ok(());
         }
 
@@ -307,26 +307,25 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
         debug_assert!(output_slice.len() == usize::try_from(self.pbkdf2.length).expect("int cast"));
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-        // Zig: `this.output = &[_]u8{};` — already done via `mem::take` above.
         promise.resolve(global_this, buffer_value)?;
         Ok(())
     }
 }
 
-pub type Job = AnyTaskJob<Pbkdf2Ctx>;
+pub(crate) type Job = AnyTaskJob<Pbkdf2Ctx>;
 
-/// Zig `Job.create` — heap-allocate, init the promise, ref the loop, and hand
+/// Heap-allocate, init the promise, ref the loop, and hand
 /// to the work pool. Returns the live job so the caller can read
 /// `(*job).ctx.promise.value()` before the JS-thread completion fires.
 /// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
-pub fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
+pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
     let job = AnyTaskJob::create(
         global_this,
         Pbkdf2Ctx {
             // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
             pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
-            err: None,
+            err: false,
             promise: JSPromiseStrong::init(global_this),
         },
     )
@@ -344,7 +343,6 @@ pub fn pbkdf2<'a>(
     iteration_count: u32,
     algorithm: Algorithm,
 ) -> Option<&'a [u8]> {
-    // Return type borrows `output`; Zig returned `?[]const u8` aliasing the input.
     let mut pbk = PBKDF2 {
         algorithm,
         password: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(password)),
@@ -359,5 +357,3 @@ pub fn pbkdf2<'a>(
 
     Some(output)
 }
-
-// ported from: src/runtime/crypto/PBKDF2.zig

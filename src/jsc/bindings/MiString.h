@@ -1,13 +1,15 @@
 #pragma once
 #include "root.h"
-#include <mimalloc.h>
+#include "MimallocWTFMalloc.h"
 
 struct MiCString {
     const char* ptr;
     size_t length;
 };
 
-/// A string which is owned by mimalloc and can be mi_free'd
+/// A string whose backing buffer is owned by Rust's default allocator
+/// (a `Vec<u8>` handed over by the global allocator). Freed with
+/// `defaultAllocatorFree` so it agrees with the `#[global_allocator]`.
 class MiString {
 public:
     MiString(const char* ptr, size_t length)
@@ -18,7 +20,7 @@ public:
     ~MiString()
     {
         if (m_span.data()) {
-            mi_free(const_cast<char*>(m_span.data()));
+            Bun::defaultAllocatorFree(const_cast<char*>(m_span.data()));
         }
     }
 
@@ -37,7 +39,7 @@ public:
     {
         if (this != &other) {
             if (m_span.data()) {
-                mi_free(const_cast<char*>(m_span.data()));
+                Bun::defaultAllocatorFree(const_cast<char*>(m_span.data()));
             }
             m_span = other.m_span;
             other.m_span = {};

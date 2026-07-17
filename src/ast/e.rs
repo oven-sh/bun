@@ -1,12 +1,9 @@
 //! E — expression node payloads for the JS AST.
-//!
-//! Port of `src/js_parser/ast/E.zig`.
 
 use core::cmp::Ordering;
 use core::fmt;
 
 use bun_alloc::Arena as Bump;
-use phf::phf_map;
 
 use bun_alloc::AllocError;
 use bun_collections::VecExt;
@@ -16,7 +13,6 @@ use bun_core::strings;
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
 use bun_alloc::ArenaVecExt as _;
 
-// In Zig: `const string = []const u8;`
 // AST string fields are arena-owned (bulk-freed via Store/arena reset; never
 // individually freed). `StoreStr` is `StoreRef`'s `[u8]` sibling: a thin
 // lifetime-erased pointer with safe construction (no `transmute`) and
@@ -45,7 +41,7 @@ impl Default for NameOfSymbol {
 
 pub struct Array {
     pub items: ExprNodeList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -55,7 +51,7 @@ impl Default for Array {
     fn default() -> Self {
         Self {
             items: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -63,21 +59,17 @@ impl Default for Array {
         }
     }
 }
-// TODO(port): Array methods call `Vec::init_capacity(bump, n)`
-// (signature mismatch: Vec takes only `n`; AST-crate variant with bump
-// arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
 // Live subset of `Array` accessors needed by downstream crates.
 impl Array {
     pub const EMPTY: Array = Array {
         items: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
         close_bracket_loc: crate::Loc::EMPTY,
     };
 
-    /// Zig: `pub fn push(this: *Array, arena, item) !void`.
     /// `Vec::append` uses the global arena; `_bump` is kept
     /// for call-site shape parity and the eventual bump-arena Vec.
     pub fn push(&mut self, _bump: &Bump, item: Expr) -> Result<(), AllocError> {
@@ -98,14 +90,13 @@ impl Array {
         estimated_count: usize,
     ) -> Result<ExprNodeList, AllocError> {
         // This over-allocates a little but it's fine
-        // PERF(port): Zig allocated in arena; this Vec uses the global arena.
-        // `Expr.data` is an enum (validity invariant), so the Zig
-        // `expandToCapacity` + index-walk pattern would form `&mut [Expr]`
+        // `Expr.data` is an enum (validity invariant), so an
+        // expand-to-capacity + index-walk pattern would form `&mut [Expr]`
         // over invalid bit patterns. Push into reserved capacity instead —
         // same allocation profile (one upfront `with_capacity`), no uninit.
         let mut out: ExprNodeList =
             ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize);
-        // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
+        // Reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` does not overlap a shared borrow of `self`.
         let items_len = self.items.len_u32() as usize;
         for idx in 0..items_len {
@@ -134,8 +125,7 @@ impl Array {
         Ok(out)
     }
 
-    // `pub const toJS = @import("../../js_parser_jsc/expr_jsc.zig").arrayToJS;` — deleted per
-    // PORTING.md (jsc extension trait lives in `js_parser_jsc` crate).
+    // `toJS` lives in the `js_parser_jsc` crate's extension trait.
 
     /// Assumes each item in the array is a string
     pub fn alphabetize_strings(&mut self) {
@@ -265,11 +255,11 @@ pub enum Special {
     HotData,
     /// `import.meta.hot.accept` when HMR is enabled. Truthy.
     HotAccept,
-    /// Converted from `hot_accept` in P.zig's handleImportMetaHotAcceptCall
-    /// when passed strings. Printed as `hmr.acceptSpecifiers`
+    /// Converted from `hot_accept` by the parser's import.meta.hot.accept
+    /// handling when passed strings. Printed as `hmr.acceptSpecifiers`
     HotAcceptVisited,
-    /// Prints the resolved specifier string for an import record.
-    /// Zig: `resolved_specifier_string: ImportRecord.Index` (a `u32`).
+    /// Prints the resolved specifier string for an import record
+    /// (an `ImportRecord` index).
     ResolvedSpecifierString(u32),
 }
 
@@ -315,7 +305,7 @@ impl Call {
     }
 }
 
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2, use u8
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum CallUnwrap {
     #[default]
@@ -327,7 +317,8 @@ pub enum CallUnwrap {
 pub struct Dot {
     // target is Node
     pub target: ExprNodeIndex,
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub name: Str,
     pub name_loc: crate::Loc,
     pub optional_chain: Option<OptionalChain>,
@@ -355,9 +346,7 @@ impl Default for Dot {
 }
 impl Dot {
     pub fn has_same_flags_as(&self, b: &Dot) -> bool {
-        // TODO(port): Zig refers to `a.is_direct_eval` which does not exist on Dot;
-        // mirroring the (likely buggy) Zig literally would not compile. Preserving
-        // the three fields that DO exist; revisit.
+        // Compare the three flag fields that exist on Dot.
         self.optional_chain == b.optional_chain
             && self.can_be_removed_if_unused == b.can_be_removed_if_unused
             && self.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused
@@ -383,9 +372,12 @@ pub struct Arrow {
     pub has_rest_arg: bool,
     /// Use shorthand if true and "Body" is a single return statement
     pub prefer_expr: bool,
+    /// See `flags::Function::HasReactHooksSuppression`.
+    pub has_react_hooks_suppression: bool,
 }
+// The fourth bool fits in existing trailing padding.
+const _: () = assert!(core::mem::size_of::<Arrow>() == 32);
 impl Arrow {
-    // Zig `pub const noop_return_undefined: Arrow = .{ .body = .{ .stmts = &.{} } };`
     pub const NOOP_RETURN_UNDEFINED: Arrow = Arrow {
         args: crate::StoreSlice::EMPTY,
         body: G::FnBody {
@@ -395,6 +387,7 @@ impl Arrow {
         is_async: false,
         has_rest_arg: false,
         prefer_expr: false,
+        has_react_hooks_suppression: false,
     };
 }
 impl Default for Arrow {
@@ -408,6 +401,7 @@ impl Default for Arrow {
             is_async: false,
             has_rest_arg: false,
             prefer_expr: false,
+            has_react_hooks_suppression: false,
         }
     }
 }
@@ -419,9 +413,8 @@ pub struct Function {
 /// 8-byte identifier expression payload. The three side-effect flags are packed
 /// into `Ref`'s user-bit lane (bits 28..31, masked out of `Ref` identity) so
 /// this — the most common `expr::Data` variant — fits in a single word, which
-/// is what pulls `expr::Data` down to 16 bytes / `Expr` to 24. The Zig layout
-/// stores them as discrete bools (16B with padding); the Rust port exploits
-/// `noalias` + smaller nodes for the structural perf win.
+/// is what pulls `expr::Data` down to 16 bytes / `Expr` to 24 (vs. 16B with
+/// padding for discrete bools).
 ///
 /// `ref_` remains a public field so the ~100 existing `id.ref_` /
 /// `Identifier { ref_, ..Default::default() }` sites stay untouched; flag
@@ -429,8 +422,8 @@ pub struct Function {
 ///
 /// **Hazard:** assigning a fresh `Ref` to `ref_` *clears the flags*. This is
 /// fine for `visit_expr`'s `e_identifier` (sets `ref_` first then re-derives
-/// the flags), but any port of Zig `id.ref = new_ref` that expects the
-/// surrounding bool fields to survive must instead write
+/// the flags), but any `id.ref_ = new_ref` site that expects the
+/// flags to survive must instead write
 /// `id.ref_ = new_ref.with_user_bits_from(id.ref_)` — see `handle_identifier`.
 #[derive(Clone, Copy)]
 pub struct Identifier {
@@ -485,8 +478,7 @@ impl Identifier {
         self.ref_.set_user_bit(2, v);
     }
 
-    // Builder-style — replaces the Zig `.{ .ref = r, .can_be_removed = true }`
-    // struct-init pattern at the handful of sites that set flags up front.
+    // Builder-style setters for the handful of sites that set flags up front.
     #[inline]
     pub const fn with_must_keep_due_to_with_stmt(self, v: bool) -> Self {
         Self {
@@ -621,13 +613,15 @@ pub struct PrivateIdentifier {
 /// In development mode, the new JSX transform has a few special props
 /// - `React.jsxDEV(type, arguments, key, isStaticChildren, source, self)`
 /// - `arguments`:
-///      ```{ ...props, children: children, }```
+///      `{ ...props, children: children, }`
 /// - `source`: https://github.com/babel/babel/blob/ef87648f3f05ccc393f89dea7d4c7c57abf398ce/packages/babel-plugin-transform-react-jsx-source/src/index.js#L24-L48
-///      ```{
-///         fileName: string | null,
-///         columnNumber: number | null,
-///         lineNumber: number | null,
-///      }```
+///   ```text
+///   {
+///      fileName: string | null,
+///      columnNumber: number | null,
+///      lineNumber: number | null,
+///   }
+///   ```
 /// - `children`:
 ///     - static the function is React.jsxsDEV, "jsxs" instead of "jsx"
 ///     - one child? the function is React.jsxDEV,
@@ -684,37 +678,51 @@ pub enum JSXSpecialProp {
     Ref,
     Any,
 }
+bun_core::comptime_string_map! {
+    static JSX_SPECIAL_PROP_MAP: JSXSpecialProp = {
+        b"key" => JSXSpecialProp::Key,
+        b"ref" => JSXSpecialProp::Ref,
+        b"__self" => JSXSpecialProp::UnderscoreSelf,
+        b"__source" => JSXSpecialProp::UnderscoreSource,
+    };
+}
+
 impl JSXSpecialProp {
-    // PERF(port): Zig used `ComptimeStringMap` (length-prefix lookup, all
-    // resolved at comptime). A `phf::Map` here would compute a full SipHash +
-    // index + slice compare on every JSX prop name even though the
-    // overwhelming majority of inputs (`className`, `onClick`, `style`, ...)
-    // miss. With only 4 keys at 3 distinct lengths, a length-gated `match`
-    // rejects almost every miss on a single `usize` compare and never hashes.
-    // See clap::find_param (12577e958d71) for the same pattern.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
-        match s.len() {
-            3 => match s {
-                b"key" => Some(Self::Key),
-                b"ref" => Some(Self::Ref),
-                _ => None,
-            },
-            6 if s == b"__self" => Some(Self::UnderscoreSelf),
-            8 if s == b"__source" => Some(Self::UnderscoreSource),
-            _ => None,
-        }
+        JSX_SPECIAL_PROP_MAP.get(s).copied()
     }
 }
 
-// `Missing` re-exported from `crate::E` above.
-// TODO(port): `Missing::json_stringify` — Zig std.json protocol; orphan rules
-// prevent an inherent impl here now that the type lives at T2. Pick a
-// serde strategy (extension trait or move the method down).
-
+/// `packed(4)` lowers the alignment to 4 so `expr::Data` (and therefore `Expr`)
+/// drop to align 4 and pack into 16 bytes; the `f64` stays a single scalar so
+/// `.value()` is one `movsd`/`ldr`. The field is private because comparisons on
+/// a packed `f64` field would require `&self.value` (an unaligned reference);
+/// callers go through `value()` / `new()` which copy by value.
 #[derive(Clone, Copy)]
+#[repr(C, packed(4))]
 pub struct Number {
-    pub value: f64,
+    value: f64,
+}
+
+const _: () = assert!(core::mem::size_of::<Number>() == 8);
+const _: () = assert!(core::mem::align_of::<Number>() == 4);
+
+impl Number {
+    #[inline(always)]
+    pub const fn new(value: f64) -> Self {
+        Number { value }
+    }
+    #[inline(always)]
+    pub const fn value(self) -> f64 {
+        self.value
+    }
+}
+impl From<f64> for Number {
+    #[inline]
+    fn from(v: f64) -> Self {
+        Number::new(v)
+    }
 }
 
 const DOUBLE_DIGIT: [&[u8]; 101] = [
@@ -745,8 +753,8 @@ impl Number {
     /// by calling out to the APIs in WebKit which are responsible for this operation.
     ///
     /// This can return `None` in wasm builds to avoid linking JSC
-    pub fn to_string(&self, bump: &Bump) -> Option<Str> {
-        Self::to_string_from_f64(self.value, bump)
+    pub fn to_string(self, bump: &Bump) -> Option<Str> {
+        Self::to_string_from_f64(self.value(), bump)
     }
 
     pub fn to_string_from_f64(value: f64, bump: &Bump) -> Option<Str> {
@@ -763,7 +771,6 @@ impl Number {
                 }));
             }
 
-            // std.fmt.allocPrint(arena, "{d}", .{@as(i32, @intCast(int_value))}) catch return null
             // i32 fits in 11 bytes ("-2147483648"); format on stack then bump-copy.
             let mut stack = [0u8; 16];
             let Ok(s) = bun_core::fmt::buf_print(&mut stack, format_args!("{}", int_value as i32))
@@ -789,54 +796,44 @@ impl Number {
         {
             let mut buf = [0u8; 124];
             let s = bun_core::fmt::FormatDouble::dtoa(&mut buf, value);
-            return Some(Str::new(bump.alloc_slice_copy(s)));
+            Some(Str::new(bump.alloc_slice_copy(s)))
         }
         #[cfg(target_arch = "wasm32")]
         {
             // do not attempt to implement the spec here, it would be error prone.
+            None
         }
-
-        #[allow(unreachable_code)]
-        None
     }
 
     #[inline]
-    pub fn to_u64(&self) -> u64 {
+    pub fn to_u64(self) -> u64 {
         self.to::<u64>()
     }
 
     #[inline]
-    pub fn to_usize(&self) -> usize {
+    pub fn to_usize(self) -> usize {
         self.to::<usize>()
     }
 
     #[inline]
-    pub fn to_u32(&self) -> u32 {
+    pub fn to_u32(self) -> u32 {
         self.to::<u32>()
     }
 
     #[inline]
-    pub fn to_u16(&self) -> u16 {
+    pub fn to_u16(self) -> u16 {
         self.to::<u16>()
     }
 
-    pub fn to<T: NumberCast>(&self) -> T {
-        // @as(T, @intFromFloat(@min(@max(@trunc(self.value), 0), comptime @min(floatMax(f64), maxInt(T)))))
-        let clamped = self.value.trunc().max(0.0).min(T::MAX_AS_F64);
+    pub fn to<T: NumberCast>(self) -> T {
+        let clamped = self.value().trunc().max(0.0).min(T::MAX_AS_F64);
         T::from_f64(clamped)
-    }
-
-    pub fn json_stringify<W: crate::JsonWriter>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(&self.value)
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 }
 
-/// Helper trait for `Number::to<T>()` — replaces Zig's `comptime T: type` param.
+/// Helper trait for `Number::to<T>()`.
 pub trait NumberCast: Copy {
     const MAX_AS_F64: f64;
     fn from_f64(v: f64) -> Self;
@@ -855,25 +852,384 @@ macro_rules! impl_number_cast {
 impl_number_cast!(u16, u32, u64, usize);
 
 pub struct BigInt {
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub value: Str,
 }
 impl BigInt {
     pub const EMPTY: BigInt = BigInt { value: Str::EMPTY };
 
-    pub fn json_stringify<W: crate::JsonWriter>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(&self.value)
+    // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
+}
+
+// ── immutable JSON nodes ───────────────────────────────────────────────────
+// Compact, read-only object/array nodes: the JSON parser's native output.
+// Children are `PropertyJSON` rows / inline `JsonValue`s in the document's `JsonTape`.
+
+/// A JSON value inside an `ObjectJSON` / `ArrayJSON`.
+#[derive(Clone, Copy)]
+pub enum JsonValue {
+    Null,
+    Boolean(bool),
+    Number(Number),
+    String(Str),
+    Object(StoreRef<ObjectJSON>),
+    Array(StoreRef<ArrayJSON>),
+}
+
+const _: () = assert!(core::mem::size_of::<JsonValue>() == 16);
+const _: () = assert!(core::mem::align_of::<JsonValue>() == 4);
+
+impl JsonValue {
+    pub fn write_to_hasher<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
+        match self {
+            JsonValue::Null => hasher.update(&[0]),
+            JsonValue::Boolean(b) => hasher.update(&[1, *b as u8]),
+            JsonValue::Number(n) => {
+                hasher.update(&[2]);
+                hasher.update(&n.value().to_bits().to_le_bytes());
+            }
+            JsonValue::String(s) => {
+                hasher.update(&[3]);
+                hasher.update(s.slice());
+            }
+            JsonValue::Object(o) => {
+                let o = o.get();
+                hasher.update(&[4]);
+                hasher.update(&(o.properties().len() as u32).to_le_bytes());
+                for p in o.properties().iter() {
+                    hasher.update(p.key.slice());
+                    p.value.write_to_hasher(hasher);
+                }
+            }
+            JsonValue::Array(a) => {
+                let a = a.get();
+                hasher.update(&[5]);
+                hasher.update(&(a.items().len() as u32).to_le_bytes());
+                for item in a.items().iter() {
+                    item.write_to_hasher(hasher);
+                }
+            }
+        }
     }
 
-    // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
+    #[inline]
+    pub fn as_str(&self) -> Option<&[u8]> {
+        match self {
+            JsonValue::String(s) => Some(s.slice()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_object(&self) -> Option<&ObjectJSON> {
+        match self {
+            JsonValue::Object(o) => Some(o.get()),
+            _ => None,
+        }
+    }
+
+    #[inline]
+    pub fn as_array(&self) -> Option<&ArrayJSON> {
+        match self {
+            JsonValue::Array(a) => Some(a.get()),
+            _ => None,
+        }
+    }
+}
+
+/// One `"key": value` row of an [`ObjectJSON`].
+#[derive(Clone, Copy)]
+pub struct PropertyJSON {
+    pub key: Str,
+    pub key_loc: crate::Loc,
+    pub value: JsonValue,
+}
+
+const _: () = assert!(core::mem::size_of::<PropertyJSON>() == 32);
+
+/// Where a [`JsonTape`]'s buffers (and, in arena mode, the tape itself) live.
+#[derive(Clone, Copy)]
+pub enum TapeAlloc {
+    Global,
+    Arena(core::ptr::NonNull<Bump>),
+}
+
+// SAFETY: an arena tape is built and read on the thread that owns the arena.
+unsafe impl Send for TapeAlloc {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for TapeAlloc {}
+
+// SAFETY: both arms forward to allocators that uphold the `Allocator` contract.
+unsafe impl core::alloc::Allocator for TapeAlloc {
+    fn allocate(
+        &self,
+        layout: core::alloc::Layout,
+    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
+        match self {
+            TapeAlloc::Global => core::alloc::Allocator::allocate(&std::alloc::Global, layout),
+            TapeAlloc::Arena(a) => {
+                // SAFETY: the arena outlives the tape (the type's contract).
+                let arena: &Bump = unsafe { a.as_ref() };
+                core::alloc::Allocator::allocate(&arena, layout)
+            }
+        }
+    }
+
+    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
+        match self {
+            // SAFETY: forwarding the caller's contract.
+            TapeAlloc::Global => unsafe {
+                core::alloc::Allocator::deallocate(&std::alloc::Global, ptr, layout)
+            },
+            TapeAlloc::Arena(a) => {
+                // SAFETY: the arena outlives the tape (the type's contract).
+                let arena: &Bump = unsafe { a.as_ref() };
+                // SAFETY: forwarding the caller's contract to the arena.
+                unsafe { core::alloc::Allocator::deallocate(&arena, ptr, layout) }
+            }
+        }
+    }
+}
+
+/// Everything one parsed JSON document allocates that does not borrow the source.
+pub struct JsonTape {
+    props: Vec<PropertyJSON, TapeAlloc>,
+    items: Vec<JsonValue, TapeAlloc>,
+    prop_value_locs: Vec<crate::Loc, TapeAlloc>,
+    item_locs: Vec<crate::Loc, TapeAlloc>,
+    str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
+    str_used: usize,
+}
+
+// SAFETY: only the parsing thread writes it; shared use afterwards is read-only.
+unsafe impl Send for JsonTape {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for JsonTape {}
+
+impl JsonTape {
+    const STR_CHUNK: usize = 4096;
+
+    pub fn empty() -> JsonTape {
+        Self::empty_in(TapeAlloc::Global)
+    }
+
+    pub fn empty_in(alloc: TapeAlloc) -> JsonTape {
+        JsonTape {
+            props: Vec::new_in(alloc),
+            items: Vec::new_in(alloc),
+            prop_value_locs: Vec::new_in(alloc),
+            item_locs: Vec::new_in(alloc),
+            str_chunks: Vec::new_in(alloc),
+            str_used: 0,
+        }
+    }
+
+    /// The tape allocation's own pointer, for [`ObjectJSON::new`] /
+    /// [`ArrayJSON::new`].
+    ///
+    /// Takes `&mut self` so the result can never be a shared reborrow: the
+    /// parser keeps writing through this pointer for the rest of the parse, and
+    /// a `&JsonTape`-derived pointer is frozen and has no permission to do that.
+    /// Build the pointer with this rather than a bare `NonNull::from`, so the
+    /// borrow it is derived from cannot silently be the wrong one.
+    #[inline]
+    pub fn root_ptr(&mut self) -> core::ptr::NonNull<JsonTape> {
+        core::ptr::NonNull::from(self)
+    }
+
+    #[inline]
+    fn alloc(&self) -> TapeAlloc {
+        *self.props.allocator()
+    }
+
+    #[inline]
+    pub fn append_props(&mut self, rows: &[PropertyJSON], value_locs: &[crate::Loc]) -> (u32, u32) {
+        let first = self.props.len() as u32;
+        self.props.extend_from_slice(rows);
+        self.prop_value_locs.extend_from_slice(value_locs);
+        (first, rows.len() as u32)
+    }
+
+    #[inline]
+    pub fn append_items(&mut self, rows: &[JsonValue], item_locs: &[crate::Loc]) -> (u32, u32) {
+        let first = self.items.len() as u32;
+        self.items.extend_from_slice(rows);
+        self.item_locs.extend_from_slice(item_locs);
+        (first, rows.len() as u32)
+    }
+
+    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
+        let fits = self
+            .str_chunks
+            .last()
+            .is_some_and(|c| c.len() - self.str_used >= bytes.len());
+        if !fits {
+            let cap = bytes.len().max(Self::STR_CHUNK);
+            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
+            chunk.resize(cap, 0);
+            self.str_chunks.push(chunk);
+            self.str_used = 0;
+        }
+        let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
+        let out = &mut chunk[self.str_used..self.str_used + bytes.len()];
+        out.copy_from_slice(bytes);
+        self.str_used += bytes.len();
+        Str::new(out)
+    }
+
+    #[inline]
+    fn prop_value_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.prop_value_locs
+            .get(first as usize..first as usize + count as usize)
+    }
+
+    #[inline]
+    fn item_locs_span(&self, first: u32, count: u32) -> Option<&[crate::Loc]> {
+        self.item_locs
+            .get(first as usize..first as usize + count as usize)
+    }
+
+    #[inline]
+    fn props_span(&self, first: u32, count: u32) -> &[PropertyJSON] {
+        &self.props[first as usize..first as usize + count as usize]
+    }
+
+    #[inline]
+    fn items_span(&self, first: u32, count: u32) -> &[JsonValue] {
+        &self.items[first as usize..first as usize + count as usize]
+    }
+}
+
+/// `Data::EObjectJSON`: a `(first, count)` span of the document's property-row tape.
+pub struct ObjectJSON {
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
+    pub close_brace_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+// SAFETY: the tape outlives the AST (`StoreRef`'s contract) and is read-only once parsing returns.
+unsafe impl Send for ObjectJSON {}
+// SAFETY: see the `Send` impl.
+unsafe impl Sync for ObjectJSON {}
+
+impl ObjectJSON {
+    /// `tape` must be the document's [`JsonTape`], and must outlive this node.
+    ///
+    /// # Safety
+    /// `tape` must carry the tape allocation's own provenance — the parser's
+    /// `NonNull<JsonTape>` — **not** a `&JsonTape`/`&mut JsonTape` reborrow of
+    /// it. The parser keeps appending to the tape after this node is built
+    /// (sibling properties, the enclosing object, later strings), and each of
+    /// those writes would invalidate a reborrow-derived pointer, making every
+    /// later [`properties`](Self::properties) read UB.
+    #[inline]
+    pub unsafe fn new(
+        tape: core::ptr::NonNull<JsonTape>,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_brace_loc: crate::Loc,
+    ) -> Self {
+        ObjectJSON {
+            tape,
+            first,
+            count,
+            close_brace_loc,
+            is_single_line,
+        }
+    }
+
+    #[inline]
+    pub fn properties(&self) -> &[PropertyJSON] {
+        if self.count == 0 {
+            return &[];
+        }
+        // SAFETY: per the constructor's contract the tape outlives this node.
+        unsafe { self.tape.as_ref() }.props_span(self.first, self.count)
+    }
+
+    /// Parallel to [`Self::properties`]; `None` unless the parse recorded value locations.
+    #[inline]
+    pub fn value_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `properties`.
+        unsafe { self.tape.as_ref() }.prop_value_locs_span(self.first, self.count)
+    }
+
+    #[inline]
+    pub fn get(&self, key: &[u8]) -> Option<&JsonValue> {
+        self.properties()
+            .iter()
+            .find(|p| p.key.slice() == key)
+            .map(|p| &p.value)
+    }
+}
+
+/// `Data::EArrayJSON`: a `(first, count)` span of the document's item tape.
+pub struct ArrayJSON {
+    tape: core::ptr::NonNull<JsonTape>,
+    first: u32,
+    count: u32,
+    pub close_bracket_loc: crate::Loc,
+    pub is_single_line: bool,
+}
+
+// SAFETY: see `ObjectJSON`.
+unsafe impl Send for ArrayJSON {}
+// SAFETY: see `ObjectJSON`.
+unsafe impl Sync for ArrayJSON {}
+
+impl ArrayJSON {
+    /// `tape` must be the document's [`JsonTape`], and must outlive this node.
+    ///
+    /// # Safety
+    /// Same provenance contract as [`ObjectJSON::new`].
+    #[inline]
+    pub unsafe fn new(
+        tape: core::ptr::NonNull<JsonTape>,
+        first: u32,
+        count: u32,
+        is_single_line: bool,
+        close_bracket_loc: crate::Loc,
+    ) -> Self {
+        ArrayJSON {
+            tape,
+            first,
+            count,
+            close_bracket_loc,
+            is_single_line,
+        }
+    }
+
+    #[inline]
+    pub fn items(&self) -> &[JsonValue] {
+        if self.count == 0 {
+            return &[];
+        }
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }.items_span(self.first, self.count)
+    }
+
+    /// Parallel to [`Self::items`]; `None` unless the parse recorded item locations.
+    #[inline]
+    pub fn item_locs(&self) -> Option<&[crate::Loc]> {
+        if self.count == 0 {
+            return Some(&[]);
+        }
+        // SAFETY: see `ObjectJSON::properties`.
+        unsafe { self.tape.as_ref() }.item_locs_span(self.first, self.count)
+    }
 }
 
 pub struct Object {
     pub properties: G::PropertyList,
-    pub comma_after_spread: Option<crate::Loc>,
+    pub comma_after_spread: crate::Loc,
     pub is_single_line: bool,
     pub is_parenthesized: bool,
     pub was_originally_macro: bool,
@@ -884,7 +1240,7 @@ impl Default for Object {
     fn default() -> Self {
         Self {
             properties: bun_alloc::AstAlloc::vec(),
-            comma_after_spread: None,
+            comma_after_spread: crate::Loc::EMPTY,
             is_single_line: false,
             is_parenthesized: false,
             was_originally_macro: false,
@@ -893,39 +1249,43 @@ impl Default for Object {
     }
 }
 
-/// used in TOML parser to merge properties.
+/// Dotted-key path used by the INI parser (`get_or_put_object`).
 ///
 /// Node types are lifetime-free, so `next` is a raw `*mut Rope`
-/// into the bump arena (Zig: `next: ?*Rope`). Segments are bulk-freed at
-/// arena reset.
+/// into the bump arena. Segments are bulk-freed at arena reset.
 pub struct Rope {
     pub head: Expr,
     pub next: *mut Rope,
 }
 impl Rope {
     pub fn append(&mut self, expr: Expr, bump: &Bump) -> Result<*mut Rope, AllocError> {
-        if let Some(mut next) = core::ptr::NonNull::new(self.next).map(StoreRef::from_non_null) {
-            // Arena-allocated Rope nodes are uniquely owned by the chain at this
-            // point in TOML parsing; route through `StoreRef::DerefMut` (the
-            // arena-backed handle whose deref is centralised in `nodes.rs`).
-            return next.append(expr, bump);
+        // Walk to the tail iteratively: recursing once per node overflows the
+        // native stack on adversarially deep ropes (e.g. an `.npmrc` section
+        // header with thousands of dot-separated segments).
+        //
+        // Arena-allocated Rope nodes are uniquely owned by the chain at this
+        // point; route through `StoreRef::DerefMut` (the arena-backed handle
+        // whose deref is centralised in `nodes.rs`).
+        let mut tail = StoreRef::from_bump(self);
+        while let Some(next) = core::ptr::NonNull::new(tail.next).map(StoreRef::from_non_null) {
+            tail = next;
         }
         let rope: *mut Rope = bump.alloc(Rope {
             head: expr,
             next: core::ptr::null_mut(),
         });
-        self.next = rope;
+        tail.next = rope;
         Ok(rope)
     }
 
     /// Re-borrow `next` as `Option<&Rope>`. Same `StoreRef` arena contract:
     /// the pointee is a bump allocation valid until arena reset. Centralises
-    /// the one `unsafe` so the `set_rope`/`get_or_put_*`/`get_rope` walkers
+    /// the one `unsafe` so the `get_or_put_object`/`get_rope` walkers
     /// don't repeat `if !next.is_null() { unsafe { &*next } }` at every hop.
     #[inline]
     pub fn next_ref<'a>(&self) -> Option<&'a Rope> {
         // SAFETY: `next` is either null or a bump-arena allocation valid until
-        // arena reset (Zig: `?*Rope`). Read-only borrow; no `&mut` alias is
+        // arena reset. Read-only borrow; no `&mut` alias is
         // outstanding at any caller (the chain is fully built before walking).
         unsafe { self.next.cast_const().as_ref() }
     }
@@ -939,11 +1299,11 @@ pub enum SetError {
 }
 bun_core::impl_tag_error!(SetError);
 bun_core::oom_from_alloc!(SetError);
-impl From<SetError> for bun_core::Error {
+impl From<SetError> for crate::Error {
     fn from(e: SetError) -> Self {
         match e {
-            SetError::OutOfMemory => bun_core::err!(OutOfMemory),
-            SetError::Clobber => bun_core::err!(Clobber),
+            SetError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            SetError::Clobber => crate::Error::Clobber,
         }
     }
 }
@@ -955,11 +1315,11 @@ pub struct RopeQuery<'a> {
 
 // ── live Object accessor surface ───────────────────────────────────────────
 // Adapted to the current `Vec` API (`append(v)`, `slice()`, `slice_mut()`).
-// `set_rope`/`get_or_put_array`/sort helpers stay in the gated impl below.
+// Sort helpers stay in the gated impl below.
 impl Object {
     pub const EMPTY: Object = Object {
         properties: bun_alloc::AstAlloc::vec(),
-        comma_after_spread: None,
+        comma_after_spread: crate::Loc::EMPTY,
         is_single_line: false,
         is_parenthesized: false,
         was_originally_macro: false,
@@ -1005,10 +1365,12 @@ impl Object {
         if let Some(q) = self.as_property(key) {
             self.properties.slice_mut()[q.i as usize].value = Some(expr);
         } else {
+            let key = Expr::init(EString::init(key), expr.loc);
             VecExt::append(
                 &mut self.properties,
                 G::Property {
-                    key: Some(Expr::init(EString::init(key), expr.loc)),
+                    flags: own_key_property_flags(&key),
+                    key: Some(key),
                     value: Some(expr),
                     ..G::Property::default()
                 },
@@ -1026,7 +1388,7 @@ impl Object {
     }
 
     /// Walks `rope` segments, creating nested objects as needed, and returns
-    /// the leaf `E.Object` expression (Zig: `getOrPutObject`).
+    /// the leaf `E.Object` expression.
     pub fn get_or_put_object(&mut self, rope: &Rope, _bump: &Bump) -> Result<Expr, SetError> {
         let head_key = match rope.head.data.e_string() {
             Some(s) => s.data,
@@ -1067,6 +1429,7 @@ impl Object {
                 G::Property {
                     key: Some(rope.head),
                     value: Some(obj),
+                    flags: own_key_property_flags(&rope.head),
                     ..G::Property::default()
                 },
             );
@@ -1079,6 +1442,7 @@ impl Object {
             G::Property {
                 key: Some(rope.head),
                 value: Some(out),
+                flags: own_key_property_flags(&rope.head),
                 ..G::Property::default()
             },
         );
@@ -1086,157 +1450,33 @@ impl Object {
     }
 }
 
+/// Data-file parsers (JSON/JSON5/TOML/YAML) define every key as an own
+/// property, so an own `"__proto__"` string key must be marked computed:
+/// a plain `"__proto__":` key in a printed object literal sets the prototype.
+pub fn own_key_property_flags(key: &Expr) -> crate::flags::PropertySet {
+    match &key.data {
+        crate::expr::Data::EString(key_str) if key_str.eql_comptime(b"__proto__") => {
+            crate::flags::Property::IsComputed.into()
+        }
+        _ => crate::flags::PROPERTY_NONE,
+    }
+}
+
 // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
 impl Object {
-    pub fn set(&mut self, key: Expr, _bump: &Bump, value: Expr) -> Result<(), SetError> {
-        let head_key = match key.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if self.has_property(&head_key) {
-            return Err(SetError::Clobber);
-        }
-        // Zig takes `*const Object` here and mutates through Vec's interior pointer;
-        // in Rust we require `&mut self` so the borrow checker tracks the write.
+    /// Appends a property without checking for an existing key. Callers that
+    /// need duplicate detection must check `as_property` with UTF-8 bytes
+    /// first — a UTF-16 EString key's raw `data` view is not byte-comparable.
+    pub fn append_property(&mut self, key: Expr, value: Expr) {
         VecExt::append(
             &mut self.properties,
             G::Property {
+                flags: own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
                 ..G::Property::default()
             },
         );
-        Ok(())
-    }
-
-    // this is terribly, shamefully slow
-    pub fn set_rope(&mut self, rope: &Rope, bump: &Bump, value: Expr) -> Result<(), SetError> {
-        let head_key = match rope.head.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if let Some(existing) = self.get(&head_key) {
-            match existing.data {
-                crate::expr::Data::EArray(mut array) => {
-                    let Some(next) = rope.next_ref() else {
-                        array.push(bump, value)?;
-                        return Ok(());
-                    };
-
-                    if let Some(last) = array.items.last_mut() {
-                        if !matches!(last.data, crate::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-                        last.data
-                            .e_object_mut()
-                            .unwrap()
-                            .set_rope(next, bump, value)?;
-                        return Ok(());
-                    }
-
-                    array.push(bump, value)?;
-                    return Ok(());
-                }
-                crate::expr::Data::EObject(mut object) => {
-                    if let Some(next) = rope.next_ref() {
-                        object.set_rope(next, bump, value)?;
-                        return Ok(());
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        let mut value_ = value;
-        if let Some(next) = rope.next_ref() {
-            let mut obj = Expr::init(Object::default(), rope.head.loc);
-            obj.data
-                .e_object_mut()
-                .unwrap()
-                .set_rope(next, bump, value)?;
-            value_ = obj;
-        }
-
-        VecExt::append(
-            &mut self.properties,
-            G::Property {
-                key: Some(rope.head),
-                value: Some(value_),
-                ..G::Property::default()
-            },
-        );
-        Ok(())
-    }
-
-    pub fn get_or_put_array(&mut self, rope: &Rope, bump: &Bump) -> Result<Expr, SetError> {
-        let head_key = match rope.head.data.e_string() {
-            Some(s) => s.data,
-            None => return Err(SetError::Clobber),
-        };
-        if let Some(existing) = self.get(&head_key) {
-            match existing.data {
-                crate::expr::Data::EArray(mut array) => {
-                    let Some(next) = rope.next_ref() else {
-                        return Ok(existing);
-                    };
-
-                    if let Some(last) = array.items.last_mut() {
-                        if !matches!(last.data, crate::expr::Data::EObject(_)) {
-                            return Err(SetError::Clobber);
-                        }
-                        return last
-                            .data
-                            .e_object_mut()
-                            .unwrap()
-                            .get_or_put_array(next, bump);
-                    }
-
-                    return Err(SetError::Clobber);
-                }
-                crate::expr::Data::EObject(mut object) => {
-                    let Some(next) = rope.next_ref() else {
-                        return Err(SetError::Clobber);
-                    };
-                    return object.get_or_put_array(next, bump);
-                }
-                _ => {
-                    return Err(SetError::Clobber);
-                }
-            }
-        }
-
-        if let Some(next) = rope.next_ref() {
-            let mut obj = Expr::init(Object::default(), rope.head.loc);
-            let out = obj
-                .data
-                .e_object_mut()
-                .unwrap()
-                .get_or_put_array(next, bump)?;
-            VecExt::append(
-                &mut self.properties,
-                G::Property {
-                    key: Some(rope.head),
-                    value: Some(obj),
-                    ..G::Property::default()
-                },
-            );
-            return Ok(out);
-        }
-
-        let out = Expr::init(Array::default(), rope.head.loc);
-        VecExt::append(
-            &mut self.properties,
-            G::Property {
-                key: Some(rope.head),
-                value: Some(out),
-                ..G::Property::default()
-            },
-        );
-        Ok(out)
     }
 
     /// Assumes each key in the property is a string
@@ -1280,20 +1520,22 @@ enum PackageJsonSortFields {
     Fake = 12,
 }
 
-static PACKAGE_JSON_SORT_MAP: phf::Map<&'static [u8], PackageJsonSortFields> = phf_map! {
-    b"name" => PackageJsonSortFields::Name,
-    b"version" => PackageJsonSortFields::Version,
-    b"author" => PackageJsonSortFields::Author,
-    b"repository" => PackageJsonSortFields::Repository,
-    b"config" => PackageJsonSortFields::Config,
-    b"main" => PackageJsonSortFields::Main,
-    b"module" => PackageJsonSortFields::Module,
-    b"dependencies" => PackageJsonSortFields::Dependencies,
-    b"devDependencies" => PackageJsonSortFields::DevDependencies,
-    b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
-    b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
-    b"exports" => PackageJsonSortFields::Exports,
-};
+bun_core::comptime_string_map! {
+    static PACKAGE_JSON_SORT_MAP: PackageJsonSortFields = {
+        b"name" => PackageJsonSortFields::Name,
+        b"version" => PackageJsonSortFields::Version,
+        b"author" => PackageJsonSortFields::Author,
+        b"repository" => PackageJsonSortFields::Repository,
+        b"config" => PackageJsonSortFields::Config,
+        b"main" => PackageJsonSortFields::Main,
+        b"module" => PackageJsonSortFields::Module,
+        b"dependencies" => PackageJsonSortFields::Dependencies,
+        b"devDependencies" => PackageJsonSortFields::DevDependencies,
+        b"optionalDependencies" => PackageJsonSortFields::OptionalDependencies,
+        b"peerDependencies" => PackageJsonSortFields::PeerDependencies,
+        b"exports" => PackageJsonSortFields::Exports,
+    };
+}
 
 fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Ordering {
     let mut lhs_key_size: u8 = PackageJsonSortFields::Fake as u8;
@@ -1317,8 +1559,7 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
 
     match lhs_key_size.cmp(&rhs_key_size) {
         Ordering::Equal => {
-            // PORT NOTE: Zig `cmpStringsAsc` is `std.mem.order(u8, a, b) == .lt`; lifted to
-            // a full `Ordering` so this is usable with `sort_by`.
+            // Full `Ordering` so this is usable with `sort_by`.
             let a = lhs
                 .key
                 .as_ref()
@@ -1366,13 +1607,21 @@ pub struct Spread {
 }
 
 /// JavaScript string literal type
+// repr(C, align(8)): `StoreStr`/`StoreRef` are `packed(4)`, so under
+// `repr(Rust)` the `data.ptr: NonNull<u8>` lands at a 4-but-not-8-aligned
+// offset, and a `static EString = EString::from_static(b"...")` then emits an
+// `ARM64_RELOC_UNSIGNED` at that offset which arm64 ld rejects. `repr(C)` pins
+// `data` (the only field needing a static relocation) at offset 0; `align(8)`
+// keeps the struct itself 8-aligned. `EString` is arena-stored (never inline
+// in `Expr`), so this does not affect `Expr` size.
+#[repr(C, align(8))]
 pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
     // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub data: Str,
-    pub prefer_template: bool,
 
     // A very simple rope implementation
     // We only use this for string folding, so this is kind of overkill
@@ -1380,9 +1629,10 @@ pub struct EString {
     pub next: Option<StoreRef<EString>>,
     pub end: Option<StoreRef<EString>>,
     pub rope_len: u32,
+    pub prefer_template: bool,
     pub is_utf16: bool,
 }
-// Export under the Zig name `String` as well; `EString` avoids colliding with bun_core::String.
+// Also exported as `String`; `EString` avoids colliding with bun_core::String.
 pub use EString as String;
 
 impl Default for EString {
@@ -1421,7 +1671,16 @@ impl EString {
         // `len/2` u16s; the lying-length encoding is load-bearing for `len()`/
         // `javascript_length()`/`has_prefix_comptime()` and changing it is a
         // cross-crate refactor (see TODO above).
-        unsafe { core::slice::from_raw_parts(self.data.as_ptr().cast::<u16>(), self.data.len()) }
+        //
+        // The `c_void` hop is clippy's documented escape hatch for
+        // `cast_ptr_alignment` ("alignment is externally guaranteed" — see the
+        // u16-aligned invariant above); it is a no-op reinterpret, not FFI.
+        unsafe {
+            core::slice::from_raw_parts(
+                self.data.as_ptr().cast::<core::ffi::c_void>().cast::<u16>(),
+                self.data.len(),
+            )
+        }
     }
     /// Const constructor for `'static` literals (Prefill globals).
     pub const fn from_static(data: &'static [u8]) -> Self {
@@ -1443,9 +1702,9 @@ impl EString {
         }
     }
     /// Construct from a UTF-16 slice (arena-owned). The `data` slice's `.len()`
-    /// stores the **u16 element count** (not byte count) — Zig:
-    /// `@ptrCast(value.ptr)[0..value.len]`. `slice16()` and friends rely on
-    /// this. The pointer is reinterpreted to `*const u8` for storage only.
+    /// stores the **u16 element count** (not byte count); `slice16()` and
+    /// friends rely on this. The pointer is reinterpreted to `*const u8` for
+    /// storage only.
     pub fn init_utf16(data: &[u16]) -> Self {
         // `Str::new` only records `(ptr, len)`; we want the original `*const u16`
         // (reinterpreted as bytes) and the **u16 element count**. Safe-cast the
@@ -1467,9 +1726,10 @@ impl EString {
         if strings::first_non_ascii(utf8).is_none() {
             Self::init(utf8)
         } else {
-            // PERF(port): Zig allocated directly in arena; here we transcode to a
-            // heap Vec then copy into the bump arena — profile.
-            let utf16 = strings::to_utf16_alloc_for_real(utf8, false, false).expect("unreachable"); // fail_if_invalid=false → never errors
+            // PERF: transcodes to a heap Vec then copies into the bump
+            // arena — profile.
+            // `fail_if_invalid = false` means the only possible error is `OutOfMemory`.
+            let utf16 = bun_core::handle_oom(strings::to_utf16_alloc_for_real(utf8, false, false));
             let arena_slice: &mut [u16] = bump.alloc_slice_copy(&utf16);
             Self::init_utf16(arena_slice)
         }
@@ -1510,13 +1770,13 @@ impl EString {
         self.len() > 0
     }
 
-    /// Zig `slice8()` alias used by some downstream callers as `.utf8()`.
+    /// Alias for `slice8()` used by some downstream callers.
     #[inline]
     pub fn utf8(&self) -> &[u8] {
         self.slice8()
     }
 
-    /// Zig: `slice(arena)` — flatten any rope and return UTF-8 bytes.
+    /// Flatten any rope and return UTF-8 bytes.
     /// Resolves the rope into the bump arena, then transcodes if UTF-16.
     pub fn slice<'b>(&mut self, bump: &'b Bump) -> &'b [u8] {
         self.resolve_rope_if_needed(bump);
@@ -1574,13 +1834,12 @@ impl EString {
         self.next = None;
     }
 
-    /// Zig `string(arena)` — return UTF-8 bytes, transcoding if UTF-16.
-    /// The transcode allocates via the global arena then copies into
-    /// `bump` (Zig used the passed arena directly).
+    /// Return UTF-8 bytes, transcoding if UTF-16.
+    /// The transcode allocates via the global arena then copies into `bump`.
     pub fn string<'b>(&self, bump: &'b Bump) -> Result<&'b [u8], AllocError> {
         if self.is_utf8() {
-            // `self.data` is arena-owned with the same lifetime as `bump`
-            // (Zig invariant); StoreStr re-borrows under that contract.
+            // `self.data` is arena-owned with the same lifetime as `bump`;
+            // StoreStr re-borrows under that contract.
             Ok(self.data.slice())
         } else {
             let v = strings::to_utf8_alloc(self.slice16());
@@ -1613,12 +1872,7 @@ impl EString {
 // Ordering / equality / const-literal / rope-mutation helpers.
 // `string_z`/`to_zig_string` remain gated on `bun_core::ZStr` arena constructors.
 impl EString {
-    pub const CLASS: EString = EString::from_static(b"class");
     pub const EMPTY: EString = EString::from_static(b"");
-    pub const TRUE: EString = EString::from_static(b"true");
-    pub const FALSE: EString = EString::from_static(b"false");
-    pub const NULL: EString = EString::from_static(b"null");
-    pub const UNDEFINED: EString = EString::from_static(b"undefined");
 
     pub fn is_identifier(&mut self, bump: &Bump) -> bool {
         if !self.is_utf8() {
@@ -1669,7 +1923,7 @@ impl EString {
         Some(self.slice16().len() as u32)
     }
 
-    // Zig `eql(comptime _t: type, other: anytype)` — split by operand type.
+    // `eql`, split by operand type.
     pub fn eql_string(&self, other: &EString) -> bool {
         if self.is_utf8() {
             if other.is_utf8() {
@@ -1694,8 +1948,7 @@ impl EString {
 
     /// Shallow field-wise copy. `EString` is structurally `Copy` (slice ref +
     /// `Option<NonNull>` rope links + scalars) but does not derive it to keep
-    /// rope-ownership intent explicit; Zig sites that did `.* = other.*` use
-    /// this instead.
+    /// rope-ownership intent explicit; use this for field-wise copies.
     #[inline]
     pub fn shallow_clone(&self) -> EString {
         EString {
@@ -1719,7 +1972,7 @@ impl EString {
         }
     }
 
-    /// Zig `E.String.push` — link `other` onto this string's rope tail.
+    /// Link `other` onto this string's rope tail.
     ///
     /// `other` MUST be Store/arena-allocated (callers pass
     /// `Expr::init(EString, ...).data.e_string_mut()` or a freshly
@@ -1737,8 +1990,7 @@ impl EString {
         self.rope_len += other.rope_len;
 
         // Caller contract — `other` lives in the AST Store/arena and outlives
-        // the next reset; capturing its address as a `StoreRef` is the Zig
-        // `*E.String` semantics.
+        // the next reset, so capturing its address as a `StoreRef` is sound.
         let other_ref = StoreRef::from_bump(other);
         if self.next.is_none() {
             self.next = Some(other_ref);
@@ -1789,8 +2041,7 @@ fn array_sorter_is_less_than(lhs: &Expr, rhs: &Expr) -> Ordering {
 
 impl EString {
     pub fn string_z<'b>(&self, bump: &'b Bump) -> Result<&'b bun_core::ZStr, AllocError> {
-        // Zig: `if (self.isUTF8()) self.data else strings.toUTF8AllocZ(...)`, NUL-terminated.
-        // Port: copy into the bump arena with a trailing NUL and wrap as `ZStr`.
+        // Copy into the bump arena with a trailing NUL and wrap as `ZStr`.
         let bytes: &[u8] = if self.is_utf8() {
             &self.data
         } else {
@@ -1802,7 +2053,7 @@ impl EString {
         buf.push(0);
         let s = buf.into_bump_slice();
         // SAFETY: `s[len-1] == 0` (just pushed) and `s[..len-1]` is readable for `'b`.
-        Ok(bun_core::ZStr::from_slice_with_nul(&s[..]))
+        Ok(bun_core::ZStr::from_slice_with_nul(s))
     }
 
     // `toJS` alias deleted — lives in `js_parser_jsc` extension trait.
@@ -1813,23 +2064,6 @@ impl EString {
         } else {
             ZigString::init_utf16(self.slice16())
         }
-    }
-
-    // TODO(port): jsonStringify — Zig std.json protocol; pick a serde strategy.
-    pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), bun_core::Error> {
-        let _ = writer;
-        let mut buf = [0u8; 4096];
-        let mut i: usize = 0;
-        for &char in self.slice16() {
-            buf[i] = u8::try_from(char).expect("int cast");
-            i += 1;
-            if i >= 4096 {
-                break;
-            }
-        }
-        let _ = &buf[..i];
-        // writer.write(&buf[..i])
-        Err(bun_core::err!(Unimplemented))
     }
 }
 
@@ -1873,7 +2107,7 @@ pub struct TemplatePart {
 
 pub struct Template {
     pub tag: Option<ExprNodeIndex>,
-    /// Arena-owned mutable slice (Zig: `[]TemplatePart`). Stored as a
+    /// Arena-owned mutable slice. Stored as a
     /// `StoreSlice` so writers (`substitute_single_use_symbol_in_expr`, the
     /// visit pass, `foldStringAddition`) retain mutable provenance. Use
     /// `parts()` / `parts_mut()` for ergonomic access; never null.
@@ -1913,7 +2147,7 @@ impl TemplateContents {
 }
 
 impl TemplateContents {
-    /// Field-wise copy (Zig: `var part = part.*`). `EString` is structurally
+    /// Field-wise copy. `EString` is structurally
     /// `Copy` but does not derive it; use `shallow_clone` for the cooked arm.
     #[inline]
     pub(crate) fn shallow_clone(&self) -> TemplateContents {
@@ -1931,8 +2165,8 @@ impl Template {
             || (matches!(self.head, TemplateContents::Cooked(_)) && !self.head.cooked().is_utf8())
         {
             // we only fold utf-8/ascii for now
-            // `self` is Store/arena-allocated (Zig: `*Template`); capturing its
-            // address as a `StoreRef` mirrors `.{ .e_template = self }`.
+            // `self` is Store/arena-allocated, so capturing its address as a
+            // `StoreRef` is sound.
             return Expr {
                 data: crate::expr::Data::ETemplate(StoreRef::from_bump(self)),
                 loc,
@@ -1949,7 +2183,7 @@ impl Template {
             bun_alloc::ArenaVec::<TemplatePart>::with_capacity_in(self.parts().len(), bump);
         let mut head = Expr::init(core::mem::take(self.head.cooked_mut()), loc);
         for part_src in self.parts() {
-            // Zig `var part = part.*` — field-wise copy (TemplatePart is not `Copy` only
+            // Field-wise copy (TemplatePart is not `Copy` only
             // because `EString` does not derive it; all fields are structurally `Copy`).
             let mut part = TemplatePart {
                 value: part_src.value,
@@ -2070,12 +2304,10 @@ impl Template {
                             );
                         }
                     } else {
-                        // PERF(port): was appendAssumeCapacity — profile
                         parts.push(part);
                     }
                 }
             } else {
-                // PERF(port): was appendAssumeCapacity — profile
                 parts.push(part);
             }
         }
@@ -2090,7 +2322,7 @@ impl Template {
         }
 
         // Arena-owned mutable slice; `into_bump_slice_mut()` preserves write
-        // provenance for downstream mutators (Zig: `parts.items`).
+        // provenance for downstream mutators.
         Expr::init(
             Template {
                 tag: None,
@@ -2108,7 +2340,8 @@ impl Template {
 }
 
 pub struct RegExp {
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub value: Str,
 
     /// This exists for JavaScript bindings
@@ -2153,30 +2386,16 @@ impl RegExp {
 
         b""
     }
-
-    pub fn json_stringify<W: crate::JsonWriter>(
-        &self,
-        writer: &mut W,
-    ) -> Result<(), bun_core::Error> {
-        writer.write(&self.value)
-    }
 }
 
 pub struct Await {
     pub value: ExprNodeIndex,
 }
 
+#[derive(Default)]
 pub struct Yield {
     pub value: Option<ExprNodeIndex>,
     pub is_star: bool,
-}
-impl Default for Yield {
-    fn default() -> Self {
-        Self {
-            value: None,
-            is_star: false,
-        }
-    }
 }
 
 pub struct If {
@@ -2208,7 +2427,8 @@ pub struct RequireResolveString {
 
 pub struct InlinedEnum {
     pub value: ExprNodeIndex,
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub comment: Str,
 }
 
@@ -2232,7 +2452,6 @@ impl Import {
     }
 
     pub fn import_record_loader(&self) -> Option<crate::Loader> {
-        // This logic is duplicated in js_printer.zig fn parsePath()
         let crate::ExprData::EObject(obj) = &self.options.data else {
             return None;
         };
@@ -2265,4 +2484,161 @@ impl Import {
 
 pub use G::Class;
 
-// ported from: src/js_parser/ast/E.zig
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+//
+// Run under Miri (`bun run rust:miri -p bun_ast`): the JSON tape hands `(first,
+// count)` spans to nodes that hold a raw `NonNull<JsonTape>` and read through
+// it long after parsing appended more rows, so Tree Borrows is what proves the
+// stored pointer survives those writes.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod json_tape_tests {
+    use super::*;
+    use crate::Loc;
+    use core::ptr::NonNull;
+
+    fn prop(key: Str, value: JsonValue) -> PropertyJSON {
+        PropertyJSON {
+            key,
+            key_loc: Loc::EMPTY,
+            value,
+        }
+    }
+
+    /// Mirrors `Parser`'s ownership: the tape is a heap allocation the parser
+    /// holds as a `NonNull` and reaches only through that pointer, handing the
+    /// same pointer to every node it builds.
+    struct TapeOwner(NonNull<JsonTape>);
+
+    impl TapeOwner {
+        fn new() -> Self {
+            TapeOwner(
+                NonNull::new(bun_core::heap::into_raw(Box::new(JsonTape::empty())))
+                    .expect("non-null"),
+            )
+        }
+        fn ptr(&self) -> NonNull<JsonTape> {
+            self.0
+        }
+        /// `Parser::tape_mut` — a fresh reborrow of the root pointer per call.
+        #[allow(clippy::mut_from_ref)]
+        fn get(&self) -> &mut JsonTape {
+            // SAFETY: sole owner; each call hands out one short-lived borrow.
+            unsafe { &mut *self.0.as_ptr() }
+        }
+    }
+
+    impl Drop for TapeOwner {
+        fn drop(&mut self) {
+            // SAFETY: sole owner of a `Box`-allocated tape.
+            drop(unsafe { bun_core::heap::take(self.0.as_ptr()) });
+        }
+    }
+
+    /// The parser keeps appending to the tape while it builds enclosing nodes.
+    /// Mirrors `{"a": {"b": null}}`: the inner object's node is built first,
+    /// then the outer object allocates a key and appends its own rows — writes
+    /// the inner node must survive, because `properties()` is read afterwards.
+    #[test]
+    fn object_json_survives_later_tape_writes() {
+        let tape = TapeOwner::new();
+
+        // Inner `{"b": null}`.
+        let kb = tape.get().alloc_str(b"b");
+        let (first, count) = tape.get().append_props(&[prop(kb, JsonValue::Null)], &[]);
+        // SAFETY: the tape's own pointer, as `Parser` passes it.
+        let inner = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        // The parse continues: another string, then the outer object's rows.
+        let ka = tape.get().alloc_str(b"a");
+        let (first, count) = tape.get().append_props(&[prop(ka, JsonValue::Null)], &[]);
+        // SAFETY: as above.
+        let outer = unsafe { ObjectJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        // Post-parse reads, after every one of those writes.
+        assert_eq!(inner.properties().len(), 1);
+        assert_eq!(inner.properties()[0].key.slice(), b"b");
+        assert_eq!(outer.properties().len(), 1);
+        assert_eq!(outer.properties()[0].key.slice(), b"a");
+        assert!(inner.get(b"b").is_some());
+        assert!(inner.get(b"nope").is_none());
+    }
+
+    #[test]
+    fn array_json_survives_later_tape_writes() {
+        let tape = TapeOwner::new();
+
+        let (first, count) = tape.get().append_items(&[JsonValue::Null], &[]);
+        // SAFETY: the tape's own pointer, as `Parser` passes it.
+        let inner = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        let (first, count) = tape.get().append_items(&[JsonValue::Boolean(true)], &[]);
+        // SAFETY: as above.
+        let outer = unsafe { ArrayJSON::new(tape.ptr(), first, count, true, Loc::EMPTY) };
+
+        assert_eq!(inner.items().len(), 1);
+        assert!(matches!(inner.items()[0], JsonValue::Null));
+        assert_eq!(outer.items().len(), 1);
+        assert!(matches!(outer.items()[0], JsonValue::Boolean(true)));
+    }
+
+    /// An empty span must not dereference the tape at all.
+    #[test]
+    fn zero_count_spans_do_not_read_the_tape() {
+        let tape = TapeOwner::new();
+        // SAFETY: the tape's own pointer.
+        let o = unsafe { ObjectJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        // SAFETY: as above.
+        let a = unsafe { ArrayJSON::new(tape.ptr(), 0, 0, true, Loc::EMPTY) };
+        assert!(o.properties().is_empty());
+        assert_eq!(o.value_locs(), Some(&[][..]));
+        assert!(a.items().is_empty());
+        assert_eq!(a.item_locs(), Some(&[][..]));
+    }
+
+    /// `alloc_str` hands out `Str`s pointing into chunks that must stay put as
+    /// later strings spill into new chunks.
+    #[test]
+    fn alloc_str_chunks_never_move() {
+        let tape = TapeOwner::new();
+        let a = tape.get().alloc_str(b"first");
+        // Force a fresh chunk: bigger than what is left in the current one.
+        let big = vec![b'x'; JsonTape::STR_CHUNK + 1];
+        let b = tape.get().alloc_str(&big);
+        let c = tape.get().alloc_str(b"third");
+        assert_eq!(a.slice(), b"first");
+        assert_eq!(b.slice(), &big[..]);
+        assert_eq!(c.slice(), b"third");
+    }
+
+    /// `Parser::new`'s arena arm roots the tape at the `&mut JsonTape` the
+    /// allocator hands back, not at a `Box::into_raw`. Writes through that root
+    /// must still be permitted: a shared reborrow here is frozen, so every
+    /// `append_props` the parse performs afterwards would be UB. This is the
+    /// shape the bundler's JSON imports take.
+    #[test]
+    fn tape_rooted_at_a_mutable_borrow_still_accepts_writes() {
+        let mut owner = JsonTape::empty();
+        // `root_ptr` takes `&mut self`, exactly as `arena.alloc(..)` yields.
+        let tape_ptr = owner.root_ptr();
+        // From here on reach the tape only through `tape_ptr`, as the parser does.
+        // SAFETY: `tape_ptr` roots the tape; `owner` is untouched until it drops.
+        let tape = |p: NonNull<JsonTape>| -> &mut JsonTape { unsafe { &mut *p.as_ptr() } };
+
+        let kb = tape(tape_ptr).alloc_str(b"b");
+        let (first, count) = tape(tape_ptr).append_props(&[prop(kb, JsonValue::Null)], &[]);
+        // SAFETY: the tape's own pointer.
+        let inner = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+
+        // The parse keeps appending after the node is built.
+        let ka = tape(tape_ptr).alloc_str(b"a");
+        let (first, count) = tape(tape_ptr).append_props(&[prop(ka, JsonValue::Null)], &[]);
+        // SAFETY: as above.
+        let outer = unsafe { ObjectJSON::new(tape_ptr, first, count, true, Loc::EMPTY) };
+
+        assert_eq!(inner.properties()[0].key.slice(), b"b");
+        assert_eq!(outer.properties()[0].key.slice(), b"a");
+    }
+}

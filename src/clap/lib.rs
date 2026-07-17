@@ -1,6 +1,4 @@
-#![allow(unused, non_snake_case, non_camel_case_types, clippy::all)]
 #![warn(unused_must_use)]
-#![warn(unreachable_pub)]
 use core::fmt;
 use core::fmt::Write as _;
 
@@ -9,9 +7,11 @@ use bun_core::{self, Output};
 
 pub mod args;
 pub mod comptime;
+pub mod error;
 pub mod streaming;
 
 pub use comptime::{ComptimeClap, ConvertedTable};
+pub use error::{Error, Result};
 pub use streaming::StreamingClap;
 
 // Proc-macro backend — do not call these directly; use `parse_param!` / `param!` /
@@ -21,8 +21,7 @@ pub use streaming::StreamingClap;
 pub use bun_clap_macros::{__parse_param_impl, __parse_params_impl};
 
 /// Parse a single param spec string (e.g. `"-h, --help  Display this help"`)
-/// into a const `Param<Help>` literal at compile time. This is the Rust
-/// equivalent of Zig's comptime `clap.parseParam(...) catch unreachable`.
+/// into a const `Param<Help>` literal at compile time.
 ///
 /// The argument **must** be a string literal; parse errors surface as compile
 /// errors at the call site.
@@ -33,8 +32,7 @@ macro_rules! parse_param {
     };
 }
 
-/// Alias for [`parse_param!`] matching the Zig call-site spelling
-/// (`clap.parseParam` → `clap::param!`).
+/// Alias for [`parse_param!`].
 #[macro_export]
 macro_rules! param {
     ($lit:literal $(,)?) => {
@@ -42,8 +40,8 @@ macro_rules! param {
     };
 }
 
-/// Const-time `Param<Help>` slice concatenation — the Rust analogue of Zig's
-/// comptime `a ++ b ++ c` over param tables. Produces a `&'static [Param<Help>]`
+/// Const-time `Param<Help>` slice concatenation
+/// over param tables. Produces a `&'static [Param<Help>]`
 /// baked into rodata; no `LazyLock`, no heap, no init closure in `.text`.
 ///
 /// Every `$part` must be a `const`-evaluable `&[Param<Help>]` (a `const` item or
@@ -59,8 +57,7 @@ macro_rules! concat_params {
 }
 
 /// Build a `&'static ConvertedTable` from a const-evaluable
-/// `&[Param<Help>]` at compile time — the Rust analogue of Zig's
-/// `ComptimeClap(Id, params)` type-generator. The converted `[Param<usize>; N]`
+/// `&[Param<Help>]` at compile time. The converted `[Param<usize>; N]`
 /// array, the three category counts, the short-name index, *and* the sorted
 /// long-name hash index all land in rodata, so [`parse_with_table`] does no
 /// heap allocation, no sorting, no locking, and `args.flag(b"--foo")`
@@ -92,9 +89,8 @@ macro_rules! comptime_table {
     // long-name index, and `ConvertedTable` header in with one shared
     // fault-around window. Non-PIE `bun` has zero runtime relocations, so these
     // stay in plain rodata even with the `&'static [u8]` help strings they point
-    // at. Linux-only: the section-name syntax is ELF-specific (mirrors
-    // `bun_core::err!`'s `.bun_err` clustering). Use sparingly — only
-    // `AUTO_TABLE` should take this arm; everything else passes `, cold`.
+    // at. Linux-only: the section-name syntax is ELF-specific. Use sparingly —
+    // only `AUTO_TABLE` should take this arm; everything else passes `, cold`.
     ($params:expr) => {
         $crate::comptime_table!(
             @build
@@ -195,7 +191,7 @@ macro_rules! parse_params {
 }
 
 /// The names a `Param` can have.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 pub struct Names {
     /// '-' prefix
     pub short: Option<u8>,
@@ -207,18 +203,8 @@ pub struct Names {
     pub long_aliases: &'static [&'static [u8]],
 }
 
-impl Default for Names {
-    fn default() -> Self {
-        Self {
-            short: None,
-            long: None,
-            long_aliases: &[],
-        }
-    }
-}
-
 impl Names {
-    /// `.{ .short = c }`
+    /// A name with only a short flag (`-c`).
     #[inline]
     pub const fn short(c: u8) -> Self {
         Self {
@@ -228,7 +214,7 @@ impl Names {
         }
     }
 
-    /// `.{ .long = name }`
+    /// A name with only a long flag (`--name`).
     #[inline]
     pub const fn long(name: &'static [u8]) -> Self {
         Self {
@@ -257,7 +243,6 @@ impl Names {
     /// long, or any long alias. Shared predicate for `has_flag`/`find_param`.
     pub fn matches(&self, name: &[u8]) -> bool {
         if let Some(s) = self.short {
-            // Zig: mem.eql(u8, name, "-" ++ [_]u8{s})
             if name.len() == 2 && name[0] == b'-' && name[1] == s {
                 return true;
             }
@@ -310,8 +295,6 @@ pub struct Param<Id> {
 
 impl<Id: Default> Default for Param<Id> {
     fn default() -> Self {
-        // SAFETY note: Zig used `std.mem.zeroes(Id)` / `std.mem.zeroes(Names)`.
-        // We require `Id: Default` instead — same effect for the `Help` payload.
         Self {
             id: Id::default(),
             names: Names::default(),
@@ -340,10 +323,10 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 }
 
 /// Optional diagnostics used for reporting useful errors
-// PORT NOTE: Zig `Diagnostic` borrows `arg`/`name.long` from the arg iterator. Rust
-// can't tie that lifetime through `&mut Diagnostic` without invariance headaches, and
-// this is an error-path-only struct, so it owns its bytes instead. The `name: Names`
-// field is flattened to `short`/`long` because `Names.long` is `&'static`.
+// Borrowing `arg`/`name.long` from the arg iterator would tie
+// that lifetime through `&mut Diagnostic` with invariance headaches, and this is
+// an error-path-only struct, so it owns its bytes instead. The `name: Names` field
+// is flattened to `short`/`long` because `Names.long` is `&'static`.
 #[derive(Default)]
 pub struct Diagnostic {
     pub arg: Vec<u8>,
@@ -360,8 +343,7 @@ impl Diagnostic {
     /// in `.text.unlikely`, away from the cold-start working set.
     #[cold]
     #[inline(never)]
-    pub fn report<W>(&self, _stream: W, err: bun_core::Error) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn report<W>(&self, _stream: W, err: crate::Error) -> crate::Result<()> {
         let mut name_buf = [0u8; 1024];
         let name: &[u8] = if let Some(s) = self.short {
             name_buf[0] = b'-';
@@ -379,49 +361,34 @@ impl Diagnostic {
         };
 
         let name = bstr::BStr::new(name);
-        // TODO(port): bun_core::err! — `from_name` is a tier-0 stub returning a
-        // sentinel, so these equality checks all collapse. Restore once the interning
-        // table lands; meanwhile the `else` arm covers all cases.
-        if err == bun_core::err!("DoesntTakeValue") {
-            bun_core::pretty_errorln!(
+        match err {
+            crate::Error::DoesntTakeValue => bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> The argument '{}' does not take a value.",
                 name
-            );
-        } else if err == bun_core::err!("MissingValue") {
-            bun_core::pretty_errorln!(
+            ),
+            crate::Error::MissingValue => bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> The argument '{}' requires a value but none was supplied.",
                 name
-            );
-        } else if err == bun_core::err!("InvalidArgument") {
-            bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name);
-        } else {
-            bun_core::pretty_errorln!(
+            ),
+            crate::Error::InvalidArgument => {
+                bun_core::pretty_errorln!("<red>error<r><d>:<r> Invalid Argument '{}'", name)
+            }
+            _ => bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> {} while parsing argument '{}'",
-                bstr::BStr::new(err.name()),
+                err,
                 name
-            );
+            ),
         }
         bun_core::Output::flush();
         Ok(())
     }
 }
 
-#[cfg(test)]
-fn test_diag(diag: Diagnostic, err: bun_core::Error, expected: &[u8]) {
-    // TODO(port): std.io.fixedBufferStream — Diagnostic.report ignores the writer
-    // and goes through Output, so this helper cannot capture output the same way.
-    let mut buf = [0u8; 1024];
-    let _ = &mut buf;
-    diag.report((), err).expect("unreachable");
-    let _ = expected;
-    // TODO(port): assert against captured Output
-}
-
 #[derive(Clone, Copy)]
 pub struct Help {
     /// The description text exactly as written in the param spec — may still
-    /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which (like
-    /// Zig's `clap.help`) emit it verbatim, and as the source for the ANSI form
+    /// contain `<tag>` colour markup. Used by [`help`]/[`help_ex`], which
+    /// emit it verbatim, and as the source for the ANSI form
     /// built lazily by [`pretty_help_desc`] on the `bun --help` colour path.
     pub msg: &'static [u8],
     /// `msg` with `<tag>` colour markup stripped — the non-TTY / piped help form.
@@ -443,20 +410,10 @@ impl Default for Help {
 }
 
 /// Options that can be set to customize the behavior of parsing.
+#[derive(Default)]
 pub struct ParseOptions<'a> {
-    // PORT NOTE: `mem.Allocator param` field deleted — non-AST crate uses
-    // the global mimalloc.
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
-}
-
-impl<'a> Default for ParseOptions<'a> {
-    fn default() -> Self {
-        Self {
-            diagnostic: None,
-            stop_after_positional_at: 0,
-        }
-    }
 }
 
 // Help/usage/error rendering — none of this is on the cold-start hot chain
@@ -478,12 +435,12 @@ fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
 /// output is actually requested. That `<tag>`→ANSI rewrite only ever runs on
 /// `bun --help` / `bun run --help`; `--print` and ordinary runs never reach this
 /// path, so they pay neither the per-invocation reparse nor the extra rodata a
-/// baked-in `msg_ansi` array would cost on every flag and subcommand. (Zig did
-/// the rewrite at `comptime` via `Output.prettyFmt` inside
-/// `clap.simpleHelpBunTopLevel`; the colour case is rare enough that doing it
+/// baked-in `msg_ansi` array would cost on every flag and subcommand. (The
+/// colour case is rare enough that doing the rewrite
 /// lazily at runtime is the better trade for binary size.)
 #[cold]
 #[inline(never)]
+#[allow(clippy::disallowed_methods)] // template is a runtime help-string parameter
 fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     if Output::enable_ansi_colors_stdout() {
         std::borrow::Cow::Owned(bun_core::output::pretty_fmt_runtime(param.id.msg, true))
@@ -498,13 +455,7 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.value
 }
 
-// TODO(port): `comptime params: []const Param(Id)` as a type parameter has no
-// stable-Rust equivalent. `params` is carried at runtime; a proc-macro could
-// restore the per-table monomorphization.
 pub struct Args<Id: 'static> {
-    // PORT NOTE: Zig stored `arena: bun.ArenaAllocator` here and `deinit` freed it.
-    // Non-AST crate → arena removed; `ComptimeClap` owns its allocations.
-    // PERF(port): was arena bulk-free — profile if hot.
     pub clap: ComptimeClap<Id>,
     pub exe_arg: Option<&'static [u8]>,
 }
@@ -546,14 +497,10 @@ impl<Id: 'static> Args<Id> {
 pub fn parse<Id: 'static>(
     params: &'static [Param<Id>],
     opt: ParseOptions<'_>,
-) -> Result<Args<Id>, bun_core::Error> {
-    // TODO(port): narrow error set
+) -> crate::Result<Args<Id>> {
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
 
-    // PORT NOTE: Zig reused `iter.arena` as the allocator for `parseEx` and
-    // moved it into `res.arena`. Arena removed in port; ownership flows through
-    // `ComptimeClap` directly.
     let clap = parse_ex::<Id, _>(
         params,
         &mut iter,
@@ -571,7 +518,7 @@ pub fn parse<Id: 'static>(
 pub fn parse_with_table<Id: 'static>(
     table: &'static ConvertedTable,
     opt: ParseOptions<'_>,
-) -> Result<Args<Id>, bun_core::Error> {
+) -> crate::Result<Args<Id>> {
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
     let clap = ComptimeClap::<Id>::parse_with_table(
@@ -595,11 +542,10 @@ pub fn parse_ex<Id: 'static, I>(
     params: &'static [Param<Id>],
     iter: &mut I,
     opt: ParseOptions<'_>,
-) -> Result<ComptimeClap<Id>, bun_core::Error>
+) -> crate::Result<ComptimeClap<Id>>
 where
     I: args::ArgIter<'static>,
 {
-    // TODO(port): narrow error set
     ComptimeClap::<Id>::parse(params, iter, opt)
 }
 
@@ -617,18 +563,15 @@ pub fn help_full<W, Id, E, C>(
     context: &C,
     help_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
-    // TODO(port): narrow error set
     let max_spacing: usize = 'blk: {
         let mut res: usize = 0;
         for param in params {
-            // TODO(port): std.io.countingWriter(io.null_writer) — using a local
-            // CountingWriter that discards output and counts bytes.
             let mut cs = CountingWriter::null();
             print_param(&mut cs, param, context, value_text)?;
             if res < cs.count {
@@ -646,7 +589,6 @@ where
         let ht = help_text(context, param).map_err(Into::into)?;
         // only print flag if description is defined
         if !ht.is_empty() {
-            // TODO(port): std.io.countingWriter(stream) — wrapping `stream`
             let mut cs = CountingWriter::wrap(stream);
             write!(cs.inner(), "\t")?;
             print_param(&mut cs, param, context, value_text)?;
@@ -656,7 +598,7 @@ where
                 stream.write_char(' ')?;
             }
             let ht2 = help_text(context, param).map_err(Into::into)?;
-            write!(stream, "\t{}\n", bstr::BStr::new(ht2))?;
+            writeln!(stream, "\t{}", bstr::BStr::new(ht2))?;
         }
     }
     Ok(())
@@ -669,11 +611,11 @@ fn print_param<W, Id, E, C>(
     param: &Param<Id>,
     context: &C,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
     if let Some(s) = param.names.short {
         write!(stream, "-{}", s as char)?;
@@ -694,7 +636,7 @@ where
 }
 
 /// Shared by `print_param` and `usage_full`: emit the ` <val>` / ` <val>?` /
-/// ` <val>...` suffix for a param's `takes_value`. Mirrors clap.zig:459/672.
+/// ` <val>...` suffix for a param's `takes_value`.
 #[cold]
 #[inline(never)]
 fn write_takes_value_suffix<W, Id, E, C>(
@@ -702,11 +644,11 @@ fn write_takes_value_suffix<W, Id, E, C>(
     param: &Param<Id>,
     context: &C,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
     match param.takes_value {
         Values::None => {}
@@ -742,11 +684,9 @@ where
 pub fn help_ex<W, Id>(
     stream: &mut W,
     params: &[Param<Id>],
-    // TODO(port): LIFETIMES.tsv classifies these as `fn(Param<Id>) -> &'static str`;
-    // using `&'static [u8]` to stay consistent with the bytes-not-str rule.
     help_text: fn(&Param<Id>) -> &'static [u8],
     value_text: fn(&Param<Id>) -> &'static [u8],
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
@@ -756,11 +696,11 @@ where
         value_text: fn(&Param<Id>) -> &'static [u8],
     }
 
-    fn help<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
+    fn help<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
         Ok((c.help_text)(p))
     }
 
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
+    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
         Ok((c.value_text)(p))
     }
 
@@ -778,9 +718,8 @@ where
 
 #[cold]
 #[inline(never)]
-pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
-    Output::pretty(format_args!("\n"));
+pub fn simple_print_param(param: &Param<Help>) -> crate::Result<()> {
+    bun_core::pretty!("\n");
     if let Some(s) = param.names.short {
         if param.takes_value != Values::None && param.names.long.is_none() {
             bun_core::pretty!("  <cyan>-{}<r><d><cyan>=\\<val\\><r>", s as char);
@@ -788,13 +727,13 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
             bun_core::pretty!("  <cyan>-{}<r>", s as char);
         }
     } else {
-        Output::pretty(format_args!("    "));
+        bun_core::pretty!("    ");
     }
     if let Some(l) = param.names.long {
         if param.names.short.is_some() {
-            Output::pretty(format_args!(", "));
+            bun_core::pretty!(", ");
         } else {
-            Output::pretty(format_args!("  "));
+            bun_core::pretty!("  ");
         }
 
         if param.takes_value != Values::None {
@@ -803,7 +742,7 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
             bun_core::pretty!("<cyan>--{}<r>", bstr::BStr::new(l));
         }
     } else {
-        Output::pretty(format_args!("    "));
+        bun_core::pretty!("    ");
     }
     Ok(())
 }
@@ -828,6 +767,11 @@ fn param_display_width(param: &Param<Help>) -> usize {
 fn compute_max_help_spacing(params: &[Param<Help>]) -> usize {
     let mut res: usize = 2;
     for param in params {
+        // Params with no help text are hidden (skipped by `simple_help` /
+        // `simple_help_bun_top_level`), so they must not widen the column.
+        if get_help_simple(param).is_empty() {
+            continue;
+        }
         res = res.max(param_display_width(param));
     }
     res
@@ -854,40 +798,33 @@ pub fn simple_help(params: &[Param<Help>]) {
         let spaces_after = vec![b' '; num_spaces_after];
 
         simple_print_param(param).expect("unreachable");
-        // Zig's `Output.pretty("  {s}  {s}", …)` (clap.zig:567) only runs prettyFmt
-        // over the comptime template, so `<tag>` markers inside `desc_text` leak
-        // through verbatim there. That is observably wrong (`bun run --help` prints
-        // literal `<d>$cwd<r>`); `pretty_help_desc` resolves the `<tag>` markup
+        // `pretty_help_desc` resolves the `<tag>` markup
         // (ANSI on a colour TTY, stripped otherwise) so `--help` output is
         // tag-clean regardless of which helper a command uses.
         let desc = pretty_help_desc(param);
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "  {}  {}",
             bstr::BStr::new(&spaces_after),
             bstr::BStr::new(desc.as_ref()),
-        ));
+        );
     }
 }
 
 #[cold]
 #[inline(never)]
 pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
-    // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
-    // `@compileError` on overflow, plus uses `inline for` + comptime string
-    // concat (`space_buf[..n] ++ desc_text`). None of that is const-evaluable
-    // in Rust over a slice param. Runtime equivalent below; could macro-gen.
+    // `computed_max_spacing` is not const-evaluable over a
+    // slice param, so the overflow check is a runtime debug_assert below.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
 
     let computed_max_spacing: usize = compute_max_help_spacing(params);
 
-    // Zig: @compileError; here a debug-time assert.
     debug_assert!(
         computed_max_spacing <= MAX_SPACING,
         "a parameter is too long to be nicely printed in `bun --help`"
     );
 
-    // PERF(port): was `inline for` + comptime string concat — profile if hot.
     for param in params {
         if !(param.names.short.is_none() && param.names.long.is_none()) {
             let desc_text = get_help_simple(param);
@@ -897,16 +834,14 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
                 let total_len = param_display_width(param);
                 let num_spaces_after = MAX_SPACING - total_len;
 
-                // Zig: Output.pretty(space_buf[0..n] ++ desc_text, .{}) — the concat
-                // is the *format string*, so `<tag>` markers inside `desc_text` are
-                // rewritten at `comptime`. Mirror that via `pretty_help_desc`, which
+                // `pretty_help_desc`
                 // resolves the markup (ANSI on a colour TTY, stripped otherwise).
                 let desc = pretty_help_desc(param);
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "{}{}",
                     bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
                     bstr::BStr::new(desc.as_ref()),
-                ));
+                );
             }
         }
     }
@@ -915,7 +850,7 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
 /// A wrapper around help_ex that takes a `Param<Help>`.
 #[cold]
 #[inline(never)]
-pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
+pub fn help<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> crate::Result<()> {
     help_ex(stream, params, get_help_simple, get_value_simple)
 }
 
@@ -931,14 +866,12 @@ pub fn usage_full<W, Id, E, C>(
     params: &[Param<Id>],
     context: &C,
     value_text: fn(&C, &Param<Id>) -> Result<&'static [u8], E>,
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
-    E: Into<bun_core::Error>,
+    E: Into<crate::Error>,
 {
-    // TODO(port): narrow error set
-    // TODO(port): std.io.countingWriter(stream)
     let mut cos = CountingWriter::wrap(stream);
     for param in params {
         let Some(name) = param.names.short else {
@@ -949,8 +882,7 @@ where
         }
 
         if cos.count == 0 {
-            // PORT NOTE: Zig wrote "[-" to `stream` (not `cs`), bypassing the
-            // counter. Preserving that quirk by writing to the inner writer.
+            // "[-" goes to the inner writer (not `cs`), bypassing the counter.
             write!(cos.inner(), "[-")?;
         }
         cos.write_char(name as char)?;
@@ -971,8 +903,7 @@ where
             b"--"
         };
 
-        // Zig had a workaround `@as([*]const u8, @ptrCast(s))[0..1]` for taking
-        // a 1-byte slice of the short char. Rust expresses this as a 1-elem array.
+        // A 1-elem array gives a 1-byte slice of the short char.
         let short_buf;
         let name: &[u8] = if let Some(s) = param.names.short {
             short_buf = [s];
@@ -1014,7 +945,7 @@ pub fn usage_ex<W, Id>(
     stream: &mut W,
     params: &[Param<Id>],
     value_text: fn(&Param<Id>) -> &'static [u8],
-) -> Result<(), bun_core::Error>
+) -> crate::Result<()>
 where
     W: fmt::Write,
     Id: Copy,
@@ -1023,7 +954,7 @@ where
         value_text: fn(&Param<Id>) -> &'static [u8],
     }
 
-    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> Result<&'static [u8], bun_core::Error> {
+    fn value<Id>(c: &Context<Id>, p: &Param<Id>) -> crate::Result<&'static [u8]> {
         Ok((c.value_text)(p))
     }
 
@@ -1033,16 +964,8 @@ where
 /// A wrapper around usage_ex that takes a `Param<Help>`.
 #[cold]
 #[inline(never)]
-pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> Result<(), bun_core::Error> {
+pub fn usage<W: fmt::Write>(stream: &mut W, params: &[Param<Help>]) -> crate::Result<()> {
     usage_ex(stream, params, get_value_simple)
-}
-
-#[cfg(test)]
-fn test_usage(expected: &[u8], params: &[Param<Help>]) -> Result<(), bun_core::Error> {
-    let mut buf = Vec::<u8>::with_capacity(1024);
-    usage(&mut bun_core::fmt::VecWriter(&mut buf), params)?;
-    assert_eq!(expected, &buf[..]);
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1235,7 +1158,7 @@ mod tests {
         assert_eq!(MACRO_PARAMS[1].takes_value, Values::OneOptional);
         assert_eq!(MACRO_PARAMS[1].id.value, b"STR");
 
-        // Aliases — proc-macro restores the comptime alias array the runtime parser drops.
+        // Aliases — the proc-macro restores the static alias array the runtime parser drops.
         assert_eq!(
             MACRO_PARAMS[2].names.long,
             Some(b"test-name-pattern" as &[u8])
@@ -1276,5 +1199,3 @@ mod tests {
         assert_eq!(CT_TABLE.converted[CT_CONFIG_IDX].takes_value, Values::One);
     }
 }
-
-// ported from: src/clap/clap.zig

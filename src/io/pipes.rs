@@ -1,8 +1,12 @@
 use core::ffi::c_void;
 
-use bun_sys::{Fd, FdExt};
+use bun_sys::Fd;
+#[cfg(not(windows))]
+use bun_sys::FdExt;
 
-use crate::{FilePollFlag, FilePollRef, Owner};
+#[cfg(target_os = "macos")]
+use crate::FilePollFlag;
+use crate::{FilePollRef, Owner};
 
 pub enum PollOrFd {
     Poll(FilePollRef),
@@ -47,9 +51,6 @@ impl PollOrFd {
         }
     }
 
-    // TODO(port): Zig's `comptime onCloseFn: anytype` allowed passing `void` for
-    // "no callback" (checked via `@TypeOf(onCloseFn) != void`). Represented here
-    // as `Option<F>`; callers that passed `{}` should pass `None::<fn(*mut c_void)>`.
     pub fn close_impl<F>(
         &mut self,
         ctx: Option<*mut c_void>,
@@ -58,9 +59,13 @@ impl PollOrFd {
     ) where
         F: FnOnce(*mut c_void),
     {
+        #[cfg(windows)]
+        let _ = close_fd;
         let fd = self.get_fd();
-        #[allow(unused_mut)]
+        #[cfg(target_os = "macos")]
         let mut close_async = true;
+        #[cfg(all(not(target_os = "macos"), not(windows)))]
+        let close_async = true;
         if matches!(self, PollOrFd::Poll(_)) {
             // workaround kqueue bug.
             // 1) non-blocking FIFO
@@ -72,7 +77,7 @@ impl PollOrFd {
             // 7) ON ANOTHER THREAD: close(3) = 0,
             // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
             // 9) ??? No more events for fd 2
-            // PORT NOTE: reshaped for borrowck — take ownership of the Box before
+            // Take ownership of the Box before
             // calling deinit_force_unregister, then leave self = Closed.
             let old = core::mem::replace(self, PollOrFd::Closed);
             if let PollOrFd::Poll(poll) = old {
@@ -84,7 +89,7 @@ impl PollOrFd {
                         close_async = false;
                     }
                 }
-                // Consumes the underlying allocation (Zig: poll.deinitForceUnregister()).
+                // Consumes the underlying allocation.
                 poll.deinit_force_unregister();
             }
         }
@@ -108,9 +113,8 @@ impl PollOrFd {
                 }
             }
             if let Some(f) = on_close_fn {
-                // SAFETY: Zig: onCloseFn(@ptrCast(@alignCast(ctx.?))) — caller
-                // guarantees ctx is Some and properly aligned for the callback's
-                // expected pointee type.
+                // SAFETY: caller guarantees ctx is Some and properly aligned
+                // for the callback's expected pointee type.
                 f(ctx.expect("ctx must be Some when on_close_fn is provided"));
             }
         } else {
@@ -142,5 +146,3 @@ pub enum ReadState {
     /// Received an EAGAIN
     Drained,
 }
-
-// ported from: src/io/pipes.zig

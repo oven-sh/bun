@@ -1,11 +1,9 @@
-use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
-// TODO(port): move to jsc_sys
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
@@ -44,8 +42,8 @@ bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
 
 impl EventLoopTaskNoContext {
     /// Deallocates `this`
-    pub fn run(this: *mut EventLoopTaskNoContext) {
-        // SAFETY: `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
+    pub unsafe fn run(this: *mut EventLoopTaskNoContext) {
+        // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
         unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
     }
 
@@ -77,7 +75,9 @@ impl ConcurrentCppTask {
         // is the centralised non-null deref proof. Valid until `run` consumes it.
         let maybe_vm = EventLoopTaskNoContext::opaque_ref(cpp_task).get_vm();
         drop(self);
-        EventLoopTaskNoContext::run(cpp_task);
+        // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
+        // `opaque_ref` above proved it non-null and it has not yet been freed — `run` consumes it here.
+        unsafe { EventLoopTaskNoContext::run(cpp_task) };
         if let Some(vm) = maybe_vm {
             vm.event_loop_shared().unref_concurrently();
         }
@@ -85,7 +85,7 @@ impl ConcurrentCppTask {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
+pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNoContext) {
     crate::mark_binding!();
     // `EventLoopTaskNoContext` is an `opaque_ffi!` ZST handle; `opaque_ref` is
     // the centralised non-null deref proof. C++ just handed it over.
@@ -97,5 +97,3 @@ pub extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoopTaskNo
         workpool_task: WorkPoolTask::default(),
     });
 }
-
-// ported from: src/jsc/CppTask.zig

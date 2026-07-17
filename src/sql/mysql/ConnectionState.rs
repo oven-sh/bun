@@ -8,5 +8,3 @@ pub enum ConnectionState {
     Connected,
     Failed,
 }
-
-// ported from: src/sql/mysql/ConnectionState.zig

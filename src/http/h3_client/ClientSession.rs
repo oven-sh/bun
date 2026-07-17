@@ -1,14 +1,12 @@
 //! One QUIC connection to an origin. Owns its UDP endpoint via quic.c and
 //! multiplexes `Stream`s, each bound 1:1 to an `HTTPClient`. The `qsocket`
 //! pointer becomes dangling after `callbacks.onConnClose`, so every accessor
-//! checks `closed` first. See `src/http/H3Client.zig` for the module-level
-//! overview.
+//! checks `closed` first.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_core::err;
 use bun_core::strings;
 use bun_uws::quic;
 
@@ -144,7 +142,26 @@ impl ClientSession {
         }
     }
 
-    pub fn detach(&mut self, stream: *mut Stream) {
+    pub fn resume_receive_by_http_id(&mut self, async_http_id: u32) -> bool {
+        for &stream_ptr in self.pending.iter() {
+            let stream = stream_mut(stream_ptr);
+            let Some(client) = stream.client else {
+                continue;
+            };
+            if client_mut(client).async_http_id != async_http_id {
+                continue;
+            }
+            if core::mem::take(&mut stream.read_paused) {
+                if let Some(qs) = stream.qstream_mut() {
+                    qs.want_read(true);
+                }
+            }
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn detach(&mut self, stream: *mut Stream) {
         let st = stream_mut(stream);
         if let Some(cl) = st.client {
             client_mut(cl).h3 = None;
@@ -173,8 +190,8 @@ impl ClientSession {
         unsafe { ClientSession::deref(self) };
     }
 
-    pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
-        // PORT NOTE: reshaped for borrowck — capture client ptr before detach() invalidates stream.
+    pub fn fail(&mut self, stream: *mut Stream, err: crate::Error) {
+        // Capture the client ptr before detach() invalidates `stream`.
         let client = stream_mut(stream).client;
         stream_mut(stream).abort();
         self.detach(stream);
@@ -190,8 +207,8 @@ impl ClientSession {
     /// standard h2/h3 client behavior for the GOAWAY / stateless-reset /
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
-    pub fn retry_or_fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
-        // PORT NOTE: reshaped for Stacked Borrows like `fail` below — `detach()`
+    pub fn retry_or_fail(&mut self, stream: *mut Stream, err: crate::Error) {
+        // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
         // `client_ptr` across `detach` and only form `&mut` afterward.
@@ -234,10 +251,9 @@ impl ClientSession {
     }
 
     pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // PORT NOTE: Zig iterates `pending.items` and calls `this.fail` (which
-        // mutates `pending`) mid-loop. Rust borrowck forbids reborrowing
-        // `&mut self` while the iterator holds `&self.pending`, and only one
-        // entry can match — so locate first via raw-ptr reads, then act.
+        // `fail` mutates `pending`, so it cannot be called while the iterator
+        // holds `&self.pending`, and only one entry can match — so locate
+        // first via raw-ptr reads, then act.
         let mut found: *mut Stream = core::ptr::null_mut();
         for &stream_ptr in self.pending.iter() {
             // pending entries are live until detach(); `stream_ref` reads the
@@ -253,7 +269,7 @@ impl ClientSession {
             }
         }
         if !found.is_null() {
-            self.fail(found, err!(Aborted));
+            self.fail(found, crate::Error::Aborted);
             return true;
         }
         false
@@ -278,7 +294,7 @@ impl ClientSession {
         let client = client_mut(client_ptr);
 
         if client.signals.get(Signal::Aborted) {
-            return self.fail(stream, err!(Aborted));
+            return self.fail(stream, crate::Error::Aborted);
         }
 
         if st.status_code != 0 && !st.headers_delivered {
@@ -316,9 +332,9 @@ impl ClientSession {
                 return self.retry_or_fail(
                     stream,
                     if st.status_code == 0 {
-                        err!(HTTP3StreamReset)
+                        crate::Error::HTTP3StreamReset
                     } else {
-                        err!(ConnectionClosed)
+                        crate::Error::ConnectionClosed
                     },
                 );
             }
@@ -449,10 +465,7 @@ pub(super) fn session_mut<'a>(p: *mut ClientSession) -> &'a mut ClientSession {
     unsafe { &mut *p }
 }
 
-fn apply_headers(
-    stream: &mut Stream,
-    client: &mut HTTPClient,
-) -> Result<HeaderResult, bun_core::Error> {
+fn apply_headers(stream: &mut Stream, client: &mut HTTPClient) -> crate::Result<HeaderResult> {
     // SAFETY: decoded_headers borrow the lsquic hset, which is deep-copied by
     // `clone_metadata` inside the same lsquic callback before lsquic frees it
     // — see `HTTPClient::apply_multiplexed_headers` contract.
@@ -462,7 +475,7 @@ fn apply_headers(
 fn finish(client: &mut HTTPClient) {
     if let Some(cl) = client.state.content_length {
         if client.state.total_body_received != cl {
-            return client.fail_from_h2(err!(HTTP3ContentLengthMismatch));
+            return client.fail_from_h2(crate::Error::HTTP3ContentLengthMismatch);
         }
     }
     client.progress_update_h3();
@@ -475,5 +488,3 @@ impl Drop for ClientSession {
         // `bun.destroy(this)` is handled by `deref()` via heap::take.
     }
 }
-
-// ported from: src/http/h3_client/ClientSession.zig

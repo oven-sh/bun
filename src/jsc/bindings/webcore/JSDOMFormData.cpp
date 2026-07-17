@@ -373,9 +373,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getBody(JSC::JS
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameStr = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto name = nameStr->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLNullable<IDLUnion<IDLUSVString, IDLInterface<Blob>>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.get(name))));
 }
@@ -395,9 +393,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_getAllBody(JSC:
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto* nameStr = argument0.value().toString(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(throwScope, {});
-    auto name = nameStr->view(lexicalGlobalObject);
+    auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     auto entries = impl.getAll(name);
     JSC::JSArray* result = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, 0);
@@ -646,8 +642,10 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
         auto& key = entry.name;
         auto& value = entry.data;
         auto ident = Identifier::fromString(vm, key);
+        auto index = JSC::parseIndex(ident);
         if (seenKeys.contains(key)) {
-            JSValue jsValue = obj->getDirect(vm, ident);
+            JSValue jsValue = index.has_value() ? obj->getDirectIndex(lexicalGlobalObject, index.value()) : obj->getDirect(vm, ident);
+            RETURN_IF_EXCEPTION(throwScope, {});
             if (jsValue.isString() || jsValue.inherits<JSBlob>()) {
                 // Make sure this runs before the deferral scope is called.
                 JSValue resultValue = toJSValue(value);
@@ -670,7 +668,11 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
                     array->initializeIndex(initializationScope, 1, resultValue);
                 }
 
-                obj->putDirect(vm, ident, array, 0);
+                if (index.has_value())
+                    obj->putDirectIndex(lexicalGlobalObject, index.value(), array);
+                else
+                    obj->putDirect(vm, ident, array, 0);
+                RETURN_IF_EXCEPTION(throwScope, {});
             } else if (jsValue.isObject() && jsValue.getObject()->inherits<JSC::JSArray>()) {
                 JSC::JSArray* array = uncheckedDowncast<JSC::JSArray>(jsValue.getObject());
                 JSValue jsValue = toJSValue(value);

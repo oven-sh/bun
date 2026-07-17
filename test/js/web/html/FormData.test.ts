@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -251,6 +252,90 @@ describe("FormData", () => {
       throw "should have thrown";
     } catch (e: any) {
       expect(typeof e.message).toBe("string");
+    }
+  });
+
+  // RFC 2045 §5.1 / RFC 7231 §3.1.1.1: media type/subtype and parameter
+  // attribute names are case-insensitive; the boundary VALUE is byte-exact.
+  describe("Content-Type case-insensitivity", () => {
+    const body = '--X\r\nContent-Disposition: form-data; name="a"\r\n\r\nhello\r\n--X--\r\n';
+    for (const C of [Response, Request] as const) {
+      const make = (b: string, ct: string) =>
+        C === Response
+          ? new Response(b, { headers: { "Content-Type": ct } })
+          : new Request("http://x/", { method: "POST", body: b, headers: { "Content-Type": ct } });
+
+      describe.each([
+        "multipart/form-data; boundary=X",
+        "Multipart/Form-Data; boundary=X",
+        "multipart/form-data; Boundary=X",
+        "Multipart/Form-Data; Boundary=X",
+        "MULTIPART/FORM-DATA; BOUNDARY=X",
+      ])(`${C.name}: %s`, ct => {
+        it("parses", async () => {
+          const fd = await make(body, ct).formData();
+          expect(fd.get("a")).toBe("hello");
+          expect([...fd.keys()]).toEqual(["a"]);
+        });
+      });
+
+      it(`${C.name}: boundary value is matched case-sensitively`, async () => {
+        const bodyAbC = '--AbC\r\nContent-Disposition: form-data; name="a"\r\n\r\nhello\r\n--AbC--\r\n';
+        const fd = await make(bodyAbC, "multipart/form-data; Boundary=AbC").formData();
+        expect(fd.get("a")).toBe("hello");
+        await expect(make(bodyAbC, "multipart/form-data; boundary=abc").formData()).rejects.toThrow();
+      });
+
+      it(`${C.name}: application/x-www-form-urlencoded matches case-insensitively`, async () => {
+        for (const ct of ["application/x-www-form-urlencoded", "Application/X-WWW-Form-URLEncoded"]) {
+          const fd = await make("a=hello&b=2", ct).formData();
+          expect(fd.get("a")).toBe("hello");
+          expect(fd.get("b")).toBe("2");
+        }
+      });
+
+      it(`${C.name}: unrelated content-type still rejects`, async () => {
+        await expect(make(body, "text/plain").formData()).rejects.toThrow();
+      });
+    }
+  });
+
+  // RFC 2183 §2: the disposition type is a case-insensitive token.
+  // RFC 9112 §5.6.3: OWS = *( SP / HTAB ), so HTAB is valid after the colon.
+  describe("Content-Disposition: form-data token + OWS", () => {
+    const boundary = "BX7";
+    const mk = (hdr: string) => `--${boundary}\r\n${hdr}\r\n\r\nv\r\n--${boundary}--\r\n`;
+    const headers = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
+
+    for (const C of [Response, Request] as const) {
+      const make = (body: string) =>
+        C === Response ? new Response(body, { headers }) : new Request("http://x/", { method: "POST", body, headers });
+
+      it.each([
+        ["lowercase", `Content-Disposition: form-data; name="k"`],
+        ["Form-Data", `Content-Disposition: Form-Data; name="k"`],
+        ["FORM-DATA", `Content-Disposition: FORM-DATA; name="k"`],
+        ["mixed case header + token", `CONTENT-DISPOSITION: Form-Data; NAME="k"`],
+        ["HTAB after colon", `Content-Disposition:\tform-data; name="k"`],
+        ["SP + HTAB after colon", `Content-Disposition: \t form-data; name="k"`],
+        ["HTAB after semicolon", `Content-Disposition: form-data;\tname="k"`],
+      ])(`${C.name}: %s`, async (_label, hdr) => {
+        const fd = await make(mk(hdr)).formData();
+        expect([...fd.entries()]).toEqual([["k", "v"]]);
+      });
+
+      it(`${C.name}: file part with Form-Data + HTAB OWS`, async () => {
+        const body =
+          `--${boundary}\r\n` +
+          `Content-Disposition:\tForm-Data; name="f"; filename="a.txt"\r\n` +
+          `Content-Type: text/plain\r\n\r\n` +
+          `hello\r\n--${boundary}--\r\n`;
+        const fd = await make(body).formData();
+        const file = fd.get("f") as File;
+        expect(file).toBeInstanceOf(File);
+        expect(file.name).toBe("a.txt");
+        expect(await file.text()).toBe("hello");
+      });
     }
   });
 
@@ -663,13 +748,18 @@ describe("FormData", () => {
       formData.get("foo")!.type;
       return formData;
     }
-    for (let i = 0; i < 100000; i++) {
+    // Release needs 100k iterations so the freed name string's memory is actually
+    // reused; ASAN/debug detect the use-after-free deterministically, so far fewer
+    // iterations (with the same 20 forced GC cycles) are enough there.
+    const iterations = isASAN || isDebug ? 2000 : 100000;
+    const gcEvery = iterations / 20;
+    for (let i = 0; i < iterations; i++) {
       test();
-      if (i % 5000 === 0) {
+      if (i % gcEvery === 0) {
         Bun.gc();
       }
     }
-  });
+  }, 180000);
 });
 
 // https://github.com/oven-sh/bun/issues/14988
@@ -781,5 +871,136 @@ describe("Content-Type header propagation", () => {
       const res = await testFn(server);
       expect(res.status).toBe(200);
     });
+  });
+});
+
+it("drops multipart part Content-Type values containing control characters", async () => {
+  // A part header line is only terminated by an exact \r\n, so a bare LF can
+  // survive inside a part's Content-Type value. That value becomes the
+  // resulting File's `type` and is later written verbatim into outgoing
+  // request headers, so it must never contain control bytes.
+  const body =
+    "--formboundary\r\n" +
+    "Content-Type: image/png\nX-Injected-Header: injected-value\r\n" +
+    'Content-Disposition: form-data; name="evil"; filename="evil.bin"\r\n' +
+    "\r\n" +
+    "hello\r\n" +
+    "--formboundary\r\n" +
+    "Content-Type: text/plain\r\n" +
+    'Content-Disposition: form-data; name="good"; filename="good.txt"\r\n' +
+    "\r\n" +
+    "world\r\n" +
+    "--formboundary\r\n" +
+    "Content-Type: text/plain;\tcharset=utf-8\r\n" +
+    'Content-Disposition: form-data; name="tabbed"; filename="tabbed.txt"\r\n' +
+    "\r\n" +
+    "tabbed\r\n" +
+    "--formboundary--\r\n";
+
+  const response = new Response(body, {
+    headers: { "Content-Type": "multipart/form-data; boundary=formboundary" },
+  });
+  const formData = await response.formData();
+
+  const evil = formData.get("evil") as File;
+  expect(evil instanceof Blob).toBe(true);
+  // The part body itself is preserved; only the malformed Content-Type is discarded.
+  expect(await evil.text()).toBe("hello");
+  expect(evil.type).not.toContain("\n");
+  expect(evil.type).not.toContain("\r");
+  expect(evil.type.toLowerCase()).not.toContain("x-injected-header");
+
+  // A well-formed part Content-Type is still honored.
+  const good = formData.get("good") as File;
+  expect(good instanceof Blob).toBe(true);
+  expect(await good.text()).toBe("world");
+  expect(good.type).toBe("text/plain");
+
+  // An interior HTAB is valid optional whitespace, not an injection vector.
+  const tabbed = formData.get("tabbed") as File;
+  expect(tabbed instanceof Blob).toBe(true);
+  expect(await tabbed.text()).toBe("tabbed");
+  expect(tabbed.type).toBe("text/plain;\tcharset=utf-8");
+});
+
+test("FormData.toJSON merges duplicate numeric field names into an array", async () => {
+  // Field names that parse as array indices ("0", "1", ...) are stored as indexed
+  // properties on the serialized object; appending the same numeric name more than
+  // once must merge into an array (like any other duplicate key) instead of
+  // terminating the process during serialization.
+  const script = `
+    const fd = new FormData();
+    fd.append("0", "a");
+    fd.append("0", "b");
+    fd.append("0", "c");
+    fd.append("tag", "x");
+    fd.append("tag", "y");
+    console.log(JSON.stringify(fd.toJSON()));
+
+    // Same shape arriving from an untrusted multipart request body.
+    const body =
+      '--foo\\r\\nContent-Disposition: form-data; name="0"\\r\\n\\r\\nfirst\\r\\n--foo\\r\\nContent-Disposition: form-data; name="0"\\r\\n\\r\\nsecond\\r\\n--foo--\\r\\n';
+    const parsed = await new Response(body, {
+      headers: { "Content-Type": "multipart/form-data; boundary=foo" },
+    }).formData();
+    console.log(JSON.stringify(parsed.toJSON()));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(['{"0":["a","b","c"],"tag":["x","y"]}', '{"0":["first","second"]}']);
+  expect(exitCode).toBe(0);
+});
+
+describe("USVString conversion of lone surrogates", () => {
+  const loneHigh = "a\uD800b";
+  const loneLow = "a\uDC00b";
+  const replaced = "a\uFFFDb";
+
+  it("get/getAll/has find an entry appended under a lone surrogate name", () => {
+    const formData = new FormData();
+    formData.append(loneHigh, "1");
+    formData.append(loneHigh, "2");
+
+    expect([...formData.keys()]).toEqual([replaced, replaced]);
+    expect(formData.has(loneHigh)).toBe(true);
+    expect(formData.get(loneHigh)).toBe("1");
+    expect(formData.getAll(loneHigh)).toEqual(["1", "2"]);
+
+    // the converted spelling names the same entry
+    expect(formData.get(replaced)).toBe("1");
+    expect(formData.getAll(replaced)).toEqual(["1", "2"]);
+  });
+
+  it("lone high and lone low surrogates both convert to U+FFFD", () => {
+    const formData = new FormData();
+    formData.append(loneLow, "low");
+    expect(formData.get(loneLow)).toBe("low");
+    expect(formData.get(loneHigh)).toBe("low");
+  });
+
+  it("finds a Blob entry appended under a lone surrogate name", async () => {
+    const formData = new FormData();
+    formData.append(loneHigh, new Blob(["bar"]), "mynameis.txt");
+
+    const entry = formData.get(loneHigh) as File;
+    expect(entry).toBeInstanceOf(Blob);
+    expect(entry.name).toBe("mynameis.txt");
+    expect(await entry.text()).toBe("bar");
+    expect(formData.getAll(loneHigh)).toHaveLength(1);
+  });
+
+  it("leaves valid surrogate pairs alone", () => {
+    const formData = new FormData();
+    formData.append("\u{1F600}", "emoji");
+    expect(formData.get("\u{1F600}")).toBe("emoji");
+    expect(formData.getAll("\u{1F600}")).toEqual(["emoji"]);
+    expect(formData.get("\uFFFD")).toBeNull();
   });
 });

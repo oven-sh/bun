@@ -1,18 +1,15 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter as ConsoleFormatter;
 use bun_core::ZigString;
 
 use super::DiffFormatter;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_property(
+pub(crate) fn to_have_property(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
+    // `defer this.postMatch(globalThis)` — guard owns `this` and calls post_match on drop.
     let this = scopeguard::guard(this, |this| this.post_match(global));
 
     let this_value = frame.this();
@@ -57,8 +54,10 @@ pub fn to_have_property(
         pass = !received_property.is_empty();
     }
 
-    if pass && expected_property.is_some() {
-        pass = received_property.jest_deep_equals(expected_property.unwrap(), global)?;
+    if pass {
+        if let Some(expected_property_value) = expected_property {
+            pass = received_property.jest_deep_equals(expected_property_value, global)?;
+        }
     }
 
     if not {
@@ -69,14 +68,13 @@ pub fn to_have_property(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one `*Formatter` across both `to_fmt` calls; in Rust each `to_fmt`
-    // takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
+    // Each `to_fmt` takes `&mut Formatter`, so use a second formatter for the second value (matches toBe.rs /
     // toInclude.rs / toStartWith.rs).
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
     if not {
-        if expected_property.is_some() {
+        if let Some(expected_property_value) = expected_property {
             let signature =
                 Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
             if !received_property.is_empty() {
@@ -86,7 +84,7 @@ pub fn to_have_property(
                     format_args!(
                         "\n\nExpected path: <green>{}<r>\n\nExpected value: not <green>{}<r>\n",
                         expected_property_path.to_fmt(&mut formatter),
-                        expected_property.unwrap().to_fmt(&mut formatter2),
+                        expected_property_value.to_fmt(&mut formatter2),
                     ),
                 );
             }
@@ -104,14 +102,14 @@ pub fn to_have_property(
         );
     }
 
-    if expected_property.is_some() {
+    if let Some(expected_property_value) = expected_property {
         let signature =
             Expect::get_signature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", false);
         if !received_property.is_empty() {
             // deep equal case
             let diff_format = DiffFormatter {
                 received: Some(received_property),
-                expected: expected_property,
+                expected: Some(expected_property_value),
                 global_this: Some(global),
                 ..Default::default()
             };
@@ -119,18 +117,13 @@ pub fn to_have_property(
             return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
         }
 
-        const FMT: &str = concat!(
-            "\n\nExpected path: <green>{}<r>\n\nExpected value: <green>{}<r>\n\n",
-            "Unable to find property\n",
-        );
-        // TODO(port): format_args! requires a literal; FMT inlined below to match Zig `++` concat.
         return this.throw(
             global,
             signature,
             format_args!(
                 "\n\nExpected path: <green>{}<r>\n\nExpected value: <green>{}<r>\n\nUnable to find property\n",
                 expected_property_path.to_fmt(&mut formatter),
-                expected_property.unwrap().to_fmt(&mut formatter2),
+                expected_property_value.to_fmt(&mut formatter2),
             ),
         );
     }
@@ -145,5 +138,3 @@ pub fn to_have_property(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveProperty.zig

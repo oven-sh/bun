@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use bun_paths::resolve_path;
 
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
@@ -51,22 +49,20 @@ pub struct ExecState {
 
 /// On Windows it is possible to get an EBUSY error very simply by running
 /// `cp myfile.txt myfile.txt mydir/` — two tasks race for the same dest. Bun
-/// ignores the EBUSY if at least one task succeeded for that dest. Spec:
-/// cp.zig `EbusyState`.
+/// ignores the EBUSY if at least one task succeeded for that dest.
 #[derive(Default)]
 pub struct EbusyState {
     pub tasks: Vec<*mut ShellCpTask>,
     pub idx: usize,
     pub main_exit_code: ExitCode,
     /// Absolute target paths that some task copied successfully — used to
-    /// suppress a sibling task's EBUSY on the same target. Spec: cp.zig
-    /// `EbusyState.absolute_targets` (`StringArrayHashMapUnmanaged(void)`).
-    pub absolute_targets: std::collections::HashSet<Vec<u8>>,
-    pub absolute_srcs: std::collections::HashSet<Vec<u8>>,
+    /// suppress a sibling task's EBUSY on the same target.
+    pub absolute_targets: bun_collections::StringSet,
+    pub absolute_srcs: bun_collections::StringSet,
 }
 
 impl Cp {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let mut opts = Opts::default();
         let (sources_start, target_idx) = {
             let args = Builtin::of(interp, cmd).args_slice();
@@ -80,7 +76,7 @@ impl Cp {
                     return Builtin::write_failing_error(interp, cmd, Kind::Cp.usage_string(), 1);
                 }
                 Err(e) => {
-                    return Builtin::fail_parse(interp, cmd, Kind::Cp, e, || {
+                    return Builtin::fail_parse(interp, cmd, Kind::Cp, &e, || {
                         Self::state_mut(interp, cmd).state = State::WaitingWriteErr
                     });
                 }
@@ -101,109 +97,103 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        loop {
-            #[allow(dead_code)]
-            enum Action {
-                Done(ExitCode),
-                Schedule { start: usize, target: usize },
-                Ebusy(ExitCode),
-            }
-            let action = match &mut Self::state_mut(interp, cmd).state {
-                State::Idle => panic!(
-                    "Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"
-                ),
-                State::Exec(exec) => {
-                    if exec.started {
-                        if exec.tasks_count == 0 && exec.output_done >= exec.output_waiting {
-                            let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
-                            exec.err = None;
-                            #[cfg(windows)]
-                            let act = if !exec.ebusy.tasks.is_empty() {
-                                Action::Ebusy(exit_code)
-                            } else {
-                                // Spec: `exec.ebusy.deinit()` — Drop handles it.
-                                Action::Done(exit_code)
-                            };
-                            #[cfg(not(windows))]
-                            let act = Action::Done(exit_code);
-                            act
+    pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
+        enum Action {
+            Done(ExitCode),
+            Schedule {
+                start: usize,
+                target: usize,
+            },
+            #[cfg(windows)]
+            Ebusy(ExitCode),
+        }
+        let action = match &mut Self::state_mut(interp, cmd).state {
+            State::Idle => panic!(
+                "Invalid state for \"Cp\": idle, this indicates a bug in Bun. Please file a GitHub issue"
+            ),
+            State::Exec(exec) => {
+                if exec.started {
+                    if exec.tasks_count == 0 && exec.output_done >= exec.output_waiting {
+                        let exit_code: ExitCode = if exec.err.is_some() { 1 } else { 0 };
+                        exec.err = None;
+                        #[cfg(windows)]
+                        let act = if !exec.ebusy.tasks.is_empty() {
+                            Action::Ebusy(exit_code)
                         } else {
-                            return Yield::suspended();
-                        }
-                    } else {
-                        exec.started = true;
-                        let n = (exec.target_idx - exec.sources_start) as u32;
-                        exec.tasks_count = n;
-                        Action::Schedule {
-                            start: exec.sources_start,
-                            target: exec.target_idx,
-                        }
-                    }
-                }
-                State::Ebusy(_) => {
-                    #[cfg(windows)]
-                    {
-                        return Self::ignore_ebusy_error_if_possible(interp, cmd);
-                    }
-                    #[cfg(not(windows))]
-                    panic!("Should only be called on Windows");
-                }
-                State::WaitingWriteErr => return Yield::failed(),
-                State::Done => return Builtin::done(interp, cmd, 0),
-            };
-            match action {
-                Action::Done(code) => {
-                    Self::state_mut(interp, cmd).state = State::Done;
-                    return Builtin::done(interp, cmd, code);
-                }
-                Action::Ebusy(exit_code) => {
-                    #[cfg(windows)]
-                    {
-                        let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
-                            unreachable!()
+                            // `Drop` frees the ebusy state here.
+                            Action::Done(exit_code)
                         };
-                        let mut ebusy = core::mem::take(&mut exec.ebusy);
-                        ebusy.idx = 0;
-                        ebusy.main_exit_code = exit_code;
-                        Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
-                        continue;
+                        #[cfg(not(windows))]
+                        let act = Action::Done(exit_code);
+                        act
+                    } else {
+                        return Yield::suspended();
                     }
-                    #[cfg(not(windows))]
-                    {
-                        let _ = exit_code;
-                        unreachable!();
+                } else {
+                    exec.started = true;
+                    let n = (exec.target_idx - exec.sources_start) as u32;
+                    exec.tasks_count = n;
+                    Action::Schedule {
+                        start: exec.sources_start,
+                        target: exec.target_idx,
                     }
                 }
-                Action::Schedule { start, target } => {
-                    let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
-                    let opts = Self::state_mut(interp, cmd).opts;
-                    let evtloop = Builtin::event_loop(interp, cmd);
-                    let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
-                    let operands = 1 + (target - start);
-                    let interp_ptr = interp.as_ctx_ptr();
-                    for i in start..target {
-                        let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
-                        let task = ShellCpTask::create(
-                            cmd,
-                            evtloop,
-                            opts,
-                            operands,
-                            src,
-                            tgt.clone(),
-                            cwd.clone(),
-                            interp_ptr,
-                        );
-                        // SAFETY: freshly heap-allocated.
-                        unsafe { ShellCpTask::schedule(task) };
-                    }
-                    return Yield::suspended();
+            }
+            State::Ebusy(_) => {
+                #[cfg(windows)]
+                {
+                    return Self::ignore_ebusy_error_if_possible(interp, cmd);
                 }
+                #[cfg(not(windows))]
+                panic!("Should only be called on Windows");
+            }
+            State::WaitingWriteErr => return Yield::failed(),
+            State::Done => return Builtin::done(interp, cmd, 0),
+        };
+        match action {
+            Action::Done(code) => {
+                Self::state_mut(interp, cmd).state = State::Done;
+                Builtin::done(interp, cmd, code)
+            }
+            #[cfg(windows)]
+            Action::Ebusy(exit_code) => {
+                let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state else {
+                    unreachable!()
+                };
+                let mut ebusy = core::mem::take(&mut exec.ebusy);
+                ebusy.idx = 0;
+                ebusy.main_exit_code = exit_code;
+                Self::state_mut(interp, cmd).state = State::Ebusy(ebusy);
+                Self::ignore_ebusy_error_if_possible(interp, cmd)
+            }
+            Action::Schedule { start, target } => {
+                let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                let opts = Self::state_mut(interp, cmd).opts;
+                let evtloop = Builtin::event_loop(interp, cmd);
+                let tgt = Builtin::of(interp, cmd).arg_bytes(target).to_vec();
+                let operands = 1 + (target - start);
+                let interp_ptr = interp.as_ctx_ptr();
+                for i in start..target {
+                    let src = Builtin::of(interp, cmd).arg_bytes(i).to_vec();
+                    let task = ShellCpTask::create(
+                        cmd,
+                        evtloop,
+                        opts,
+                        operands,
+                        src,
+                        tgt.clone(),
+                        cwd.clone(),
+                        interp_ptr,
+                    );
+                    // SAFETY: freshly heap-allocated.
+                    unsafe { ShellCpTask::schedule(task) };
+                }
+                Yield::suspended()
             }
         }
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         written: usize,
@@ -220,16 +210,15 @@ impl Cp {
         Self::next(interp, cmd)
     }
 
-    /// Spec: cp.zig `ignoreEbusyErrorIfPossible`. Windows-only post-processing
-    /// of tasks that failed with EBUSY: if some other task already succeeded
+    /// Windows-only post-processing of tasks that failed with EBUSY: if some
+    /// other task already succeeded
     /// for the same absolute src/tgt, the EBUSY is benign and the task is
     /// dropped; otherwise its error is surfaced via `print_shell_cp_task`.
     #[cfg(windows)]
     fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
-            // PORT NOTE: reshaped for borrowck — pop tasks one at a time
-            // (Zig iterated `tasks.items[idx..]` and bumped `idx` on the
-            // first non-ignorable hit so a re-entry resumes there).
+            // Pop tasks one at a time; `idx` is bumped on the first
+            // non-ignorable hit so a re-entry resumes there.
             let next = {
                 let State::Ebusy(eb) = &mut Self::state_mut(interp, cmd).state else {
                     unreachable!()
@@ -266,13 +255,12 @@ impl Cp {
             unreachable!()
         };
         let exit_code = eb.main_exit_code;
-        // Spec: `state.ebusy.state.deinit()` — Drop handles the sets/vec.
+        // `Drop` frees the ebusy sets/vec here.
         Self::state_mut(interp, cmd).state = State::Done;
         Builtin::done(interp, cmd, exit_code)
     }
 
-    /// Spec: cp.zig `onShellCpTaskDone`.
-    pub fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
+    pub(crate) fn on_shell_cp_task_done(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.tasks_count -= 1;
         }
@@ -282,15 +270,11 @@ impl Cp {
             let tref = unsafe { &mut *task };
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if let Some(err) = &tref.err {
-                    // Spec: cp.zig — defer the task to the ebusy phase.
-                    // PORT NOTE: cp.zig L215-221 reads
-                    //   `err.* == .sys and err.sys.getErrno() == .BUSY and (tgt_match) or (src_match)`
-                    // Zig `and` binds tighter than `or`, so this parses as
-                    //   `(is_sys && errno==BUSY && tgt_match) || src_match`
+                    // Defer the task to the ebusy phase. Note the precedence:
+                    //   `(is_sys && errno==EBUSY && tgt_match) || src_match`
                     // i.e. ANY sys error whose `path` equals `src_absolute` is
-                    // deferred regardless of errno. We mirror that precedence
-                    // exactly here for spec parity (even though it is almost
-                    // certainly a latent precedence bug upstream).
+                    // deferred regardless of errno; preserved deliberately for
+                    // compatibility.
                     let is_ebusy = matches!(err, ShellErr::Sys(sys)
                         if (sys.get_errno() == bun_sys::E::EBUSY
                                 && tref.tgt_absolute.as_deref()
@@ -305,10 +289,10 @@ impl Cp {
                     // Record successful absolute paths so a deferred EBUSY
                     // sibling can be suppressed.
                     if let Some(tgt) = tref.tgt_absolute.take() {
-                        exec.ebusy.absolute_targets.insert(tgt);
+                        bun_core::handle_oom(exec.ebusy.absolute_targets.insert(&tgt));
                     }
                     if let Some(src) = tref.src_absolute.take() {
-                        exec.ebusy.absolute_srcs.insert(src);
+                        bun_core::handle_oom(exec.ebusy.absolute_srcs.insert(&src));
                     }
                 }
             }
@@ -316,12 +300,11 @@ impl Cp {
         Self::print_shell_cp_task(interp, cmd, task).run(interp);
     }
 
-    /// Spec: cp.zig `printShellCpTask`.
     fn print_shell_cp_task(interp: &Interpreter, cmd: NodeId, task: *mut ShellCpTask) -> Yield {
         // SAFETY: task was heap-allocated in create(); reclaim.
         let mut task = unsafe { bun_core::heap::take(task) };
-        // Spec: cp.zig `task.takeOutput()`. The lock is uncontended here (all
-        // work-pool subtasks have finished) but the data lives inside it.
+        // The lock is uncontended here (all work-pool subtasks have
+        // finished) but the data lives inside it.
         let output = core::mem::take(&mut *task.verbose_output.lock());
         let output_task = OutputTask::<Cp>::new(cmd, OutputSrc::Arrlist(output));
 
@@ -330,14 +313,12 @@ impl Cp {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.err = Some(e);
             }
-            // Spec: else-arm `e.deinit()` — `e` drops here when not stored.
+            // `e` drops here when not stored.
             s
         });
         OutputTask::<Cp>::start(output_task, interp, errstr.as_deref())
     }
 }
-
-pub type ShellCpOutputTask = OutputTask<Cp>;
 
 impl OutputTaskVTable for Cp {
     fn write_err(
@@ -401,7 +382,7 @@ impl OutputTaskVTable for Cp {
     }
 }
 
-/// Spec: cp.zig `ShellCpTask`. Resolves src/tgt to absolute paths, decides
+/// Resolves src/tgt to absolute paths, decides
 /// which POSIX `cp` synopsis applies, then hands off to the node:fs async cp
 /// implementation.
 pub struct ShellCpTask {
@@ -413,18 +394,16 @@ pub struct ShellCpTask {
     pub src_absolute: Option<Vec<u8>>,
     pub tgt_absolute: Option<Vec<u8>>,
     pub cwd_path: Vec<u8>,
-    /// Spec: cp.zig `verbose_output_lock` + `verbose_output`. `cp_on_copy` is
-    /// invoked from work-pool threads (concurrently per copied file) while the
-    /// directory walk is still fanning out, so the buffer must live inside the
-    /// mutex — Zig's split lock-then-mutate pattern would alias `&mut self` in
-    /// Rust.
+    /// `cp_on_copy` is invoked from work-pool threads (concurrently per
+    /// copied file) while the directory walk is still fanning out, so the
+    /// buffer must live inside the mutex.
     pub verbose_output: bun_threading::Guarded<Vec<u8>>,
     pub err: Option<ShellErr>,
     pub task: ShellTask,
 }
 
 impl ShellCpTask {
-    pub fn create(
+    pub(crate) fn create(
         cmd: NodeId,
         evtloop: EventLoopHandle,
         opts: Opts,
@@ -453,12 +432,11 @@ impl ShellCpTask {
         bun_core::heap::into_raw(task)
     }
 
-    /// Spec: cp.zig `onCopyImpl` — appends `"{src} -> {dest}\n"` to the verbose
+    /// Appends `"{src} -> {dest}\n"` to the verbose
     /// buffer (printed to stdout once the cp finishes). Called from work-pool
     /// threads; serialised via `verbose_output`'s mutex.
     fn on_copy_impl(&self, src: &[u8], dest: &[u8]) {
         let mut out = self.verbose_output.lock();
-        // PORT NOTE: Zig used `writer.print("{s} -> {s}\n", .{src, dest})`.
         out.reserve(src.len() + dest.len() + 5);
         out.extend_from_slice(src);
         out.extend_from_slice(b" -> ");
@@ -466,12 +444,12 @@ impl ShellCpTask {
         out.push(b'\n');
     }
 
-    /// Spec: cp.zig `cpOnCopy`. Called from the node:fs `NewAsyncCpTask<true>`
+    /// Called from the node:fs `NewAsyncCpTask<true>`
     /// work-pool thread for every successfully-copied file. Records the pair
     /// for `-v`; on Windows the paths arrive as WTF-16 and are transcoded.
     /// Takes `&self` because subtasks fan out concurrently — the only mutated
     /// state is the locked `verbose_output` buffer.
-    pub fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
+    pub(crate) fn cp_on_copy(&self, src: &[bun_paths::OSPathChar], dest: &[bun_paths::OSPathChar]) {
         if !self.opts.verbose {
             return;
         }
@@ -489,7 +467,7 @@ impl ShellCpTask {
         }
     }
 
-    /// Spec: cp.zig `cpOnFinish` → `onSubtaskFinish`. Called when the node:fs
+    /// Called when the node:fs
     /// async cp completes (success or first error). Records the error (if any)
     /// and re-queues this `ShellCpTask` onto the JS thread so the interpreter
     /// can drain `verbose_output` / surface the error.
@@ -498,20 +476,20 @@ impl ShellCpTask {
     /// `this` is the live `heap::alloc`'d task originally passed to
     /// [`schedule`](Self::schedule); not touched again on this thread after
     /// return.
-    pub unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
+    pub(crate) unsafe fn cp_on_finish(this: *mut ShellCpTask, result: bun_sys::Maybe<()>) {
         // SAFETY: caller contract — `this` is live and exclusively owned by
         // this thread until `enqueue_to_event_loop` hands it off.
         unsafe {
             if let Err(e) = result {
-                (*this).err = Some(ShellErr::new_sys(e));
+                (*this).err = Some(ShellErr::new_sys(&e));
             }
             Self::enqueue_to_event_loop(this);
         }
     }
 
-    /// Spec: cp.zig `schedule` — `WorkPool.schedule(&this.task)`. Unlike most
-    /// shell builtins this does NOT use the generic [`ShellTask::schedule`]
-    /// trampoline (which auto-enqueues back to main on return): on the
+    /// Unlike most shell builtins this does NOT use the generic
+    /// [`ShellTask::schedule`] trampoline (which auto-enqueues back to main
+    /// on return): on the
     /// success path the [`ShellAsyncCpTask`](crate::node::fs::ShellAsyncCpTask)
     /// owns the bounce-back via `cp_on_finish`, so an unconditional post would
     /// double-enqueue. The embedded [`ShellTask`] is reused for its
@@ -519,7 +497,7 @@ impl ShellCpTask {
     ///
     /// # Safety
     /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
-    pub unsafe fn schedule(this: *mut ShellCpTask) {
+    pub(crate) unsafe fn schedule(this: *mut ShellCpTask) {
         use bun_threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
@@ -532,7 +510,7 @@ impl ShellCpTask {
         }
     }
 
-    /// Spec: cp.zig `runFromThreadPool` — recover `*ShellCpTask` from the
+    /// Recover `*ShellCpTask` from the
     /// intrusive `*WorkPoolTask`, run the impl, and on error post back
     /// immediately (success path defers the post to `cp_on_finish`).
     unsafe fn work_pool_callback(task: *mut crate::shell::interpreter::WorkPoolTask) {
@@ -552,26 +530,23 @@ impl ShellCpTask {
         }
     }
 
-    /// Spec: cp.zig `enqueueToEventLoop`. Post this task to the main-thread
+    /// Post this task to the main-thread
     /// concurrent queue; routed by `dispatch.rs` → [`run_from_main_thread`].
     ///
     /// # Safety
     /// `this` is the live `heap::alloc`'d task; not touched again on this
     /// thread after return.
     unsafe fn enqueue_to_event_loop(this: *mut ShellCpTask) {
-        // Reuse the generic `ShellTask` post-back (identical to Zig's manual
-        // `concurrent_task.{js,mini}.from(...)` + enqueue).
+        // Reuse the generic `ShellTask` post-back.
         // SAFETY: caller contract.
         unsafe { ShellTask::on_finish::<ShellCpTask>(this) };
     }
 
-    /// Spec: cp.zig `hasTrailingSep`.
     fn has_trailing_sep(path: &[u8]) -> bool {
         path.last()
-            .map_or(false, |&c| resolve_path::Platform::AUTO.is_separator(c))
+            .is_some_and(|&c| resolve_path::Platform::AUTO.is_separator(c))
     }
 
-    /// Spec: cp.zig `isDir`.
     fn is_dir(path: &bun_core::ZStr) -> bun_sys::Maybe<bool> {
         #[cfg(windows)]
         {
@@ -590,8 +565,8 @@ impl ShellCpTask {
         }
     }
 
-    /// Spec: cp.zig `runFromThreadPoolImpl`. Resolves src/tgt to absolute
-    /// paths, classifies them per the three POSIX `cp` synopses
+    /// Resolves src/tgt to absolute paths, classifies them per the three
+    /// POSIX `cp` synopses
     /// (<https://man7.org/linux/man-pages/man1/cp.1p.html>), then hands off to
     /// the node:fs async cp implementation.
     fn run_from_thread_pool_impl(&mut self) -> Option<ShellErr> {
@@ -602,9 +577,8 @@ impl ShellCpTask {
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
-            // PORT NOTE: `self.src` is the bare argv bytes (no NUL); the Zig
-            // path is `[:0]const u8` so `break :brk this.src` was already
-            // NUL-terminated. Re-terminate via the thread-local join buffer.
+            // `self.src` is the bare argv bytes (no NUL); re-terminate via
+            // the thread-local join buffer.
             resolve_path::join_z::<platform::Auto>(&[&self.src])
         } else {
             resolve_path::join_z::<platform::Auto>(&[&self.cwd_path, &self.src])
@@ -628,7 +602,7 @@ impl ShellCpTask {
         // need to create it.
         let src_is_dir = match Self::is_dir(src) {
             Ok(x) => x,
-            Err(e) => return Some(ShellErr::new_sys(e)),
+            Err(e) => return Some(ShellErr::new_sys(&e)),
         };
 
         // Any source directory without -R is an error.
@@ -657,7 +631,7 @@ impl ShellCpTask {
                 // If it has a trailing directory separator, it's a directory.
                 (Self::has_trailing_sep(tgt.as_bytes()), false)
             }
-            Err(e) => return Some(ShellErr::new_sys(e)),
+            Err(e) => return Some(ShellErr::new_sys(&e)),
         };
 
         let mut _copying_many = false;
@@ -711,11 +685,13 @@ impl ShellCpTask {
         self.tgt_absolute = Some(tgt.as_bytes().to_vec());
 
         let args = crate::node::fs::args::Cp {
-            src: bun_jsc::node::PathLike::String(bun_core::PathString::init(
+            src: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 self.src_absolute.as_deref().unwrap(),
+                false,
             )),
-            dest: bun_jsc::node::PathLike::String(bun_core::PathString::init(
+            dest: bun_jsc::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 self.tgt_absolute.as_deref().unwrap(),
+                false,
             )),
             flags: crate::node::fs::args::CpFlags {
                 mode: crate::node::fs::constants::Copyfile::from_raw(0),
@@ -726,8 +702,6 @@ impl ShellCpTask {
             },
         };
 
-        // PORT NOTE: Zig passed an `ArenaAllocator` for the async-cp
-        // bookkeeping; the Rust `NewAsyncCpTask` owns its allocations.
         match self.task.event_loop {
             EventLoopHandle::Js { .. } => {
                 let vm_ptr = self
@@ -737,9 +711,8 @@ impl ShellCpTask {
                     .cast::<bun_jsc::virtual_machine::VirtualMachine>();
                 // SAFETY: `Js` arm always has a live VM (set at interpreter
                 // construction); accessed read-only here for the
-                // global-object handle and event-loop pointer — same as Zig's
-                // `event_loop.js.getVmImpl()` from the work-pool thread.
-                // PORT NOTE: reshaped for borrowck — read the raw `global`
+                // global-object handle and event-loop pointer.
+                // Read the raw `global`
                 // field instead of `vm.global()` so the `&mut VirtualMachine`
                 // passed below doesn't overlap a `&JSGlobalObject` borrow.
                 let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };
@@ -763,8 +736,11 @@ impl ShellCpTask {
         None
     }
 
-    pub fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
-        // SAFETY: `this` is a live heap-allocated task.
+    /// # Safety
+    /// `this` must be a live `heap::alloc`'d task (see [`create`](Self::create));
+    /// ownership is consumed via [`Cp::on_shell_cp_task_done`].
+    pub(crate) fn run_from_main_thread(this: *mut ShellCpTask, interp: &Interpreter) {
+        // SAFETY: `this` is a live heap-allocated task per the caller's contract.
         let cmd = unsafe { (*this).cmd };
         Cp::on_shell_cp_task_done(interp, cmd, this);
     }
@@ -778,15 +754,17 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {
     const TASK_OFFSET: usize = core::mem::offset_of!(Self, task);
     fn run_from_thread_pool(_this: &mut Self) {
         // Not reached: `ShellCpTask::schedule` installs `work_pool_callback`
-        // directly (cp.zig does NOT use `InnerShellTask` — the generic
-        // trampoline auto-posts back, which would double-enqueue when the
-        // `ShellAsyncCpTask` later calls `cp_on_finish`).
+        // directly (the generic trampoline auto-posts back, which would
+        // double-enqueue when the `ShellAsyncCpTask` later calls
+        // `cp_on_finish`).
         debug_assert!(
             false,
             "ShellCpTask scheduled via ShellTask::schedule; use ShellCpTask::schedule"
         );
     }
     fn run_from_main_thread(this: *mut Self, interp: &Interpreter) {
+        // SAFETY: `ShellTask::run_from_main_thread` dispatch contract — `this`
+        // is the live heap-allocated task posted via `ShellTask::schedule`.
         Self::run_from_main_thread(this, interp)
     }
 }
@@ -859,5 +837,3 @@ impl FlagParser for Opts {
         }
     }
 }
-
-// ported from: src/shell/builtin/cp.zig

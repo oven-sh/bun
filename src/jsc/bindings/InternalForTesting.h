@@ -8,6 +8,10 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunction_arrayBufferViewHasBuffer);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_hasReifiedStatic);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_isASANEnabled);
 JSC_DECLARE_HOST_FUNCTION(jsFunction_BunString_toThreadSafeRefCountDelta);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_lowercaseHeaderNameSIMD);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_emitMemoryPressure);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_isMemoryPressureWatcherInstalled);
 
 }

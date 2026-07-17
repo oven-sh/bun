@@ -1,5 +1,3 @@
-use core::ffi::CStr;
-
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind};
 use crate::shell::interpreter::{Interpreter, NodeId};
 use crate::shell::io_writer::{ChildPtr, WriterTag};
@@ -20,7 +18,7 @@ enum State {
 }
 
 impl Dirname {
-    pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
+    pub(crate) fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
         let bltn = Builtin::of(interp, cmd);
         let argc = bltn.args_slice().len();
         if argc == 0 {
@@ -55,13 +53,14 @@ impl Dirname {
         Builtin::write_failing_error(interp, cmd, msg, 1)
     }
 
-    pub fn on_io_writer_chunk(
+    pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         cmd: NodeId,
         _: usize,
         err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        if err.is_some() {
+        if let Some(e) = err {
+            e.deref();
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
         }
@@ -73,5 +72,3 @@ impl Dirname {
         Builtin::done(interp, cmd, exit)
     }
 }
-
-// ported from: src/shell/builtin/dirname.zig

@@ -643,6 +643,16 @@ warn: (msg: string) => console.warn(\`[WARN] \${msg}\`)
       Bun.gc(true);
       await Bun.sleep(10);
     }
+    if (onFinalizeCallCount < 3) {
+      const { heapStats } = require("bun:jsc");
+      const stats = heapStats();
+      console.error(
+        `onFinalizeCallCount=${onFinalizeCallCount} ` +
+          `BundlerPlugin alive=${stats.objectTypeCounts.BundlerPlugin ?? 0} ` +
+          `protected=${JSON.stringify(stats.protectedObjectTypeCounts)} ` +
+          `protectedCount=${stats.protectedObjectCount}`,
+      );
+    }
     expect(onFinalizeCallCount).toBe(3);
   });
 });

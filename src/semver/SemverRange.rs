@@ -2,7 +2,6 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use crate::Version;
-// TODO(port): verify exact module path for Query::Token::Wildcard in bun_semver
 use crate::query::token::Wildcard;
 
 #[repr(u8)]
@@ -30,40 +29,27 @@ impl fmt::Display for Range {
         }
 
         if self.right.op == Op::Unset {
-            // TODO(port): Zig used `{}` on Comparator directly but Comparator has no
-            // top-level `format` in the source — likely dead/broken upstream. Mirroring shape.
-            write!(f, "{}", ComparatorDisplay(&self.left))
+            // Effectively dead path;
+            // the real formatting path is the buffered `Range::fmt(buf)` Formatter below.
+            write!(f, "{}", ComparatorDisplay)
         } else {
-            write!(
-                f,
-                "{} {}",
-                ComparatorDisplay(&self.left),
-                ComparatorDisplay(&self.right),
-            )
+            write!(f, "{} {}", ComparatorDisplay, ComparatorDisplay,)
         }
     }
 }
 
-// PORT NOTE: helper for Range's Display impl above (Zig relied on default struct formatting).
-struct ComparatorDisplay<'a>(#[allow(dead_code)] &'a Comparator);
-impl fmt::Display for ComparatorDisplay<'_> {
+// Helper for Range's Display impl above.
+struct ComparatorDisplay;
+impl fmt::Display for ComparatorDisplay {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): no buffer available here; upstream Zig path appears unused.
+        // Intentionally emits nothing: no source buffer is available here, so the
+        // version's prerelease/build slices can't be rendered. Use `Comparator::fmt(buf)`
+        // (the buffered Formatter) for real output; this mirrors the unused upstream path.
         Ok(())
     }
 }
 
 impl Range {
-    /// *
-    /// >= 0.0.0
-    /// >= 0
-    /// >= 0.0
-    /// >= x
-    /// >= 0
-    pub fn any_range_satisfies(&self) -> bool {
-        self.left.op == Op::Gte && self.left.version.eql(Version::default())
-    }
-
     pub fn init_wildcard(version: Version, wildcard: Wildcard) -> Range {
         match wildcard {
             Wildcard::None => Range {
@@ -148,7 +134,7 @@ impl Range {
     /// Is the Range equal to another Range
     /// This does not evaluate the range.
     #[inline]
-    pub fn eql(self, rhs: Range) -> bool {
+    pub fn eql(self, rhs: &Range) -> bool {
         self.left.eql(rhs.left) && self.right.eql(rhs.right)
     }
 
@@ -297,5 +283,3 @@ impl fmt::Display for ComparatorFormatter<'_> {
         write!(f, "{}", self.comparator.version.fmt(self.buffer))
     }
 }
-
-// ported from: src/semver/SemverRange.zig

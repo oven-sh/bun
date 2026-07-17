@@ -1,13 +1,11 @@
-//! Port of the subset of Zig `std.macho` (vendor/zig/lib/std/macho.zig) needed
-//! by `macho.rs`. All structs are `#[repr(C)]` POD matching the on-disk Mach-O
-//! format so they can be read/written via unaligned `ptr::{read,write}_unaligned`
-//! exactly like Zig's `*align(1) const T` casts.
+//! Mach-O type definitions needed by `macho.rs`. All structs are `#[repr(C)]`
+//! POD matching the on-disk Mach-O format so they can be read/written via
+//! unaligned `ptr::{read,write}_unaligned`.
 //!
 //! `LoadCommandIterator` deliberately stores a raw `*const u8` rather than a
 //! borrowed `&'a [u8]`: macho.rs interleaves iterator reads with in-place
-//! mutation of the same backing `Vec<u8>` (matching the Zig original, which
-//! has no borrow checker). Holding a Rust borrow across that mutation would
-//! force a structural rewrite; raw pointers preserve the Zig semantics.
+//! mutation of the same backing `Vec<u8>`. Holding a Rust borrow across that
+//! mutation would force a structural rewrite; raw pointers avoid that.
 //! SAFETY contract: callers must not reallocate or shrink the backing buffer
 //! while a `LoadCommandIterator` derived from it is live.
 
@@ -20,40 +18,37 @@ pub use bun_sys::macho::{
     cpu_subtype_t, cpu_type_t, load_command, mach_header_64, segment_command_64, vm_prot_t,
 };
 
-pub const MH_MAGIC_64: u32 = 0xfeed_facf;
-pub const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
+pub(crate) const CPU_TYPE_ARM64: cpu_type_t = 0x0100_000C;
 
-pub const S_REGULAR: u32 = 0x0;
-pub const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
+pub(crate) const S_REGULAR: u32 = 0x0;
+pub(crate) const S_ATTR_NO_DEAD_STRIP: u32 = 0x1000_0000;
 
-pub const LC_REQ_DYLD: u32 = 0x8000_0000;
+pub(crate) const LC_REQ_DYLD: u32 = 0x8000_0000;
 
-/// Zig `std.macho.LC` is a non-exhaustive `enum(u32)`. On-disk load commands
-/// can carry arbitrary tag values, so model it as bare `u32` constants instead
+/// On-disk load commands
+/// can carry arbitrary tag values, so model them as bare `u32` constants instead
 /// of a Rust `enum` (which would make `read_unaligned` of unknown discriminants
 /// instant UB).
 pub mod LC {
     use super::LC_REQ_DYLD;
     pub use bun_sys::macho::LC_SEGMENT_64 as SEGMENT_64;
-    pub const SYMTAB: u32 = 0x2;
-    pub const DYSYMTAB: u32 = 0xb;
-    pub const CODE_SIGNATURE: u32 = 0x1d;
-    pub const FUNCTION_STARTS: u32 = 0x26;
-    pub const DATA_IN_CODE: u32 = 0x29;
-    pub const DYLIB_CODE_SIGN_DRS: u32 = 0x2B;
-    pub const LINKER_OPTIMIZATION_HINT: u32 = 0x2E;
-    pub const DYLD_INFO: u32 = 0x22;
-    pub const DYLD_INFO_ONLY: u32 = 0x22 | LC_REQ_DYLD;
-    pub const DYLD_EXPORTS_TRIE: u32 = 0x33 | LC_REQ_DYLD;
-    pub const DYLD_CHAINED_FIXUPS: u32 = 0x34 | LC_REQ_DYLD;
+    pub(crate) const SYMTAB: u32 = 0x2;
+    pub(crate) const DYSYMTAB: u32 = 0xb;
+    pub(crate) const CODE_SIGNATURE: u32 = 0x1d;
+    pub(crate) const FUNCTION_STARTS: u32 = 0x26;
+    pub(crate) const DATA_IN_CODE: u32 = 0x29;
+    pub(crate) const DYLIB_CODE_SIGN_DRS: u32 = 0x2B;
+    pub(crate) const LINKER_OPTIMIZATION_HINT: u32 = 0x2E;
+    pub(crate) const DYLD_INFO: u32 = 0x22;
+    pub(crate) const DYLD_INFO_ONLY: u32 = 0x22 | LC_REQ_DYLD;
+    pub(crate) const DYLD_EXPORTS_TRIE: u32 = 0x33 | LC_REQ_DYLD;
+    pub(crate) const DYLD_CHAINED_FIXUPS: u32 = 0x34 | LC_REQ_DYLD;
 }
 
 pub mod PROT {
     use super::vm_prot_t;
-    pub const NONE: vm_prot_t = 0x00;
     pub const READ: vm_prot_t = 0x01;
     pub const WRITE: vm_prot_t = 0x02;
-    pub const EXEC: vm_prot_t = 0x04;
 }
 
 #[repr(C)]
@@ -74,18 +69,14 @@ pub struct section_64 {
 }
 impl section_64 {
     #[inline]
-    pub fn sect_name(&self) -> &[u8] {
+    pub(crate) fn sect_name(&self) -> &[u8] {
         parse_name(&self.sectname)
-    }
-    #[inline]
-    pub fn seg_name(&self) -> &[u8] {
-        parse_name(&self.segname)
     }
 }
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct linkedit_data_command {
+pub(crate) struct linkedit_data_command {
     pub cmd: u32,
     pub cmdsize: u32,
     pub dataoff: u32,
@@ -94,7 +85,7 @@ pub struct linkedit_data_command {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct symtab_command {
+pub(crate) struct symtab_command {
     pub cmd: u32,
     pub cmdsize: u32,
     pub symoff: u32,
@@ -105,7 +96,7 @@ pub struct symtab_command {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct dysymtab_command {
+pub(crate) struct dysymtab_command {
     pub cmd: u32,
     pub cmdsize: u32,
     pub ilocalsym: u32,
@@ -130,7 +121,7 @@ pub struct dysymtab_command {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct dyld_info_command {
+pub(crate) struct dyld_info_command {
     pub cmd: u32,
     pub cmdsize: u32,
     pub rebase_off: u32,
@@ -147,10 +138,10 @@ pub struct dyld_info_command {
 
 // ── code-signing blobs ────────────────────────────────────────────────────
 
-/// Tailored at version 0x20400 (matches Zig's std.macho.CodeDirectory).
+/// Tailored at version 0x20400.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct CodeDirectory {
+pub(crate) struct CodeDirectory {
     pub magic: u32,
     pub length: u32,
     pub version: u32,
@@ -176,7 +167,7 @@ pub struct CodeDirectory {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct BlobIndex {
+pub(crate) struct BlobIndex {
     pub type_: u32,
     pub offset: u32,
 }

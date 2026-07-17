@@ -10,12 +10,12 @@ impl Parser<'_> {
     pub fn push_container(&mut self, c: &Container) -> Result<(), AllocError> {
         if (self.n_containers as usize) >= self.containers.len() {
             self.containers.push(*c);
-            // PERF(port): Vec::push aborts on OOM; Zig returned error.OutOfMemory
         } else {
             self.containers[self.n_containers as usize] = *c;
         }
 
-        // Record block_byte offset in the container
+        // Record block_byte offset in the container.
+        // In range: every `block_bytes` grower enforces `check_block_bytes_len`.
         let block_off: u32 = u32::try_from(self.block_bytes.len()).expect("int cast");
         self.containers[self.n_containers as usize].block_byte_off = block_off;
 
@@ -28,33 +28,21 @@ impl Parser<'_> {
         block_type: BlockType,
         data: u32,
         flags: u32,
-    ) -> Result<(), AllocError> {
-        let align_mask: usize = align_of::<BlockHeader>() - 1;
-        let cur_len = self.block_bytes.len();
-        let aligned = (cur_len + align_mask) & !align_mask;
-        let needed = aligned + size_of::<BlockHeader>();
-        self.block_bytes
-            .reserve(needed.saturating_sub(self.block_bytes.len()));
-        // Zero-fill to `needed`; bytes in [aligned, needed) are immediately
-        // overwritten by the BlockHeader assignment below.
-        self.block_bytes.resize(needed, 0);
-
-        let hdr = self.get_block_header_at(aligned);
-        *hdr = BlockHeader {
+    ) -> Result<(), parser::Error> {
+        self.append_block_header(BlockHeader {
             block_type,
             _pad: [0; 3],
             flags,
             data,
             n_lines: 0,
-        };
+        })?;
         Ok(())
     }
 
-    pub fn enter_child_containers(&mut self, count: u32) -> Result<(), AllocError> {
+    pub fn enter_child_containers(&mut self, count: u32) -> Result<(), parser::Error> {
         let mut i: u32 = self.n_containers - count;
         while i < self.n_containers {
-            // PORT NOTE: reshaped for borrowck — capture container fields before
-            // calling &mut self methods.
+            // Capture the container fields before calling &mut self methods.
             let idx = i as usize;
             let ch = self.containers[idx].ch;
             let is_task = self.containers[idx].is_task;
@@ -67,6 +55,8 @@ impl Parser<'_> {
             } else if ch == b'-' || ch == b'+' || ch == b'*' {
                 // Save opener position for later loose-list patching
                 let align_mask_: usize = align_of::<BlockHeader>() - 1;
+                // In range: every `block_bytes` grower enforces
+                // `check_block_bytes_len`, which leaves alignment headroom.
                 self.containers[idx].block_byte_off =
                     u32::try_from((self.block_bytes.len() + align_mask_) & !align_mask_).unwrap();
                 // Unordered list + list item
@@ -83,6 +73,8 @@ impl Parser<'_> {
             } else if ch == b'.' || ch == b')' {
                 // Save opener position for later loose-list patching
                 let align_mask_: usize = align_of::<BlockHeader>() - 1;
+                // In range: every `block_bytes` grower enforces
+                // `check_block_bytes_len`, which leaves alignment headroom.
                 self.containers[idx].block_byte_off =
                     u32::try_from((self.block_bytes.len() + align_mask_) & !align_mask_).unwrap();
                 // Ordered list + list item
@@ -102,11 +94,10 @@ impl Parser<'_> {
         Ok(())
     }
 
-    pub fn leave_child_containers(&mut self, keep: u32) -> Result<(), AllocError> {
+    pub fn leave_child_containers(&mut self, keep: u32) -> Result<(), parser::Error> {
         while self.n_containers > keep {
             self.n_containers -= 1;
-            // PORT NOTE: reshaped for borrowck — capture container fields before
-            // calling &mut self methods.
+            // Capture the container fields before calling &mut self methods.
             let idx = self.n_containers as usize;
             let ch = self.containers[idx].ch;
             let is_loose = self.containers[idx].is_loose;
@@ -183,15 +174,15 @@ impl Parser<'_> {
 
     pub fn process_all_blocks(&mut self) -> Result<(), parser::Error> {
         let mut off: usize = 0;
-        // PORT NOTE: reshaped for borrowck — capture raw ptr/len so we can call
-        // &mut self methods inside the loop. block_bytes is not mutated during
-        // process_all_blocks.
+        // Capture the raw ptr/len so we can call &mut self methods inside the
+        // loop. block_bytes is not mutated during process_all_blocks.
         let bytes_len = self.block_bytes.len();
         let bytes_ptr = self.block_bytes.as_ptr();
 
         // Reuse containers array for tight/loose tracking (same approach as md4c).
         // The containers are no longer needed for line analysis at this point.
         self.n_containers = 0;
+        let mut block_lines: Vec<VerbatimLine> = Vec::new();
 
         while off < bytes_len {
             // Align to BlockHeader
@@ -201,9 +192,10 @@ impl Parser<'_> {
                 break;
             }
 
-            // SAFETY: bytes_ptr+off is within bounds (checked above) and was written
-            // at BlockHeader alignment by push_container_bytes / current_block writes.
-            let hdr: &BlockHeader = unsafe { &*bytes_ptr.add(off).cast::<BlockHeader>() };
+            // SAFETY: off + size_of::<BlockHeader>() <= bytes_len (checked above) and the
+            // block parser wrote a valid BlockHeader at this offset.
+            let hdr: BlockHeader =
+                unsafe { bytes_ptr.add(off).cast::<BlockHeader>().read_unaligned() };
             off += size_of::<BlockHeader>();
 
             let block_type = hdr.block_type;
@@ -216,14 +208,18 @@ impl Parser<'_> {
             if off + lines_size > bytes_len {
                 break;
             }
-            // SAFETY: bytes_ptr+off..+lines_size is within bounds (checked above) and
-            // VerbatimLine entries were written contiguously after the header.
-            let block_lines: &[VerbatimLine] = unsafe {
-                core::slice::from_raw_parts(
-                    bytes_ptr.add(off).cast::<VerbatimLine>(),
-                    n_lines as usize,
-                )
-            };
+            block_lines.clear();
+            for li in 0..n_lines as usize {
+                // SAFETY: li < n_lines so off + li*size_of::<VerbatimLine>() is within the
+                // [off, off + lines_size) range bounds-checked above; end_current_block wrote
+                // n_lines contiguous VerbatimLine entries there.
+                block_lines.push(unsafe {
+                    bytes_ptr
+                        .add(off + li * size_of::<VerbatimLine>())
+                        .cast::<VerbatimLine>()
+                        .read_unaligned()
+                });
+            }
             off += lines_size;
 
             // Handle container openers/closers
@@ -274,12 +270,12 @@ impl Parser<'_> {
             }
             match block_type {
                 BlockType::Hr => {}
-                BlockType::Code => self.process_code_block(block_lines, data, flags)?,
-                BlockType::Html => self.process_html_block(block_lines)?,
-                BlockType::Table => self.process_table_block(block_lines, data)?,
-                BlockType::P => self.process_leaf_block(block_lines, true)?,
-                BlockType::H => self.process_leaf_block(block_lines, true)?,
-                _ => self.process_leaf_block(block_lines, false)?,
+                BlockType::Code => self.process_code_block(&block_lines, data, flags)?,
+                BlockType::Html => self.process_html_block(&block_lines)?,
+                BlockType::Table => self.process_table_block(&block_lines, data)?,
+                BlockType::P => self.process_leaf_block(&block_lines, true)?,
+                BlockType::H => self.process_leaf_block(&block_lines, true)?,
+                _ => self.process_leaf_block(&block_lines, false)?,
             }
             if !is_in_tight_list || block_type != BlockType::P {
                 self.leave_block(block_type, data)?;
@@ -288,5 +284,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/containers.zig

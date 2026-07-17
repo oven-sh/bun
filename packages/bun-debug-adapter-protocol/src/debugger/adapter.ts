@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { EventEmitter } from "node:events";
 import { AddressInfo, createServer, Socket } from "node:net";
 import * as path from "node:path";
@@ -224,6 +225,26 @@ export type DebugAdapterEventMap = InspectorEventMap & {
 const isDebug = process.env.NODE_ENV === "development";
 const debugSilentEvents = new Set(["Adapter.event", "Inspector.event"]);
 
+const inspectorEventDomains = new Set([
+  "Audit",
+  "Console",
+  "Debugger",
+  "Heap",
+  "Inspector",
+  "LifecycleReporter",
+  "Runtime",
+  "ScriptProfiler",
+  "TestReporter",
+]);
+
+function isInspectorEvent(event: unknown): boolean {
+  if (typeof event !== "string") {
+    return false;
+  }
+  const dot = event.indexOf(".");
+  return dot !== -1 && inspectorEventDomains.has(event.slice(0, dot));
+}
+
 let threadId = 1;
 
 // Add these helper functions at the top level
@@ -278,7 +299,9 @@ export abstract class BaseDebugAdapter<T extends Inspector = Inspector>
     this.inspector.emit = (event, ...args) => {
       let sent = false;
       sent ||= emit(event, ...args);
-      sent ||= this.emit(event as keyof JSC.EventMap, ...(args as any));
+      if (isInspectorEvent(event)) {
+        sent ||= this.emit(event as keyof JSC.EventMap, ...(args as any));
+      }
       return sent;
     };
     this.#sourceId = 1;
@@ -2791,7 +2814,7 @@ function nextId(): number {
 }
 
 export function getRandomId() {
-  return Math.random().toString(36).slice(2);
+  return randomBytes(16).toString("hex");
 }
 
 export function normalizeWindowsPath(winPath: string): string {

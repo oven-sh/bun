@@ -59,6 +59,16 @@ export const SSLConfig = b.dictionary(
       default: 0,
       internalName: "secure_options",
     },
+    minVersion: {
+      type: b.i32,
+      default: 0,
+      internalName: "ssl_min_version",
+    },
+    maxVersion: {
+      type: b.i32,
+      default: 0,
+      internalName: "ssl_max_version",
+    },
     keyFile: {
       type: b.String.nullable,
       internalName: "key_file",

@@ -10,7 +10,6 @@ pub enum UuidError {
     #[error("InvalidUUID")]
     InvalidUUID,
 }
-bun_core::named_error_set!(UuidError);
 
 #[derive(Clone, Copy)]
 pub struct UUID {
@@ -21,7 +20,7 @@ impl UUID {
     pub fn init() -> UUID {
         let mut uuid = UUID { bytes: [0u8; 16] };
 
-        bun_core::csprng(&mut uuid.bytes);
+        bun_boringssl::rand_bytes(&mut uuid.bytes);
         // Version 4
         uuid.bytes[6] = (uuid.bytes[6] & 0x0f) | 0x40;
         // Variant 1
@@ -57,7 +56,6 @@ impl UUID {
             return Err(UuidError::InvalidUUID);
         }
 
-        // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
         for (j, &i) in ENCODED_POS.iter().enumerate() {
             uuid.bytes[j] = bun_core::fmt::hex_pair_value(buf[i as usize], buf[i as usize + 1])
                 .ok_or(UuidError::InvalidUUID)?;
@@ -93,10 +91,9 @@ fn print_bytes(bytes: &[u8; 16], buf: &mut [u8; 36]) {
     buf[13] = b'-';
     buf[18] = b'-';
     buf[23] = b'-';
-    // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for (j, &i) in ENCODED_POS.iter().enumerate() {
         let [hi, lo] = bun_core::fmt::hex_byte_lower(bytes[j]);
-        buf[i as usize + 0] = hi;
+        buf[i as usize] = hi;
         buf[i as usize + 1] = lo;
     }
 }
@@ -115,17 +112,39 @@ static UUID_V7_LAST_TIMESTAMP: AtomicU64 = AtomicU64::new(0);
 static UUID_V7_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 impl UUID7 {
-    fn get_count(timestamp: u64) -> u32 {
+    // Returns the (possibly adjusted) timestamp and the 12-bit rand_a counter.
+    // RFC 9562 §6.2: on counter rollover, increment the timestamp rather than
+    // wrapping the counter, so the output stays monotonic.
+    fn next(timestamp: u64, seed: u16) -> (u64, u32) {
+        // The high bit of the 12-bit counter is reserved as a rollover guard so
+        // a freshly seeded millisecond always has at least 2048 increments left.
+        let seed = (seed & 0x07FF) as u32;
+
         let _guard = UUID_V7_LOCK.lock();
-        if UUID_V7_LAST_TIMESTAMP.swap(timestamp, Ordering::Relaxed) != timestamp {
-            UUID_V7_COUNTER.store(0, Ordering::Relaxed);
+        let last = UUID_V7_LAST_TIMESTAMP.load(Ordering::Relaxed);
+
+        let (mut ts, mut count) = if timestamp > last {
+            (timestamp, seed)
+        } else {
+            (last, UUID_V7_COUNTER.load(Ordering::Relaxed) + 1)
+        };
+
+        if count > 0x0FFF {
+            ts = (ts + 1).min((1u64 << 48) - 1);
+            count = seed;
         }
 
-        UUID_V7_COUNTER.fetch_add(1, Ordering::Relaxed) % 4096
+        UUID_V7_LAST_TIMESTAMP.store(ts, Ordering::Relaxed);
+        UUID_V7_COUNTER.store(count, Ordering::Relaxed);
+
+        (ts, count)
     }
 
-    pub fn init(timestamp: u64, random: &[u8; 8]) -> UUID7 {
-        let count = Self::get_count(timestamp);
+    pub fn init(timestamp: u64, random: [u8; 10]) -> UUID7 {
+        // random[0..8] supplies rand_b; random[8..10] seeds the rand_a counter
+        // so the seeded counter value is independent of the visible random bits.
+        let seed = u16::from_le_bytes([random[8], random[9]]);
+        let (timestamp, count) = Self::next(timestamp, seed);
 
         let mut bytes = [0u8; 16];
 
@@ -179,12 +198,11 @@ pub struct UUID5 {
     pub bytes: [u8; 16],
 }
 
-// PORT NOTE: Zig nested `pub const namespaces = struct { ... }` used as a namespace;
-// Rust cannot nest a module inside an `impl`, so it lives adjacent to `UUID5`.
+/// Well-known UUID v5 namespaces (RFC 4122 Appendix C).
 pub mod namespaces {
     use super::*;
 
-    pub const DNS: &[u8; 16] = &[
+    pub(crate) const DNS: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x10, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
@@ -192,11 +210,11 @@ pub mod namespaces {
         0x6b, 0xa7, 0xb8, 0x11, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub const OID: &[u8; 16] = &[
+    pub(crate) const OID: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x12, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
-    pub const X500: &[u8; 16] = &[
+    pub(crate) const X500: &[u8; 16] = &[
         0x6b, 0xa7, 0xb8, 0x14, 0x9d, 0xad, 0x11, 0xd1, 0x80, 0xb4, 0x00, 0xc0, 0x4f, 0xd4, 0x30,
         0xc8,
     ];
@@ -259,5 +277,3 @@ impl fmt::Display for UUID5 {
         self.to_uuid().fmt(f)
     }
 }
-
-// ported from: src/jsc/uuid.zig

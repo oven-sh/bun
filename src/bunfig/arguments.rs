@@ -1,5 +1,4 @@
-//! Port of `src/runtime/cli/Arguments.zig` — bunfig-loading subset.
-//!
+//! Bunfig-loading subset of CLI argument handling: these functions
 //! and their private helpers were lifted out of `bun_runtime::cli::Arguments`
 //! so that mid-tier crates (`bun_install`) can call them directly. The
 //! `bun_runtime` crate re-exports these for its own callers.
@@ -41,7 +40,7 @@ fn load_bunfig(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     let source =
         match bun_ast::to_source(config_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
@@ -49,11 +48,11 @@ fn load_bunfig(
                 if auto_loaded {
                     return Ok(());
                 }
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "{}\nwhile reading config \"{}\"",
                     err,
                     BStr::new(config_path.as_bytes()),
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -62,8 +61,8 @@ fn load_bunfig(
     bun_ast::expr::data::Store::create();
     let _store_reset = bun_ast::StoreResetGuard::new();
 
-    // PORT NOTE: reshaped for borrowck — `defer { ctx.log.level = original }`
-    // would capture `&mut *ctx.log` past the `Bunfig::parse(.., ctx)` reborrow.
+    // A drop-guard borrowing `&mut *ctx.log` would conflict with the
+    // `Bunfig::parse(.., ctx)` reborrow.
     // Route through the raw `*mut Log` (process-lifetime, set in
     // `create_context_data()`); the guard restores `level` on unwind/return.
     let log_ptr: *mut bun_ast::Log = ctx.log;
@@ -81,7 +80,7 @@ fn load_bunfig(
     Bunfig::parse(cmd, &source, ctx)
 }
 
-fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_core::Error> {
+fn load_global_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), crate::Error> {
     if ctx.has_loaded_global_config {
         return Ok(());
     }
@@ -99,21 +98,22 @@ pub fn load_config_path(
     auto_loaded: bool,
     config_path: &ZStr,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
-    // PORT NOTE: `comptime cmd.readGlobalConfig()` demoted to runtime — see
-    // `parse()` PORT NOTE; `Tag::read_global_config` is a const-ish lookup so
-    // the dead arm is still a single branch.
+) -> Result<(), crate::Error> {
+    // `cmd.read_global_config()` is evaluated at runtime (see
+    // the note on `Parser::parse` in src/bunfig/bunfig.rs);
+    // `Tag::read_global_config` is a const-ish
+    // lookup so the dead arm is still a single branch.
     if cmd.read_global_config() {
         if let Err(err) = load_global_bunfig(cmd, ctx) {
             if auto_loaded {
                 return Ok(());
             }
 
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "{}\nreading global config \"{}\"",
                 err,
                 BStr::new(config_path.as_bytes()),
-            ));
+            );
             Global::exit(1);
         }
     }
@@ -122,7 +122,7 @@ pub fn load_config_path(
 }
 
 #[cold]
-fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: bun_core::Error) -> ! {
+fn report_bunfig_load_failure(log: *mut bun_ast::Log, err: crate::Error) -> ! {
     // SAFETY: process-global Log; see `load_bunfig` note.
     let log = unsafe { &mut *log };
     if log.has_any() {
@@ -137,7 +137,7 @@ pub fn load_config(
     cmd: CommandTag,
     user_config_path_: Option<&[u8]>,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     // If running as a standalone executable with autoloadBunfig disabled, skip config loading
     // unless an explicit config path was provided via --config
     if user_config_path_.is_none() {
@@ -202,7 +202,7 @@ pub fn load_config(
             ctx.args.absolute_working_dir = Some(Box::<[u8]>::from(&secondbuf[..cwd_len]));
         }
 
-        // PORT NOTE: reshaped for borrowck — `join_abs_string_buf` ties the
+        // Reshaped for borrowck: `join_abs_string_buf` ties the
         // returned slice's lifetime to both `cwd` (borrowed from `ctx.args`)
         // and `config_buf`. We only need the length to NUL-terminate and
         // re-wrap, so capture `joined.len()` and drop the `ctx` borrow before
@@ -230,6 +230,6 @@ pub fn load_config_with_cmd_args(
     cmd: CommandTag,
     args: &bun_clap::Args<bun_clap::Help>,
     ctx: Context<'_>,
-) -> Result<(), bun_core::Error> {
+) -> Result<(), crate::Error> {
     load_config(cmd, args.option(b"--config"), ctx)
 }

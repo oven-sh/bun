@@ -2,7 +2,7 @@
 // The container itself now lives in `bun_collections::SmallList` (a thin
 // `#[repr(transparent)]` newtype over `smallvec::SmallVec<[T; N]>`). This file
 // keeps only the CSS-domain pieces that depend on `bun_css` types — the
-// `ImageFallback` protocol and the two `getFallbacks` comptime branches —
+// `ImageFallback` protocol and the two `get_fallbacks` flavors —
 // which the orphan rule prevents from living on the foreign `SmallList` type
 // as inherent methods.
 //
@@ -17,7 +17,6 @@
 // `grow_capacity`, manual `Drop`, and `SmallListIntoIter` (~800 lines of
 // `unsafe`) were a direct port of servo/rust-smallvec; that loop is now closed
 // back onto the upstream crate.
-// ported from: src/css/small_list.zig
 
 pub use bun_collections::SmallList;
 
@@ -28,19 +27,8 @@ pub use bun_collections::SmallList;
 // trait at the call site instead.)
 
 // ─── getFallbacks ──────────────────────────────────────────────────────────
-// The Zig version uses `@hasDecl(T, "getImage")` and `T == TextShadow` comptime
-// dispatch with a comptime-computed return type. In Rust this becomes a trait
-// with associated type for the return.
 
-pub trait GetFallbacks<const N: usize>: Sized {
-    type Output;
-    fn get_fallbacks(
-        this: &mut SmallList<Self, N>,
-        targets: crate::targets::Targets,
-    ) -> Self::Output;
-}
-
-/// Duck-typed protocol from the Zig source (`@hasDecl(T, "getImage")`): any
+/// Protocol for any
 /// value type that carries an `Image` and can produce color/prefix fallbacks
 /// of itself. Implemented by `values::image::Image` and
 /// `properties::background::Background`.
@@ -54,24 +42,24 @@ pub trait ImageFallback: Sized {
     ) -> Self;
     fn get_necessary_fallbacks(
         &self,
-        targets: crate::targets::Targets,
+        targets: &crate::targets::Targets,
     ) -> crate::values::color::ColorFallbackKind;
 }
 
 // `ImageFallback for Image` is implemented alongside the type in
 // `crate::values::image` to avoid a duplicate impl here.
 
-/// Port of Zig `SmallList(T, N).getFallbacks` for the `@hasDecl(T, "getImage")`
-/// branch. The TextShadow branch is `get_fallbacks_text_shadow`.
+/// `getFallbacks` for `ImageFallback` element types.
+/// The TextShadow variant is `get_fallbacks_text_shadow`.
 ///
 /// Free-standing (was an inherent on `SmallList<T,1>`) so it can live in this
 /// crate now that `SmallList` is foreign. The lone caller threads `self`
 /// explicitly.
 #[inline]
-pub fn get_fallbacks<T: ImageFallback>(
+pub(crate) fn get_fallbacks<T: ImageFallback>(
     this: &mut SmallList<T, 1>,
     arena: &bun_alloc::Arena,
-    targets: crate::targets::Targets,
+    targets: &crate::targets::Targets,
 ) -> Vec<SmallList<T, 1>> {
     fallbacks_gated::get_fallbacks_image(this, arena, targets)
 }
@@ -83,11 +71,10 @@ pub mod fallbacks_gated {
     use crate::css_parser as css;
     use crate::properties::text::TextShadow;
 
-    // TODO(port): trait bound placeholder — any T with getImage()/withImage()/getFallback()/getNecessaryFallbacks()
     pub fn get_fallbacks_image<T>(
         this: &mut SmallList<T, 1>,
         arena: &bun_alloc::Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> Vec<SmallList<T, 1>>
     where
         T: super::ImageFallback,
@@ -121,7 +108,7 @@ pub mod fallbacks_gated {
         // Legacy -webkit-gradient()
         if prefixes.contains(css::VendorPrefix::WEBKIT)
             && targets.browsers.is_some()
-            && css::prefixes::Feature::is_webkit_gradient(targets.browsers.unwrap())
+            && css::prefixes::Feature::is_webkit_gradient(&targets.browsers.unwrap())
         {
             let images = 'images: {
                 let mut images = SmallList::<T, 1>::default();
@@ -140,7 +127,7 @@ pub mod fallbacks_gated {
         #[inline]
         fn prefix_helper<T: ImageFallback>(
             prefix: &'static str,
-            pfs: &css::VendorPrefix,
+            pfs: css::VendorPrefix,
             pfi: &SmallList<T, 1>,
             r: &mut Vec<SmallList<T, 1>>,
             alloc: &bun_alloc::Arena,
@@ -158,9 +145,9 @@ pub mod fallbacks_gated {
             }
         }
 
-        prefix_helper("webkit", &prefixes, prefix_images, &mut res, arena);
-        prefix_helper("moz", &prefixes, prefix_images, &mut res, arena);
-        prefix_helper("o", &prefixes, prefix_images, &mut res, arena);
+        prefix_helper("webkit", prefixes, prefix_images, &mut res, arena);
+        prefix_helper("moz", prefixes, prefix_images, &mut res, arena);
+        prefix_helper("o", prefixes, prefix_images, &mut res, arena);
 
         if prefixes.contains(css::VendorPrefix::NONE) {
             if let Some(r) = rgb {
@@ -198,7 +185,7 @@ pub mod fallbacks_gated {
     pub fn get_fallbacks_text_shadow(
         this: &mut SmallList<TextShadow, 1>,
         arena: &bun_alloc::Arena,
-        targets: css::targets::Targets,
+        targets: &css::targets::Targets,
     ) -> SmallList<SmallList<TextShadow, 1>, 2> {
         let mut fallbacks = css::ColorFallbackKind::default();
         for shadow in this.slice() {
@@ -213,7 +200,10 @@ pub mod fallbacks_gated {
                 // dummy non-alloced color to avoid deep cloning the real one since we will replace it
                 new_shadow.color = css::css_values::color::CssColor::CurrentColor;
                 new_shadow = new_shadow.deep_clone(arena);
-                new_shadow.color = shadow.color.to_rgb().unwrap();
+                new_shadow.color = shadow
+                    .color
+                    .to_rgb()
+                    .unwrap_or_else(|| shadow.color.deep_clone(arena));
                 rgb.append_assume_capacity(new_shadow);
             }
             res.append(rgb);
@@ -226,7 +216,10 @@ pub mod fallbacks_gated {
                 // dummy non-alloced color to avoid deep cloning the real one since we will replace it
                 new_shadow.color = css::css_values::color::CssColor::CurrentColor;
                 new_shadow = new_shadow.deep_clone(arena);
-                new_shadow.color = shadow.color.to_p3().unwrap();
+                new_shadow.color = shadow
+                    .color
+                    .to_p3()
+                    .unwrap_or_else(|| shadow.color.deep_clone(arena));
                 p3.append_assume_capacity(new_shadow);
             }
             res.append(p3);
@@ -234,7 +227,9 @@ pub mod fallbacks_gated {
 
         if fallbacks.contains(css::ColorFallbackKind::LAB) {
             for shadow in this.slice_mut() {
-                let out = shadow.color.to_lab().unwrap();
+                let Some(out) = shadow.color.to_lab() else {
+                    continue;
+                };
                 // old color dropped via replace
                 let _ = core::mem::replace(&mut shadow.color, out);
             }

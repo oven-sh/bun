@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -28,6 +28,16 @@ function setup() {
       BUN_INSTALL_CACHE_DIR: install_cache_dir,
     } as Record<string, string>,
   };
+}
+
+// Drop every PATH entry that already provides `name`, so `bunx <name>` cannot
+// short-circuit to a binary that happens to be installed on this machine.
+// Bun.which does the resolving, so Windows' .exe/.cmd lookup matches bunx's.
+function pathWithout(name: string, PATH: string | undefined): string {
+  return (PATH ?? "")
+    .split(delimiter)
+    .filter(dir => dir && !Bun.which(name, { PATH: dir }))
+    .join(delimiter);
 }
 
 beforeAll(async () => {
@@ -501,10 +511,13 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(exited).toBe(0);
 });
 
+// Pinned to 20: its engines are "^20.19.0 || ^22.12.0 || >=24.0.0", so the node-24
+// requirement this test exercises holds no matter what Node.js version Bun reports.
+// @latest tracks Angular's engines upward and breaks whenever they outrun us.
 it.concurrent("should handle package that requires node 24", async () => {
   const { x_dir, env } = setup();
   const subprocess = spawn({
-    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@20", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
@@ -737,19 +750,6 @@ describe("--package flag", () => {
     it("should execute the correct binary when package has multiple binaries", async () => {
       const urls: string[] = [];
 
-      // Set up a package with two different binaries
-      setHandler(
-        dummyRegistry(urls, {
-          "1.0.0": {
-            bin: {
-              "multi-tool": "bin/multi-tool.js",
-              "multi-tool-alt": "bin/multi-tool-alt.js",
-            },
-            as: "1.0.0",
-          },
-        }),
-      );
-
       // Create the tarball with both binaries that output different messages
       // First, let's create the package structure
       const tempDir = tmpdirSync();
@@ -786,8 +786,28 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
       // Make the binaries executable
       await Bun.$`chmod +x ${packageDir}/bin/multi-tool.js ${packageDir}/bin/multi-tool-alt.js`;
 
-      // Create the tarball with package/ prefix
-      await Bun.$`cd ${tempDir} && tar -czf ${join(import.meta.dir, "multi-tool-pkg-1.0.0.tgz")} package`;
+      // Create the tarball with package/ prefix. It goes to a temp dir the
+      // registry is pointed at — writing it under import.meta.dir would
+      // rewrite a checked-in file on every run.
+      const tgzDir = tmpdirSync();
+      await Bun.$`cd ${tempDir} && tar -czf ${join(tgzDir, "multi-tool-pkg-1.0.0.tgz")} package`;
+
+      setHandler(
+        dummyRegistry(
+          urls,
+          {
+            "1.0.0": {
+              bin: {
+                "multi-tool": "bin/multi-tool.js",
+                "multi-tool-alt": "bin/multi-tool-alt.js",
+              },
+              as: "1.0.0",
+            },
+          },
+          0,
+          tgzDir,
+        ),
+      );
 
       // Test 1: Without --package, bunx multi-tool-alt should fail or install wrong package
       // Test 2: With --package, we can run the alternate binary
@@ -1140,6 +1160,12 @@ describe("package name aliases", () => {
       stderr: "pipe",
       env: {
         ...env,
+        // An untagged `bunx <name>` runs a matching binary already on PATH
+        // instead of querying the registry, so a machine with `claude`
+        // installed never makes the request this test asserts on. Drop those
+        // entries so the alias is what gets exercised, not the developer's or
+        // the agent's PATH.
+        PATH: pathWithout("claude", env.PATH),
         npm_config_registry: `http://localhost:${port}/`,
       },
     });
@@ -1231,3 +1257,72 @@ it.skipIf(!isWindows)("should not crash on corrupted .bunx file with missing quo
   expect(stderr).not.toContain("panic");
   expect(stderr).not.toContain("reached unreachable code");
 });
+
+// The bunx cache root lives at a predictable path inside the shared temp dir
+// ($TMPDIR/bunx-<uid>-<pkg>@<version>). bunx must refuse to reuse a
+// pre-existing cache root that is not a private directory owned by the
+// current user, because the owner of that directory can replace any of the
+// cached package's module files after install. The check happens before any
+// network or filesystem access inside the cache, so this test is fully
+// offline. The check is Unix-only (no uid/world-writable-tmp model on
+// Windows).
+it.concurrent.skipIf(isWindows)(
+  "refuses to reuse a bunx cache directory that other local users can modify",
+  async () => {
+    const { x_dir, env } = setup();
+    const pkg = "bunx-cache-root-fixture";
+    const cacheRoot = join(env.TMPDIR, `bunx-${process.getuid!()}-${pkg}@latest`);
+
+    const run = () => {
+      const subprocess = spawn({
+        cmd: [bunExe(), "x", "--no-install", pkg],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "ignore",
+        stderr: "pipe",
+        env,
+      });
+      return Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited] as const);
+    };
+
+    // Legitimate case: a pre-existing cache root that is a private directory
+    // owned by the current user is accepted. bunx gets past the cache-root
+    // validation and fails later with the normal --no-install "could not
+    // find an existing binary" message because the cache is empty.
+    await mkdir(cacheRoot, { recursive: true });
+    chmodSync(cacheRoot, 0o755);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).not.toContain("refusing to use bunx cache directory");
+      expect(err).toContain(`Could not find an existing '${pkg}' binary to run.`);
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+
+    // The same cache root made writable by group/other -- the state a
+    // pre-created directory in the shared temp dir must be in for another
+    // user's install to populate it -- must be refused before bunx reads or
+    // writes anything inside it.
+    chmodSync(cacheRoot, 0o777);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).toContain("refusing to use bunx cache directory");
+      expect(err).toContain("not a directory owned by the current user");
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+
+    // A cache root that is a symlink (redirecting the whole install
+    // elsewhere) must also be refused.
+    await rm(cacheRoot, { recursive: true, force: true });
+    const elsewhere = join(env.TMPDIR, "bunx-cache-root-fixture-elsewhere");
+    await mkdir(elsewhere, { recursive: true });
+    symlinkSync(elsewhere, cacheRoot);
+    {
+      const [err, out, exitCode] = await run();
+      expect(err).toContain("refusing to use bunx cache directory");
+      expect(out).toHaveLength(0);
+      expect(exitCode).toBe(1);
+    }
+  },
+);

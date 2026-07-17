@@ -1,12 +1,12 @@
 import { spawnSync } from "bun";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir, tmpdirSync } from "harness";
 import { appendFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // Each case spawns a full `bun test` process; give the concurrent group
 // headroom on slow ASAN/CI machines.
-setDefaultTimeout(30_000);
+setDefaultTimeout(isASAN ? 120_000 : 30_000);
 
 // Keep git from reading the developer's global config and make commits
 // deterministic across machines. Used both for the `git` helper below and

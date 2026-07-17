@@ -37,7 +37,7 @@ export default [
   define({
     name: "Crypto",
     construct: true,
-    finalize: false,
+    finalize: true,
 
     proto: {
       getRandomValues: {

@@ -1,8 +1,8 @@
-//! Port of src/bun.js.zig — entry point for `bun run <file>` / standalone executables.
+//! Entry point for `bun run <file>` / standalone executables.
 //!
 //! The `Run` struct (the per-process VM driver) is defined once in
 //! `crate::cli::run_command` so the CLI dispatch path can call it directly
-//! without a crate-cycle; this module re-exports it under the Zig namespace
+//! without a crate-cycle; this module re-exports it as
 //! `bun.js.Run` and hosts the handful of helpers that other crates reach for
 //! (`apply_standalone_runtime_flags`, `fail_with_build_error`, the
 //! `Bun__on{Resolve,Reject}EntryPointResult` host fns).
@@ -14,7 +14,6 @@ use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, Standalon
 // Thin re-exports (mirrors `pub const X = @import(...)` at file top).
 pub use crate::api;
 pub use crate::webcore;
-pub use bun_jsc as jsc_mod; // TODO(port): naming — Zig exposed this as `bun.js.jsc`
 
 /// Canonical `Run` lives in `cli::run_command`; re-export so callers that
 /// expect `bun.js.Run` resolve to the single definition.
@@ -53,8 +52,10 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     // `defer Output.flush()` — RAII guard flushes buffered stderr on every exit path.
     let _flush = Output::flush_guard();
 
-    // SAFETY: `vm.log` is set in `init`.
     if let Some(mut p) = vm.log {
+        // SAFETY: `vm.log` is set during `VirtualMachine::init` to the VM-owned log and
+        // remains valid for the lifetime of `vm`; the `&mut VirtualMachine` borrow above
+        // guarantees exclusive access to it here.
         let _ = unsafe { p.as_mut() }.print(std::ptr::from_mut(writer));
     }
 }

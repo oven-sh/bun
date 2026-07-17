@@ -5,9 +5,10 @@ const ArrayPrototypePush = Array.prototype.push;
 
 function aggregateTwoErrors(innerError: Error | undefined, outerError: Error & { errors?: Error[] }) {
   if (innerError && outerError && innerError !== outerError) {
-    if (ArrayIsArray(outerError.errors)) {
+    const outerErrors = outerError.errors;
+    if (ArrayIsArray(outerErrors)) {
       // If `outerError` is already an `AggregateError`.
-      ArrayPrototypePush.$call(outerError.errors, innerError);
+      ArrayPrototypePush.$call(outerErrors, innerError);
       return outerError;
     }
     const err = new AggregateError(new SafeArrayIterator([outerError, innerError]), outerError.message);

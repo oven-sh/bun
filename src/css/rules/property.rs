@@ -15,7 +15,7 @@ pub struct PropertyRule {
 }
 
 impl PropertyRule {
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // #[cfg(feature = "sourcemap")]
         // dest.add_mapping(self.loc);
 
@@ -60,13 +60,9 @@ impl PropertyRule {
 }
 
 impl PropertyRule {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `SyntaxString` has an
-        // inherent `deep_clone(&self, &Arena)`. While `ParsedComponent` is
-        // ``-gated to `()`, `Option<()>` is `Copy` → identity;
-        // once it un-gates, swap to `self.initial_value.as_ref().map(|v|
-        // v.deep_clone(bump))` (values/syntax.rs already provides the
-        // inherent impl).
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+        // `SyntaxString` and `ParsedComponent` provide inherent
+        // `deep_clone(&self, &Arena)` impls.
         Self {
             name: self.name.deep_clone(bump),
             syntax: self.syntax.deep_clone(bump),
@@ -79,7 +75,7 @@ impl PropertyRule {
 
 // ─── PropertyRule parse ───────────────────────────────────────────────────
 impl PropertyRule {
-    pub fn parse(
+    pub(crate) fn parse(
         name: DashedIdent,
         input: &mut css::Parser,
         loc: Location,
@@ -92,14 +88,12 @@ impl PropertyRule {
             initial_value: None,
         };
 
-        // PORT NOTE: split the borrows — `RuleBodyParser` borrows `input`+`p`;
-        // we re-borrow `input` after dropping `decl_parser`.
+        // `RuleBodyParser` borrows `input`+`p`; re-borrow `input` after
+        // dropping `decl_parser`.
         {
             let mut decl_parser = RuleBodyParser::new(input, &mut p);
             while let Some(decl) = decl_parser.next() {
-                if let Err(e) = decl {
-                    return Err(e);
-                }
+                decl?;
             }
         }
 
@@ -158,20 +152,17 @@ impl PropertyRule {
     }
 }
 
-// PORT NOTE: borrows the parser input buffer for `initial_value` (arena-backed
-// in CSS crate). Kept as `&'static [u8]` per PORTING.md §AST crates;
-// TODO(refactor): re-thread `'i`.
-pub struct PropertyRuleDeclarationParser {
+// Borrows the parser input buffer for `initial_value` (arena-backed in the
+// CSS crate). Kept as `&'static [u8]` per the rules/mod.rs lifetime-erasure
+// note; TODO(refactor): re-thread `'i`.
+pub(crate) struct PropertyRuleDeclarationParser {
     pub syntax: Option<SyntaxString>,
     pub inherits: Option<bool>,
     pub initial_value: Option<&'static [u8]>,
 }
 
-// PORT NOTE: Zig's nested `pub const DeclarationParser = struct { ... }`
-// namespaces are structural duck-typing for RuleBodyParser; in Rust these
-// become trait impls.
+// Parser trait impls for `@property` rule bodies.
 const _: () = {
-    use bun_core::strings;
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
@@ -180,8 +171,6 @@ const _: () = {
     impl DeclarationParser for PropertyRuleDeclarationParser {
         type Declaration = ();
 
-        // TODO(port): the Zig defines a ComptimeStringMap over FieldEnum but never uses it
-        // (usage is commented out). Preserved the active if/else-if chain instead.
         fn parse_value(
             this: &mut Self,
             name: &[u8],
@@ -276,5 +265,3 @@ const _: () = {
         }
     }
 };
-
-// ported from: src/css/rules/property.zig

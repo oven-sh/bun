@@ -36,7 +36,45 @@
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/text/StringView.h>
 
+extern "C" size_t highway_index_of_first_ascii_upper(const uint8_t* input, size_t len);
+extern "C" void highway_lower_ascii(const uint8_t* src, size_t len, uint8_t* dst);
+extern "C" size_t highway_index_of_first_ascii_upper16(const uint16_t* input, size_t len);
+extern "C" void highway_lower_ascii16(const uint16_t* src, size_t len, uint16_t* dst);
+
 namespace WebCore {
+
+String lowercaseHeaderName(const String& name)
+{
+    if (name.isEmpty())
+        return name;
+
+    // ASCII-only names may be stored as either 8-bit or 16-bit; handle both.
+    // In each case scan for the first uppercase letter and, only if one exists,
+    // allocate a same-width copy and lowercase it (matching
+    // StringImpl::convertToASCIILowercase, which returns a 16-bit result for a
+    // 16-bit input).
+    if (name.is8Bit()) {
+        auto span = name.span8();
+        size_t length = span.size();
+        if (highway_index_of_first_ascii_upper(span.data(), length) == length)
+            return name;
+
+        std::span<Latin1Character> data;
+        String result = String::createUninitialized(static_cast<unsigned>(length), data);
+        highway_lower_ascii(span.data(), length, data.data());
+        return result;
+    }
+
+    auto span = name.span16();
+    size_t length = span.size();
+    if (highway_index_of_first_ascii_upper16(reinterpret_cast<const uint16_t*>(span.data()), length) == length)
+        return name;
+
+    std::span<char16_t> data;
+    String result = String::createUninitialized(static_cast<unsigned>(length), data);
+    highway_lower_ascii16(reinterpret_cast<const uint16_t*>(span.data()), length, reinterpret_cast<uint16_t*>(data.data()));
+    return result;
+}
 
 HTTPHeaderMap::HTTPHeaderMap()
 {
@@ -139,7 +177,18 @@ void HTTPHeaderMap::setUncommonHeader(const String& name, const String& value)
         m_uncommonHeaders[index].value = value;
 }
 
-void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const String& value)
+void HTTPHeaderMap::addUncommonHeader(const String& name, const String& value)
+{
+    auto index = m_uncommonHeaders.findIf([&](auto& header) {
+        return equalIgnoringASCIICase(header.key, name);
+    });
+    if (index == notFound)
+        m_uncommonHeaders.append(UncommonHeader { name, value });
+    else
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
+}
+
+void HTTPHeaderMap::addUncommonHeaderCloneName(const StringView name, const String& value)
 {
     auto index = m_uncommonHeaders.findIf([&](auto& header) {
         return equalIgnoringASCIICase(header.key, name);
@@ -150,7 +199,7 @@ void HTTPHeaderMap::setUncommonHeaderCloneName(const StringView name, const Stri
         memcpy(ptr.data(), name.span8().data(), name.length());
         m_uncommonHeaders.append(UncommonHeader { nameCopy, value });
     } else
-        m_uncommonHeaders[index].value = value;
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 void HTTPHeaderMap::add(const String& name, const String& value)

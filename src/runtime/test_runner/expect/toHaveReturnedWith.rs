@@ -1,13 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-#[allow(unused_imports)] use bun_core::Output;
 
 use super::DiffFormatter;
 use super::mock;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_have_returned_with(
+pub(crate) fn to_have_returned_with(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -24,10 +21,9 @@ pub fn to_have_returned_with(
     let calls_count = u32::try_from(returns.get_length(global)?).unwrap();
     let mut pass = false;
 
-    // Zig: std.array_list.Managed(JSValue) — heap-backed list of JSValue.
-    // PORTING.md §JSC types: heap-backed Vec<JSValue> is not stack-scanned by JSC's conservative GC;
+    // A heap-backed Vec<JSValue> is not stack-scanned by JSC's conservative GC;
     // however every value pushed here is also reachable via the `returns` JSArray (kept live on the
-    // stack), so a plain Vec mirrors the Zig spec safely. SuccessfulReturnsFormatter expects &Vec.
+    // stack), so a plain Vec is safe. SuccessfulReturnsFormatter expects &Vec.
     let mut successful_returns: Vec<JSValue> = Vec::new();
 
     let mut has_errors = false;
@@ -39,7 +35,7 @@ pub fn to_have_returned_with(
         if result.is_object() {
             let result_type = result.get(global, "type")?.unwrap_or(JSValue::UNDEFINED);
             if result_type.is_string() {
-                let type_str = result_type.to_bun_string(global)?;
+                let type_str = bun_core::OwnedString::new(result_type.to_bun_string(global)?);
 
                 if type_str.eql_comptime("return") {
                     let result_value = result.get(global, "value")?.unwrap_or(JSValue::UNDEFINED);
@@ -97,8 +93,7 @@ pub fn to_have_returned_with(
             return this.throw(global, signature, format_args!("\n\n{}\n", diff_format));
         }
 
-        // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
-        // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
+        // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
         // the same backing formatter. Use a second formatter for the received value —
         // `make_formatter` is a trivial struct init with no shared state between values.
         let mut formatter2 = super::make_formatter(global);
@@ -113,7 +108,7 @@ pub fn to_have_returned_with(
         );
     }
 
-    // PORT NOTE: list_formatter holds &mut Formatter via RefCell, so a separate formatter is
+    // list_formatter holds &mut Formatter via RefCell, so a separate formatter is
     // required for the inline `expected.to_fmt` argument used alongside it in the same format_args!.
     let mut list_fmt = super::make_formatter(global);
 
@@ -124,10 +119,6 @@ pub fn to_have_returned_with(
             returns,
             formatter: core::cell::RefCell::new(&mut list_fmt),
         };
-        // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
-        // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<r>` tags at comptime.
-        // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,
@@ -146,10 +137,6 @@ pub fn to_have_returned_with(
             successful_returns: &successful_returns,
             formatter: core::cell::RefCell::new(&mut list_fmt),
         };
-        // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
-        // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
-        // `Expect::throw` → `throw_pretty` handles tag substitution at runtime, so collapse both arms.
-        // PERF(port): was comptime bool dispatch (`switch inline else`).
         return this.throw(
             global,
             signature,
@@ -162,5 +149,3 @@ pub fn to_have_returned_with(
         );
     }
 }
-
-// ported from: src/test_runner/expect/toHaveReturnedWith.zig

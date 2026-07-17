@@ -278,7 +278,7 @@ void JSPerformance::finishCreation(VM& vm)
         globalObject(),
         0,
         String("now"_s),
-        functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, functionPerformanceNow,
+        functionPerformanceNow, ImplementationVisibility::Public, NoIntrinsic, callHostFunctionAsConstructor,
         &DOMJITSignatureForPerformanceNow);
     this->putDirect(vm, JSC::Identifier::fromString(vm, "now"_s), now, 0);
 

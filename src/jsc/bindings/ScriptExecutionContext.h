@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "ActiveDOMObject.h"
+#include "SharedEnvStore.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -93,6 +94,7 @@ public:
 #endif
 
     WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, Function<void(ScriptExecutionContext&)>&& task);
+    WEBCORE_EXPORT static bool postTaskTo(ScriptExecutionContextIdentifier identifier, NOESCAPE const WTF::Function<void()>& betweenLookupAndEnqueue, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnContextThread(ScriptExecutionContextIdentifier, Function<void(ScriptExecutionContext&)>&& task);
     WEBCORE_EXPORT static bool ensureOnMainThread(Function<void(ScriptExecutionContext&)>&& task);
 
@@ -125,6 +127,20 @@ public:
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
 
     bool isWorker = false;
+
+    // Set once when the context is permanently shutting down (WebWorker__teardownJSCVM).
+    // Unlike VM::hasTerminationRequest(), never set transiently (node:vm {timeout}).
+    // Takes allScriptExecutionContextsMapLock so it serializes with postTaskTo's
+    // check-then-enqueue; a caller that drains the concurrent queue after this
+    // returns will observe every task enqueued before the flag flipped.
+    void markTerminating();
+    bool isTerminating() const { return m_isTerminating.load(std::memory_order_acquire); }
+
+    // Non-null once this thread joins a `worker_threads` SHARE_ENV tree; every
+    // thread in the tree holds a ref to the same store.
+    Bun::SharedEnvStore* sharedEnvStore() const { return m_sharedEnvStore.get(); }
+    void setSharedEnvStore(Bun::SharedEnvStore& store) { m_sharedEnvStore = &store; }
+
     void setGlobalObject(JSC::JSGlobalObject* globalObject)
     {
         m_globalObject = globalObject;
@@ -134,10 +150,15 @@ public:
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
+    std::atomic<bool> m_isTerminating { false };
+    RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();
     ScriptExecutionContextIdentifier m_identifier;
+    // Snapshot of the creating thread's UID; used by isContextThread() so the
+    // check stays valid after VM clientData / VMHolder are torn down on exit.
+    uint32_t m_contextThreadUID;
 
     UncheckedKeyHashSet<ContextDestructionObserver*> m_destructionObservers;
 

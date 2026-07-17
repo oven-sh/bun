@@ -1,8 +1,6 @@
-//! Port of `src/runtime/socket/socket.zig`.
-//!
 //! TCP/TLS socket JS bindings (`Bun.connect` / `Bun.listen` socket wrappers).
 //!
-//! The full method-body port lives in `socket_body.rs`; this module wires the
+//! The full method bodies live in `socket_body.rs`; this module wires the
 //! submodules together and re-exports the canonical type surface so
 //! `crate::api` and the dispatch / handler layers see one set of types.
 
@@ -16,6 +14,9 @@ pub mod socket_address;
 
 #[path = "Handlers.rs"]
 pub mod handlers;
+
+#[path = "JSSocketHandlers.rs"]
+pub mod js_socket_handlers;
 
 #[path = "Listener.rs"]
 pub mod listener;
@@ -37,21 +38,21 @@ pub mod windows_named_pipe_context;
 pub mod ssl_wrapper {
     pub use bun_uws::ssl_wrapper::*;
 
-    /// Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
     /// Thin wrapper over `SSLWrapper::init_from_options` so callers in this
     /// tier can keep passing `&SSLConfig` directly.
     pub fn init<T: Copy>(
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
-    ) -> Result<SSLWrapper<T>, bun_core::Error> {
-        SSLWrapper::<T>::init_from_options(ssl_options.as_usockets(), is_client, handlers)
-            .map_err(bun_core::Error::from)
+    ) -> Result<SSLWrapper<T>, crate::Error> {
+        SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
+            .map_err(crate::Error::from)
     }
 }
 
-#[path = "tls_socket_functions.rs"]
-mod tls_socket_functions;
+// `tls_socket_functions.rs` is `#[path]`-included from `socket_body.rs` (where
+// the functions are actually used); a second top-level include here was only
+// there for type-check parity.
 
 #[path = "udp_socket.rs"]
 pub mod udp_socket_draft;
@@ -67,7 +68,7 @@ pub mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
 pub mod ssl_config;
-pub use ssl_config::{SSLConfig, SSLConfigFromJs};
+pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here; now that the real
@@ -83,8 +84,6 @@ pub use socket_body::{
 
 #[cfg(windows)]
 pub use windows_named_pipe_context::WindowsNamedPipeContext;
-#[cfg(not(windows))]
-pub type WindowsNamedPipeContext = ();
 
 /// LAYERING: `udp_socket.rs` is the canonical body. It is mounted as
 /// `udp_socket_draft` above (legacy name retained for existing callers); the
@@ -93,7 +92,7 @@ pub type WindowsNamedPipeContext = ();
 /// `generated_js2native.rs` (`crate::socket::udp_socket::udp_socket::js_connect`)
 /// resolve against the real struct, not an opaque placeholder.
 pub mod udp_socket {
-    /// `generated_js2native.rs` lowers `$zig(udp_socket.zig, UDPSocket.jsConnect)`
+    /// `generated_js2native.rs` lowers `$rust(udp_socket.rs, UDPSocket.jsConnect)`
     /// to `crate::socket::udp_socket::udp_socket::js_connect`. The inner
     /// `udp_socket` segment is the snake-cased struct name; aliasing the type
     /// lets the associated-fn path resolve directly.
@@ -104,7 +103,7 @@ pub use udp_socket::UDPSocket;
 
 /// Codegen path alias.
 ///
-/// `generated_js2native.rs` lowers `$zig(socket.zig, fnName)` to
+/// `generated_js2native.rs` lowers `$rust(socket.rs, fnName)` to
 /// `crate::socket::socket::fn_name(...)` (one path segment per directory plus
 /// the file stem). The Rust port placed the bodies in `socket_body.rs` to keep
 /// `mod.rs` as the wiring layer, so re-export the js2native entry points under
@@ -112,80 +111,68 @@ pub use udp_socket::UDPSocket;
 pub mod socket {
     pub use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls,
+        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
     };
 }
 
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
 // vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). PORT NOTE (noalias re-entrancy): the inherent `on_*`
-// methods take `this: *mut Self` precisely so no `&mut NewSocket` is held
-// across `callback.call` (JS can re-derive `&mut Self` via the wrapper's
-// `m_ptr` and mutate `flags`/`handlers`/`ref_count`); a `&mut self` argument
-// formed here from the ext slot and protected through the dispatch frame would
-// be aliasing UB. Bridge them here so the trait impl and the struct definition
-// stay in their respective files.
+// not `PtrHandler`). The handlers take `ThisPtr<Self>` rather than `&mut self`:
+// a JS callback can close the socket and drop its last ref mid-dispatch, and a
+// `&mut` argument protector outliving the allocation is UB.
 impl<const SSL: bool> uws_handlers::RawSocketEvents<SSL> for NewSocket<SSL> {
     const HAS_ON_OPEN: bool = true;
 
     #[inline]
-    unsafe fn on_open(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
-        // SAFETY: caller (RawPtrHandler) passes the live ext-slot pointer.
-        unsafe { NewSocket::on_open(this, s) };
+    fn on_open(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+        NewSocket::on_open(this, s);
     }
     #[inline]
-    unsafe fn on_data(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) {
-        // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_data(this, s, data) };
+    fn on_data(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>, data: &[u8]) {
+        NewSocket::on_data(this, s, data);
     }
     #[inline]
-    unsafe fn on_writable(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_writable(this, s) };
+    fn on_writable(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+        NewSocket::on_writable(this, s);
     }
     #[inline]
-    unsafe fn on_close(
-        this: *mut Self,
+    fn on_close(
+        this: bun_ptr::ThisPtr<Self>,
         s: bun_uws::NewSocketHandler<SSL>,
         code: i32,
         reason: *mut core::ffi::c_void,
     ) {
-        // SAFETY: see `on_open`.
-        let _ = unsafe {
-            NewSocket::on_close(
-                this,
-                s,
-                code,
-                if reason.is_null() { None } else { Some(reason) },
-            )
-        };
+        let _ = NewSocket::on_close(
+            this,
+            s,
+            code,
+            if reason.is_null() { None } else { Some(reason) },
+        );
     }
     #[inline]
-    unsafe fn on_timeout(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_timeout(this, s) };
+    fn on_timeout(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+        NewSocket::on_timeout(this, s);
     }
     #[inline]
-    unsafe fn on_end(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>) {
-        // SAFETY: see `on_open`.
-        unsafe { NewSocket::on_end(this, s) };
+    fn on_end(this: bun_ptr::ThisPtr<Self>, s: bun_uws::NewSocketHandler<SSL>) {
+        NewSocket::on_end(this, s);
     }
     #[inline]
-    unsafe fn on_connect_error(this: *mut Self, s: bun_uws::NewSocketHandler<SSL>, code: i32) {
-        // SAFETY: see `on_open`.
-        let _ = unsafe { NewSocket::on_connect_error(this, s, code) };
+    fn on_connect_error(
+        this: bun_ptr::ThisPtr<Self>,
+        s: bun_uws::NewSocketHandler<SSL>,
+        code: i32,
+    ) {
+        let _ = NewSocket::on_connect_error(this, s, code);
     }
     #[inline]
-    unsafe fn on_handshake(
-        this: *mut Self,
+    fn on_handshake(
+        this: bun_ptr::ThisPtr<Self>,
         s: bun_uws::NewSocketHandler<SSL>,
         ok: i32,
         err: bun_uws_sys::us_bun_verify_error_t,
     ) {
-        // SAFETY: see `on_open`.
-        let _ = unsafe { NewSocket::on_handshake(this, s, ok, err) };
+        let _ = NewSocket::on_handshake(this, s, ok, err);
     }
 }
-
-// ported from: src/runtime/socket/socket.zig

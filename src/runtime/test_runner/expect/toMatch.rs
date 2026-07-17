@@ -1,11 +1,9 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::ConsoleObject;
+use super::JSValueTestExt;
 
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_match(
+pub(crate) fn to_match(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -54,17 +52,13 @@ pub fn to_match(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
-    // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
+    // Each `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
     // we need a second Formatter for the second value (matches toContain.rs / toBe.rs).
     let mut formatter2 = super::make_formatter(global);
     let expected_fmt = expected_value.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
-        const EXPECTED_LINE: &str = "Expected substring or pattern: not <green>{}<r>\n";
-        const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
-        // TODO(port): `comptime getSignature(...)` — ensure `get_signature` is `const fn` (or macro) returning &'static str.
         let signature = Expect::get_signature("toMatch", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -81,8 +75,6 @@ pub fn to_match(
         );
     }
 
-    const EXPECTED_LINE: &str = "Expected substring or pattern: <green>{}<r>\n";
-    const RECEIVED_LINE: &str = "Received: <red>{}<r>\n";
     let signature = Expect::get_signature("toMatch", "<green>expected<r>", false);
     this.throw(
         global,
@@ -98,5 +90,3 @@ pub fn to_match(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toMatch.zig

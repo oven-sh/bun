@@ -80,7 +80,6 @@ impl PendingConnect {
     pub unsafe fn on_dns_resolved(this: *mut PendingConnect) {
         // SAFETY: `this` was heap-allocated in `register`; reclaim it so the Box drops at
         // end of scope — `Drop` derefs `session` and the allocation is freed.
-        // (Zig: defer { session.deref(); bun.destroy(this); })
         let this = unsafe { bun_core::heap::take(this) };
         let session = this.session;
 
@@ -93,14 +92,14 @@ impl PendingConnect {
             // handle; `cancel()` consumes it.
             this.pc_mut().cancel();
             if !s.closed {
-                Self::fail_session(session, bun_core::err!("Aborted"));
+                Self::fail_session(session, crate::Error::Aborted);
             }
             return;
         }
         // `pc_mut` upgrades the owned C handle; `resolved()` consumes it and
         // returns the connected quic socket or None on DNS failure.
         let Some(qs) = this.pc_mut().resolved() else {
-            Self::fail_session(session, bun_core::err!("DNSResolutionFailed"));
+            Self::fail_session(session, crate::Error::DNSResolutionFailed);
             return;
         };
         s.qsocket = Some(NonNull::from(&mut *qs));
@@ -140,7 +139,7 @@ impl PendingConnect {
 
     /// Tear down a session that never reached `on_conn_close` (DNS failure or
     /// every waiter aborted while DNS was in flight).
-    pub fn fail_session(session: *mut ClientSession, err: bun_core::Error) {
+    pub fn fail_session(session: *mut ClientSession, err: crate::Error) {
         // Caller guarantees `session` is live (held by an intrusive ref) —
         // `session_mut` centralises the backref upgrade.
         let s = session_mut(session);
@@ -159,10 +158,10 @@ impl PendingConnect {
                 super::client_session::client_mut(cl).fail_from_h2(err);
             }
         }
-        // Zig .monotonic == LLVM monotonic == Rust Relaxed
         let _ = super::LIVE_SESSIONS.fetch_sub(1, Ordering::Relaxed);
-        // session is intrusive-refcounted; this drops the connection-alive ref.
-        unsafe { ClientSession::deref(session) };
+        // SAFETY: `s` refers to a live heap-allocated ClientSession (caller holds
+        // an intrusive ref for the duration); this drops the connection-alive ref.
+        unsafe { ClientSession::deref(s) };
     }
 }
 
@@ -187,5 +186,3 @@ unsafe impl Send for Resolved {}
 /// dedicated `Sync` static sidesteps that without weakening the singleton
 /// accessor's `&mut` contract.
 static RESOLVED: Guarded<Vec<Resolved>> = Guarded::new(Vec::new());
-
-// ported from: src/http/h3_client/PendingConnect.zig

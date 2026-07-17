@@ -142,6 +142,10 @@ export interface DevServerTest {
    * Only run this test.
    */
   only?: boolean;
+  /**
+   * Extra environment variables for the spawned dev-server process.
+   */
+  env?: Record<string, string>;
 }
 
 let interactive = false;
@@ -1439,8 +1443,21 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
 
-// Create a cache directory for React dependencies
-const reactCacheDir = path.join(tempDir, ".react-cache");
+// react-server-dom-bun's only published build was compiled against this react build. RSC
+// packages only pair with the exact react they were built for, so pin all three instead of
+// tracking the daily-moving `experimental` dist-tag (whose 2026-07-01 build broke the suite).
+const REACT_EXPERIMENTAL_VERSION = "0.0.0-experimental-603e6108-20241029";
+// Bun.$ expands an array into separate escaped arguments, so both install sites share it.
+const REACT_INSTALL_PACKAGES = [
+  `react@${REACT_EXPERIMENTAL_VERSION}`,
+  `react-dom@${REACT_EXPERIMENTAL_VERSION}`,
+  "react-server-dom-bun",
+  `react-refresh@${REACT_EXPERIMENTAL_VERSION}`,
+];
+
+// Cache the installed React packages, keyed on the pinned build so a stale cache under a
+// persistent BUN_DEV_SERVER_TEST_TEMP is repopulated whenever the pin changes.
+const reactCacheDir = path.join(tempDir, `.react-cache-${REACT_EXPERIMENTAL_VERSION}`);
 if (!fs.existsSync(reactCacheDir)) {
   fs.mkdirSync(reactCacheDir, { recursive: true });
 }
@@ -1471,7 +1488,7 @@ async function installReactWithCache(root: string) {
     }
   } else {
     // Install fresh and populate cache
-    await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+    await Bun.$`${bunExe()} i --linker=hoisted ${REACT_INSTALL_PACKAGES} && ${bunExe()} install --linker=hoisted`
       .cwd(root)
       .env({ ...bunEnv })
       .throws(true);
@@ -1520,7 +1537,7 @@ export async function ensureReactCache(): Promise<void> {
 
         try {
           // Install React packages
-          await Bun.$`${bunExe()} i --linker=hoisted react@experimental react-dom@experimental react-server-dom-bun react-refresh@experimental && ${bunExe()} install --linker=hoisted`
+          await Bun.$`${bunExe()} i --linker=hoisted ${REACT_INSTALL_PACKAGES} && ${bunExe()} install --linker=hoisted`
             .cwd(tempInstallDir)
             .env({ ...bunEnv })
             .throws(true);
@@ -1958,6 +1975,7 @@ function testImpl<T extends DevServerTest>(
           // BUN_DEBUG_INCREMENTALGRAPH: isDebugBuild && interactive ? "1" : undefined,
           // BUN_DEBUG_WATCHER: isDebugBuild && interactive ? "1" : undefined,
           BUN_ASSUME_PERFECT_INCREMENTAL: "0",
+          ...options.env,
         },
       ]),
       stdio: ["pipe", "pipe", "pipe"],
@@ -2059,7 +2077,7 @@ function logErr(err: any) {
   }
 }
 
-// Loosely modelled after the widget system in @paperclover/console
+// Loosely modelled after the widget system in @clo/lib/log
 // Only works with a single log
 let hasTrailingLog = false;
 class TrailingLog {

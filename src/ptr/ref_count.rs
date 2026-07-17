@@ -1,25 +1,25 @@
 //! Intrusive reference counting (single-threaded and thread-safe) + `RefPtr<T>`
 //! debug-tracking wrapper.
 //!
-//! Ported from `src/ptr/ref_count.zig`. The Zig original uses comptime
-//! type-returning functions (`fn RefCount(T, field_name, destructor, opts) type`)
-//! as mixins; in Rust this becomes a pair of (embedded struct + trait the host
+//! Each ref-count mixin is a pair of (embedded struct + trait the host
 //! type implements). See `RefCounted` / `ThreadSafeRefCounted`.
 
 use core::cell::Cell;
+#[cfg(debug_assertions)]
 use core::ffi::c_void;
 use core::marker::PhantomData;
-use core::mem::size_of;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::StoredTrace;
 use bun_core::ThreadLock;
 
-// PORT NOTE(b0): was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
+// was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
 // Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
 // which is acceptable for leak reports.
+#[cfg(debug_assertions)]
 use std::collections::HashMap;
+#[cfg(debug_assertions)]
 type ArrayHashMap<K, V> = HashMap<K, V>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -47,9 +47,8 @@ fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
 
 /// Options for `RefCount` / `ThreadSafeRefCount`.
 ///
-/// PORT NOTE: Zig's `Options` also carried `destructor_ctx: ?type`. A *type*
-/// cannot be a struct field in Rust; it becomes the associated type
-/// `RefCounted::DestructorCtx` instead.
+/// The destructor-context knob is the associated type
+/// `RefCounted::DestructorCtx`, not a field here.
 #[derive(Default)]
 pub struct Options {
     /// Defaults to the type basename.
@@ -58,31 +57,45 @@ pub struct Options {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Host-type traits (replace Zig's comptime `field_name` / `destructor` params)
+// Host-type traits (field projection + destructor)
 // ──────────────────────────────────────────────────────────────────────────
 
+/// `bun.meta.typeBaseName` — strip the module path (and the path inside any
+/// leading generic segment) from a `core::any::type_name` string, returning a
+/// subslice so the result stays `&'static str`.
+/// `"a::b::Foo<c::Bar>"` → `"Foo<c::Bar>"`.
+fn type_base_name(name: &'static str) -> &'static str {
+    let end = name.find('<').unwrap_or(name.len());
+    match name[..end].rfind("::") {
+        Some(i) => &name[i + 2..],
+        None => name,
+    }
+}
+
 /// Implemented by types that embed a [`RefCount`] field.
-///
-/// Replaces the Zig comptime parameters `field_name: []const u8`,
-/// `destructor: anytype`, and `options: Options` passed to
-/// `RefCount(T, field_name, destructor, options)`.
 pub trait RefCounted: Sized {
-    /// Zig: `options.destructor_ctx orelse void`.
     type DestructorCtx;
 
-    /// Zig: `options.debug_name orelse bun.meta.typeBaseName(@typeName(T))`.
+    /// Defaults to the type basename.
     fn debug_name() -> &'static str {
-        // TODO(port): bun.meta.typeBaseName — strip module path from type_name
-        core::any::type_name::<Self>()
+        type_base_name(core::any::type_name::<Self>())
     }
 
-    /// Zig: `&@field(self, field_name)` — locate the embedded `RefCount` field.
+    /// Locate the embedded `RefCount` field.
     ///
     /// # Safety
-    /// `this` must point to a live `Self`.
+    /// `this` must be non-null, properly aligned, and in-bounds of an
+    /// allocation large enough for `Self` — but it may point to
+    /// **uninitialized** memory: `offset_of_ref_count` probes this method
+    /// with a `MaybeUninit<Self>` to recover the field offset.
+    ///
+    /// Consequently, implementations MUST be pure raw-pointer field
+    /// projections (`&raw mut (*this).field`): no reads through `this`, no
+    /// creation of references (`&`/`&mut`) to `*this` or any of its fields,
+    /// and no other side effects.
     unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self>;
 
-    /// Zig: the `destructor` fn pointer passed to `RefCount(...)`.
+    /// Called when the refcount reaches zero.
     ///
     /// # Safety
     /// `this` must point to a live `Self` with `raw_count == 0`.
@@ -91,18 +104,26 @@ pub trait RefCounted: Sized {
 
 /// Implemented by types that embed a [`ThreadSafeRefCount`] field.
 pub trait ThreadSafeRefCounted: Sized {
-    /// Zig: `options.debug_name orelse bun.meta.typeBaseName(@typeName(T))`.
+    /// Defaults to the type basename.
     fn debug_name() -> &'static str {
-        core::any::type_name::<Self>()
+        type_base_name(core::any::type_name::<Self>())
     }
 
-    /// Zig: `&@field(self, field_name)`.
+    /// Locate the embedded `ThreadSafeRefCount` field.
     ///
     /// # Safety
-    /// `this` must point to a live `Self`.
+    /// `this` must be non-null, properly aligned, and in-bounds of an
+    /// allocation large enough for `Self` — but it may point to
+    /// **uninitialized** memory: `offset_of_ref_count_ts` probes this
+    /// method with a `MaybeUninit<Self>` to recover the field offset.
+    ///
+    /// Consequently, implementations MUST be pure raw-pointer field
+    /// projections (`&raw mut (*this).field`): no reads through `this`, no
+    /// creation of references (`&`/`&mut`) to `*this` or any of its fields,
+    /// and no other side effects.
     unsafe fn get_ref_count(this: *mut Self) -> *mut ThreadSafeRefCount<Self>;
 
-    /// Zig: the `destructor: fn (*T) void` parameter.
+    /// Called when the refcount reaches zero.
     ///
     /// # Safety
     /// `this` must point to a live `Self` with `raw_count == 0`.
@@ -116,10 +137,6 @@ pub trait ThreadSafeRefCounted: Sized {
 }
 
 /// Unifying trait so `RefPtr<T>` works with either ref-count flavor.
-///
-/// PORT NOTE: Zig's `RefPtr` reflected on `@FieldType(T, "ref_count")` and the
-/// private `is_ref_count == unique_symbol` marker to accept either mixin. In
-/// Rust the trait bound IS that check.
 pub trait AnyRefCounted: Sized {
     type DestructorCtx;
 
@@ -129,10 +146,8 @@ pub trait AnyRefCounted: Sized {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx);
-    /// Zig's `deref(self)` forwards `{}` (void) as the ctx — equivalent to
-    /// `Default::default()`. Types with a non-unit `DestructorCtx` must call
-    /// `rc_deref_with_context` explicitly (matches Zig's compile error when
-    /// `destructor_ctx != null`).
+    /// Forwards `Default::default()` as the ctx. Types with a non-unit
+    /// `DestructorCtx` must call `rc_deref_with_context` explicitly.
     ///
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -259,7 +274,7 @@ impl<T: RefCounted> RefCount<T> {
 
     // interface implementation
 
-    // PORT NOTE: `ref` is a Rust keyword; renamed to `ref_`.
+    // `ref` is a Rust keyword; renamed to `ref_`.
     /// # Safety
     /// `self_` must point to a live `T`.
     pub unsafe fn ref_(self_: *mut T) {
@@ -269,9 +284,8 @@ impl<T: RefCounted> RefCount<T> {
         {
             count.debug.assert_valid();
         }
-        // TODO(port): per-type scoped logging — Zig used
-        // `bun.Output.Scoped(debug_name, .hidden)` keyed on T's name. The
-        // `bun_core::scoped_log!` macro expects a static scope ident.
+        // `bun_core::scoped_log!` requires a static scope ident, so all types
+        // share the single `ref_count` scope.
         bun_core::scoped_log!(
             ref_count,
             "0x{:x}   ref {} -> {}:",
@@ -280,7 +294,6 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() + 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -314,7 +327,6 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() - 1,
         );
         if DEBUG_STACK_TRACE {
-            // TODO(port): was dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]})
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -358,7 +370,7 @@ impl<T: RefCounted> RefCount<T> {
             let ptr: *mut T = unsafe {
                 bun_core::container_of::<T, Self>(
                     std::ptr::from_mut(self),
-                    offset_of_ref_count::<T, Self>(),
+                    offset_of_ref_count::<T>(),
                 )
             };
             self.debug.dump(
@@ -371,7 +383,6 @@ impl<T: RefCounted> RefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // Zig: gated on `bun.Environment.ci_assert`.
         assert!(self.raw_count.get() == 0);
     }
 
@@ -389,11 +400,11 @@ impl<T: RefCounted> RefCount<T> {
         self.thread.lock_or_assert();
     }
 
-    // PORT NOTE: `getRefCount(self: *T) *@This()` is the trait method
+    // `getRefCount(self: *T) *@This()` is the trait method
     // `T::get_ref_count` above; not duplicated here.
 
-    // PORT NOTE: `is_ref_count = unique_symbol` and `ref_count_options` were
-    // comptime-reflection markers for `RefPtr`; replaced by the `AnyRefCounted`
+    // `is_ref_count = unique_symbol` and `ref_count_options` were
+    // reflection markers for `RefPtr`; replaced by the `AnyRefCounted`
     // trait bound.
 }
 
@@ -576,7 +587,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
             let ptr: *mut T = unsafe {
                 bun_core::container_of::<T, Self>(
                     std::ptr::from_mut(self),
-                    offset_of_ref_count_ts::<T, Self>(),
+                    offset_of_ref_count_ts::<T>(),
                 )
             };
             self.debug.dump(
@@ -589,7 +600,6 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // Zig: gated on `bun.Environment.ci_assert`.
         assert!(self.raw_count.load(Ordering::SeqCst) == 0);
     }
 
@@ -615,7 +625,7 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
         &raw mut self.debug
     }
 
-    // PORT NOTE: `getRefCount` / `is_ref_count` / `ref_count_options` — see
+    // `getRefCount` / `is_ref_count` / `ref_count_options` — see
     // notes on RefCount above.
 }
 
@@ -745,9 +755,6 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 // with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
 // Instead, thread-safe hosts opt in via `#[derive(ThreadSafeRefCounted)]`,
 // which emits the per-type `AnyRefCounted` impl alongside the trait impl.
-//
-// Zig: `RefPtr` reflected on `@FieldType(T, "ref_count")` to accept either
-// mixin; the derive is the manual half of that dispatch.
 
 // ──────────────────────────────────────────────────────────────────────────
 // RefPtr
@@ -765,8 +772,7 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 ///
 /// # ⚠️ No `Drop` impl — the owned ref must be released *manually*
 ///
-/// This mirrors the Zig original, which (having no destructors) never released
-/// on scope exit. `RefPtr` does **not** implement `Drop`: dropping a `RefPtr`
+/// `RefPtr` does **not** implement `Drop`: dropping a `RefPtr`
 /// value — including `Option::take()`-then-drop, or letting a struct field
 /// holding one go out of scope — **leaks** the strong ref it owns. On every
 /// path that gives up a `RefPtr` you must explicitly call one of:
@@ -796,14 +802,12 @@ impl<T: AnyRefCounted> RefPtr<T> {
     pub unsafe fn init_ref(raw_ptr: *mut T) -> Self {
         // SAFETY: caller contract
         unsafe { T::rc_ref(raw_ptr) };
-        // PORT NOTE: Zig re-asserted `is_ref_count == unique_symbol` here;
-        // the `T: AnyRefCounted` bound is that assertion.
         // SAFETY: caller contract
         unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
     // NOTE: would be nice to use a const for deref dispatch, but keep two
-    // methods for clarity (matches Zig comment).
+    // methods for clarity.
 
     /// Decrement the reference count, and destroy the object if the count is 0.
     pub fn deref(&self)
@@ -822,11 +826,11 @@ impl<T: AnyRefCounted> RefPtr<T> {
         }
         // SAFETY: data is live (we hold a ref)
         unsafe { T::rc_deref_with_context(self.as_ptr(), ctx) };
-        // make UAF fail faster (ideally integrate this with ASAN)
-        // PORT NOTE: Zig did `@constCast(self).data = undefined`. In Rust we
-        // cannot mutate through `&self` without UnsafeCell; and `RefPtr` is
-        // consumed-by-value in idiomatic use anyway.
-        // TODO(port): consider taking `self` by value and dropping.
+        // The handle is not poisoned after release: that would require
+        // mutating through `&self` (UnsafeCell), and `&self` is load-bearing
+        // here: hundreds of call sites (including Drop impls and ScopedRef)
+        // deref through a borrow they cannot move out of, so a by-value
+        // signature is not an option.
     }
 
     pub fn dupe_ref(&self) -> Self {
@@ -855,6 +859,28 @@ impl<T: AnyRefCounted> RefPtr<T> {
         }
         // SAFETY: caller contract
         unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
+    }
+
+    /// A [`ThisPtr`](crate::ThisPtr) to the pointee, for the FFI-shaped call
+    /// sites that take one.
+    ///
+    /// Safe: holding a `RefPtr` means we own a ref, so the pointee is live —
+    /// which is exactly `ThisPtr::new`'s precondition. The returned handle is
+    /// only valid while this `RefPtr` (or another ref) is alive.
+    #[inline]
+    pub fn this_ptr(&self) -> crate::ThisPtr<T> {
+        // SAFETY: we own an outstanding ref, so `self.data` is live and non-null.
+        unsafe { crate::ThisPtr::new(self.data.as_ptr()) }
+    }
+
+    /// Consume this `RefPtr` into a [`ThisPtr`](crate::ThisPtr), transferring
+    /// the ref to the callee — the counterpart of `into_raw` for the
+    /// `ThisPtr`-shaped dispatch entry points. Safe for the same reason
+    /// `into_raw` is: no ref is released, and the pointee stays live.
+    #[inline]
+    pub fn into_this_ptr(self) -> crate::ThisPtr<T> {
+        // SAFETY: `into_raw` transfers our live ref; the pointee is non-null.
+        unsafe { crate::ThisPtr::new(self.into_raw()) }
     }
 
     /// Wrap a raw pointer whose ref is being transferred to this RefPtr
@@ -941,8 +967,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
             // SAFETY: data is live (we hold a ref)
             unsafe { (*T::rc_debug_data(ptr)).release(self.debug, return_address()) };
         }
-        // PORT NOTE: Zig set `self.data = undefined`; taking `self` by value
-        // here makes the RefPtr unusable, which is the same intent.
+        // Taking `self` by value makes the RefPtr unusable afterwards.
         ptr
     }
 
@@ -983,7 +1008,7 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
 
 /// RAII scope guard for an intrusive refcount: bumps on construction, derefs
 /// on `Drop`. Use to bracket a `ref_()`/`deref()` pair that protects `*T`
-/// across a re-entrant call (Zig: `this.ref(); defer this.deref();`).
+/// across a re-entrant call.
 ///
 /// Unlike [`RefPtr`] this is not a smart-pointer handle (no `Deref`, not
 /// stored in fields) — it exists solely so the paired deref runs on every
@@ -1013,7 +1038,7 @@ where
     /// Adopt an already-held ref: does **not** bump on construction, but still
     /// derefs on `Drop`. Use when the matching `ref()` was taken earlier (e.g.
     /// by an in-flight async op) and this scope is responsible for releasing
-    /// it (Zig: `defer this.deref();` with no preceding `this.ref()`).
+    /// it.
     ///
     /// # Safety
     /// `ptr` must point to a live `T` for which the caller owns one outstanding
@@ -1040,15 +1065,16 @@ where
 // TrackedRef / TrackedDeref
 // ──────────────────────────────────────────────────────────────────────────
 
+#[cfg(debug_assertions)]
 struct TrackedRef {
     acquired_at: StoredTrace,
 }
 
 /// Not an index, just a unique identifier for the debug data.
-// PORT NOTE: Zig used `bun.GenericIndex(u32, TrackedRef)` (opaque type-tag).
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TrackedRefId(u32);
 
+#[cfg(debug_assertions)]
 impl TrackedRefId {
     #[inline]
     const fn new(n: u32) -> Self {
@@ -1056,10 +1082,8 @@ impl TrackedRefId {
     }
 }
 
-struct TrackedDeref {
-    acquired_at: StoredTrace,
-    released_at: StoredTrace,
-}
+#[cfg(debug_assertions)]
+struct TrackedDeref;
 
 // ──────────────────────────────────────────────────────────────────────────
 // DebugData
@@ -1074,32 +1098,27 @@ pub trait DebugDataOps {
     fn release(&mut self, id: TrackedRefId, return_address: usize);
 }
 
+#[cfg(debug_assertions)]
 const MAGIC_VALID: u128 = 0x2f84_e51d;
 
 /// Provides Ref tracking. This is not generic over the pointer T to reduce
 /// analysis complexity.
-// PORT NOTE: Zig parameterized on `comptime thread_safe: bool` and selected
-// `Count`/`Lock` types accordingly. Rust cannot select a type from a const
-// bool without a helper trait; instead we parameterize on the `Count` storage
-// type directly (`Cell<u32>` or `AtomicU32`). The lock and `next_id` are made
-// uniformly thread-safe (debug-only — perf irrelevant).
+// Parameterized on the `Count` storage type directly (`Cell<u32>` or
+// `AtomicU32`). The lock and `next_id` are made uniformly thread-safe
+// (debug-only — perf irrelevant).
 #[cfg(debug_assertions)]
 pub struct DebugData<Count> {
-    // TODO(port): Zig used `align(@alignOf(u32))` to reduce u128 alignment to
-    // 4. Rust cannot under-align a field; consider `[u32; 4]` if layout matters.
     magic: u128,
-    // TODO(port): Zig used `if (thread_safe) std.debug.SafetyLock else bun.Mutex`.
-    // Debug-only — always `bun_core::Mutex<()>` (poison-free `std::sync`) here for simplicity.
     lock: bun_core::Mutex<()>,
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,
     frees: ArrayHashMap<TrackedRefId, TrackedDeref>,
-    count_pointer: Option<NonNull<Count>>,
+    _count: core::marker::PhantomData<Count>,
 }
 
 #[cfg(debug_assertions)]
 impl<Count: CountLoad> DebugData<Count> {
-    // PORT NOTE(b0): was `pub const EMPTY` — std HashMap::new() is non-const.
+    // was `pub const EMPTY` — std HashMap::new() is non-const.
     pub fn empty() -> Self {
         Self {
             magic: MAGIC_VALID,
@@ -1107,7 +1126,7 @@ impl<Count: CountLoad> DebugData<Count> {
             next_id: AtomicU32::new(0),
             map: HashMap::new(),
             frees: ArrayHashMap::new(),
-            count_pointer: None,
+            _count: core::marker::PhantomData,
         }
     }
 
@@ -1121,54 +1140,29 @@ impl<Count: CountLoad> DebugData<Count> {
     }
 
     fn alloc_id(&self) -> TrackedRefId {
-        // PORT NOTE: Zig branched on `thread_safe` (atomic RMW vs plain ++).
         // Debug-only path; always atomic here.
         TrackedRefId::new(self.next_id.fetch_add(1, Ordering::SeqCst))
-    }
-
-    fn acquire_with_count(
-        &mut self,
-        count_pointer: NonNull<Count>,
-        return_address: usize,
-    ) -> TrackedRefId {
-        let _guard = self.lock.lock();
-        self.count_pointer = Some(count_pointer);
-        let id = self.alloc_id();
-        self.map.insert(
-            id,
-            TrackedRef {
-                acquired_at: StoredTrace::capture(Some(return_address)),
-            },
-        );
-        id
     }
 
     fn release_impl(&mut self, id: TrackedRefId, return_address: usize) {
         // If this triggers ASAN, the RefCounted object is double-freed.
         let _guard = self.lock.lock();
-        let Some(entry) = self.map.remove(&id) else {
+        let _ = return_address;
+        if self.map.remove(&id).is_none() {
             return;
-        };
-        self.frees.insert(
-            id,
-            TrackedDeref {
-                acquired_at: entry.acquired_at,
-                released_at: StoredTrace::capture(Some(return_address)),
-            },
-        );
+        }
+        self.frees.insert(id, TrackedDeref);
     }
 
-    // PORT NOTE: Zig `deinit` took `std.mem.asBytes(self)` as `data: []const u8`
-    // but never read it; the Rust port dropped the parameter to avoid forming a
-    // `&[u8]` over `T` (which may contain padding/uninit bytes — UB to read).
     fn deinit(&mut self, ret_addr: usize) {
         self.assert_valid();
-        self.magic = 0; // Zig: `= undefined`
+        self.magic = 0;
         let _guard = self.lock.lock();
         self.map.clear();
         self.map.shrink_to_fit();
+        // Clear and release the allocation.
         self.frees.clear();
-        // TODO(port): ArrayHashMap shrink — Zig clearAndFree
+        self.frees.shrink_to_fit();
         let _ = ret_addr;
     }
 }
@@ -1180,13 +1174,10 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
     }
 
     fn acquire(&mut self, return_address: usize) -> TrackedRefId {
-        // PORT NOTE: Zig's `acquire` took `count_pointer: *Count` because
-        // `RefPtr.uncheckedAndUnsafeInit` reached into `raw_ptr.ref_count.raw_count`.
-        // The dyn surface cannot name `Count`; the typed call site
-        // (RefCount::ref_/ThreadSafeRefCount::ref_) wires the count_pointer
-        // separately. Here we acquire without updating count_pointer.
-        // TODO(port): plumb count_pointer through AnyRefCounted if leak-dump
-        // needs it for RefPtr-created refs.
+        // The dyn surface cannot name `Count`, so we acquire without a count
+        // pointer; that is fine because the only leak-dump path
+        // (`dump_active_refs`) receives the current count explicitly as a
+        // parameter, so nothing reads a stored count pointer.
         let _guard = self.lock.lock();
         let id = self.alloc_id();
         self.map.insert(
@@ -1253,7 +1244,7 @@ fn generic_dump(
         bun_core::pretty_error!("refs<r>\n");
     }
     let mut i: usize = 0;
-    for (_, entry) in map.iter() {
+    for entry in map.values() {
         bun_core::pretty_error!("<b>RefPtr acquired at:<r>\n");
         dump_stack_hook(Some(&entry.acquired_at), 0);
         i += 1;
@@ -1268,10 +1259,8 @@ fn generic_dump(
 // maybe_assert_no_refs
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig used `@hasField(T, "ref_count")` + `@hasDecl(Rc, "assertNoRefs")`
-/// reflection to make this a no-op for non-ref-counted types. In Rust the
-/// "has ref_count" check IS the trait bound.
-// TODO(port): callers that passed non-ref-counted T must simply not call this.
+/// The trait bound restricts this to ref-counted types; callers with a
+/// non-ref-counted T must simply not call this.
 pub fn maybe_assert_no_refs<T: AnyRefCounted>(ptr: &T) {
     // SAFETY: `ptr` is a live reference to T
     unsafe { T::rc_assert_no_refs(std::ptr::from_ref::<T>(ptr)) }
@@ -1286,28 +1275,365 @@ fn return_address() -> usize {
     bun_core::return_address()
 }
 
+// The ref-count field name is not known here as a const, but
+// `T::get_ref_count` is a pure raw-pointer field projection
+// (`&raw mut (*this).field` — no read), so probing an uninitialized stack
+// value yields the field offset soundly.
+
 #[cfg(debug_assertions)]
 #[inline(always)]
-fn offset_of_ref_count<T: RefCounted, Rc>() -> usize {
-    // TODO(port): Zig used `@fieldParentPtr(field_name, count)`. Without the
-    // field name as a const, compute via the trait: feed a dangling aligned T
-    // and diff pointers. The derive macro could emit `offset_of!(T, ref_count)`.
-    let _ = core::mem::size_of::<Rc>();
-    0
+fn offset_of_ref_count<T: RefCounted>() -> usize {
+    let mut uninit = core::mem::MaybeUninit::<T>::uninit();
+    let base = uninit.as_mut_ptr();
+    // SAFETY: `get_ref_count` only projects a field within `base`'s
+    // allocation; it never reads `*base`.
+    let field = unsafe { T::get_ref_count(base) };
+    field as usize - base as usize
 }
 
 #[cfg(debug_assertions)]
 #[inline(always)]
-fn offset_of_ref_count_ts<T: ThreadSafeRefCounted, Rc>() -> usize {
-    // TODO(port): see offset_of_ref_count.
-    let _ = core::mem::size_of::<Rc>();
-    0
+fn offset_of_ref_count_ts<T: ThreadSafeRefCounted>() -> usize {
+    let mut uninit = core::mem::MaybeUninit::<T>::uninit();
+    let base = uninit.as_mut_ptr();
+    // SAFETY: `get_ref_count` only projects a field within `base`'s
+    // allocation; it never reads `*base`.
+    let field = unsafe { T::get_ref_count(base) };
+    field as usize - base as usize
 }
 
-// PORT NOTE: `const unique_symbol = opaque {};` — type-identity marker for
-// comptime assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
+// `const unique_symbol = opaque {};` — type-identity marker for
+// compile-time assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
 
-#[allow(non_upper_case_globals)]
 bun_core::declare_scope!(ref_count, hidden);
 
-// ported from: src/ptr/ref_count.zig
+// ──────────────────────────────────────────────────────────────────────────
+// Tests
+//
+// Run under Miri (`bun run rust:miri -p bun_ptr`): every path here walks raw
+// pointers through `Box::into_raw` / `heap::take`, so Tree Borrows is what
+// proves the ref/deref/destructor handoff does not alias or use-after-free.
+// ──────────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core::sync::atomic::AtomicUsize;
+    use std::sync::{Mutex, MutexGuard, PoisonError};
+
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+
+    /// `DROPS` is process-wide but libtest runs `#[test]`s on parallel threads,
+    /// so every test asserting on it holds this for its duration.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial() -> MutexGuard<'static, ()> {
+        SERIAL.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    fn drops() -> usize {
+        DROPS.load(Ordering::SeqCst)
+    }
+
+    // ── RefCount (single-threaded) ────────────────────────────────────────
+
+    struct Thing {
+        ref_count: RefCount<Thing>,
+        payload: Box<u32>,
+    }
+
+    impl Thing {
+        fn new(payload: u32) -> *mut Thing {
+            bun_core::heap::into_raw(Box::new(Thing {
+                ref_count: RefCount::init(),
+                payload: Box::new(payload),
+            }))
+        }
+    }
+
+    impl Drop for Thing {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl RefCounted for Thing {
+        type DestructorCtx = ();
+        unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self> {
+            // SAFETY: caller contract — `this` is in-bounds of a `Thing`
+            // allocation. Pure field projection, no read.
+            unsafe { &raw mut (*this).ref_count }
+        }
+        unsafe fn destructor(this: *mut Self, _: ()) {
+            // SAFETY: caller contract — refcount hit zero, sole owner.
+            drop(unsafe { bun_core::heap::take(this) });
+        }
+    }
+
+    #[test]
+    fn ref_count_ref_deref_destroys_at_zero() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(7);
+        // SAFETY: `t` is live with one ref.
+        unsafe {
+            RefCount::<Thing>::ref_(t);
+            assert_eq!((*RefCounted::get_ref_count(t)).get(), 2);
+            RefCount::<Thing>::deref(t);
+            assert!((*RefCounted::get_ref_count(t)).has_one_ref());
+            assert_eq!(*(*t).payload, 7);
+            // Last ref: runs `destructor`, freeing the allocation.
+            RefCount::<Thing>::deref(t);
+        }
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn ref_count_init_exact_refs() {
+        let _serial = serial();
+        let before = drops();
+        let t = bun_core::heap::into_raw(Box::new(Thing {
+            ref_count: RefCount::init_exact_refs(3),
+            payload: Box::new(1),
+        }));
+        // SAFETY: `t` is live with three refs; exactly three derefs destroy it.
+        unsafe {
+            RefCount::<Thing>::deref(t);
+            RefCount::<Thing>::deref(t);
+            assert_eq!(drops(), before);
+            RefCount::<Thing>::deref(t);
+        }
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn ref_ptr_round_trip() {
+        let _serial = serial();
+        let before = drops();
+        let p = RefPtr::new(Thing {
+            ref_count: RefCount::init(),
+            payload: Box::new(42),
+        });
+        assert_eq!(*p.data().payload, 42);
+
+        let q = p.dupe_ref();
+        let r = p.clone();
+        assert_eq!(p.as_ptr(), q.as_ptr());
+        assert_eq!(p.as_ptr(), r.as_ptr());
+        r.deref();
+        q.deref();
+        assert_eq!(drops(), before);
+
+        // `leak` hands the ref off without decrementing; `from_raw` takes it back.
+        let raw = p.leak();
+        // SAFETY: `raw` still owns the ref `p` gave up.
+        let p = unsafe { RefPtr::from_raw(raw) };
+        assert_eq!(*p.payload, 42);
+        p.deref();
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn scoped_ref_releases_on_drop() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(3);
+        {
+            // SAFETY: `t` is live; the guard's ref keeps it alive for the scope.
+            let _g = unsafe { ScopedRef::new(t) };
+            // SAFETY: two refs outstanding.
+            assert_eq!(unsafe { (*RefCounted::get_ref_count(t)).get() }, 2);
+        }
+        // SAFETY: the original ref is still outstanding.
+        assert!(unsafe { (*RefCounted::get_ref_count(t)).has_one_ref() });
+        // SAFETY: releasing the last ref.
+        unsafe { RefCount::<Thing>::deref(t) };
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn scoped_ref_adopt_consumes_caller_ref() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(3);
+        // SAFETY: `t` is live and we own the one ref the guard will consume.
+        drop(unsafe { ScopedRef::adopt(t) });
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn finalize_js_box_releases_one_ref() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(9);
+        // SAFETY: `t` is live; simulate the codegen handing `finalize` a Box.
+        let boxed: Box<Thing> = unsafe { bun_core::heap::take(t) };
+        let seen = std::cell::Cell::new(0u32);
+        finalize_js_box(boxed, |thing: &Thing| seen.set(*thing.payload));
+        assert_eq!(seen.get(), 9);
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn clear_without_destructor_skips_drop() {
+        let _serial = serial();
+        let before = drops();
+        let t = Thing::new(1);
+        // SAFETY: `t` is live.
+        unsafe { (*RefCounted::get_ref_count(t)).clear_without_destructor() };
+        // SAFETY: we now own the allocation outright; free it by hand.
+        drop(unsafe { bun_core::heap::take(t) });
+        assert_eq!(drops(), before + 1);
+    }
+
+    // ── ThreadSafeRefCount (atomic, cross-thread) ─────────────────────────
+
+    struct Shared {
+        ref_count: ThreadSafeRefCount<Shared>,
+        payload: Box<u32>,
+    }
+
+    impl Drop for Shared {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    impl ThreadSafeRefCounted for Shared {
+        unsafe fn get_ref_count(this: *mut Self) -> *mut ThreadSafeRefCount<Self> {
+            // SAFETY: caller contract — pure field projection, no read.
+            unsafe { &raw mut (*this).ref_count }
+        }
+    }
+
+    /// `*mut Shared` is not `Send`; the refcount is what makes sharing it sound.
+    #[derive(Clone, Copy)]
+    struct SendPtr(*mut Shared);
+    // SAFETY: `Shared`'s payload is only read across threads, and every thread
+    // holds its own ref for the duration (taken before spawn).
+    unsafe impl Send for SendPtr {}
+
+    #[test]
+    fn thread_safe_ref_count_cross_thread_destroy() {
+        let _serial = serial();
+        let before = drops();
+        let s = bun_core::heap::into_raw(Box::new(Shared {
+            ref_count: ThreadSafeRefCount::init(),
+            payload: Box::new(5),
+        }));
+
+        const N: usize = 4;
+        let mut handles = Vec::with_capacity(N);
+        for _ in 0..N {
+            // SAFETY: `s` is live and we hold a ref while handing one out.
+            unsafe { ThreadSafeRefCount::<Shared>::ref_(s) };
+            let p = SendPtr(s);
+            handles.push(std::thread::spawn(move || {
+                let p = p;
+                // SAFETY: this thread owns one ref, so `*p.0` is live.
+                unsafe {
+                    assert_eq!(*(*p.0).payload, 5);
+                    ThreadSafeRefCount::<Shared>::deref(p.0);
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(drops(), before);
+        // SAFETY: the initial ref; last one out runs `destructor`.
+        unsafe { ThreadSafeRefCount::<Shared>::deref(s) };
+        assert_eq!(drops(), before + 1);
+    }
+
+    #[test]
+    fn thread_safe_release_defers_destruction() {
+        let _serial = serial();
+        let before = drops();
+        let s = bun_core::heap::into_raw(Box::new(Shared {
+            ref_count: ThreadSafeRefCount::init_exact_refs(2),
+            payload: Box::new(8),
+        }));
+        // SAFETY: `s` is live with two refs.
+        unsafe {
+            assert!(!ThreadSafeRefCount::<Shared>::release(s));
+            assert_eq!(drops(), before);
+            // 1 → 0: `release` reports sole ownership but runs no destructor.
+            assert!(ThreadSafeRefCount::<Shared>::release(s));
+            assert_eq!(drops(), before);
+            drop(bun_core::heap::take(s));
+        }
+        assert_eq!(drops(), before + 1);
+    }
+
+    // ── CellRefCounted ────────────────────────────────────────────────────
+
+    struct Light {
+        ref_count: Cell<u32>,
+        payload: Box<u32>,
+    }
+
+    impl Drop for Light {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    // SAFETY: every `*mut Light` reaching `deref` came from `Box::into_raw`,
+    // which the default `destroy` reclaims.
+    unsafe impl CellRefCounted for Light {
+        fn ref_count(&self) -> &Cell<u32> {
+            &self.ref_count
+        }
+        unsafe fn ref_count_raw<'a>(this: *const Self) -> &'a Cell<u32> {
+            // SAFETY: caller contract — `this` is live. Field projection only;
+            // no whole-struct `&Self` is formed.
+            unsafe { &*(&raw const (*this).ref_count) }
+        }
+    }
+
+    #[test]
+    fn cell_ref_counted_destroys_at_zero() {
+        let _serial = serial();
+        let before = drops();
+        let l = bun_core::heap::into_raw(Box::new(Light {
+            ref_count: Cell::new(1),
+            payload: Box::new(11),
+        }));
+        // SAFETY: `l` is live.
+        unsafe {
+            (*l).ref_();
+            assert_eq!((*l).ref_count.get(), 2);
+            CellRefCounted::deref(l);
+            assert_eq!(*(*l).payload, 11);
+            assert_eq!(drops(), before);
+            CellRefCounted::deref(l);
+        }
+        assert_eq!(drops(), before + 1);
+    }
+
+    // ── helpers ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn type_base_name_strips_module_path() {
+        assert_eq!(type_base_name("a::b::Foo"), "Foo");
+        assert_eq!(type_base_name("a::b::Foo<c::Bar>"), "Foo<c::Bar>");
+        assert_eq!(type_base_name("Foo"), "Foo");
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn offset_of_ref_count_probes_uninit_without_reading() {
+        // `get_ref_count` must be a pure projection: this probes it against a
+        // `MaybeUninit<Thing>`, so any read of `*base` is an uninit read Miri
+        // would reject.
+        assert_eq!(
+            offset_of_ref_count::<Thing>(),
+            core::mem::offset_of!(Thing, ref_count)
+        );
+        assert_eq!(
+            offset_of_ref_count_ts::<Shared>(),
+            core::mem::offset_of!(Shared, ref_count)
+        );
+    }
+}

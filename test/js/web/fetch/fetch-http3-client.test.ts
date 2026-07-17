@@ -1,4 +1,4 @@
-import { gzipSync, type Server } from "bun";
+import { gunzipSync, gzipSync, type Server } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir, tls } from "harness";
 
@@ -42,6 +42,16 @@ beforeAll(async () => {
       "/head": () => new Response("should not appear", { headers: { "x-head": "1" } }),
       "/route/:id": req => new Response("id=" + req.params.id, { headers: { "x-route": "param" } }),
       "/headers-echo": req => Response.json(Object.fromEntries(req.headers)),
+      "/raw-echo": async req => {
+        const raw = Buffer.from(await req.arrayBuffer());
+        return new Response(raw, {
+          headers: {
+            "x-recv-len": String(raw.length),
+            "x-recv-encoding": req.headers.get("content-encoding") ?? "",
+            "x-recv-content-length": req.headers.get("content-length") ?? "",
+          },
+        });
+      },
 
       // Response body driven by pull — one chunk per consumer read.
       "/pull": () => {
@@ -226,6 +236,24 @@ describe("fetch protocol: http3", () => {
     const res = await fetch(`${base}/echo`, { ...h3, method: "POST", body: payload });
     expect(res.headers.get("x-recv-len")).toBe(String(payload.length));
     expect(Buffer.from(await res.bytes()).equals(payload)).toBe(true);
+  });
+
+  test.each([
+    ["small (shared-buffer fast path)", 32 * 1024],
+    ["large (zlib-streaming spill path)", 600 * 1024],
+  ])("compress: gzip request body — %s", async (_, size) => {
+    const payload = Buffer.alloc(size, "abcdefghij");
+    const res = await fetch(`${base}/raw-echo`, {
+      ...h3,
+      method: "POST",
+      body: payload,
+      compress: "gzip",
+    });
+    const raw = Buffer.from(await res.bytes());
+    expect(res.headers.get("x-recv-encoding")).toBe("gzip");
+    expect(Number(res.headers.get("x-recv-len"))).toBeLessThan(size);
+    expect(res.headers.get("x-recv-content-length")).toBe(String(raw.length));
+    expect(Buffer.from(gunzipSync(raw)).equals(payload)).toBe(true);
   });
 
   test.each([200, 204, 404, 500])("status %d", async code => {
@@ -698,4 +726,72 @@ describe("Alt-Svc upgrade (--experimental-http3-fetch)", () => {
     expect(stdout).toMatch(/second status=200 sessions=0\n$/);
     expect(exitCode).toBe(0);
   });
+});
+
+// The HTTP/3 client cannot apply per-request TLS trust configuration (custom
+// ca / client cert+key / serverName): the QUIC context is created without it.
+// Such requests must be refused on the forced-h3 path and kept on TCP+TLS on
+// the Alt-Svc upgrade path, never connected with the options dropped.
+test("custom TLS trust options are rejected on protocol: http3 and excluded from Alt-Svc h3 upgrade", async () => {
+  // protocol: "http3" + a custom CA must reject up front (the CA cannot be
+  // honoured over QUIC), even though the connection would otherwise succeed
+  // with rejectUnauthorized: false.
+  await expect(
+    fetch(`${base}/hello`, {
+      protocol: "http3",
+      tls: { ca: tls.cert, rejectUnauthorized: false },
+    } as any),
+  ).rejects.toThrow();
+
+  // Same for an mTLS client certificate, which the h3 path would never present.
+  await expect(
+    fetch(`${base}/hello`, {
+      protocol: "http3",
+      tls: { cert: tls.cert, key: tls.key, rejectUnauthorized: false },
+    } as any),
+  ).rejects.toThrow();
+
+  // The plain h3 request shape (no trust customization) still works, so the
+  // rejections above are about the TLS options, not h3 being broken.
+  const ok = await fetch(`${base}/hello`, h3);
+  expect(await ok.text()).toBe("hello over h3");
+
+  // Alt-Svc path: with the experimental flag on, a request that carries a
+  // custom CA must keep using HTTP/1.1 over TCP (where the CA is applied)
+  // instead of upgrading onto a QUIC session that ignores it.
+  const fixture = `
+    import { fetchH3Internals } from "bun:internal-for-testing";
+    const { liveCounts } = fetchH3Internals;
+    const tlsOptions = ${JSON.stringify(tls)};
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsOptions,
+      http3: true,
+      fetch: () => new Response("ok"),
+    });
+    const url = "https://127.0.0.1:" + server.port + "/";
+    const opts = { tls: { ca: tlsOptions.cert, rejectUnauthorized: false } };
+    {
+      const r = await fetch(url, opts);
+      await r.text();
+      console.log("first alt-svc=%s sessions=%d", r.headers.get("alt-svc") ?? "", liveCounts().sessions);
+    }
+    {
+      const r = await fetch(url, opts);
+      await r.text();
+      console.log("second status=%d sessions=%d", r.status, liveCounts().sessions);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: { ...bunEnv, BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP3_CLIENT: "1" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Server still advertises Alt-Svc, but with a custom CA both fetches must
+  // stay off QUIC: the live h3 session count stays at 0 after the second fetch.
+  expect(stdout).toMatch(/^first alt-svc=h3=":\d+"; ma=\d+ sessions=0\n/);
+  expect(stdout).toMatch(/second status=200 sessions=0\n$/);
+  expect(exitCode).toBe(0);
 });

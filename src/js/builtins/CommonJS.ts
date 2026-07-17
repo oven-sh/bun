@@ -60,7 +60,10 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
     }
   }
 
-  if (id.endsWith(".node")) {
+  // A resolved id may carry a `?query` suffix (part of the module cache key);
+  // match the native-addon extension against the path portion only.
+  const queryIndex = id.indexOf("?");
+  if (queryIndex === -1 ? id.endsWith(".node") : id.endsWith(".node", queryIndex)) {
     return $internalRequire(id, this);
   }
 
@@ -158,10 +161,14 @@ export function requireResolve(
 $visibility = "Private";
 export function internalRequire(id: string, parent: JSCommonJSModule) {
   $assert($requireMap.$get(id) === undefined, "Module " + JSON.stringify(id) + " should not be in the map");
-  $assert(id.endsWith(".node"));
+  // `id` keys the module cache and may carry a `?query` suffix;
+  // `process.dlopen` needs the on-disk path.
+  const queryIndex = id.indexOf("?");
+  const filename = queryIndex === -1 ? id : id.substring(0, queryIndex);
+  $assert(filename.endsWith(".node"));
 
   const module = $createCommonJSModule(id, {}, true, parent);
-  process.dlopen(module, id);
+  process.dlopen(module, filename);
   $requireMap.$set(id, module);
   return module.exports;
 }
@@ -209,7 +216,7 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
         // - we've never fetched it
         // - a fetch is in progress
         (!$isPromise(fetch) ||
-          ($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending))
+          ($peekPromiseStatus(fetch)) === 0))
     ) {
       // force it to be no longer pending
       $fulfillModuleSync(key);
@@ -225,7 +232,7 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 
     if (state < $ModuleLink && $isPromise(fetch)) {
       // This will probably never happen, but just in case
-      if (($getPromiseInternalField(fetch, $promiseFieldFlags) & $promiseStateMask) === $promiseStatePending) {
+      if (($peekPromiseStatus(fetch)) === 0) {
         registry.$delete(resolvedSpecifier);
 
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
@@ -233,21 +240,20 @@ function loadEsmIntoCjs__dead(resolvedSpecifier: string) {
 
       // this pulls it out of the promise without delaying by a tick
       // the promise is already fulfilled by $fulfillModuleSync
-      const sourceCodeObject = $getPromiseInternalField(fetch, $promiseFieldReactionsOrResult);
+      const sourceCodeObject = $peekPromiseSettledValue(fetch);
       moduleRecordPromise = loader.parseModule(key, sourceCodeObject);
     }
     let mod = entry?.module;
 
     if (moduleRecordPromise && $isPromise(moduleRecordPromise)) {
-      let reactionsOrResult = $getPromiseInternalField(moduleRecordPromise, $promiseFieldReactionsOrResult);
-      let flags = $getPromiseInternalField(moduleRecordPromise, $promiseFieldFlags);
-      let state = flags & $promiseStateMask;
+      let reactionsOrResult = $peekPromiseSettledValue(moduleRecordPromise);
+      let state = $peekPromiseStatus(moduleRecordPromise);
       // this branch should never happen, but just to be safe
-      if (state === $promiseStatePending || (reactionsOrResult && $isPromise(reactionsOrResult))) {
+      if (state === 0 || (reactionsOrResult && $isPromise(reactionsOrResult))) {
         registry.$delete(resolvedSpecifier);
 
         throw new TypeError(`require() async module "${key}" is unsupported. use "await import()" instead.`);
-      } else if (state === $promiseStateRejected) {
+      } else if (state === 2) {
         if (!reactionsOrResult?.message) {
           throw new TypeError(
             `${

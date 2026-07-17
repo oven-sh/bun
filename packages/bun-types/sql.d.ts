@@ -2,8 +2,8 @@ import type * as BunSQLite from "bun:sqlite";
 
 declare module "bun" {
   /**
-   * Represents a reserved connection from the connection pool Extends SQL with
-   * additional release functionality
+   * A connection reserved from the pool with {@link SQL.reserve}. Call
+   * {@link release} to return it to the pool.
    */
   interface ReservedSQL extends SQL, Disposable {
     /**
@@ -61,22 +61,22 @@ declare module "bun" {
     | (string & {});
 
   /**
-   * Represents a SQL array parameter
+   * An array parameter created by {@link SQL.array}
    */
   interface SQLArrayParameter {
     /**
-     * The serialized values of the array parameter
+     * The array values, serialized into a single string
      */
     serializedValues: string;
     /**
-     * The type of the array parameter
+     * The element type of the array, for example `"INT"`
      */
     arrayType: ArrayType;
   }
 
   /**
-   * Represents a client within a transaction context Extends SQL with savepoint
-   * functionality
+   * The client passed to transaction callbacks ({@link SQL.begin},
+   * {@link SQL.transaction}). Extends {@link SQL} with savepoints.
    */
   interface TransactionSQL extends SQL {
     /**
@@ -86,12 +86,12 @@ declare module "bun" {
     savepoint<T>(fn: SQL.SavepointContextCallback<T>): Promise<T>;
 
     /**
-     * The reserve method pulls out a connection from the pool, and returns a
-     * client that wraps the single connection.
+     * Reserves a connection from the pool and returns a client that wraps
+     * that single connection.
      *
-     * Using reserve() inside of a transaction will return a brand new
-     * connection, not one related to the transaction. This matches the
-     * behaviour of the `postgres` package.
+     * Inside a transaction, `reserve()` returns a brand new connection, not
+     * one related to the transaction. This matches the behaviour of the
+     * `postgres` package.
      */
     reserve(): Promise<ReservedSQL>;
   }
@@ -170,7 +170,7 @@ declare module "bun" {
       adapter?: "sqlite";
 
       /**
-       * Specify the path to the database file
+       * Path to the database file
        *
        * Examples:
        *
@@ -185,21 +185,21 @@ declare module "bun" {
       filename?: URL | ":memory:" | (string & {}) | undefined;
 
       /**
-       * Callback executed when a connection attempt completes (SQLite)
-       * Receives an Error on failure, or null on success.
+       * Called when a connection attempt completes.
+       * Receives an `Error` on failure, or `null` on success.
        */
       onconnect?: ((err: Error | null) => void) | undefined;
 
       /**
-       * Callback executed when a connection is closed (SQLite)
-       * Receives the closing Error or null.
+       * Called when a connection is closed.
+       * Receives the closing `Error`, or `null`.
        */
       onclose?: ((err: Error | null) => void) | undefined;
     }
 
     interface PostgresOrMySQLOptions {
       /**
-       * Connection URL (can be string or URL object)
+       * Connection URL, for example `postgres://user:pass@localhost:5432/mydb`
        */
       url?: URL | string | undefined;
 
@@ -268,13 +268,13 @@ declare module "bun" {
       adapter?: "postgres" | "mysql" | "mariadb";
 
       /**
-       * Maximum time in seconds to wait for connection to become available
+       * Maximum time in seconds a connection can sit idle before it is closed
        * @default 0 (no timeout)
        */
       idleTimeout?: number | undefined;
 
       /**
-       * Maximum time in seconds to wait for connection to become available (alias for idleTimeout)
+       * Maximum time in seconds a connection can sit idle before it is closed (alias for idleTimeout)
        * @deprecated Prefer {@link idleTimeout}
        * @default 0 (no timeout)
        */
@@ -342,14 +342,14 @@ declare module "bun" {
       path?: string | undefined;
 
       /**
-       * Callback executed when a connection attempt completes
-       * Receives an Error on failure, or null on success.
+       * Called when a connection attempt completes.
+       * Receives an `Error` on failure, or `null` on success.
        */
       onconnect?: ((err: Error | null) => void) | undefined;
 
       /**
-       * Callback executed when a connection is closed
-       * Receives the closing Error or null.
+       * Called when a connection is closed.
+       * Receives the closing `Error`, or `null`.
        */
       onclose?: ((err: Error | null) => void) | undefined;
 
@@ -367,8 +367,8 @@ declare module "bun" {
       max?: number | undefined;
 
       /**
-       * By default values outside i32 range are returned as strings. If this is
-       * true, values outside i32 range are returned as BigInts.
+       * Return values outside the i32 range as `BigInt`. By default they are
+       * returned as strings.
        * @default false
        */
       bigint?: boolean | undefined;
@@ -378,6 +378,17 @@ declare module "bun" {
        * @default true
        */
       prepare?: boolean | undefined;
+
+      /**
+       * MySQL only. Allow the client to request the server's RSA public key
+       * during `caching_sha2_password` / `sha256_password` authentication when
+       * the connection is not protected by TLS. Disabled by default because a
+       * network attacker can substitute their own key and recover the
+       * plaintext password. Enable only for trusted local connections, or use
+       * TLS instead.
+       * @default false
+       */
+      allowPublicKeyRetrieval?: boolean | undefined;
     }
 
     /**
@@ -393,8 +404,8 @@ declare module "bun" {
      *   database: 'myapp',
      *   idleTimeout: 30,
      *   max: 20,
-     *   onconnect: (client) => {
-     *     console.log('Connected to database');
+     *   onconnect: (err) => {
+     *     if (!err) console.log('Connected to database');
      *   }
      * };
      * ```
@@ -402,17 +413,17 @@ declare module "bun" {
     type Options = SQLiteOptions | PostgresOrMySQLOptions;
 
     /**
-     * Represents a SQL query that can be executed, with additional control
-     * methods Extends Promise to allow for async/await usage
+     * A pending SQL query. Extends `Promise`, so it can be awaited, and adds
+     * methods to control how it runs.
      */
     interface Query<T> extends Promise<T> {
       /**
-       * Indicates if the query is currently executing
+       * True while the query is executing
        */
       active: boolean;
 
       /**
-       * Indicates if the query has been cancelled
+       * True if the query has been cancelled
        */
       cancelled: boolean;
 
@@ -422,23 +433,25 @@ declare module "bun" {
       cancel(): Query<T>;
 
       /**
-       * Executes the query as a simple query, no parameters are allowed but can
-       * execute multiple commands separated by semicolons
+       * Executes the query as a simple query. Parameters are not allowed, but
+       * the query can contain multiple commands separated by semicolons.
        */
       simple(): Query<T>;
 
       /**
-       * Executes the query
+       * Starts executing the query. Queries are lazy: they only run when
+       * awaited or executed with this method.
        */
       execute(): Query<T>;
 
       /**
-       * Returns the raw query result
+       * Returns rows as arrays of `Buffer` objects instead of objects
        */
       raw(): Query<T>;
 
       /**
-       * Returns only the values from the query result
+       * Returns each row as an array of values, in the same order as the
+       * columns in the query
        */
       values(): Query<T>;
     }
@@ -456,8 +469,7 @@ declare module "bun" {
     type SavepointContextCallback<T> = ContextCallback<T, SavepointSQL>;
 
     /**
-     * SQL.Helper represents a parameter or serializable
-     * value inside of a query.
+     * A parameter or serializable value interpolated into a query.
      *
      * @example
      * ```ts
@@ -482,11 +494,11 @@ declare module "bun" {
     <T = any>(strings: TemplateStringsArray, ...values: unknown[]): SQL.Query<T>;
 
     /**
-     * Execute a SQL query using a string
+     * Executes a SQL query from a string
      *
      * @example
      * ```ts
-     * const users = await sql<User[]>`SELECT * FROM users WHERE id = ${1}`;
+     * const users = await sql<User[]>("SELECT * FROM users");
      * ```
      */
     <T = any>(string: string): SQL.Query<T>;
@@ -536,17 +548,20 @@ declare module "bun" {
      * const result = await sql`SELECT * FROM users WHERE id IN ${sql([1, 2, 3])}`;
      * ```
      */
-    <T>(value: T): SQL.Helper<T>;
+    // `T & {}` rejects a bare `null`/`undefined` value, which the runtime
+    // throws on. An array such as `[null]` stays allowed: it is a valid
+    // `WHERE IN` binding and is an object, so it still satisfies `{}`.
+    <T>(value: T & {}): SQL.Helper<T>;
   }
 
   /**
-   * Main SQL client interface providing connection and transaction management
+   * SQL client. Manages a connection pool, queries, and transactions.
    */
   class SQL {
     /**
      * Creates a new SQL client instance
      *
-     * @param connectionString - The connection string for the SQL client
+     * @param connectionString Database connection string or URL
      *
      * @example
      * ```ts
@@ -559,8 +574,8 @@ declare module "bun" {
     /**
      * Creates a new SQL client instance with options
      *
-     * @param connectionString - The connection string for the SQL client
-     * @param options - The options for the SQL client
+     * @param connectionString Database connection string or URL
+     * @param options Connection and pool options
      *
      * @example
      * ```ts
@@ -575,7 +590,7 @@ declare module "bun" {
     /**
      * Creates a new SQL client instance with options
      *
-     * @param options - The options for the SQL client
+     * @param options Connection and pool options, including the URL or filename
      *
      * @example
      * ```ts
@@ -590,9 +605,10 @@ declare module "bun" {
     options: Bun.__internal.DistributedMerge<SQL.Options>;
 
     /**
-     * Commits a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     * Commits a distributed transaction, also known as a prepared transaction
+     * in PostgreSQL or an XA transaction in MySQL
      *
-     * @param name - The name of the distributed transaction
+     * @param name Name of the distributed transaction
      *
      * @throws {Error} If the adapter does not support distributed transactions (e.g., SQLite)
      *
@@ -604,9 +620,10 @@ declare module "bun" {
     commitDistributed(name: string): Promise<void>;
 
     /**
-     * Rolls back a distributed transaction also know as prepared transaction in postgres or XA transaction in MySQL
+     * Rolls back a distributed transaction, also known as a prepared
+     * transaction in PostgreSQL or an XA transaction in MySQL
      *
-     * @param name - The name of the distributed transaction
+     * @param name Name of the distributed transaction
      *
      * @throws {Error} If the adapter does not support distributed transactions (e.g., SQLite)
      *
@@ -627,9 +644,10 @@ declare module "bun" {
     connect(): Promise<SQL>;
 
     /**
-     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
+     * Closes the database connection. With `timeout: 0` it closes
+     * immediately; with no timeout it waits for all queries to finish first.
      *
-     * @param options - The options for the close
+     * @param options Optional `timeout` in seconds
      *
      * @example
      * ```ts
@@ -639,10 +657,9 @@ declare module "bun" {
     close(options?: { timeout?: number }): Promise<void>;
 
     /**
-     * Closes the database connection with optional timeout in seconds. If timeout is 0, it will close immediately, if is not provided it will wait for all queries to finish before closing.
-     * This is an alias of {@link SQL.close}
+     * Closes the database connection. Alias of {@link SQL.close}.
      *
-     * @param options - The options for the close
+     * @param options Optional `timeout` in seconds
      *
      * @example
      * ```ts
@@ -664,19 +681,22 @@ declare module "bun" {
     flush(): void;
 
     /**
-     * The reserve method pulls out a connection from the pool, and returns a client that wraps the single connection.
+     * Reserves a connection from the pool and returns a client that wraps
+     * that single connection. Use it to run queries on an isolated
+     * connection.
      *
-     * This can be used for running queries on an isolated connection.
-     * Calling reserve in a reserved Sql will return a new reserved connection,  not the same connection (behavior matches postgres package).
+     * Calling `reserve()` on a reserved client returns a new reserved
+     * connection, not the same one (behavior matches the `postgres` package).
      *
-     * @throws {Error} If the adapter does not support connection pooling (e.g., SQLite)s
+     * @throws {Error} If the adapter does not support connection pooling (e.g., SQLite)
      *
      * @example
      * ```ts
      * const reserved = await sql.reserve();
      * await reserved`select * from users`;
      * await reserved.release();
-     * // with in a production scenario would be something more like
+     *
+     * // In production, release in a finally block
      * const reserved = await sql.reserve();
      * try {
      *   // ... queries
@@ -684,8 +704,8 @@ declare module "bun" {
      *   await reserved.release();
      * }
      *
-     * // Bun supports Symbol.dispose and Symbol.asyncDispose
-     * // always release after context (safer)
+     * // Bun supports Symbol.dispose and Symbol.asyncDispose,
+     * // so `using` releases the connection at the end of the scope
      * using reserved = await sql.reserve()
      * await reserved`select * from users`
      * ```
@@ -693,10 +713,10 @@ declare module "bun" {
     reserve(): Promise<ReservedSQL>;
 
     /**
-     * Creates a new SQL array parameter
-     * @param values - The values to create the array parameter from
-     * @param typeNameOrTypeID - The type name or type ID to create the array parameter from, if omitted it will default to JSON
-     * @returns A new SQL array parameter
+     * Creates a SQL array parameter
+     * @param values Array values to bind
+     * @param typeNameOrTypeID Element type name or type ID; defaults to JSON when omitted
+     * @returns The array parameter, ready to interpolate into a query
      *
      * @example
      * ```ts
@@ -710,9 +730,13 @@ declare module "bun" {
     /**
      * Begins a new transaction.
      *
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * Reserves a connection for the transaction and passes a scoped `sql`
+     * instance to the callback. `sql.begin` resolves with the callback's
+     * return value. `BEGIN` is sent automatically, and if anything fails,
+     * `ROLLBACK` is sent so the connection can be released and execution can
+     * continue.
      * @example
+     * ```ts
      * const [user, account] = await sql.begin(async sql => {
      *   const [user] = await sql`
      *     insert into users (
@@ -732,15 +756,20 @@ declare module "bun" {
      *   `
      *   return [user, account]
      * })
+     * ```
      */
     begin<const T>(fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
      * Begins a new transaction with options.
      *
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.begin will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * Reserves a connection for the transaction and passes a scoped `sql`
+     * instance to the callback. `sql.begin` resolves with the callback's
+     * return value. `BEGIN` is sent with the given options, and if anything
+     * fails, `ROLLBACK` is sent so the connection can be released and
+     * execution can continue.
      * @example
+     * ```ts
      * const [user, account] = await sql.begin("read write", async sql => {
      *   const [user] = await sql`
      *     insert into users (
@@ -760,16 +789,21 @@ declare module "bun" {
      *   `
      *   return [user, account]
      * })
+     * ```
      */
     begin<const T>(options: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
-     * Alternative method to begin a transaction.
+     * Begins a new transaction. Alias of {@link begin}.
      *
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * Reserves a connection for the transaction and passes a scoped `sql`
+     * instance to the callback. `sql.transaction` resolves with the
+     * callback's return value. `BEGIN` is sent automatically, and if
+     * anything fails, `ROLLBACK` is sent so the connection can be released
+     * and execution can continue.
      * @alias begin
      * @example
+     * ```ts
      * const [user, account] = await sql.transaction(async sql => {
      *   const [user] = await sql`
      *     insert into users (
@@ -789,17 +823,23 @@ declare module "bun" {
      *   `
      *   return [user, account]
      * })
+     * ```
      */
     transaction<const T>(fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
-     * Alternative method to begin a transaction with options
-     * Will reserve a connection for the transaction and supply a scoped sql instance for all transaction uses in the callback function. sql.transaction will resolve with the returned value from the callback function.
-     * BEGIN is automatically sent with the optional options, and if anything fails ROLLBACK will be called so the connection can be released and execution can continue.
+     * Begins a new transaction with options. Alias of {@link begin}.
+     *
+     * Reserves a connection for the transaction and passes a scoped `sql`
+     * instance to the callback. `sql.transaction` resolves with the
+     * callback's return value. `BEGIN` is sent with the given options, and
+     * if anything fails, `ROLLBACK` is sent so the connection can be
+     * released and execution can continue.
      *
      * @alias {@link begin}
      *
      * @example
+     * ```ts
      * const [user, account] = await sql.transaction("read write", async sql => {
      *   const [user] = await sql`
      *     insert into users (
@@ -819,20 +859,36 @@ declare module "bun" {
      *   `
      *   return [user, account]
      * });
+     * ```
      */
     transaction<const T>(options: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
     /**
-     * Begins a distributed transaction
-     * Also know as Two-Phase Commit, in a distributed transaction, Phase 1 involves the coordinator preparing nodes by ensuring data is written and ready to commit, while Phase 2 finalizes with nodes committing or rolling back based on the coordinator's decision, ensuring durability and releasing locks.
-     * In PostgreSQL and MySQL distributed transactions persist beyond the original session, allowing privileged users or coordinators to commit/rollback them, ensuring support for distributed transactions, recovery, and administrative tasks.
-     * beginDistributed will automatic rollback if any exception are not caught, and you can commit and rollback later if everything goes well.
-     * PostgreSQL natively supports distributed transactions using PREPARE TRANSACTION, while MySQL uses XA Transactions, and MSSQL also supports distributed/XA transactions. However, in MSSQL, distributed transactions are tied to the original session, the DTC coordinator, and the specific connection.
-     * These transactions are automatically committed or rolled back following the same rules as regular transactions, with no option for manual intervention from other sessions, in MSSQL distributed transactions are used to coordinate transactions using Linked Servers.
+     * Begins a distributed transaction, also known as Two-Phase Commit. In
+     * phase 1 the coordinator prepares each node, making sure its data is
+     * written and ready to commit; in phase 2 the nodes commit or roll back
+     * based on the coordinator's decision, ensuring durability and releasing
+     * locks.
+     *
+     * `beginDistributed` rolls back automatically if an exception is not
+     * caught; otherwise you commit or roll back later with
+     * {@link commitDistributed} or {@link rollbackDistributed}.
+     *
+     * In PostgreSQL and MySQL, distributed transactions persist beyond the
+     * original session, so privileged users or coordinators can commit or
+     * roll them back later, which supports recovery and administrative
+     * tasks. PostgreSQL implements them with `PREPARE TRANSACTION`; MySQL
+     * uses XA Transactions. MSSQL also supports distributed/XA transactions,
+     * but ties them to the original session, the DTC coordinator, and the
+     * specific connection: they are committed or rolled back under the same
+     * rules as regular transactions, with no manual intervention from other
+     * sessions, and are used to coordinate transactions across Linked
+     * Servers.
      *
      * @throws {Error} If the adapter does not support distributed transactions (e.g., SQLite)
      *
      * @example
+     * ```ts
      * await sql.beginDistributed("numbers", async sql => {
      *   await sql`create table if not exists numbers (a int)`;
      *   await sql`insert into numbers values(1)`;
@@ -840,36 +896,45 @@ declare module "bun" {
      * // later you can call
      * await sql.commitDistributed("numbers");
      * // or await sql.rollbackDistributed("numbers");
+     * ```
      */
     beginDistributed<const T>(
       name: string,
       fn: SQL.TransactionContextCallback<T>,
     ): Promise<SQL.ContextCallbackResult<T>>;
 
-    /** Alternative method to begin a distributed transaction
+    /** Begins a distributed transaction. Alias of {@link beginDistributed}.
      * @alias {@link beginDistributed}
      */
     distributed<const T>(name: string, fn: SQL.TransactionContextCallback<T>): Promise<SQL.ContextCallbackResult<T>>;
 
-    /**If you know what you're doing, you can use unsafe to pass any string you'd like.
-     * Please note that this can lead to SQL injection if you're not careful.
-     * You can also nest sql.unsafe within a safe sql expression. This is useful if only part of your fraction has unsafe elements.
+    /**
+     * Executes any query string as-is. This can lead to SQL injection if the
+     * string contains untrusted input.
+     *
+     * `sql.unsafe` can be nested inside a safe `sql` expression, for example
+     * when only part of the query is unsafe.
      * @example
+     * ```ts
      * const result = await sql.unsafe(`select ${danger} from users where id = ${dragons}`)
+     * ```
      */
     unsafe<T = any>(string: string, values?: any[]): SQL.Query<T>;
 
     /**
-     * Reads a file and uses the contents as a query.
-     * Optional parameters can be used if the file includes $1, $2, etc
+     * Reads a file and runs its contents as a query.
+     * Pass `values` if the file uses positional parameters (`$1`, `$2`, ...)
      * @example
+     * ```ts
      * const result = await sql.file("query.sql", [1, 2, 3]);
+     * ```
      */
     file<T = any>(filename: string, values?: any[]): SQL.Query<T>;
   }
 
   /**
-   * SQL client
+   * The default SQL client, configured from environment variables such as
+   * `DATABASE_URL`
    */
   const sql: SQL;
 
@@ -881,7 +946,8 @@ declare module "bun" {
   const postgres: SQL;
 
   /**
-   * Represents a savepoint within a transaction
+   * The client passed to {@link TransactionSQL.savepoint} callbacks; queries
+   * run within that savepoint
    */
   interface SavepointSQL extends SQL {}
 }

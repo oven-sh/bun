@@ -1,7 +1,5 @@
 //! `AnyTaskJob<C>` — the canonical "{WorkPool offload → AnyTask re-queue →
-//! JS-thread completion}" boilerplate that was open-coded at five sites in
-//! Zig (`SecretsJob`, `ExternCryptoJob`, `CryptoJob<Ctx>`, `PBKDF2::Job`,
-//! `ZstdJob`). Each call site supplies only a `Ctx` impl of
+//! JS-thread completion}" boilerplate. Each call site supplies only a `Ctx` impl of
 //! [`AnyTaskJobCtx`]; the heap allocation, intrusive `WorkPoolTask`/`AnyTask`
 //! wiring, `KeepAlive` ref/unref, and `is_shutting_down` guard live here.
 //!
@@ -88,9 +86,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
             ctx,
         }));
         // SAFETY: `job` was just allocated and is exclusively owned here.
-        // Zig: `AnyTask.New(@This(), &runFromJS).init(job)`. Rust's `New<T>`
-        // cannot carry a comptime callback, so build the erased AnyTask
-        // directly with a non-capturing shim.
+        // Build the erased AnyTask directly with a non-capturing shim.
         unsafe {
             (*job).any_task = AnyTask {
                 ctx: NonNull::new(job.cast::<c_void>()),
@@ -145,9 +141,8 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
         let job = unsafe { &mut *Self::from_task_ptr(task) };
         let vm = job.vm;
         job.ctx.run(vm.global);
-        // Mirror Zig `defer vm.enqueueTaskConcurrent(...)` — there is no early
-        // return between the body and the enqueue, so the `defer` reduces to a
-        // trailing call.
+        // `ConcurrentTask::create` heap-allocates a fresh task; the queue takes
+        // ownership of it.
         vm.event_loop_shared()
             .enqueue_task_concurrent(ConcurrentTask::create(job.any_task.task()));
     }

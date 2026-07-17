@@ -2,12 +2,11 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 /// Logically a u49. Rust has no native u49, so we carry it in a u64 and mask.
-pub type AddressableSize = u64;
+pub(crate) type AddressableSize = u64;
 
 /// `TaggedPtr::Tag` — logically u15, carried in u16. (Inherent assoc types are nightly; hoisted here.)
 pub type TagType = u16;
-/// Zig: `packed struct(u64) { _ptr: u49, data: u15 }`
-/// Packed-struct field order in Zig is LSB-first, so:
+/// Bit layout:
 ///   bits  0..49 → `_ptr`
 ///   bits 49..64 → `data`
 #[repr(transparent)]
@@ -24,9 +23,7 @@ impl TaggedPtr {
 
     #[inline]
     pub fn init<T>(ptr: *const T, data: TagType) -> TaggedPtr {
-        // Zig's `if (Ptr == @TypeOf(null))` branch is subsumed: a null `*const T`
-        // yields address 0 below. The `@typeInfo(Ptr) != .pointer` compile error
-        // is enforced by `*const T` in the signature.
+        // A null `*const T` yields address 0 below.
         let address = ptr as usize;
         TaggedPtr(
             (address as u64 & Self::ADDR_MASK) // @truncate to u49
@@ -52,22 +49,17 @@ impl TaggedPtr {
     #[inline]
     pub fn get<Type>(self) -> *mut Type {
         // SAFETY: caller asserts the stored address points to a live `Type`.
-        // @ptrFromInt(@intCast(this._ptr))
         self.ptr_bits() as usize as *mut Type
     }
 
     #[inline]
     pub fn to(self) -> *mut c_void {
-        // @ptrFromInt(@bitCast(this)) — note: includes the tag bits in the high
-        // word, matching Zig. This is intentional: round-tripping through
-        // `*anyopaque` preserves the tag.
+        // Note: includes the tag bits in the high word. This is intentional:
+        // round-tripping through `*anyopaque` preserves the tag.
         self.0 as usize as *mut c_void
     }
 }
 
-// Zig `from(val: anytype)` dispatches on @TypeOf(val):
-//   f64 | i64 | u64        => @bitCast(val)
-//   ?*anyopaque|*anyopaque => @bitCast(@intFromPtr(val))
 impl From<u64> for TaggedPtr {
     #[inline]
     fn from(val: u64) -> Self {
@@ -104,20 +96,17 @@ impl From<Option<*mut c_void>> for TaggedPtr {
 // TaggedPointerUnion
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Zig builds this with heavy comptime reflection: `@typeName`, `@Type` to mint
-// an enum, `@hasField`/`@field` for membership checks, and `inline for` over a
-// type tuple. None of that exists in Rust. We model it with two traits:
+// Modeled with two traits:
 //
 //   - `TypeList`      : implemented for the tuple `(T1, T2, ...)`; carries the
 //                       variant count and the tag→name table.
 //   - `UnionMember<L>`: implemented for each `Ti` against its list `L`; carries
-//                       that type's tag value (1024 - index, matching Zig).
+//                       that type's tag value (1024 - index).
 //
-// `assert_type` / `@hasField` become a `T: UnionMember<Ts>` bound — the compile
-// error is the trait-bound failure.
+// Membership checks become a `T: UnionMember<Ts>` bound — the compile error is
+// the trait-bound failure.
 //
-// Tag values are assigned exactly as Zig does: `1024 - i` for index `i`. Zig
-// also reifies a non-exhaustive `enum(u15)` for the tag; we keep the raw u15
+// Tag values are assigned as `1024 - i` for index `i`. We keep the raw u15
 // and expose `tag()` as the integer (callers that need an enum can define one
 // per instantiation).
 
@@ -133,18 +122,16 @@ pub trait TypeList {
 }
 
 /// `T: UnionMember<Ts>` ⇔ `T` is one of the types in the list `Ts`.
-/// Replaces Zig's `assert_type` / `@hasField(Tag, @typeName(Type))`.
 pub trait UnionMember<Ts: TypeList> {
     const TAG: TagType;
     const NAME: &'static str;
 }
 
 /// Generates `TypeList` for `($($T,)*)` and `UnionMember<($($T,)*)>` for each
-/// `$T`, assigning tags `1024 - i` to match Zig's `TagTypeEnumWithTypeMap`.
-// TODO(port): proc-macro — Zig uses `@typeName` for both the tag enum field
-// name and the `name` string. `stringify!($T)` is the closest analogue but
-// won't match Zig's fully-qualified `@typeName` output; confirm no caller
-// depends on the exact string.
+/// `$T`, assigning tags `1024 - i`.
+// `stringify!($T)` is not a fully-qualified type name. That is fine: no
+// caller consumes the strings (`type_name`/`type_name_from_tag` have no users
+// outside debug output), so the exact spelling is not load-bearing.
 #[macro_export]
 macro_rules! impl_tagged_ptr_union {
     ($($T:ty),+ $(,)?) => {
@@ -203,18 +190,16 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
         *self = Self::NULL;
     }
 
-    // `typeFromTag(comptime the_tag) type` has no Rust equivalent (cannot
-    // return a type from a const value). Callers must name the type directly.
-    // TODO(port): if any callsite needs this, it becomes a trait associated type.
+    // A tag→type mapping function has no Rust equivalent (cannot
+    // return a type from a const value). Callers must name the type directly;
+    // no callsite needs it.
 
     pub fn type_name_from_tag(the_tag: TagType) -> Option<&'static str> {
         Ts::type_name_from_tag(the_tag)
     }
 
     pub fn type_name(self) -> Option<&'static str> {
-        // Zig: @tagName(this.tag()) — on a non-exhaustive enum this is defined
-        // for known fields. We return None for unknown tags to match the
-        // optional return type the Zig caller sees.
+        // Returns `None` for unknown tags.
         Ts::type_name_from_tag(self.repr.data())
     }
 
@@ -229,18 +214,17 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
 
     #[inline]
     pub fn tag(self) -> TagType {
-        // Zig returns the reified enum; we return the raw integer.
         self.repr.data()
     }
 
-    /// Zig `case(comptime Type) Tag` → the tag constant for `Type`.
+    /// The tag constant for `Type`.
     #[inline]
     pub const fn case<Type: UnionMember<Ts>>() -> TagType {
         Type::TAG
     }
 
     /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
-    // PORT NOTE: Zig name is `as`, which is a Rust keyword.
+    // `as` is a Rust keyword, hence `as_unchecked`.
     #[inline]
     pub fn as_unchecked<Type: UnionMember<Ts>>(self) -> *mut Type {
         self.repr.get::<Type>()
@@ -299,8 +283,6 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
 
     #[inline]
     pub fn init<Type: UnionMember<Ts>>(ptr: *const Type) -> Self {
-        // Zig splits `init` (infers Type via std.meta.Child) and `initWithType`.
-        // In Rust the generic param IS the inferred child type, so both collapse.
         Self::init_with_type::<Type>(ptr)
     }
 
@@ -317,13 +299,4 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     pub fn is_null(self) -> bool {
         self.repr.ptr_bits() == 0
     }
-
-    // TODO(port): `call(comptime fn_name, args, comptime Ret)` dispatches by
-    // tag and invokes `@field(entry.ty, fn_name)` reflectively. Rust cannot
-    // look up a method by string at compile time. Port pattern: define a trait
-    // with the target method, bound every `Ti: TheTrait`, and have callers
-    // `match self.tag()` (or use a per-instantiation `dispatch!` macro). Each
-    // callsite of `.call(...)` needs to be rewritten by hand.
 }
-
-// ported from: src/ptr/tagged_pointer.zig

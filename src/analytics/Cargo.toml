@@ -11,7 +11,6 @@ workspace = true
 
 [dependencies]
 strum.workspace = true
-phf.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
@@ -22,3 +21,5 @@ bitflags.workspace = true
 bun_core.workspace = true
 bun_semver.workspace = true
 bun_sys.workspace = true
+thiserror.workspace = true
+bun_errno.workspace = true

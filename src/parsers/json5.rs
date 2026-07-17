@@ -99,8 +99,6 @@ bun_core::impl_tag_error!(ParseError);
 
 bun_core::oom_from_alloc!(ParseError);
 
-bun_core::named_error_set!(ParseError);
-
 #[derive(Clone, Copy)]
 pub enum Error {
     Oom,
@@ -134,11 +132,11 @@ pub enum AddToLogError {
 }
 bun_core::impl_tag_error!(AddToLogError);
 
-impl From<AddToLogError> for bun_core::Error {
+impl From<AddToLogError> for crate::Error {
     fn from(e: AddToLogError) -> Self {
         match e {
-            AddToLogError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            AddToLogError::StackOverflow => bun_core::err!("StackOverflow"),
+            AddToLogError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            AddToLogError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -207,12 +205,12 @@ pub enum ExternalError {
 }
 bun_core::impl_tag_error!(ExternalError);
 
-impl From<ExternalError> for bun_core::Error {
+impl From<ExternalError> for crate::Error {
     fn from(e: ExternalError) -> Self {
         match e {
-            ExternalError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            ExternalError::SyntaxError => bun_core::err!("SyntaxError"),
-            ExternalError::StackOverflow => bun_core::err!("StackOverflow"),
+            ExternalError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ExternalError::SyntaxError => crate::Error::SyntaxError,
+            ExternalError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -531,7 +529,7 @@ impl<'a> JSON5Parser<'a> {
             }
             TokenData::Number(n) => {
                 self.scan()?;
-                Ok(Expr::init(E::Number { value: n }, loc))
+                Ok(Expr::init(E::Number::new(n), loc))
             }
             TokenData::Boolean(b) => {
                 self.scan()?;
@@ -544,15 +542,10 @@ impl<'a> JSON5Parser<'a> {
             TokenData::Identifier(s) => {
                 if s == b"NaN" {
                     self.scan()?;
-                    return Ok(Expr::init(E::Number { value: f64::NAN }, loc));
+                    return Ok(Expr::init(E::Number::new(f64::NAN), loc));
                 } else if s == b"Infinity" {
                     self.scan()?;
-                    return Ok(Expr::init(
-                        E::Number {
-                            value: f64::INFINITY,
-                        },
-                        loc,
-                    ));
+                    return Ok(Expr::init(E::Number::new(f64::INFINITY), loc));
                 }
                 Err(ParseError::UnexpectedToken)
             }
@@ -578,6 +571,7 @@ impl<'a> JSON5Parser<'a> {
             let value = self.parse_value()?;
 
             properties.push(G::Property {
+                flags: E::own_key_property_flags(&key),
                 key: Some(key),
                 value: Some(value),
                 ..Default::default()
@@ -1085,7 +1079,7 @@ impl<'a> JSON5Parser<'a> {
         let seq_len_usize = usize::from(seq_len);
         let mut bytes = [0u8; 4];
         bytes[..seq_len_usize].copy_from_slice(&self.source[self.pos..self.pos + seq_len_usize]);
-        let decoded = strings::decode_wtf8_rune_t(&bytes, seq_len, -1i32);
+        let decoded = strings::decode_wtf8_rune_t(bytes, seq_len, -1i32);
         if decoded < 0 {
             return Some(Codepoint {
                 cp: i32::from(first),
@@ -1118,5 +1112,3 @@ fn append_codepoint_to_utf8(buf: &mut BumpVec<'_, u8>, cp: i32) -> Result<(), Pa
 fn is_ident_continue_ascii(c: u8) -> bool {
     matches!(c, b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'_' | b'$')
 }
-
-// ported from: src/interchange/json5.zig

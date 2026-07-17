@@ -1,10 +1,14 @@
+// Build scripts run on the host before bun_* crates are compiled; std is the only option.
+#![allow(
+    clippy::disallowed_methods,
+    clippy::disallowed_types,
+    clippy::disallowed_macros
+)]
 //! Generates the sorted `DEFAULT_TRUSTED_DEPENDENCIES_LIST` slice from
 //! `default-trusted-dependencies.txt`.
 //!
-//! Zig builds this at comptime via `@embedFile` + tokenize + sort
-//! (see `src/install/lockfile.zig`). Rust cannot tokenize/sort at const time
-//! without a build script, so we emit a `&[&[u8]]` literal here and `include!`
-//! it from `lockfile.rs`.
+//! Rust cannot tokenize/sort at const time without a build script, so we
+//! emit a `&[&[u8]]` literal here and `include!` it from `lockfile.rs`.
 
 use std::env;
 use std::fmt::Write as _;
@@ -21,14 +25,12 @@ fn main() {
     let data = fs::read_to_string(&txt)
         .unwrap_or_else(|e| panic!("failed to read {}: {e}", txt.display()));
 
-    // Zig: std.mem.tokenizeAny(u8, data, " \r\n\t")
     let mut names: Vec<&str> = data
         .split([' ', '\r', '\n', '\t'])
         .filter(|s| !s.is_empty())
         .collect();
 
-    // Zig: alphabetical sort so `bun pm trusted --default` doesn't need to sort.
-    // std.mem.order(u8, ..) == .lt  ↔  byte-wise ordering.
+    // Alphabetical byte-wise sort so `bun pm trusted --default` doesn't need to sort.
     names.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
 
     assert!(

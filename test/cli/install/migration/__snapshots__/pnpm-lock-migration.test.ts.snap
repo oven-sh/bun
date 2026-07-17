@@ -2,7 +2,7 @@
 
 exports[`pnpm-lock.yaml migration simple pnpm lockfile migration produces correct bun.lock: simple-pnpm-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -24,7 +24,7 @@ exports[`pnpm-lock.yaml migration simple pnpm lockfile migration produces correc
 
 exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-pnpm-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -86,7 +86,7 @@ exports[`pnpm-lock.yaml migration pnpm workspace lockfile migration: workspace-p
 
 exports[`pnpm-lock.yaml migration pnpm with npm protocol aliases: npm-aliases-pnpm-migration 1`] = `
 "{
-  "lockfileVersion": 1,
+  "lockfileVersion": 2,
   "configVersion": 1,
   "workspaces": {
     "": {

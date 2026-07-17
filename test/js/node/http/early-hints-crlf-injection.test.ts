@@ -134,4 +134,47 @@ describe.concurrent("writeEarlyHints", () => {
     expect(stdout).toContain("body:ok");
     expect(exitCode).toBe(0);
   });
+
+  test("rejects pathological link value without catastrophic backtracking", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const http = require("node:http");
+        const server = http.createServer((req, res) => {
+          try {
+            res.writeEarlyHints({
+              link: "</x>" + ";a=b".repeat(32) + " ",
+            });
+            console.log("FAIL: no error thrown");
+            process.exit(1);
+          } catch (e) {
+            console.log("error_code:" + e.code);
+            res.writeHead(200);
+            res.end("ok");
+          }
+        });
+        server.listen(0, () => {
+          http.get({ port: server.address().port }, (res) => {
+            let data = "";
+            res.on("data", (c) => data += c);
+            res.on("end", () => {
+              console.log("body:" + data);
+              server.close();
+            });
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toContain("error_code:ERR_INVALID_ARG_VALUE");
+    expect(stdout).toContain("body:ok");
+    expect(exitCode).toBe(0);
+  });
 });

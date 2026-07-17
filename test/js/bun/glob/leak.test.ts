@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
-const thresholdMB = 100;
+// ASAN's quarantine retains freed allocations (default 256 MB) so RSS deltas
+// run far higher under bun-asan; widen the threshold there.
+const thresholdMB = isASAN ? 400 : 100;
 const timeout = 60_000;
 
 async function run(dir: string, code: string) {

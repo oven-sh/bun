@@ -8,7 +8,6 @@ use super::codecs;
 use super::quantize;
 use crate::encoded_wrap_free;
 
-// TODO(port): move to runtime_sys (or a dedicated spng_sys crate)
 bun_opaque::opaque_ffi! { pub struct spng_ctx; }
 
 unsafe extern "C" {
@@ -60,6 +59,7 @@ struct Iccp {
 }
 
 #[repr(C)]
+#[derive(Default)]
 struct Ihdr {
     width: u32,
     height: u32,
@@ -68,20 +68,6 @@ struct Ihdr {
     compression_method: u8,
     filter_method: u8,
     interlace_method: u8,
-}
-
-impl Default for Ihdr {
-    fn default() -> Self {
-        Self {
-            width: 0,
-            height: 0,
-            bit_depth: 0,
-            color_type: 0,
-            compression_method: 0,
-            filter_method: 0,
-            interlace_method: 0,
-        }
-    }
 }
 
 const SPNG_CTX_ENCODER: c_int = 2;
@@ -210,7 +196,7 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
 }
 
-pub fn encode(
+pub(crate) fn encode(
     rgba: &[u8],
     w: u32,
     h: u32,
@@ -269,8 +255,9 @@ pub fn encode(
     // spng_get_png_buffer transfers ownership (libc malloc); hand to JS
     // with libc `free` as the finalizer instead of duping.
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
+    let bytes = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) };
     Ok(codecs::Encoded {
-        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        bytes,
         free: encoded_wrap_free!(libc::free),
     })
 }
@@ -281,7 +268,7 @@ pub fn encode(
 /// cut operates on the raw RGB numbers without converting colour spaces,
 /// so the palette entries are still in that space and need the profile
 /// to be interpreted correctly — same contract as truecolour encode.
-pub fn encode_indexed(
+pub(crate) fn encode_indexed(
     rgba: &[u8],
     w: u32,
     h: u32,
@@ -384,10 +371,9 @@ pub fn encode_indexed(
         return Err(codecs::Error::EncodeFailed);
     }
     // SAFETY: buf is non-null and points to `len` bytes owned by us (malloc'd by libspng).
+    let bytes = unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) };
     Ok(codecs::Encoded {
-        bytes: unsafe { NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(buf, len)) },
+        bytes,
         free: encoded_wrap_free!(libc::free),
     })
 }
-
-// ported from: src/runtime/image/codec_png.zig

@@ -1,6 +1,7 @@
 use core::ffi::c_void;
 use core::marker::PhantomData;
 
+use crate::error::ThrowSqlError;
 use crate::jsc::{JSGlobalObject, JSValue, MarkedArgumentBuffer};
 use bun_core::String as BunString;
 
@@ -28,8 +29,7 @@ bun_core::define_scoped_log!(debug, MySQLQuery, visible);
 
 pub struct MySQLQuery {
     // Intrusive refcount (`MySQLStatement::ref_` / `::deref`). Null = none.
-    // Zig uses `bun.ptr.RefCount` and mutates `stmt.status` / `stmt.execution_flags`
-    // in place; the connection's `PreparedStatementsMap` also stores `*mut MySQLStatement`,
+    // The connection's `PreparedStatementsMap` also stores `*mut MySQLStatement`,
     // so this pointer participates in the same intrusive ownership graph (each holder
     // owns one ref).
     statement: *mut MySQLStatement,
@@ -39,7 +39,6 @@ pub struct MySQLQuery {
     flags: Flags,
 }
 
-/// Zig: `packed struct(u8) { bigint, simple, pipelined: bool, result_mode: SQLQueryResultMode, _padding: u3 }`
 /// Not all fields are `bool`, so per PORTING.md this is a transparent `u8` with shift accessors.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
@@ -76,7 +75,7 @@ impl Flags {
     fn result_mode(self) -> SQLQueryResultMode {
         // result_mode bits were written from a valid SQLQueryResultMode
         // discriminant (`set_result_mode`); the unreachable 4th bit-state
-        // traps (matches Zig's safety-checked `@enumFromInt`).
+        // traps.
         match (self.0 & Self::RESULT_MODE_MASK) >> Self::RESULT_MODE_SHIFT {
             0 => SQLQueryResultMode::Objects,
             1 => SQLQueryResultMode::Values,
@@ -155,7 +154,7 @@ impl MySQLQuery {
     /// `statement` is a raw `*mut MySQLStatement` (not `&mut`) because the sole caller,
     /// `run_prepared_query`, must derive it from `self.statement` and then call this
     /// `&mut self` method — a `&mut MySQLStatement` rooted in `*self` would overlap that
-    /// reborrow. The Zig original (.zig:59) likewise passes an independent `*MySQLStatement`.
+    /// reborrow.
     fn bind_and_execute<C: WriterContext>(
         &mut self,
         writer: NewWriter<C>,
@@ -216,8 +215,7 @@ impl MySQLQuery {
         // SAFETY: `statement` was copied from `self.statement` by `run_prepared_query`;
         // the intrusive ref held there keeps the allocation alive across this call. The
         // caller passes the raw pointer before reborrowing `self`, so this is the only
-        // live mutable access path to the statement for the duration of this function
-        // (matches Zig .zig:74 which takes an independent `*MySQLStatement`).
+        // live mutable access path to the statement for the duration of this function.
         let statement = unsafe { &mut *statement };
 
         // Bind before touching the writer so a bind failure (user-triggerable via JS
@@ -275,8 +273,7 @@ impl MySQLQuery {
         Ok(())
     }
 
-    fn run_simple_query(&mut self, connection: &MySQLConnection) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    fn run_simple_query(&mut self, connection: &MySQLConnection) -> crate::Result<()> {
         if self.status != Status::Pending || !connection.can_execute_query() {
             debug!("cannot execute query");
             // cannot execute query
@@ -285,13 +282,11 @@ impl MySQLQuery {
         let query_str = self.query.to_utf8();
         let writer = connection.get_writer();
         if self.statement.is_null() {
-            // Zig: `bun.new(MySQLStatement, .{ .signature = .empty(), .status = .parsing, .ref_count = .initExactRefs(1) })`.
-            // `heap::alloc` yields a heap allocation with intrusive ref_count == 1
-            // (the `Default` impl sets `ref_count = Cell::new(1)`).
-            // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
-            let mut stmt = Box::new(MySQLStatement::default());
-            stmt.signature = Signature::empty();
-            stmt.status = my_sql_statement::Status::Parsing;
+            // `MySQLStatement::new` sets the intrusive ref_count to 1.
+            let stmt = Box::new(MySQLStatement::new(
+                Signature::empty(),
+                my_sql_statement::Status::Parsing,
+            ));
             self.statement = bun_core::heap::into_raw(stmt);
         }
         mysql_request::execute_query(query_str.slice(), writer)?;
@@ -306,8 +301,7 @@ impl MySQLQuery {
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<()> {
         let mut query_str: Option<bun_core::zig_string::Slice> = None;
         // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
 
@@ -322,25 +316,22 @@ impl MySQLQuery {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        // PORT NOTE: Zig calls `AnyMySQLError.mysqlErrorToJS` here, but the
-                        // Rust `Signature::generate` returns a wider `bun_core::Error`. Use
-                        // `throw_error` (which builds an `Error` instance from the error
-                        // name + message) instead of forcing into the MySQL enum.
-                        let _ = global_object.throw_error(err, "failed to generate signature");
+                        let _ = global_object.throw_sql_error(err, "failed to generate signature");
                     }
-                    return Err(bun_core::err!("JSError"));
+                    return Err(crate::Error::JSError);
                 }
             };
             query_str = Some(query);
             // errdefer signature.deinit() — `Signature: Drop` handles the error path; on the
-            // found_existing success path below we explicitly drop it (Zig calls deinit + reassigns empty).
-            let entry = match connection
-                .get_statement_from_signature_hash(bun_wyhash::hash(&signature.name))
-            {
+            // found_existing success path below we explicitly drop it.
+            let entry = match connection.get_statement_from_signature_name(&signature.name) {
                 Ok(e) => e,
                 Err(err) => {
-                    let _ = global_object.throw_error(err, "failed to allocate statement");
-                    return Err(bun_core::err!("JSError"));
+                    // `err` is `bun_core::AllocError`; `throw_error` takes
+                    // `crate::Error` (`From<AllocError>` → OutOfMemory).
+                    let _ = global_object
+                        .throw_error(crate::Error::from(err), "failed to allocate statement");
+                    return Err(crate::Error::JSError);
                 }
             };
 
@@ -359,22 +350,19 @@ impl MySQLQuery {
                     let error_response = stmt_ref.error_response.to_js(global_object);
                     // If the statement failed, we need to throw the error
                     let _ = global_object.throw_value(error_response);
-                    return Err(bun_core::err!("JSError"));
+                    return Err(crate::Error::JSError);
                 }
-                // Zig: `this.#statement = stmt; stmt.ref();`
                 self.statement = stmt;
                 stmt_ref.ref_();
                 drop(signature);
                 signature = Signature::default();
-                let _ = signature; // matches Zig reassign-to-empty; silences unused.
+                let _ = signature; // silences unused.
             } else {
-                // Zig: `bun.new(MySQLStatement, .{ .ref_count = .initExactRefs(2), ... })`
-                // — one ref for `self.statement`, one for the map entry.
-                // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
-                let mut stmt = Box::new(MySQLStatement::default());
-                stmt.signature = signature;
-                stmt.status = my_sql_statement::Status::Pending;
-                stmt.statement_id = 0;
+                // One ref for `self.statement`, one for the map entry.
+                let mut stmt = Box::new(MySQLStatement::new(
+                    signature,
+                    my_sql_statement::Status::Pending,
+                ));
                 stmt.init_exact_refs(2);
                 let stmt = bun_core::heap::into_raw(stmt);
                 self.statement = stmt;
@@ -397,14 +385,13 @@ impl MySQLQuery {
                 let error_response = stmt_ref.error_response.to_js(global_object);
                 // If the statement failed, we need to throw the error
                 let _ = global_object.throw_value(error_response);
-                return Err(bun_core::err!("JSError"));
+                return Err(crate::Error::JSError);
             }
             my_sql_statement::Status::Prepared => {
                 if connection.can_pipeline() {
                     debug!("bindAndExecute");
                     let writer = connection.get_writer();
-                    // Pass the raw `*mut MySQLStatement` separately from `&mut self`
-                    // (matches Zig .zig:183/195 which passes an independent `*MySQLStatement`).
+                    // Pass the raw `*mut MySQLStatement` separately from `&mut self`.
                     if let Err(err) = self.bind_and_execute(
                         writer,
                         stmt,
@@ -419,7 +406,7 @@ impl MySQLQuery {
                                 err,
                             ));
                         }
-                        return Err(bun_core::err!("JSError"));
+                        return Err(crate::Error::JSError);
                     }
                     self.flags.set_pipelined(true);
                 }
@@ -436,8 +423,9 @@ impl MySQLQuery {
                         None => self.query.to_utf8(),
                     };
                     if let Err(err) = mysql_request::prepare_request(query.slice(), writer) {
-                        let _ = global_object.throw_error(err, "failed to prepare query");
-                        return Err(bun_core::err!("JSError"));
+                        let _ =
+                            global_object.throw_sql_error(err.into(), "failed to prepare query");
+                        return Err(crate::Error::JSError);
                     }
                     // `self.statement` was set in both branches above; route
                     // through the single-unsafe accessor instead of a raw
@@ -469,8 +457,7 @@ impl MySQLQuery {
         global_object: &JSGlobalObject,
         columns_value: JSValue,
         binding_value: JSValue,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> crate::Result<()> {
         if self.flags.simple() {
             debug!("runSimpleQuery");
             return self.run_simple_query(connection);
@@ -521,14 +508,12 @@ impl MySQLQuery {
     }
 
     pub fn cleanup(&mut self) {
-        // Zig: `if (this.#statement) |s| { s.deref(); this.#statement = null; }`
         if !self.statement.is_null() {
             let s = self.statement;
             self.statement = core::ptr::null_mut();
             // SAFETY: `s` is a live boxed `MySQLStatement` we held one intrusive ref on.
             unsafe { MySQLStatement::deref(s) };
         }
-        // Zig: `var q = this.#query; defer q.deref(); this.#query = .empty;`
         // `BunString` is `Copy` (no `Drop`); assigning `empty()` would NOT deref
         // the old value, so release the +1 from `to_bun_string` explicitly.
         let q = core::mem::replace(&mut self.query, BunString::empty());
@@ -596,13 +581,12 @@ impl MySQLQuery {
     }
 
     #[inline]
+    #[allow(clippy::mut_from_ref)] // goes through a raw intrusive pointer; see SAFETY note below
     pub fn get_statement(&self) -> Option<&mut MySQLStatement> {
         // SAFETY: when non-null, `self.statement` is a live boxed `MySQLStatement`
-        // kept alive by the intrusive ref we hold. Returning `&mut` mirrors Zig's
-        // `?*MySQLStatement` (shared mutation through the intrusive pointer); the
+        // kept alive by the intrusive ref we hold. Returning `&mut` permits
+        // shared mutation through the intrusive pointer; the
         // lifetime is bounded by `&self`, which owns one ref.
         unsafe { self.statement.as_mut() }
     }
 }
-
-// ported from: src/sql_jsc/mysql/MySQLQuery.zig

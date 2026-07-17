@@ -25,7 +25,7 @@ use crate::server::jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
 bun_output::declare_scope!(FileResponseStream, hidden);
 
 #[derive(bun_ptr::CellRefCounted)]
-pub struct FileResponseStream {
+pub(crate) struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: AnyResponse,
     // LIFETIMES.tsv: `&'static VirtualMachine`. `BackRef` keeps the struct
@@ -54,24 +54,33 @@ pub struct FileResponseStream {
 
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 #[repr(u8)]
-enum Mode {
+pub enum Mode {
     Reader,
     Sendfile,
 }
 
 struct Sendfile {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     socket_fd: Fd,
     remain: u64,
     offset: u64,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     has_set_on_writable: bool,
 }
 
+#[allow(
+    clippy::derivable_impls,
+    reason = "only derivable where the linux/android-gated fields are absent; `Fd` has no \
+              `Default` impl, so `#[derive(Default)]` would not compile on linux/android"
+)]
 impl Default for Sendfile {
     fn default() -> Self {
         Self {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             socket_fd: Fd::INVALID,
             remain: 0,
             offset: 0,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
             has_set_on_writable: false,
         }
     }
@@ -85,10 +94,11 @@ bitflags::bitflags! {
         const FINISHED      = 1 << 1;
         const ERRORED       = 1 << 2;
         const RESP_DETACHED = 1 << 3;
+        const READ_REF_HELD = 1 << 4;
     }
 }
 
-pub struct StartOptions {
+pub(crate) struct StartOptions {
     pub fd: Fd,
     pub auto_close: bool,
     pub resp: AnyResponse,
@@ -110,7 +120,7 @@ pub struct StartOptions {
 }
 
 impl FileResponseStream {
-    pub fn start(opts: StartOptions) {
+    pub(crate) fn start(opts: &StartOptions) {
         let use_sendfile = can_sendfile(opts.resp, opts.file_type, opts.length);
 
         // Heap-allocate; the raw pointer is handed to uWS callbacks and freed
@@ -160,9 +170,11 @@ impl FileResponseStream {
 
         if use_sendfile {
             this.sendfile = Sendfile {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 socket_fd: opts.resp.get_native_handle(),
                 offset: opts.offset,
                 remain: opts.length.expect("can_sendfile gates None"),
+                #[cfg(any(target_os = "linux", target_os = "android"))]
                 has_set_on_writable: false,
             };
             this.resp.prepare_for_sendfile();
@@ -213,13 +225,13 @@ impl FileResponseStream {
         }
 
         // hold a ref for the in-flight read; released in on_reader_done/on_reader_error
-        this.ref_();
+        this.hold_read_ref();
         this.reader.read();
     }
 
     // ───────────────────────── reader backend ─────────────────────────
 
-    pub fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
+    pub(crate) fn on_read_chunk(&mut self, chunk_: &[u8], state_: ReadState) -> bool {
         let this: *mut Self = self;
         // SAFETY: `this` is the live intrusive allocation owning `self`.
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
@@ -228,7 +240,6 @@ impl FileResponseStream {
             return false;
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig captured `*max` mutably across the block.
         let (chunk, state) = 'brk: {
             if let Some(max) = self.max_size.as_mut() {
                 let c = &chunk_[..chunk_
@@ -277,8 +288,7 @@ impl FileResponseStream {
             WriteResult::Backpressure(_) => {
                 // release the read ref; on_writable re-takes it. Adopts the ref
                 // taken before `reader.read()` — no fresh `ref_()` here.
-                // SAFETY: `this` is the live intrusive allocation owning `self`.
-                let _guard2 = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
+                let _guard2 = self.take_read_ref();
                 self.resp.on_writable(
                     |p: *mut FileResponseStream, off, r| {
                         // SAFETY: uWS hands back the userdata pointer set below.
@@ -294,18 +304,34 @@ impl FileResponseStream {
         }
     }
 
-    pub fn on_reader_done(&mut self) {
+    pub(crate) fn on_reader_done(&mut self) {
         // Adopts the in-flight read ref taken before `reader.read()`.
-        // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
+        let _guard = self.take_read_ref();
         self.finish();
     }
 
-    pub fn on_reader_error(&mut self, err: sys::Error) {
+    pub(crate) fn on_reader_error(&mut self, err: sys::Error) {
         // Adopts the in-flight read ref taken before `reader.read()`.
-        // SAFETY: `self` is the live intrusive allocation; `adopt` consumes the prior +1.
-        let _guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) };
+        let _guard = self.take_read_ref();
         self.fail_with(err);
+    }
+
+    fn hold_read_ref(&mut self) {
+        if self.state.contains(State::READ_REF_HELD) {
+            return;
+        }
+        self.state.insert(State::READ_REF_HELD);
+        self.ref_();
+    }
+
+    fn take_read_ref(&mut self) -> Option<bun_ptr::ScopedRef<Self>> {
+        if !self.state.contains(State::READ_REF_HELD) {
+            return None;
+        }
+        self.state.remove(State::READ_REF_HELD);
+        // SAFETY: `self` is the live intrusive allocation; `READ_REF_HELD`
+        // witnesses exactly one outstanding ref taken in `hold_read_ref`.
+        Some(unsafe { bun_ptr::ScopedRef::<Self>::adopt(self) })
     }
 
     fn on_writable(&mut self, _: u64, _: AnyResponse) -> bool {
@@ -322,7 +348,7 @@ impl FileResponseStream {
             return true;
         }
         self.resp.timeout(self.idle_timeout);
-        self.ref_();
+        self.hold_read_ref();
         self.reader.read();
         true
     }
@@ -381,54 +407,13 @@ impl FileResponseStream {
                 }
             }
         }
-        #[cfg(target_os = "macos")]
-        loop {
-            let mut sbytes: libc::off_t =
-                i64::try_from(self.sendfile.remain.min(i32::MAX as u64)).expect("int cast");
-            // SAFETY: both fds are valid open file descriptors owned by `self`;
-            // `sbytes` is a stack local; hdtr is null per spec.
-            let errno = sys::get_errno(unsafe {
-                sys::c::sendfile(
-                    self.fd.native(),
-                    self.sendfile.socket_fd.native(),
-                    i64::try_from(self.sendfile.offset).expect("int cast"),
-                    &mut sbytes,
-                    core::ptr::null_mut(),
-                    0,
-                )
-            });
-            let sent: u64 = u64::try_from(sbytes).expect("int cast");
-            self.sendfile.offset += sent;
-            self.sendfile.remain = self.sendfile.remain.saturating_sub(sent);
-
-            match errno {
-                sys::E::SUCCESS => {
-                    if self.sendfile.remain == 0 || sent == 0 {
-                        self.end_sendfile();
-                        return false;
-                    }
-                    return self.arm_sendfile_writable();
-                }
-                sys::E::EINTR => continue,
-                sys::E::EAGAIN => return self.arm_sendfile_writable(),
-                sys::E::EPIPE | sys::E::ENOTCONN => {
-                    self.end_sendfile();
-                    return false;
-                }
-                _ => {
-                    self.fail_with(
-                        sys::Error::from_code(errno, sys::Tag::sendfile).with_fd(self.fd),
-                    );
-                    return false;
-                }
-            }
-        }
-        #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
             unreachable!() // can_sendfile gates this
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn arm_sendfile_writable(&mut self) -> bool {
         bun_output::scoped_log!(FileResponseStream, "armSendfileWritable");
         if !self.sendfile.has_set_on_writable {
@@ -445,6 +430,7 @@ impl FileResponseStream {
         true
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn end_sendfile(&mut self) {
         bun_output::scoped_log!(FileResponseStream, "endSendfile");
         if self.state.contains(State::RESPONSE_DONE) {
@@ -520,11 +506,11 @@ impl FileResponseStream {
         unsafe { Self::deref(self) };
     }
 
-    pub fn event_loop(&self) -> EventLoopHandle {
+    pub(crate) fn event_loop(&self) -> EventLoopHandle {
         EventLoopHandle::init(self.vm.event_loop().cast::<()>())
     }
 
-    pub fn r#loop(&self) -> *mut bun_io::Loop {
+    pub(crate) fn r#loop(&self) -> *mut bun_io::Loop {
         #[cfg(windows)]
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
@@ -542,10 +528,9 @@ impl FileResponseStream {
     // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+// BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection (Zig spec: FileResponseStream.zig `loop()`).
+// cfg(windows) `.uv_loop` projection.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
@@ -572,12 +557,15 @@ impl Drop for FileResponseStream {
 }
 
 fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> bool {
-    #[cfg(windows)]
+    // Matches the cfg on `on_sendfile`. macOS is excluded: XNU's sendfile can
+    // sleep uninterruptibly under mbuf pressure, leaving the process unkillable;
+    // the BufferedReader path stays non-blocking.
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
     {
         let _ = (resp, file_type, length);
         return false;
     }
-    #[cfg(not(windows))]
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         // sendfile() needs a real socket fd; SSL writes go through BIO and H3
         // through lsquic stream frames — neither has one.
@@ -592,5 +580,3 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
         len >= (1 << 20)
     }
 }
-
-// ported from: src/runtime/server/FileResponseStream.zig

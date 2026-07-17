@@ -1,7 +1,6 @@
 use bun_core as bstring;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
-use super::assert::myers_diff::DiffList;
 use super::node_assert;
 
 /// ```ts
@@ -14,9 +13,7 @@ use super::node_assert;
 /// declare function myersDiff(actual: string, expected: string): Diff[];
 /// ```
 #[bun_jsc::host_fn]
-pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (2KB) + ArenaAllocator bulk-free.
-
+pub(crate) fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let nargs = frame.arguments_count();
     if nargs < 2 {
         return Err(global.throw_not_enough_arguments("printMyersDiff", 2, nargs as usize));
@@ -56,30 +53,6 @@ pub fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
     )
 }
 
-type StrDiffList<'a> = DiffList<&'a [u8]>;
-
-#[allow(dead_code)]
-fn diff_list_to_js(global: &JSGlobalObject, diff_list: StrDiffList<'_>) -> JsResult<JSValue> {
-    // todo: replace with toJS
-    JSValue::create_array_from_iter(global, diff_list.iter(), |line| {
-        let obj = JSValue::create_empty_object_with_null_prototype(global);
-        if obj.is_empty() {
-            return Err(global.throw_out_of_memory());
-        }
-        obj.put(
-            global,
-            bstring::String::static_(b"kind"),
-            JSValue::js_number(line.kind as u32 as f64),
-        );
-        obj.put(
-            global,
-            bstring::String::static_(b"value"),
-            JSValue::from_any(global, line.value)?,
-        );
-        Ok(obj)
-    })
-}
-
 // =============================================================================
 
 pub fn generate(global: &JSGlobalObject) -> JSValue {
@@ -99,5 +72,3 @@ pub fn generate(global: &JSGlobalObject) -> JSValue {
 
     exports
 }
-
-// ported from: src/runtime/node/node_assert_binding.zig

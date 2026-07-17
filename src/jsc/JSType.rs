@@ -92,10 +92,10 @@
 
 use crate::array_buffer::TypedArrayType;
 
-// PORT NOTE: Zig's `enum(u8) { ..., _ }` is non-exhaustive — any u8 value is a valid
-// JSType (values are read directly from JSCell::m_type via FFI, including embedder-
-// defined types). A plain `#[repr(u8)] enum` would be UB for unknown discriminants,
-// so this is a transparent newtype with associated consts instead.
+// Any u8 value is a valid JSType (values are read directly from JSCell::m_type
+// via FFI, including embedder-defined types). A plain `#[repr(u8)] enum` would
+// be UB for unknown discriminants, so this is a transparent newtype with
+// associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, core::marker::ConstParamTy)]
 pub struct JSType(pub u8);
@@ -126,19 +126,13 @@ impl JSType {
     /// ```
     pub const HeapBigInt: JSType = JSType(3);
 
-    /// Heap-allocated double values (new in recent WebKit).
-    pub const HeapDouble: JSType = JSType(4);
-
-    /// Heap-allocated int32 values (new in recent WebKit).
-    pub const HeapInt32: JSType = JSType(5);
-
     /// JavaScript Symbol primitive - unique identifiers.
     /// ```js
     /// Symbol()
     /// Symbol('description')
     /// Symbol.for('key')
     /// ```
-    pub const Symbol: JSType = JSType(6);
+    pub const Symbol: JSType = JSType(4);
 
     /// Accessor property descriptor containing getter and/or setter functions.
     /// ```js
@@ -147,7 +141,7 @@ impl JSType {
     ///   set(v) { this._value = v; }
     /// })
     /// ```
-    pub const GetterSetter: JSType = JSType(7);
+    pub const GetterSetter: JSType = JSType(5);
 
     /// Custom native getter/setter implementation for built-in properties.
     /// ```js
@@ -155,10 +149,10 @@ impl JSType {
     /// const arr = [1, 2, 3];
     /// arr.length; // uses CustomGetterSetter
     /// ```
-    pub const CustomGetterSetter: JSType = JSType(8);
+    pub const CustomGetterSetter: JSType = JSType(6);
 
     /// Wrapper for native API values exposed to JavaScript.
-    pub const APIValueWrapper: JSType = JSType(9);
+    pub const APIValueWrapper: JSType = JSType(7);
 
     /// Compiled native code executable for built-in functions.
     /// ```js
@@ -166,72 +160,78 @@ impl JSType {
     /// parseInt("42")
     /// Array.from([1, 2, 3])
     /// ```
-    pub const NativeExecutable: JSType = JSType(10);
+    pub const NativeExecutable: JSType = JSType(8);
 
     /// Compiled executable for top-level program code.
-    pub const ProgramExecutable: JSType = JSType(11);
+    pub const ProgramExecutable: JSType = JSType(9);
 
     /// Compiled executable for ES6 module code.
-    pub const ModuleProgramExecutable: JSType = JSType(12);
+    pub const ModuleProgramExecutable: JSType = JSType(10);
 
     /// Compiled executable for eval() expressions.
     /// ```js
     /// eval('var x = 42; console.log(x);')
     /// ```
-    pub const EvalExecutable: JSType = JSType(13);
+    pub const EvalExecutable: JSType = JSType(11);
 
     /// Compiled executable for function bodies.
     /// ```js
     /// function foo() { return 42; }
     /// const bar = () => 123
     /// ```
-    pub const FunctionExecutable: JSType = JSType(14);
+    pub const FunctionExecutable: JSType = JSType(12);
 
-    pub const UnlinkedFunctionExecutable: JSType = JSType(15);
-    pub const UnlinkedProgramCodeBlock: JSType = JSType(16);
-    pub const UnlinkedModuleProgramCodeBlock: JSType = JSType(17);
-    pub const UnlinkedEvalCodeBlock: JSType = JSType(18);
-    pub const UnlinkedFunctionCodeBlock: JSType = JSType(19);
+    pub const UnlinkedFunctionExecutable: JSType = JSType(13);
+    pub const UnlinkedProgramCodeBlock: JSType = JSType(14);
+    pub const UnlinkedModuleProgramCodeBlock: JSType = JSType(15);
+    pub const UnlinkedEvalCodeBlock: JSType = JSType(16);
+    pub const UnlinkedFunctionCodeBlock: JSType = JSType(17);
 
     /// Compiled bytecode block ready for execution.
-    pub const CodeBlock: JSType = JSType(20);
+    pub const CodeBlock: JSType = JSType(18);
 
-    pub const JSCellButterfly: JSType = JSType(21);
-    pub const JSSourceCode: JSType = JSType(22);
+    pub const JSCellButterfly: JSType = JSType(19);
+    pub const JSSourceCode: JSType = JSType(20);
 
     /// Slim promise reaction (no rejection handler / context payload).
     /// Internal object used in the promise resolution mechanism.
-    pub const SlimPromiseReaction: JSType = JSType(23);
+    pub const SlimPromiseReaction: JSType = JSType(21);
 
     /// Full promise reaction (carries onFulfilled/onRejected and async context).
     /// Internal object used in the promise resolution mechanism.
-    pub const FullPromiseReaction: JSType = JSType(24);
+    pub const FullPromiseReaction: JSType = JSType(22);
 
     /// Context object for Promise.all() operations.
     /// Internal object used to track the state of Promise.all() resolution.
     /// Note: Moved before ObjectType in recent WebKit.
-    pub const PromiseAllContext: JSType = JSType(25);
+    pub const PromiseAllContext: JSType = JSType(23);
 
     /// Global context for Promise.all() (new in recent WebKit).
-    pub const PromiseAllGlobalContext: JSType = JSType(26);
+    pub const PromiseAllGlobalContext: JSType = JSType(24);
+
+    /// Streaming WebAssembly compile/instantiate context (new in WebKit).
+    pub const WebAssemblyStreamingContext: JSType = JSType(25);
 
     /// Microtask dispatcher for promise/microtask queue management.
-    pub const JSMicrotaskDispatcher: JSType = JSType(27);
+    pub const JSMicrotaskDispatcher: JSType = JSType(26);
 
     /// Module loader registry entry (new C++ module loader).
-    pub const ModuleRegistryEntry: JSType = JSType(28);
+    pub const ModuleRegistryEntry: JSType = JSType(27);
 
     /// Module loading context (new C++ module loader).
-    pub const ModuleLoadingContext: JSType = JSType(29);
+    pub const ModuleLoadingContext: JSType = JSType(28);
 
     /// Module loader payload (new C++ module loader).
-    pub const ModuleLoaderPayload: JSType = JSType(30);
+    pub const ModuleLoaderPayload: JSType = JSType(29);
 
     /// Module graph loading state (new C++ module loader).
-    pub const ModuleGraphLoadingState: JSType = JSType(31);
+    pub const ModuleGraphLoadingState: JSType = JSType(30);
 
     /// JSModuleLoader cell type (new C++ module loader).
-    pub const JSModuleLoader: JSType = JSType(32);
+    pub const JSModuleLoader: JSType = JSType(31);
+
+    /// Sentinel cell used by ordered hash table iteration.
+    pub const Sentinel: JSType = JSType(32);
 
     /// Base JavaScript object type.
     /// ```js
@@ -474,23 +474,26 @@ impl JSType {
     /// ```
     pub const Generator: JSType = JSType(75);
 
+    /// Async function generator object (split from JSGenerator in WebKit ~May 2026 to shrink sizeof(JSGenerator)).
+    pub const AsyncFunctionGenerator: JSType = JSType(76);
+
     /// Async generator object for asynchronous iteration.
     /// ```js
     /// async function* asyncGen() {
     ///   yield await promise;
     /// }
     /// ```
-    pub const AsyncGenerator: JSType = JSType(76);
+    pub const AsyncGenerator: JSType = JSType(77);
 
     /// Iterator for Array objects.
     /// ```js
     /// [1,2,3][Symbol.iterator]()
     /// for (const x of array) {}
     /// ```
-    pub const JSArrayIterator: JSType = JSType(77);
+    pub const JSArrayIterator: JSType = JSType(78);
 
-    pub const Iterator: JSType = JSType(78);
-    pub const IteratorHelper: JSType = JSType(79);
+    pub const Iterator: JSType = JSType(79);
+    pub const IteratorHelper: JSType = JSType(80);
 
     /// Iterator for Map objects.
     /// ```js
@@ -499,32 +502,32 @@ impl JSType {
     /// map.entries()
     /// for (const [k,v] of map) {}
     /// ```
-    pub const MapIterator: JSType = JSType(80);
+    pub const MapIterator: JSType = JSType(81);
 
     /// Iterator for Set objects.
     /// ```js
     /// set.values()
     /// for (const value of set) {}
     /// ```
-    pub const SetIterator: JSType = JSType(81);
+    pub const SetIterator: JSType = JSType(82);
 
     /// Iterator for String objects.
     /// ```js
     /// 'hello'[Symbol.iterator]()
     /// for (const char of string) {}
     /// ```
-    pub const StringIterator: JSType = JSType(82);
+    pub const StringIterator: JSType = JSType(83);
 
-    pub const WrapForValidIterator: JSType = JSType(83);
+    pub const WrapForValidIterator: JSType = JSType(84);
 
     /// Iterator for RegExp string matching.
     /// ```js
     /// 'abc'.matchAll(/./g)
     /// for (const match of string.matchAll(regex)) {}
     /// ```
-    pub const RegExpStringIterator: JSType = JSType(84);
+    pub const RegExpStringIterator: JSType = JSType(85);
 
-    pub const AsyncFromSyncIterator: JSType = JSType(85);
+    pub const AsyncFromSyncIterator: JSType = JSType(86);
 
     /// JavaScript Promise object for asynchronous operations.
     /// ```js
@@ -532,7 +535,7 @@ impl JSType {
     /// Promise.resolve(42)
     /// async function foo() { await promise; }
     /// ```
-    pub const JSPromise: JSType = JSType(86);
+    pub const JSPromise: JSType = JSType(87);
 
     /// JavaScript Map object for key-value storage.
     /// ```js
@@ -540,7 +543,7 @@ impl JSType {
     /// map.set(key, value)
     /// map.get(key)
     /// ```
-    pub const Map: JSType = JSType(87);
+    pub const Map: JSType = JSType(88);
 
     /// JavaScript Set object for unique value storage.
     /// ```js
@@ -548,41 +551,41 @@ impl JSType {
     /// set.add(value)
     /// set.has(value)
     /// ```
-    pub const Set: JSType = JSType(88);
+    pub const Set: JSType = JSType(89);
 
     /// WeakMap for weak key-value references.
     /// ```js
     /// new WeakMap()
     /// weakMap.set(object, value)
     /// ```
-    pub const WeakMap: JSType = JSType(89);
+    pub const WeakMap: JSType = JSType(90);
 
     /// WeakSet for weak value references.
     /// ```js
     /// new WeakSet()
     /// weakSet.add(object)
     /// ```
-    pub const WeakSet: JSType = JSType(90);
+    pub const WeakSet: JSType = JSType(91);
 
-    pub const WebAssemblyModule: JSType = JSType(91);
-    pub const WebAssemblyInstance: JSType = JSType(92);
-    pub const WebAssemblyGCObject: JSType = JSType(93);
+    pub const WebAssemblyModule: JSType = JSType(92);
+    pub const WebAssemblyInstance: JSType = JSType(93);
+    pub const WebAssemblyGCObject: JSType = JSType(94);
 
     /// Boxed String object.
     /// ```js
     /// new String("hello")
     /// ```
-    pub const StringObject: JSType = JSType(94);
+    pub const StringObject: JSType = JSType(95);
 
-    pub const DerivedStringObject: JSType = JSType(95);
-    pub const InternalFieldTuple: JSType = JSType(96);
+    pub const DerivedStringObject: JSType = JSType(96);
+    pub const InternalFieldTuple: JSType = JSType(97);
 
     pub const MaxJS: JSType = JSType(0b11111111);
     pub const Event: JSType = JSType(0b11101111);
     pub const DOMWrapper: JSType = JSType(0b11101110);
     pub const EmbedderArrayLike: JSType = JSType(0b11101101);
 
-    /// This means that we don't have Zig bindings for the type yet, but it
+    /// This means that we don't have bindings for the type yet, but it
     /// implements .toJSON()
     pub const JSAsJSONType: JSType = JSType(0b11110000 | 1);
 }
@@ -591,7 +594,7 @@ impl JSType {
     pub const MIN_TYPED_ARRAY: JSType = JSType::Int8Array;
     pub const MAX_TYPED_ARRAY: JSType = JSType::DataView;
 
-    /// Port of Zig `@tagName(arrayBuffer.typed_array_type)` — `JSType` is a
+    /// `JSType` is a
     /// newtype-const (not a Rust `enum`), so there is no derived stringifier.
     /// Covers every `is_typed_array_or_array_buffer()` variant + `DataView`.
     /// The `_ => "TypedArray"` arm is unreachable for any real
@@ -870,5 +873,3 @@ impl JSType {
         )
     }
 }
-
-// ported from: src/jsc/JSType.zig

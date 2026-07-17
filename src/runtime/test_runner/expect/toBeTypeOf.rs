@@ -1,22 +1,23 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-#[allow(unused_imports)] use super::{JSValueTestExt, JSGlobalObjectTestExt, BigIntCompare, make_formatter};
-use bun_jsc::console_object::Formatter;
 use super::Expect;
 use super::get_signature;
 
-static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
-    b"function" => b"function",
-    b"object" => b"object",
-    b"bigint" => b"bigint",
-    b"boolean" => b"boolean",
-    b"number" => b"number",
-    b"string" => b"string",
-    b"symbol" => b"symbol",
-    b"undefined" => b"undefined",
-};
+bun_core::comptime_string_map! {
+    static JS_TYPE_OF_MAP: &'static [u8] = {
+        b"function" => b"function",
+        b"object" => b"object",
+        b"bigint" => b"bigint",
+        b"boolean" => b"boolean",
+        b"number" => b"number",
+        b"string" => b"string",
+        b"symbol" => b"symbol",
+        b"undefined" => b"undefined",
+    };
+}
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
-pub fn to_be_type_of(
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
+pub(crate) fn to_be_type_of(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
@@ -36,8 +37,7 @@ pub fn to_be_type_of(
         return Err(global.throw_invalid_arguments(format_args!("toBeTypeOf() requires a string argument")));
     }
 
-    let expected_type = expected.to_bun_string(global)?;
-    // `defer expected_type.deref()` — handled by Drop on bun_core::String.
+    let expected_type = bun_core::OwnedString::new(expected.to_bun_string(global)?);
 
     let expected_utf8 = expected_type.to_utf8();
     let Some(typeof_) = JS_TYPE_OF_MAP.get(expected_utf8.slice()).copied() else {
@@ -46,31 +46,28 @@ pub fn to_be_type_of(
         )));
     };
 
-    let mut pass = false;
-    let mut what_is_the_type: &'static [u8] = b"";
-
     // Checking for function/class should be done before everything else, or it will fail.
-    if value.is_callable() {
-        what_is_the_type = b"function";
+    let what_is_the_type: &'static [u8] = if value.is_callable() {
+        b"function"
     } else if value.is_object() || value.js_type().is_array() || value.is_null() {
-        what_is_the_type = b"object";
+        b"object"
     } else if value.is_big_int() {
-        what_is_the_type = b"bigint";
+        b"bigint"
     } else if value.is_boolean() {
-        what_is_the_type = b"boolean";
+        b"boolean"
     } else if value.is_number() {
-        what_is_the_type = b"number";
+        b"number"
     } else if value.js_type().is_string() {
-        what_is_the_type = b"string";
+        b"string"
     } else if value.is_symbol() {
-        what_is_the_type = b"symbol";
+        b"symbol"
     } else if value.is_undefined() {
-        what_is_the_type = b"undefined";
+        b"undefined"
     } else {
         return Err(global.throw(format_args!("Internal consistency error: unknown JSValue type")));
-    }
+    };
 
-    pass = typeof_ == what_is_the_type;
+    let mut pass = typeof_ == what_is_the_type;
 
     if not {
         pass = !pass;
@@ -80,7 +77,7 @@ pub fn to_be_type_of(
     }
 
     let mut formatter = super::make_formatter(global);
-    // PORT NOTE: ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
+    // ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
     // so `received` and `expected_str` can coexist in one format_args!.
     let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
@@ -121,5 +118,3 @@ pub fn to_be_type_of(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toBeTypeOf.zig

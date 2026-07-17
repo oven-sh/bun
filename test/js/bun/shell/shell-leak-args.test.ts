@@ -1,5 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
+import { isASAN } from "harness";
 
 test("shell parsing error does not leak emmory", async () => {
   const buffer = Buffer.alloc(1024 * 1024, "A").toString();
@@ -22,7 +23,14 @@ test("shell parsing error does not leak emmory", async () => {
   // In Bun v1.3.1 on macOS arm64:
   //   Expected: < 100
   //   Received: 0.25
-  expect(after - before).toBeLessThan(100);
+  //
+  // Under ASAN the freed parser buffers land in the allocator quarantine
+  // (default `quarantine_size_mb=256`) instead of being returned, so the RSS
+  // delta over-reports by up to the quarantine size (~180 MiB observed) even
+  // when nothing leaks. Widen to 400 MiB under ASAN (still catches the 1.3.0
+  // regression at 524 MiB with headroom for quarantine churn); keep the
+  // original 100 MiB threshold elsewhere.
+  expect(after - before).toBeLessThan(isASAN ? 400 : 100);
 });
 
 test("shell execution doesn't leak argv", async () => {
@@ -43,7 +51,11 @@ test("shell execution doesn't leak argv", async () => {
   // In Bun v1.3.1 on macOS arm64:
   //   Expected: < 250
   //   Received: 93.875
-  expect(after - before).toBeLessThan(250);
+  //
+  // Same ASAN quarantine over-reporting as the test above: widen to 450 MiB
+  // under ASAN (still below the 1.3.0 regression at 588 MiB); keep the
+  // original 250 MiB threshold elsewhere.
+  expect(after - before).toBeLessThan(isASAN ? 450 : 250);
 });
 
 test("non-awaited shell command does not leak argv", async () => {
@@ -64,5 +76,9 @@ test("non-awaited shell command does not leak argv", async () => {
   // In Bun v1.3.1 on macOS arm64:
   //   Expected: < 250
   //   Received: 93.875
-  expect(after - before).toBeLessThan(250);
+  //
+  // Same ASAN quarantine over-reporting as the test above: widen to 450 MiB
+  // under ASAN (still below the 1.3.0 regression at 588 MiB); keep the
+  // original 250 MiB threshold elsewhere.
+  expect(after - before).toBeLessThan(isASAN ? 450 : 250);
 });

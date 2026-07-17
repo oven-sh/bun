@@ -55,6 +55,13 @@ const cases: Array<[string, number[]]> = [
   ["4-byte lead + 1 continuation", [0x31, 0x40, 0xf0, 0x90]],
   ["4-byte lead + 2 continuations", [0x31, 0x40, 0xf0, 0x90, 0x80]],
   ["sourceMappingURL pragma + 4-byte lead", [...Buffer.from("//# sourceMappingURL=a"), 0xf0]],
+  // Block comments with >=512 bytes remaining go through the SIMD skip in the
+  // lexer (bun_highway::index_of_interesting_character_in_multiline_comment);
+  // ending the input exactly at the guard page catches any read past the end.
+  ["block comment terminated at buffer end", [...Buffer.from("x=1/*"), ...Buffer.alloc(700, 0x63), ...Buffer.from("*/")]],
+  ["unterminated block comment at buffer end", [...Buffer.from("x=1/*"), ...Buffer.alloc(700, 0x63)]],
+  ["unterminated block comment + 4-byte lead", [...Buffer.from("x=1/*"), ...Buffer.alloc(700, 0x63), 0xf0]],
+  ["unterminated block comment + '*'", [...Buffer.from("x=1/*"), ...Buffer.alloc(700, 0x63), 0x2a]],
 ];
 
 for (const [name, bytes] of cases) {

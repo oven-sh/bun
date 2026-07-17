@@ -1,7 +1,6 @@
 use core::ffi::c_void;
-use core::marker::{PhantomData, PhantomPinned};
 
-use crate::{JSGlobalObject, JSValue, JsResult, VM};
+use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
 bun_opaque::opaque_ffi! {
@@ -9,9 +8,7 @@ bun_opaque::opaque_ffi! {
     pub struct DOMFormData;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
-    safe fn WebCore__DOMFormData__cast_(js_value0: JSValue, arg1: &VM) -> *mut DOMFormData;
     safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__DOMFormData__createFromURLQuery(
         arg0: &JSGlobalObject,
@@ -45,15 +42,6 @@ unsafe extern "C" {
     );
     safe fn WebCore__DOMFormData__count(arg0: &mut DOMFormData) -> usize;
 
-    // Declared in the Zig but never called (WebCore__DOMFormData__toQueryString is used instead).
-    // Kept for symbol parity.
-    #[allow(dead_code)]
-    fn DOMFormData__toQueryString(
-        this: *mut DOMFormData,
-        ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void, arg1: *mut ZigString),
-    );
-
     // safe: same opaque-handle/round-trip-ctx contract as `toQueryString` above.
     safe fn DOMFormData__forEach(this: &mut DOMFormData, ctx: *mut c_void, cb: ForEachFunction);
 }
@@ -73,16 +61,16 @@ impl DOMFormData {
         })
     }
 
-    // PORT NOTE: Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, ZigString)`
-    // is Zig's spelling of a monomorphized closure. Reshaped to `FnMut(ZigString)` — the
-    // closure environment IS the ctx, and the generic trampoline below is the `Wrapper.run`.
+    // The closure environment is the ctx pointer; the generic trampoline
+    // below unwraps it and invokes the closure.
     pub fn to_query_string<F>(&mut self, callback: &mut F)
     where
         F: FnMut(ZigString),
     {
         extern "C" fn run<F: FnMut(ZigString)>(c: *mut c_void, str_: *mut ZigString) {
-            // SAFETY: `c` is the `&mut F` passed below; `str_` is valid for this call.
+            // SAFETY: `c` is the `&mut F` passed below.
             let cb = unsafe { bun_ptr::callback_ctx::<F>(c) };
+            // SAFETY: `str_` is a valid non-null *ZigString for the synchronous callback scope.
             cb(unsafe { *str_ });
         }
 
@@ -99,8 +87,9 @@ impl DOMFormData {
         // Returned pointer is valid while `value` is kept alive on the stack
         // (conservative GC scan). Null → None. `DOMFormData` is an opaque ZST
         // handle, so `opaque_mut` is the centralised zero-byte deref proof.
-        // TODO(port): lifetime — unbounded `'a` is a placeholder; caller must keep `value`
-        // stack-rooted for the lifetime of the returned reference.
+        // The unbounded `'a` cannot be expressed more tightly: the cell is
+        // GC-owned, so the caller must keep `value` stack-rooted for the
+        // lifetime of the returned reference.
         let p = WebCore__DOMFormData__fromJS(value);
         (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
@@ -123,9 +112,6 @@ impl DOMFormData {
         WebCore__DOMFormData__count(self)
     }
 
-    // PORT NOTE: Zig's `comptime Context: type, ctx: *Context, comptime callback_wrapper`
-    // reshaped to a Rust closure; the generic `extern "C"` trampoline below is `Wrap.forEachWrapper`.
-    //
     // LAYERING: `FormDataEntry::File::blob` is a `*mut webcore::Blob`, whose
     // layout lives in `bun_runtime` (a dependent of this crate). The C++ side
     // hands it as `*mut c_void`; this fn is generic over `B` so the caller (in
@@ -144,7 +130,7 @@ impl DOMFormData {
         ) where
             F: FnMut(ZigString, FormDataEntry<'_, B>),
         {
-            // SAFETY: ctx_ptr is the `&mut F` passed below; Zig did `ctx_ptr.?` (unwrap non-null).
+            // SAFETY: ctx_ptr is the non-null `&mut F` passed below.
             let ctx_ = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
             let value = if is_blob == 0 {
                 // SAFETY: when is_blob == 0, value_ptr points to a ZigString.
@@ -168,7 +154,6 @@ impl DOMFormData {
             ctx_(unsafe { *name_ }, value);
         }
 
-        // TODO(port): jsc.markBinding(@src()) — debug-only binding tracker; no Rust equivalent yet.
         // C++ invokes the callback synchronously and does not retain `ctx` or the fn
         // pointer past this call.
         DOMFormData__forEach(
@@ -193,5 +178,3 @@ pub enum FormDataEntry<'a, B> {
     String(ZigString),
     File { blob: &'a B, filename: ZigString },
 }
-
-// ported from: src/jsc/DOMFormData.zig

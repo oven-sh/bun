@@ -3,11 +3,9 @@ use crate::css_parser::{CssResult as Result, PrintErr, Printer};
 use crate::targets::Browsers;
 use crate::values::protocol::{IsCompatible, Parse, ToCss};
 
-// PORT NOTE: the Zig `needsDeinit(comptime T: type) bool` switch and the
-// `deinit(this, arena)` method are dropped entirely. They existed to
-// thread per-field `arena.free` through a comptime type table; in Rust,
-// `T: Drop` on the four fields handles this automatically (and arena-owned
-// payloads in `bun_css` are bulk-freed by the bump, never per-value).
+// No `deinit` is needed: `T: Drop` on the four fields handles cleanup
+// automatically (and arena-owned payloads in `bun_css` are bulk-freed by the
+// bump, never per-value).
 
 /// A generic value that represents a value for four sides of a box,
 /// e.g. border-width, margin, padding, etc.
@@ -26,7 +24,7 @@ pub struct Rect<T> {
 }
 
 impl<T> Rect<T> {
-    pub fn eql(&self, other: &Self) -> bool
+    pub(crate) fn eql(&self, other: &Self) -> bool
     where
         T: PartialEq,
     {
@@ -36,15 +34,12 @@ impl<T> Rect<T> {
             && self.left == other.left
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self
     where
         T: Clone,
     {
-        // PORT NOTE: Zig branched on `comptime needs_deinit` to decide between
-        // bitwise copy and per-field `.deepClone(arena)`. In Rust this is
-        // just the `DeepClone`/`Clone` trait on `T` — the cheap-copy types
+        // The `Clone` trait on `T` covers everything — the cheap-copy types
         // (`f32`, `NumberOrPercentage`, `LineStyle`) impl it as a bit copy.
-        // TODO(port): narrow trait bound once css::generic::DeepClone lands.
         Self {
             top: self.top.clone(),
             right: self.right.clone(),
@@ -53,7 +48,7 @@ impl<T> Rect<T> {
         }
     }
 
-    pub fn all(val: T) -> Self
+    pub(crate) fn all(val: T) -> Self
     where
         T: Clone,
     {
@@ -65,14 +60,14 @@ impl<T> Rect<T> {
         }
     }
 
-    pub fn parse(input: &mut css::Parser) -> Result<Self>
+    pub(crate) fn parse(input: &mut css::Parser) -> Result<Self>
     where
         T: Parse + Clone,
     {
         Self::parse_with(input, Self::val_parse)
     }
 
-    pub fn parse_with<F>(input: &mut css::Parser, parse_fn: F) -> Result<Self>
+    pub(crate) fn parse_with<F>(input: &mut css::Parser, parse_fn: F) -> Result<Self>
     where
         F: Fn(&mut css::Parser) -> Result<T>,
         T: Clone,
@@ -123,7 +118,7 @@ impl<T> Rect<T> {
         })
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>
     where
         T: ToCss + PartialEq,
     {
@@ -147,22 +142,19 @@ impl<T> Rect<T> {
         self.left.to_css(dest)
     }
 
-    pub fn val_parse(i: &mut css::Parser) -> Result<T>
+    pub(crate) fn val_parse(i: &mut css::Parser) -> Result<T>
     where
         T: Parse,
     {
         T::parse(i)
     }
+}
 
-    pub fn is_compatible(&self, browsers: Browsers) -> bool
-    where
-        T: IsCompatible,
-    {
+impl<T: IsCompatible> IsCompatible for Rect<T> {
+    fn is_compatible(&self, browsers: &Browsers) -> bool {
         self.top.is_compatible(browsers)
             && self.right.is_compatible(browsers)
             && self.bottom.is_compatible(browsers)
             && self.left.is_compatible(browsers)
     }
 }
-
-// ported from: src/css/values/rect.zig

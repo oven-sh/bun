@@ -730,7 +730,7 @@ assert.throws(
     });
     crypto.sign('sha512', 'message', privateKey);
   }, {
-    code: common.openSSLIsBoringSSL ? 'ERR_OSSL_DIGEST_TOO_BIG_FOR_RSA_KEY' : 'ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY',
+    code: 'ERR_OSSL_RSA_DIGEST_TOO_BIG_FOR_RSA_KEY',
     message: common.openSSLIsBoringSSL ? /DIGEST_TOO_BIG_FOR_RSA_KEY/ : /digest too big for rsa key/
   });
 }
@@ -766,13 +766,13 @@ assert.throws(
   for (const { publicKey, privateKey } of keys) {
     assert.throws(() => {
       crypto.createSign('SHA256').update('Test123').sign(privateKey);
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_EVP_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(privateKey, 'sig');
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_EVP_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(publicKey, 'sig');
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
+    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_EVP_COMMAND_NOT_SUPPORTED' : 'ERR_CRYPTO_UNSUPPORTED_OPERATION', message: common.openSSLIsBoringSSL ? /public key.*COMMAND_NOT_SUPPORTED/ : 'Unsupported crypto operation' });
   }
 }
 
@@ -788,13 +788,13 @@ assert.throws(
     const publicKey = fixtures.readKey(`${algo}_public.pem`, 'ascii');
     assert.throws(() => {
       crypto.createSign('SHA256').update('Test123').sign(privateKey);
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
+    }, { code: 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(privateKey, 'sig');
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
+    }, { code: 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
     assert.throws(() => {
       crypto.createVerify('SHA256').update('Test123').verify(publicKey, 'sig');
-    }, { code: common.openSSLIsBoringSSL ? 'ERR_OSSL_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE' : 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
+    }, { code: 'ERR_OSSL_EVP_OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE', message: common.openSSLIsBoringSSL ? /public key routines.*OPERATION_NOT_SUPPORTED_FOR_THIS_KEYTYPE/ : /operation not supported for this keytype/ });
   }
 }
 

@@ -822,12 +822,13 @@ export { after };
 // a module containing `debugger;`, and the client resumes the pause.
 test("breakpoints pause and resume over the inspector.open() DevTools server", async () => {
   using dir = tempDir("inspector-breakpoints", {
+    // wait=true blocks the inspected thread in waitForDebugger()'s tick loop
+    // until Runtime.runIfWaitingForDebugger, so Debugger.enable is guaranteed
+    // to have armed setPauseOnDebuggerStatements before mod.mjs evaluates.
     "entry.mjs": `
 import inspector from "node:inspector";
 let beforeOpen = 1;
-inspector.open(0, "127.0.0.1");
-process.stdout.write("ready\\n");
-await new Promise(resolve => process.stdin.once("data", resolve));
+inspector.open(0, "127.0.0.1", true);
 const mod = await import("./mod.mjs");
 console.log(JSON.stringify({ after: mod.after, beforeOpen }));
 process.exit(0);
@@ -844,7 +845,6 @@ export { after };
     cmd: [bunExe(), "entry.mjs"],
     env: bunEnv,
     cwd: String(dir),
-    stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
   });
@@ -867,20 +867,13 @@ export { after };
     }
   })();
 
-  const stdoutReader = proc.stdout.getReader();
-  let stdoutText = "";
-  while (!stdoutText.includes("ready")) {
-    const { value, done } = await stdoutReader.read();
-    if (done) throw new Error(`stdout closed before ready: ${stdoutText}`);
-    stdoutText += decoder.decode(value);
-  }
-
   const ws = new WebSocket(wsUrl);
   await new Promise<void>((resolve, reject) => {
     ws.onopen = () => resolve();
     ws.onerror = err => reject(err);
   });
   let nextId = 1;
+  let awaiting = "";
   const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   let pausedReason: string | undefined;
   const paused = Promise.withResolvers<void>();
@@ -895,31 +888,43 @@ export { after };
       paused.resolve();
     }
   };
-  // Report why the pause never came instead of hanging until the test timeout.
-  ws.onerror = () => paused.reject(new Error("inspector websocket errored before Debugger.paused"));
-  ws.onclose = () => paused.reject(new Error("inspector websocket closed before Debugger.paused"));
-  proc.exited.then(code =>
-    paused.reject(new Error(`child exited (code ${code}) before Debugger.paused; stdout so far: ${stdoutText}`)),
-  );
+  // Every awaited promise must reject on socket loss or child death so the
+  // failure reports where it was stuck instead of silently hitting the suite
+  // timeout with no stack.
+  const abandon = (why: string) => {
+    const err = new Error(`${why} while awaiting ${awaiting}; stderr: ${stderrText}`);
+    paused.reject(err);
+    for (const p of pending.values()) p.reject(err);
+    pending.clear();
+  };
+  ws.onerror = () => abandon("inspector websocket errored");
+  ws.onclose = () => abandon("inspector websocket closed");
+  proc.exited.then(code => abandon(`child exited (code ${code})`));
   function send(method: string, params?: unknown) {
     return new Promise((resolve, reject) => {
       const id = nextId++;
+      awaiting = method;
       pending.set(id, { resolve, reject });
       ws.send(JSON.stringify({ id, method, params }));
     });
   }
   await send("Runtime.enable");
   await send("Debugger.enable");
+  // The inspected thread is still parked inside open()'s waitForDebugger at
+  // this point; releasing it now is race-free because Debugger.enable's reply
+  // proves the backend already armed breakpoints.
   await send("Runtime.runIfWaitingForDebugger");
 
-  // FileSink buffers: without the flush the child never sees "go", never
-  // reaches the `debugger;` statement, and the pause never arrives.
-  proc.stdin.write("go\n");
-  proc.stdin.flush();
+  awaiting = "Debugger.paused";
   await paused.promise;
   expect(pausedReason).toBe("other");
-  await send("Debugger.resume");
+  // Do not wait for the resume reply: the inspected thread may reach
+  // process.exit(0) before the debugger thread has relayed it, which closes
+  // the socket first. The JSON on stdout is the real proof the resume landed.
+  ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
 
+  const stdoutReader = proc.stdout.getReader();
+  let stdoutText = "";
   for (;;) {
     const { value, done } = await stdoutReader.read();
     if (done) break;

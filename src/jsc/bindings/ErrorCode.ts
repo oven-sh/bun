@@ -353,6 +353,10 @@ const errors: ErrorCodeMapping = [
   ["ERR_INVALID_BUFFER_SIZE", RangeError],
   ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
   ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
+  ["ERR_CRYPTO_ARGON2_NOT_SUPPORTED", Error],
+  // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
+  // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
+  ["HPE_STRICT", Error],
   ["ERR_INSPECTOR_ALREADY_ACTIVATED", Error],
   ["ERR_INSPECTOR_NOT_ACTIVE", Error],
   ["ERR_INSPECTOR_ALREADY_CONNECTED", Error],
@@ -360,8 +364,5 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_NOT_WORKER", Error],
   ["ERR_INSPECTOR_CLOSED", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
-  // llhttp reports a missing CRLF after a chunk's data as HPE_STRICT,
-  // distinct from a malformed chunk-size line (HPE_INVALID_CHUNK_SIZE).
-  ["HPE_STRICT", Error],
 ];
 export default errors;

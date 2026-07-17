@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 
 // Regression guard for a heap-use-after-free observed under ASAN during

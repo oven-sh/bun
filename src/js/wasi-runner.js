@@ -48,6 +48,10 @@ const instance = !Number(WASM_USE_ASYNC_INIT)
   ? new WebAssembly.Instance(wasm, wasi.getImports(wasm))
   : await WebAssembly.instantiate(wasm, wasi.getImports(wasm));
 
-wasi.start(instance);
+if (typeof instance.exports._start === "function") {
+  wasi.start(instance);
+} else {
+  wasi.initialize(instance);
+}
 
 process.reallyExit(0);

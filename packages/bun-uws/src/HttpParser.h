@@ -86,8 +86,8 @@ struct HttpResponseData;
         /* A bare CR (not followed by LF) terminated a header value (llhttp's
          * HPE_LF_EXPECTED). */
         HTTP_PARSER_ERROR_LF_EXPECTED = 11,
-        /* node:http compat only: the chunk extensions of a single chunk exceeded
-         * the 16 KiB limit enforced by Node (HPE_CHUNK_EXTENSIONS_OVERFLOW). */
+        /* The chunk extensions of a single chunk exceeded the 16 KiB limit
+         * (Node/llhttp's HPE_CHUNK_EXTENSIONS_OVERFLOW). */
         HTTP_PARSER_ERROR_CHUNK_EXTENSIONS_OVERFLOW = 12,
         /* An HTTP/2 client connection preface was received on an HTTP/1 server
          * (llhttp's HPE_PAUSED_H2_UPGRADE). */

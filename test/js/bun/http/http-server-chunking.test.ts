@@ -533,7 +533,7 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
 describe.if(isPosix)("HTTP server handles fragmented requests", () => {
   test.concurrentIf(!isASAN)("handles requests with tiny send buffer (regression test)", async () => {
     using server = Bun.serve({
-      hostname: "localhost",
+      hostname: "127.0.0.1",
 
       port: 0,
       async fetch(req) {

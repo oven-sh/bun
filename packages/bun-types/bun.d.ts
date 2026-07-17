@@ -692,7 +692,8 @@ declare module "bun" {
 
     /**
      * If `true`, wrap at word boundaries when possible.
-     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     * If `false`, break every line at exactly the column width (characters
+     * are split wherever the limit falls, ignoring word boundaries).
      *
      * @default true
      */

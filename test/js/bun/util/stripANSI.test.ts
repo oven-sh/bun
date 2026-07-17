@@ -541,13 +541,16 @@ describe("Bun.stripANSI", () => {
     ] as const) {
       test(`standalone C1 ST is not stripped (${label}): returns the same object`, () => {
         Bun.stripANSI(input);
-        heapStats();
+        Bun.gc(true);
 
         const before = heapStats().objectTypeCounts.string;
         const result = Bun.stripANSI(input);
         const after = heapStats().objectTypeCounts.string;
         expect(result).toBe(input);
-        expect(after).toBe(before); // no copy made
+        // A copy would hold `after` above `before` (the copy is rooted by
+        // `result`). The reverse — GC collecting something between the two
+        // heapStats() calls — is fine, so the check is one-sided.
+        expect(after).toBeLessThanOrEqual(before);
       });
     }
 

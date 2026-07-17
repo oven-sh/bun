@@ -230,6 +230,7 @@ describe("Bun.wrapAnsi", () => {
       ["Fs escape (ESC 7) soft", "aaa \x1b7bbbbbbb cc", 6, undefined, "aaa\n\x1b7bbbbbbb\ncc"],
       ["Fs escape (ESC 7) wordWrap:false", "aaa \x1b7bbbbbbb cc", 6, { wordWrap: false }, "aaa \x1b7bb\nbbbbb\ncc"],
       ["C1 CSI (0x9b) hard", "aaaa\x9b31mbb", 3, { hard: true }, "aaa\na\x9b31mbb"],
+      ["C1 CSI non-SGR final byte (K)", "\x9b2Kabcdef", 3, { hard: true }, "\x9b2Kabc\ndef"],
       ["C1 CSI SGR carried across a row break", "\x9b31mabc def", 3, undefined, "\x9b31mabc\x1b[39m\n\x1b[31mdef"],
       ["DCS payload with a space", "ab \x1bPfoo bar\x1b\\cd ef", 5, undefined, "ab \x1bPfoo bar\x1b\\cd\nef"],
       ["C1 DCS (0x90) with C1 ST (0x9c)", "ab \x90foo bar\x9ccd ef", 5, undefined, "ab \x90foo bar\x9ccd\nef"],

@@ -908,7 +908,7 @@ Bun.wrapAnsi("Hello World", 5, {
 | Option              | Default | Description                                                                                                     |
 | ------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
 | `hard`              | `false` | If `true`, break words in the middle if they exceed the column width.                                           |
-| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, only break at explicit newlines.                                |
+| `wordWrap`          | `true`  | If `true`, wrap at word boundaries. If `false`, break every line at exactly the column width.                   |
 | `trim`              | `true`  | If `true`, trim leading and trailing whitespace from each line.                                                 |
 | `ambiguousIsNarrow` | `true`  | If `true`, treat ambiguous-width Unicode characters as 1 column wide. If `false`, treat them as 2 columns wide. |
 
@@ -938,7 +938,8 @@ namespace Bun {
       hard?: boolean;
       /**
        * If `true`, wrap at word boundaries when possible.
-       * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+       * If `false`, break every line at exactly the column width (characters
+       * are split wherever the limit falls, ignoring word boundaries).
        *
        * @default true
        */

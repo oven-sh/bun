@@ -1512,6 +1512,7 @@ pub struct ParenExprOpts {
     pub async_range: bun_ast::Range,
     pub is_async: bool,
     pub force_arrow_fn: bool,
+    pub is_after_question_and_before_colon: bool,
 }
 
 impl Default for ParenExprOpts {
@@ -1520,6 +1521,7 @@ impl Default for ParenExprOpts {
             async_range: bun_ast::Range::NONE,
             is_async: false,
             force_arrow_fn: false,
+            is_after_question_and_before_colon: false,
         }
     }
 }

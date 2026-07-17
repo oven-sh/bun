@@ -151,6 +151,10 @@ export default [
         length: 0,
         passThis: true,
       },
+      pauseReads: {
+        fn: "pauseSocketReads",
+        length: 0,
+      },
       drainRequestBody: {
         fn: "drainRequestBody",
         length: 0,

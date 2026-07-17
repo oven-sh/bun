@@ -949,6 +949,15 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             socket,
           };
           (socket[kPipelinedResponses] ??= []).push(http_res);
+          // A pipelined dispatch can arrive after the previous response already
+          // finished and detached — its bytes still flushing natively keep the
+          // connection marked pending — so nothing is in flight to advance the
+          // queue from and this response would sit queued forever. Kick the
+          // pipeline once this dispatch settles.
+          if (socket._httpMessage == null && !socket[kPipelineKickScheduled]) {
+            socket[kPipelineKickScheduled] = true;
+            process.nextTick(advancePipelineIfIdleNT, server, socket);
+          }
           // Node's parserOnIncoming stops reading the connection once the bytes
           // queued on responses that do not own the socket yet reach the
           // socket's high water mark, so pipelined requests cannot flood it.
@@ -2577,7 +2586,11 @@ function pausePipelineReads(socket) {
   const response = socket[kHandle]?.response;
   if (!response) return;
   socket._paused = true;
-  response.pause();
+  // Not response.pause(): that is request-body flow control and refuses to act
+  // once the in-flight response has ended — which it always has by the time the
+  // pipeline backs up. pauseReads() pauses the connection's reads regardless,
+  // and native stops consuming already-received pipelined requests with it.
+  response.pauseReads();
 }
 
 function addPipelineOutgoingData(queued, bytes) {
@@ -2601,6 +2614,14 @@ function releasePipelineOutgoingData(socket, bytes) {
 // pipelined responses are queued behind it, the next one becomes the
 // connection's current response, is assigned the socket, and its buffered
 // output is flushed.
+const kPipelineKickScheduled = Symbol("kPipelineKickScheduled");
+function advancePipelineIfIdleNT(server, socket) {
+  socket[kPipelineKickScheduled] = false;
+  if (socket._httpMessage == null && socket[kPipelinedResponses]?.length) {
+    advanceResponsePipeline(server, socket);
+  }
+}
+
 function advanceResponsePipeline(server, socket) {
   // The previous response on this connection closed it (Connection: close,
   // HTTP/1.0, maxRequestsPerSocket): like Node.js's resOnFinish, advancing

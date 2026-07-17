@@ -564,6 +564,18 @@ struct HttpResponseData;
 
     private:
         std::string fallback;
+    public:
+        /* node:http flood prevention. The dispatch of a pipelined request that
+         * finds outgoing backpressure pauses reads (HttpContext), but the recv
+         * buffer being parsed can still hold thousands of already-received
+         * pipelined requests, and Node stops consuming those too (its parser is
+         * paused alongside the socket). The signal makes the request loop stop
+         * at the next request boundary; the unconsumed remainder is parked here
+         * and replayed, in order, when reads resume. */
+        bool nodeHttpReadsPausedSignal = false;
+        bool nodeHttpSpillReplayScheduled = false;
+        std::string nodeHttpPausedSpill;
+    private:
          /* This guy really has only 30 bits since we reserve two highest bits to chunked encoding parsing state */
         uint64_t remainingStreamingBytes = 0;
         /* node:http compat: a completed request on this connection forbade keep-alive
@@ -1120,6 +1132,18 @@ struct HttpResponseData;
                 void *returnedUser = dataHandler(user, std::string_view(data, length), false);
                 consumedTotal += length;
                 return HttpParserResult::success(consumedTotal, returnedUser);
+            }
+            /* node:http flood prevention: a dispatch earlier in this buffer
+             * paused reads. Stop at this request boundary (the previous
+             * request's body is fully consumed here by construction) and park
+             * the rest. Reported as consumed so the caller does not spill it
+             * into the size-capped header fallback buffer. */
+            if constexpr (IsNodeHttp) {
+                if (nodeHttpReadsPausedSignal) [[unlikely]] {
+                    nodeHttpPausedSpill.append(data, length);
+                    consumedTotal += length;
+                    return HttpParserResult::success(consumedTotal, user);
+                }
             }
             /* RFC 9112 2.2: ignore empty lines (CRLF) received prior to the
              * request-line, like Node/llhttp - e.g. a stray "\r\n" sent on an

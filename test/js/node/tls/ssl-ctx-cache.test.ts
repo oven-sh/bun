@@ -14,7 +14,7 @@ import { join } from "node:path";
 
 async function withServer(fn: (port: number) => Promise<void>) {
   const server = tls.createServer({ ...tlsCerts, rejectUnauthorized: false }, s => s.end());
-  server.listen(0);
+  server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address() as import("net").AddressInfo;
   try {
@@ -247,7 +247,7 @@ test("addCACert on one exported SecureContext instance does not change what anot
   // isolates the contexts and fails this connection closed).
   const fx = (n: string) => readFileSync(join(import.meta.dir, "fixtures", n), "utf8");
   const server = tls.createServer({ key: fx("agent6-key.pem"), cert: fx("agent6-cert.pem") }, s => s.end());
-  server.listen(0);
+  server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address() as import("net").AddressInfo;
   const a = new (tls as any).SecureContext({ ca: fx("ca2-cert.pem") });
@@ -256,6 +256,7 @@ test("addCACert on one exported SecureContext instance does not change what anot
   const outcome = Promise.withResolvers<string>();
   const socket = tls.connect({
     port,
+    host: "127.0.0.1",
     secureContext: b,
     rejectUnauthorized: true,
     checkServerIdentity: () => undefined,
@@ -390,7 +391,7 @@ test("tls.Server.close() releases the listener's SSL_CTX without waiting for GC"
   const kept: tls.Server[] = [];
   for (let i = 0; i < 5; i++) {
     const server = tls.createServer({ ...tlsCerts, sessionTimeout: 100 + i });
-    server.listen(0);
+    server.listen(0, "127.0.0.1");
     await once(server, "listening");
     server.close();
     await once(server, "close");
@@ -408,7 +409,7 @@ test("a connection accepted before close() keeps working after it", async () => 
     s.on("error", () => {});
     s.on("data", d => s.write(d));
   });
-  server.listen(0);
+  server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const { port } = server.address() as import("net").AddressInfo;
 

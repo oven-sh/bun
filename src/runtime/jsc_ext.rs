@@ -81,6 +81,22 @@ impl JSGlobalObjectExt for JSGlobalObject {
     }
 }
 
+// ─── JsResultExt (cut from `bun_jsc/lib.rs` at Step 6.1) ────────────────────
+pub trait JsResultExt {
+    fn report_unhandled(self, global: &JSGlobalObject);
+}
+
+impl<T> JsResultExt for JsResult<T> {
+    #[inline]
+    fn report_unhandled(self, global: &JSGlobalObject) {
+        if let Err(e) = self {
+            if e != JsError::Terminated {
+                global.report_active_exception_as_unhandled(e);
+            }
+        }
+    }
+}
+
 // ─── ScriptExecutionContextIdentifierExt ────────────────────────────────────
 pub trait ScriptExecutionContextIdentifierExt {
     fn bun_vm(self) -> Option<*mut VirtualMachine>;

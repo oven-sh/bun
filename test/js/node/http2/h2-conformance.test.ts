@@ -452,22 +452,23 @@ describe("connection-error GOAWAY is sent once with the specific code (RFC 9113 
       ErrorCode.FRAME_SIZE_ERROR,
       (c: RawH2) => c.sendFrame(FrameType.PING, 0, 0, Buffer.alloc(5)),
     ],
-    [
-      "INITIAL_WINDOW_SIZE overflow -> FLOW_CONTROL_ERROR",
-      ErrorCode.FLOW_CONTROL_ERROR,
-      (c: RawH2) => {
-        const b = Buffer.alloc(6);
-        b.writeUInt16BE(0x4, 0);
-        b.writeUInt32BE(0x80000000, 2);
-        c.sendFrame(FrameType.SETTINGS, 0, 0, b);
-      },
-    ],
-  ] as const)("%s", async (_name, expected, send) => {
-    const codes = await collectGoawayCodes(send);
-    // Node sends exactly one GOAWAY here (nghttp2_session_terminate_session is a no-op once
-    // terminated). A second GOAWAY with a different code (e.g. destroy()'s INTERNAL_ERROR
-    // default) is what conforming peers would act on, misclassifying the failure.
-    expect(codes).toEqual([expected]);
+  ] as const)("%s (matches node)", async (_name, expected, send) => {
+    // Node parity: nghttp2 writes the specific GOAWAY and enters terminated state, so the
+    // destroy()->terminate_session that follows is a no-op and exactly this one frame is sent.
+    expect(await collectGoawayCodes(send)).toEqual([expected]);
+  });
+
+  test("INITIAL_WINDOW_SIZE overflow -> FLOW_CONTROL_ERROR (RFC-correct; node sends INTERNAL_ERROR)", async () => {
+    // Deliberate node divergence: nghttp2 returns fatal NGHTTP2_ERR_FLOW_CONTROL (-524) here
+    // without terminating, so node's destroy() writes only INTERNAL_ERROR. Bun's engine writes
+    // the RFC 9113 6.5.2 FLOW_CONTROL_ERROR itself and destroy() does not override it.
+    const codes = await collectGoawayCodes(c => {
+      const b = Buffer.alloc(6);
+      b.writeUInt16BE(0x4, 0);
+      b.writeUInt32BE(0x80000000, 2);
+      c.sendFrame(FrameType.SETTINGS, 0, 0, b);
+    });
+    expect(codes).toEqual([ErrorCode.FLOW_CONTROL_ERROR]);
   });
 });
 

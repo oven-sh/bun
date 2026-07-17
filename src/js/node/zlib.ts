@@ -784,7 +784,15 @@ class Zstd extends ZlibBase {
     const pledgedSrcSize = opts?.pledgedSrcSize ?? undefined;
 
     const writeState = new Uint32Array(2);
-    handle.init(initParamsArray, pledgedSrcSize, writeState, processCallback);
+    // Node does not validate options.dictionary here (unlike Zlib/Brotli) — a
+    // non-view is silently ignored.
+    handle.init(
+      initParamsArray,
+      pledgedSrcSize,
+      writeState,
+      processCallback,
+      opts?.dictionary && isArrayBufferView(opts.dictionary) ? opts.dictionary : undefined,
+    );
     super(opts, mode, handle, zstdDefaultOpts);
     this._writeState = writeState;
   }

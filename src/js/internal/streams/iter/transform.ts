@@ -225,9 +225,7 @@ function createZstdHandle(mode, options, processCallback, onError) {
 
   // Validate before creating native handle.
   const chunkSize = validateChunkSize(options);
-  // Note: bun's NativeZstd.init() does not take a dictionary parameter;
-  // validate for parity but the dictionary is not passed to the engine.
-  validateDictionary(options.dictionary);
+  const dictionary = validateDictionary(options.dictionary);
   const maxParam = isCompress ? kMaxZstdCParam : kMaxZstdDParam;
   validateParams(options.params, maxParam, key => $ERR_ZSTD_INVALID_PARAM(key));
 
@@ -256,7 +254,7 @@ function createZstdHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  handle.init(initArray, pledgedSrcSize, writeState, processCallback);
+  handle.init(initArray, pledgedSrcSize, writeState, processCallback, dictionary);
 
   return { __proto__: null, handle, writeState, chunkSize };
 }

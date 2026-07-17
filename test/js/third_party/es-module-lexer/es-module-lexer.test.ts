@@ -16,9 +16,16 @@ const expected = {
   exports: [{ s: 36, e: 37, ls: 36, le: 37, n: "c", ln: "c" }],
 };
 
-// Bound each child so a hung `await init` doesn't burn the whole test timeout;
-// the stderr progress markers tell us which phase stalled.
-const perChildTimeoutMs = 15_000;
+// Bound each child so a hung `await init` doesn't burn the whole test timeout
+// (10 * 8s fits inside the CI per-test bound).
+const perChildTimeoutMs = 8_000;
+
+function splitStderr(stderr: string) {
+  const lines = stderr.split("\n");
+  const markers = lines.filter(l => l.includes("[es-module-lexer]")).join(" | ");
+  const rest = lines.filter(l => l.trim() && !l.includes("[es-module-lexer]")).join("\n");
+  return { markers, rest };
+}
 
 async function runOnce() {
   await using proc = spawn({
@@ -30,17 +37,24 @@ async function runOnce() {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const { markers, rest } = splitStderr(stderr);
 
-  if (proc.signalCode !== null) {
-    const markers = stderr
-      .split("\n")
-      .filter(l => l.includes("[es-module-lexer]"))
-      .join(" | ");
-    return { hung: true as const, markers };
+  if (proc.signalCode === "SIGTERM" && exitCode !== 42) {
+    return { hung: true as const, markers, rest };
   }
 
-  expect(JSON.parse(stdout)).toEqual(expected);
-  expect(exitCode).toBe(42);
+  // Any other outcome (normal exit, crash, non-timeout signal) is asserted
+  // with the child's real stderr so the failure message carries it.
+  let parsed: unknown = stdout;
+  try {
+    parsed = JSON.parse(stdout);
+  } catch {}
+  expect({ stdout: parsed, stderr: rest, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: expected,
+    stderr: "",
+    signalCode: null,
+    exitCode: 42,
+  });
   return { hung: false as const };
 }
 
@@ -49,7 +63,10 @@ test("es-module-lexer consistently loads", async () => {
   for (let i = 0; i < 10; i++) {
     const result = await runOnce();
     if (result.hung) {
-      console.error(`iteration ${i}: child hung >${perChildTimeoutMs}ms; reached: ${result.markers || "<none>"}`);
+      console.error(
+        `iteration ${i}: child hung >${perChildTimeoutMs}ms; reached: ${result.markers || "<none>"}` +
+          (result.rest ? `\n${result.rest}` : ""),
+      );
       hangs.push({ i, markers: result.markers });
     }
   }
@@ -57,13 +74,9 @@ test("es-module-lexer consistently loads", async () => {
   if (hangs.length === 0) return;
 
   const summary = hangs.map(h => `#${h.i}(${h.markers || "<none>"})`).join(", ");
-  // On Windows the child occasionally parks forever in `await init`: the
-  // DeferredWorkTimer completion for WebAssembly.compile is never delivered to
-  // the main thread, leaving the concurrent ref (and so uv active_handles) at
-  // +1 with nothing to wake uv_run. Tolerate a minority of hangs there that
-  // stalled at the await-init phase so the suite doesn't flake while that is
-  // investigated; anything else (non-Windows, a different stall point, or a
-  // majority) is a real regression and must fail.
+  // Windows CI intermittently parks in `await init` (WebAssembly.compile completion
+  // never wakes uv_run). Tolerate <5/10 hangs stalled specifically at await-init there;
+  // anything else (non-Windows, different phase, or a majority) must fail.
   const stalledAtInit = hangs.every(h => h.markers.includes("await init") && !h.markers.includes("init resolved"));
   if (isWindows && stalledAtInit && hangs.length < 5) {
     console.error(`es-module-lexer: ${hangs.length}/10 iterations hung on Windows: ${summary}`);

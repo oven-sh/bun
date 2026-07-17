@@ -710,9 +710,15 @@ it("RSA importKey with an unsupported usage names the algorithm", async () => {
     ["sign", "verify"],
   );
   const spki = await crypto.subtle.exportKey("spki", publicKey);
-  const rejection = (p: Promise<unknown>) => p.then(() => "resolved", e => `${e.name}: ${e.message}`);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
   expect({
-    pss: await rejection(crypto.subtle.importKey("spki", spki, { name: "RSA-PSS", hash: "SHA-256" }, true, ["encrypt"])),
+    pss: await rejection(
+      crypto.subtle.importKey("spki", spki, { name: "RSA-PSS", hash: "SHA-256" }, true, ["encrypt"]),
+    ),
     rsassa: await rejection(
       crypto.subtle.importKey("spki", spki, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["encrypt"]),
     ),

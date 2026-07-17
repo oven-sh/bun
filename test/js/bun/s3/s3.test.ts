@@ -1589,6 +1589,54 @@ describe.concurrent("s3 missing credentials", () => {
   });
 });
 
+// Presigning is local signing math, so these run without any S3 service.
+describe.concurrent("presign expiresIn validation", () => {
+  // AWS Signature v4 rejects X-Amz-Expires above 7 days.
+  const MAX_EXPIRES_IN = 7 * 24 * 60 * 60;
+  const localOptions: S3Options = {
+    accessKeyId: "test",
+    secretAccessKey: "test",
+    bucket: "bucket",
+    region: "us-east-1",
+  };
+  const entryPoints: [string, (expiresIn: unknown) => string][] = [
+    ["client.presign()", expiresIn => S3(localOptions).presign("key.txt", { expiresIn } as any)],
+    ["S3Client.presign()", expiresIn => S3Client.presign("key.txt", { ...localOptions, expiresIn } as any)],
+    [
+      "file.presign()",
+      expiresIn =>
+        S3(localOptions)
+          .file("key.txt")
+          .presign({ expiresIn } as any),
+    ],
+  ];
+
+  for (const [name, presign] of entryPoints) {
+    describe(name, () => {
+      it("accepts the 7 day maximum", () => {
+        expect(new URL(presign(MAX_EXPIRES_IN)).searchParams.get("X-Amz-Expires")).toBe(String(MAX_EXPIRES_IN));
+      });
+      it("rejects expiresIn above 7 days", () => {
+        expect(() => presign(MAX_EXPIRES_IN + 1)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+        expect(() => presign(8 * 24 * 60 * 60)).toThrow(
+          `The value of "expiresIn" is out of range. It must be >= 1 and <= 604800. Received 691200`,
+        );
+        // Values past i32 still report the SigV4 bound, not an integer-width bound.
+        expect(() => presign(2 ** 31)).toThrow(
+          `The value of "expiresIn" is out of range. It must be >= 1 and <= 604800. Received 2147483648`,
+        );
+      });
+      it("rejects expiresIn below 1", () => {
+        expect(() => presign(0)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+        expect(() => presign(-1)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+      });
+      it("rejects a non-integer expiresIn", () => {
+        expect(() => presign(1.5)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      });
+    });
+  }
+});
+
 // Archive + S3 integration tests
 describe.skipIf(!minioCredentials)("Archive with S3", () => {
   const credentials = minioCredentials!;
@@ -1786,7 +1834,14 @@ describe("s3 multipart upload id validation", () => {
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // The fixture only talks to its own localhost mock: an ambient proxy must not capture that traffic.
+      env: {
+        ...bunEnv,
+        http_proxy: undefined,
+        HTTP_PROXY: undefined,
+        https_proxy: undefined,
+        HTTPS_PROXY: undefined,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

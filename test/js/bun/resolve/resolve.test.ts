@@ -589,6 +589,48 @@ describe("wildcard exports with @ in matched subpath", () => {
   });
 });
 
+describe("package.json exports target percent-encoding", () => {
+  // ESModule.finalize short-circuits when the resolved path contains no '%'.
+  // These cases exercise both that branch and the decode branch to keep them in lockstep.
+  it.concurrent("resolves a plain target and rejects a directory target", () => {
+    using dir = tempDir("resolver-exports-finalize-plain", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: { "./ok": "./lib/ok.js", "./dir": "./lib/" },
+      }),
+      "node_modules/test-pkg/lib/ok.js": "module.exports = 1;",
+      "node_modules/test-pkg/lib/index.js": "module.exports = 2;",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/ok", root)).toBe(join(root, "node_modules/test-pkg/lib/ok.js"));
+    expect(() => Bun.resolveSync("test-pkg/dir", root)).toThrow();
+  });
+
+  it.concurrent("decodes a percent-encoded target and rejects encoded path separators", () => {
+    using dir = tempDir("resolver-exports-finalize-percent", {
+      "package.json": JSON.stringify({ name: "host" }),
+      "node_modules/test-pkg/package.json": JSON.stringify({
+        name: "test-pkg",
+        version: "1.0.0",
+        exports: {
+          "./space": "./lib/with%20space.js",
+          "./slash": "./lib%2Ffile.js",
+          "./bad": "./lib/%%.js",
+        },
+      }),
+      "node_modules/test-pkg/lib/with space.js": "module.exports = 1;",
+    });
+    const root = String(dir);
+
+    expect(Bun.resolveSync("test-pkg/space", root)).toBe(join(root, "node_modules/test-pkg/lib/with space.js"));
+    expect(() => Bun.resolveSync("test-pkg/slash", root)).toThrow();
+    expect(() => Bun.resolveSync("test-pkg/bad", root)).toThrow();
+  });
+});
+
 describe("package.json exports targets longer than the maximum path length", () => {
   it.concurrent("reports a resolution error for an oversized string exports target", async () => {
     using dir = tempDir("resolver-exports-long-target", {

@@ -162,7 +162,8 @@ test.concurrent("domain maintains correct active domain across nested run()", as
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "in d1, active is d1: true\n" +
+    stdout:
+      "in d1, active is d1: true\n" +
       "in d2, active is d2: true\n" +
       "back in d1, active is d1: true\n" +
       "outside, active is null: true\n" +

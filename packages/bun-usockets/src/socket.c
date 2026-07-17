@@ -701,16 +701,18 @@ int us_connecting_socket_is_shut_down(struct us_connecting_socket_t *c) {
 void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
     if (!us_socket_is_closed(s) && us_internal_poll_type(&s->p) != POLL_TYPE_SOCKET_SHUT_DOWN) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
-        us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
+        /* Peer FIN already delivered: the half-open poll has settled at
+         * events=0, so us_poll_change(&READABLE)=0 would be a no-op on
+         * libuv/kqueue and the is_shut_down close path never fires (epoll
+         * gets it via unmaskable EPOLLHUP). Arm READABLE instead so the
+         * next poll delivers the 0-byte read / DISCONNECT and closes via
+         * the existing SHUT_DOWN branch - next iteration, not synchronously,
+         * so callers on the stack (e.g. uWS onWritable) still see a live
+         * socket after shutdown() returns. */
+        us_poll_change(&s->p, s->group->loop,
+                       s->readable_ended ? LIBUS_SOCKET_READABLE
+                                         : (us_poll_events(&s->p) & LIBUS_SOCKET_READABLE));
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
-        if (s->readable_ended) {
-            /* Peer FIN was already delivered, so both directions are done.
-             * epoll sees this as unmaskable EPOLLHUP and closes via the
-             * is_shut_down path; on Windows the poll has settled at events=0
-             * and us_poll_change(0) above is a no-op (no UV_DISCONNECT
-             * re-arm), so close here to match. */
-            us_internal_socket_close_raw(s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
-        }
     }
 }
 

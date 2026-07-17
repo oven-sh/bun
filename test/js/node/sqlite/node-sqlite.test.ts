@@ -1197,40 +1197,84 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
 // Each backup_step with rate=1 fsyncs the destination once per page; keep
 // the page count tiny so the test stays fast on slow-fsync CI filesystems.
 describe("backup()", () => {
-  test("Worker.terminate() interrupts a backup() spinning on a locked destination", async () => {
-    // With no progress callback the BUSY loop never re-enters JS, so
-    // terminate() can only land if the loop polls vm.hasTerminationRequest().
-    using dir = tempDir("node-sqlite-backup-terminate", {
-      "worker.mjs": `
-        import { DatabaseSync, backup } from "node:sqlite";
-        import { parentPort, workerData } from "node:worker_threads";
-        const src = new DatabaseSync(":memory:");
-        src.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1)");
-        parentPort.postMessage("spinning");
-        // destination is held write-locked by the parent: this spins on
-        // SQLITE_BUSY until terminated.
-        await backup(src, workerData.dest);
-        parentPort.postMessage("done");
-      `,
+  test("backing up a database to its own file rejects promptly", async () => {
+    // sqlite3_backup_init only compares sqlite3* pointers, so opening the
+    // source path a second time as the destination succeeds — but the
+    // source's SHARED lock blocks the destination's EXCLUSIVE upgrade and
+    // every sqlite3_backup_step() returns SQLITE_BUSY with remaining == 0.
+    // Node only reschedules when remaining != 0, so it rejects on the first
+    // step. A regression (unconditional BUSY retry on the JS thread) wedges
+    // the process, so run in a subprocess under a bounded timeout.
+    using dir = tempDir("node-sqlite-backup-self", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync, backup } = require("node:sqlite");
+         const db = new DatabaseSync(process.argv[1]);
+         db.exec("CREATE TABLE t (a); INSERT INTO t VALUES (1)");
+         backup(db, String(db.location())).then(
+           v => { console.log("resolved:" + v); process.exit(1); },
+           e => { console.log("rejected:" + e.code + ":" + e.errcode); process.exit(0); },
+         );`,
+        path.join(String(dir), "self.db"),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    const destPath = path.join(String(dir), "locked.db");
-    using holder = new DatabaseSync(destPath);
-    // BEGIN IMMEDIATE takes a RESERVED lock so a writer from another
-    // connection sees SQLITE_BUSY.
-    holder.exec("BEGIN IMMEDIATE");
-
-    const worker = new Worker(path.join(String(dir), "worker.mjs"), { workerData: { dest: destPath } });
-    const spinning = new Promise<void>((resolve, reject) => {
-      worker.on("message", m => (m === "spinning" ? resolve() : reject(new Error(`unexpected: ${m}`))));
-      worker.on("error", reject);
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      Promise.race([proc.exited, Bun.sleep(4_000).then(() => (proc.kill(), "timeout"))]),
+    ]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "rejected:ERR_SQLITE_ERROR:0",
+      stderr: "",
+      exitCode: 0,
     });
-    await spinning;
+  });
 
-    const exitCode = await worker.terminate();
-    // The observable invariant is that terminate() returns at all — without
-    // the poll the worker's JS thread is stuck in sqlite3_sleep and the
-    // await never resolves (the test times out).
-    expect(typeof exitCode).toBe("number");
+  test("rejects promptly when the destination is write-locked", async () => {
+    // Same remaining == 0 gate as the self-backup case: the destination
+    // connection can't take its write lock, so the first step returns BUSY
+    // without ever advancing and Node rejects rather than retrying. Run in
+    // a subprocess so a regression is a bounded kill, not a wedged test.
+    using dir = tempDir("node-sqlite-backup-locked", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { DatabaseSync, backup } = require("node:sqlite");
+         const path = require("node:path");
+         const dest = path.join(process.argv[1], "locked.db");
+         const holder = new DatabaseSync(dest);
+         holder.exec("BEGIN IMMEDIATE");
+         const src = new DatabaseSync(":memory:");
+         src.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1)");
+         let calls = 0;
+         backup(src, dest, { progress: () => calls++ }).then(
+           v => { console.log("resolved:" + v); process.exit(1); },
+           e => { console.log("rejected:" + e.code + ":" + calls); process.exit(0); },
+         );`,
+        String(dir),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      proc.stdout.text(),
+      proc.stderr.text(),
+      Promise.race([proc.exited, Bun.sleep(4_000).then(() => (proc.kill(), "timeout"))]),
+    ]);
+    // Node gates progress on remaining != 0, which is never true here, so
+    // calls stays 0.
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "rejected:ERR_SQLITE_ERROR:0",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   test("re-checks the source is open after reading options", () => {
@@ -1315,66 +1359,21 @@ describe("backup()", () => {
     src.close();
   });
 
-  test("progress fires on SQLITE_BUSY so a throw can abort a locked backup", async () => {
-    // Bun runs the whole backup on the JS thread, so a permanently-locked
-    // destination would otherwise be an unrecoverable hang. Run the whole
-    // scenario in a subprocess so a regression (progress never fires →
-    // sync loop) is a bounded timeout kill, not a wedged test process.
-    using dir = tempDir("node-sqlite-backup-busy", {});
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { DatabaseSync, backup } = require("node:sqlite");
-         const path = require("node:path");
-         const dst = path.join(process.argv[1], "dst.db");
-         // Child holds a RESERVED lock on the destination so
-         // sqlite3_backup_step returns SQLITE_BUSY. It self-exits so a
-         // regression that never fires progress still terminates.
-         const locker = Bun.spawn({
-           cmd: [process.execPath, "-e",
-             "const {DatabaseSync}=require('node:sqlite');" +
-             "const db=new DatabaseSync(process.argv[1]);" +
-             "db.exec('PRAGMA locking_mode=EXCLUSIVE');" +
-             "db.exec('BEGIN IMMEDIATE');" +
-             "db.exec('CREATE TABLE lock_t(x)');" +
-             "console.log('locked');" +
-             "setTimeout(()=>{},1<<30);",
-             dst],
-           stdout: "pipe", stderr: "inherit",
-         });
-         let ready = "";
-         for await (const c of locker.stdout) {
-           ready += Buffer.from(c).toString();
-           if (ready.includes("locked")) break;
-         }
-         if (!ready.includes("locked")) throw new Error("locker never ready");
-         const src = new DatabaseSync(":memory:");
-         src.exec("CREATE TABLE t (x)");
-         let calls = 0;
-         const p = backup(src, dst, {
-           progress: () => { if (++calls >= 2) throw new Error("busy-abort"); },
-         });
-         p.then(
-           () => { console.log("resolved"); process.exit(1); },
-           e => { console.log("rejected:" + e.message + ":" + calls); locker.kill(); process.exit(0); },
-         );`,
-        String(dir),
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
+  test("progress does not fire on the final step (SQLITE_DONE)", async () => {
+    // Node fires progress only while sqlite3_backup_remaining() != 0, which
+    // is never true on the step that returns SQLITE_DONE. With rate: -1 the
+    // whole database copies in one step, so progress never fires at all.
+    using dir = tempDir("node-sqlite-backup-done", {});
+    const src = new DatabaseSync(":memory:");
+    src.exec("CREATE TABLE t (x); INSERT INTO t VALUES (1), (2), (3)");
+    let progressCalls = 0;
+    const pages = await backup(src, path.join(String(dir), "dst.db"), {
+      rate: -1,
+      progress: () => progressCalls++,
     });
-    const [stdout, stderr, exitCode] = await Promise.all([
-      proc.stdout.text(),
-      proc.stderr.text(),
-      Promise.race([proc.exited, Bun.sleep(15_000).then(() => (proc.kill(), "timeout"))]),
-    ]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: "rejected:busy-abort:2",
-      stderr: expect.any(String),
-      exitCode: 0,
-    });
+    expect(typeof pages).toBe("number");
+    expect(progressCalls).toBe(0);
+    src.close();
   });
 });
 

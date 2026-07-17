@@ -9,7 +9,9 @@ use crate::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
-use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
+use crate::jsc_ext::JSGlobalObjectExt as _;
+use crate::vm::EventLoopHandle;
+use crate::webcore::jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
 #[cfg(windows)]
@@ -746,14 +748,14 @@ impl FileSink {
     /// typed `&mut VirtualMachine` (None for the mini loop or null).
     #[inline]
     #[allow(clippy::mut_from_ref)] // recovers `&mut` from a type-erased raw ptr (per-thread VM, not aliased)
-    fn js_vm(&self) -> Option<&mut crate::vm::VirtualMachineRef> {
+    fn js_vm(&self) -> Option<&mut crate::vm::virtual_machine::VirtualMachine> {
         let p = self.event_loop_handle.bun_vm();
         if p.is_null() {
             return None;
         }
         // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
         // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *p.cast::<crate::vm::VirtualMachineRef>() })
+        Some(unsafe { &mut *p.cast::<crate::vm::virtual_machine::VirtualMachine>() })
     }
 
     pub fn connect(&self, signal: streams::Signal) {
@@ -976,7 +978,7 @@ impl FileSink {
             // that already has a Bun VM (`get()` panics otherwise); `event_loop()`
             // is the live per-thread `jsc::EventLoop`.
             event_loop_handle: EventLoopHandle::init(
-                (*crate::vm::VirtualMachineRef::get())
+                (*crate::vm::virtual_machine::VirtualMachine::get())
                     .event_loop()
                     .cast::<()>(),
             ),

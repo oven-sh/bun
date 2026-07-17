@@ -25,8 +25,6 @@ using namespace JSC;
 using namespace WebCore;
 using namespace ncrypto;
 
-extern "C" bool Bun__Node__ProcessNoDeprecation;
-
 namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsKeyObjectConstructor_from);
@@ -98,7 +96,7 @@ JSC_DEFINE_HOST_FUNCTION(jsKeyObjectConstructor_from, (JSGlobalObject * lexicalG
     if (!wrappedKey.extractable()) {
         // DEP0204: KeyObject.from() with a non-extractable CryptoKey still works but is
         // deprecated. Warned at most once per realm, like Node.
-        if (!globalObject->hasWarnedNonExtractableCryptoKeyDeprecation && !Bun__Node__ProcessNoDeprecation) {
+        if (!globalObject->hasWarnedNonExtractableCryptoKeyDeprecation) {
             globalObject->hasWarnedNonExtractableCryptoKeyDeprecation = true;
             Process::emitWarning(globalObject,
                 jsString(vm, makeString("Passing a non-extractable CryptoKey to KeyObject.from() is deprecated."_s)),

@@ -110,6 +110,7 @@ static JSC::JSString* coerceEnvValue(JSGlobalObject* globalObject, JSC::ThrowSco
 }
 
 static void applyTZFromString(JSGlobalObject*, const String&);
+static bool shouldApplyTZSideEffect(JSGlobalObject*);
 
 // TZ side effect for put() and jsProcessEnvCoerceForWrite, so delete-then-set
 // (which drops the CustomAccessor) still updates the process timezone like
@@ -359,8 +360,10 @@ bool JSEnvironmentVariableMap::deleteProperty(JSCell* cell, JSGlobalObject* glob
     // the side effect after the accessor is gone.
     auto* uid = propertyName.publicName();
     if (uid && WTF::equal(uid, "TZ"_s)) {
-        WTF::setTimeZoneOverride(String());
-        resetDateCachesAfterTimeZoneChange(vm);
+        if (shouldApplyTZSideEffect(globalObject)) {
+            WTF::setTimeZoneOverride(String());
+            resetDateCachesAfterTimeZoneChange(vm);
+        }
         auto* clientData = WebCore::clientData(vm);
         DeletePropertySlot dataSlot;
         Base::deleteProperty(cell, globalObject, clientData->builtinNames().dataPrivateName(), dataSlot);
@@ -522,8 +525,10 @@ JSC_DEFINE_HOST_FUNCTION(jsProcessEnvCoerceForWrite, (JSGlobalObject * globalObj
 JSC_DEFINE_HOST_FUNCTION(jsProcessEnvResetTZ, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
-    WTF::setTimeZoneOverride(String());
-    resetDateCachesAfterTimeZoneChange(vm);
+    if (shouldApplyTZSideEffect(globalObject)) {
+        WTF::setTimeZoneOverride(String());
+        resetDateCachesAfterTimeZoneChange(vm);
+    }
     return JSValue::encode(jsUndefined());
 }
 
@@ -686,11 +691,25 @@ static constexpr ASCIILiteral kProxyEnvVarNames[] = {
     "no_proxy"_s,
 };
 
+// Node does not intercept process.env.TZ in workers: only RealEnvStore::Set
+// calls DateTimeConfigurationChangeNotification, and every worker env is a
+// MapKVStore. WTF::setTimeZoneOverride is process-global, so a worker write
+// would otherwise flip the main thread's timezone while only invalidating the
+// worker VM's Date caches.
+static bool shouldApplyTZSideEffect(JSGlobalObject* globalObject)
+{
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    auto* context = zigGlobal ? zigGlobal->scriptExecutionContext() : nullptr;
+    return !context || context->isMainThread();
+}
+
 // The parse-and-apply bodies for the three side-effecting env vars, shared by
 // process.env's put()/CustomSetters and applySharedEnvSideEffects so a new
 // side-effecting var need only be added in one place.
 static void applyTZFromString(JSGlobalObject* globalObject, const String& value)
 {
+    if (!shouldApplyTZSideEffect(globalObject))
+        return;
     if (value.length() < 32 && WTF::setTimeZoneOverride(value))
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
 }
@@ -793,7 +812,7 @@ bool JSSharedEnvMap::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     // side effect via applySharedEnvSideEffects, so delete has to undo it or
     // existing Date instances keep the deleted zone's offset.
     String key(uid);
-    if (SharedEnvStore::normalizeKey(key) == "TZ"_s) {
+    if (SharedEnvStore::normalizeKey(key) == "TZ"_s && shouldApplyTZSideEffect(globalObject)) {
         WTF::setTimeZoneOverride(String());
         resetDateCachesAfterTimeZoneChange(JSC::getVM(globalObject));
     }

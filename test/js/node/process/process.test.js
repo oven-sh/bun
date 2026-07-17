@@ -171,6 +171,61 @@ it("process.env defineProperty matches assignment semantics", () => {
   expect(process.env[""]).toBeUndefined();
 });
 
+it("process.env.TZ writes inside a worker do not change the main thread's timezone", async () => {
+  // Node does not intercept TZ in workers (only RealEnvStore::Set calls
+  // DateTimeConfigurationChangeNotification, and every worker env is a
+  // MapKVStore). WTF::setTimeZoneOverride is process-global, so without the
+  // isMainThread gate a worker write would flip the main thread's zone.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        process.env.TZ = "America/New_York";
+        const mainBefore = new Date("2024-07-15T12:00:00Z").getHours();
+        const { Worker } = require("node:worker_threads");
+        const results = [];
+        function probe(env, label) {
+          return new Promise((res, rej) => {
+            const w = new Worker(
+              \`process.env.TZ = "Asia/Tokyo";
+                delete process.env.TZ;
+                process.env.TZ = "Europe/London";
+                require("node:worker_threads").parentPort.postMessage(0);\`,
+              { eval: true, env },
+            );
+            w.once("message", () => {
+              results.push([label, new Date("2024-07-15T12:00:00Z").getHours() === mainBefore]);
+              w.terminate().then(res, rej);
+            });
+            w.once("error", rej);
+          });
+        }
+        (async () => {
+          await probe({ TZ: "UTC" }, "snapshot");
+          await probe(undefined, "default");
+          console.log(JSON.stringify({ mainBefore, results }));
+        })().catch(e => { console.error(e); process.exit(1); });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ out: JSON.parse(stdout.trim() || "null"), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    out: {
+      mainBefore: 8,
+      results: [
+        ["snapshot", true],
+        ["default", true],
+      ],
+    },
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 it.skipIf(isWindows)("process.env keeps Node's EnvSetter semantics inside a snapshot-env worker", async () => {
   // new Worker(file, { env: {...} }) seeds process.env from a snapshot dict;
   // writes inside the worker must still coerce to string, reject symbol keys,

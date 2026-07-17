@@ -10,10 +10,11 @@ use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
-    self, AbortSignal, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject,
-    JSString, JSType, JSUint8Array, JSValue, JsRef, JsResult, ZigStringSlice,
+    self, ArrayBuffer, BinaryType, CallFrame, CommonAbortReason, JSGlobalObject, JSString, JSType,
+    JSUint8Array, JSValue, JsRef, JsResult, ZigStringSlice,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::vm::AbortSignal;
 
 bun_core::declare_scope!(WebSocketServer, visible);
 

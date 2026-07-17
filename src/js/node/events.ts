@@ -341,8 +341,10 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
   if (list === undefined) return this;
 
   let position = -1;
+  let originalListener;
   for (let i = list.length - 1; i >= 0; i--) {
     if (list[i] === listener || list[i].listener === listener) {
+      originalListener = list[i].listener;
       position = i;
       break;
     }
@@ -355,9 +357,12 @@ EventEmitterPrototype.removeListener = function removeListener(type, listener) {
   if (list.length === 0) {
     delete events[type];
     this._eventsCount--;
+    // Node's single-listener fast path emits `list.listener || listener` (unwraps once-wrappers).
+    if (events.removeListener !== undefined) this.emit("removeListener", type, originalListener || listener);
+  } else if (events.removeListener !== undefined) {
+    // Node's array path emits the `listener` argument as passed (may be the onceWrapper itself).
+    this.emit("removeListener", type, listener);
   }
-
-  if (events.removeListener !== undefined) this.emit("removeListener", type, listener.listener || listener);
 
   return this;
 };

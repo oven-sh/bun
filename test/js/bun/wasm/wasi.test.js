@@ -28,7 +28,7 @@ it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",
   });
-  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
 
   const WASI_ESUCCESS = 0;
@@ -51,7 +51,7 @@ it("path_open reports the host errno to the guest when the open fails", () => {
   using dir = tempDir("wasi-path-open-errno", {
     "exists.txt": "x",
   });
-  const wasi = new WASI({ preopens: { "/": String(dir) } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": String(dir) } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
   const view = new DataView(wasi.memory.buffer);
@@ -97,7 +97,7 @@ it("path_* syscalls cannot escape the preopened directory", () => {
     fs.symlinkSync(path.join("..", "secret.txt"), path.join(sandbox, "escape"));
   }
 
-  const wasi = new WASI({ preopens: { "/": sandbox } });
+  const wasi = new WASI({ version: "preview1", preopens: { "/": sandbox } });
   wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
   const memory = Buffer.from(wasi.memory.buffer);
 

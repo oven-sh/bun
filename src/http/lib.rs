@@ -1735,6 +1735,12 @@ impl<'a> HTTPClient<'a> {
                         // `HTTPThread::schedule_cert_check_resume` on success,
                         // or schedules a shutdown on failure.
                         self.state.flags.is_waiting_for_cert_check = true;
+                        // Pause reads so application data and close_notify that
+                        // arrive while parked stay in the kernel / SSL buffer
+                        // until the verdict lands; `resume_after_cert_check`
+                        // un-pauses. Runs from `on_handshake` so the socket is
+                        // open.
+                        let _ = socket.pause_stream();
 
                         // we inform the user that the cert is invalid
                         let ctx = self.get_ssl_ctx::<IS_SSL>();
@@ -2071,36 +2077,6 @@ impl<'a> HTTPClient<'a> {
             self.fail(crate::Error::Aborted);
             return;
         }
-
-        // Peer closed while parked for the JS `checkServerIdentity` verdict
-        // with early application data buffered (see `on_data`): dispatch the
-        // buffer so a complete early reply resolves instead of ECONNRESET.
-        if self.state.flags.is_waiting_for_cert_check {
-            self.state.flags.is_waiting_for_cert_check = false;
-            if !self.state.response_message_buffer.list.is_empty() {
-                // A 3xx here comes from a peer whose certificate has not been
-                // approved by the JS callback; following its Location would act
-                // on attacker-chosen data before verification. Downgrade Follow
-                // to Error for the replay so a buffered 3xx fails closed
-                // instead of calling `do_redirect`; Manual/Error keep their own
-                // semantics (neither calls `do_redirect`).
-                let redirect_type = self.redirect_type;
-                if redirect_type == FetchRedirect::Follow {
-                    self.redirect_type = FetchRedirect::Error;
-                }
-                // A terminal outcome frees the AsyncHTTP that embeds `*self`
-                // (via `on_async_http_callback_raw`, which is the sole
-                // HTTP-thread `ACTIVE_REQUESTS_COUNT` decrement). HTTP-thread-only.
-                let active_before = async_http::ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed);
-                let ctx = self.get_ssl_ctx::<IS_SSL>();
-                self.handle_on_data_headers::<IS_SSL>(&[], ctx, socket);
-                if async_http::ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed) < active_before {
-                    return;
-                }
-                self.redirect_type = redirect_type;
-            }
-        }
-
         self.close_proxy_tunnel(true);
         let in_progress = self.state.stage != Stage::Done
             && self.state.stage != Stage::Fail
@@ -3621,13 +3597,13 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         if remaining_redirect_count != self.remaining_redirect_count {
-            // Approval is for a previous hop's certificate (the `on_close`
-            // parked-replay can follow a buffered redirect before that hop's
-            // resume is drained); the current hop parks independently.
+            // Approval is for a previous hop's certificate; the current hop
+            // parks independently.
             return;
         }
         bun_core::scoped_log!(fetch, "resumeAfterCertCheck");
         self.state.flags.is_waiting_for_cert_check = false;
+        let _ = socket.resume_stream();
         self.on_writable::<true, IS_SSL>(socket);
         // `on_writable` → `close_and_fail` may free the AsyncHTTP that embeds
         // `*self`; the socket handle outlives the client.
@@ -3635,8 +3611,9 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         // Replay application data the peer sent while parked (buffered by
-        // `on_data` / `ProxyTunnel::on_data`) via `handle_on_data_headers`,
-        // which consumes `response_message_buffer` when `incoming_data` is empty.
+        // `on_data` / `ProxyTunnel::on_data` when it shared the recv buffer
+        // with the handshake flight) via `handle_on_data_headers`, which
+        // consumes `response_message_buffer` when `incoming_data` is empty.
         if !self.state.response_message_buffer.list.is_empty() {
             let ctx = self.get_ssl_ctx::<IS_SSL>();
             self.handle_on_data_headers::<IS_SSL>(&[], ctx, socket);

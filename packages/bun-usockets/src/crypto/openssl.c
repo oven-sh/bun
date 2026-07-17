@@ -1859,6 +1859,17 @@ struct us_socket_t *us_internal_ssl_on_data(struct us_socket_t *s, char *data, i
   int read = 0;
 restart:
   while (1) {
+    /* A handler dispatched from this loop (on_handshake, on_data) may have
+     * paused the socket. Stop draining once the recv-buffer ciphertext is
+     * fully consumed so we do not process further records (e.g. close_notify)
+     * the caller asked to defer; bytes already decrypted are delivered. */
+    if (s->flags.is_paused && loop_ssl_data->ssl_read_input_length == 0) {
+      if (read) {
+        s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
+        if (!s || ssl_gone(s)) return NULL;
+      }
+      return s;
+    }
     unsigned char ssl_was_in_use = s->ssl_in_use;
     s->ssl_in_use = 1;
     int just_read = SSL_read(s_ssl(s),

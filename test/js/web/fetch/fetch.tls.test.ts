@@ -260,8 +260,9 @@ describe.concurrent("fetch-tls", () => {
   // A TLS peer is free to transmit application data as soon as the handshake
   // completes. fetch() holds back the request until the JS checkServerIdentity
   // callback approves the certificate, so the server's response can arrive
-  // before the request is written. Those early bytes must be buffered and
-  // replayed once the callback approves, not rejected as UnexpectedData.
+  // before the request is written. The socket is paused while parked so those
+  // early bytes are processed only after the callback approves, not rejected
+  // as UnexpectedData.
   it("fetch with checkServerIdentity accepts a response that arrives before the request is written", async () => {
     const server = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       // Write the response immediately, without waiting for a request.
@@ -306,15 +307,11 @@ describe.concurrent("fetch-tls", () => {
       });
     });
     let redirectPort = 0;
-    // Write the 302 immediately but keep the connection open until the
-    // request arrives, so the redirect is replayed from resume_after_cert_check
-    // (after the first hop's certificate has been approved) rather than the
-    // on_close fail-closed path.
     const redirector = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {
       socket.write(
         `HTTP/1.1 302 Found\r\nLocation: https://127.0.0.1:${redirectPort}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n`,
       );
-      socket.once("data", () => socket.end());
+      socket.end();
     });
     try {
       await new Promise<void>((resolve, reject) => {
@@ -351,9 +348,9 @@ describe.concurrent("fetch-tls", () => {
   });
 
   // A 3xx from a peer whose certificate the pinning callback rejects must
-  // never result in a connection to the Location target, regardless of
-  // whether the early 302 is replayed from resume_after_cert_check (callback
-  // already ran) or from on_close (fail-closed before the callback ran).
+  // never result in a connection to the Location target: the buffered 302 is
+  // only processed after the verdict, and a reject tears down the connection
+  // before that.
   it("fetch with checkServerIdentity never connects to the redirect target when the peer's certificate is rejected", async () => {
     let targetConnections = 0;
     const target = tls.createServer({ key: validTls.key, cert: validTls.cert }, socket => {

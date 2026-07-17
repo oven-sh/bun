@@ -45,6 +45,7 @@ const FFIType = {
   uint64_t: 8,
   uint8_t: 2,
   usize: 8,
+  size_t: 8,
   "void*": 12,
   ptr: 12,
   pointer: 12,
@@ -81,7 +82,7 @@ delete ffi.closeCallback;
 
 class JSCallback {
   constructor(cb, options) {
-    const { ctx, ptr } = nativeCallback(options, cb);
+    const { ctx, ptr } = nativeCallback(options, FFICallbackReturnWrapper(cb, options));
     this.#ctx = ctx;
     this.ptr = ptr;
     this.#threadsafe = !!options?.threadsafe;
@@ -333,6 +334,23 @@ ffiWrappers[FFIType.function] = `{
 
   return ptr;
 }`;
+
+// The generated trampoline decodes the callback's return value with the raw
+// JSValue macros in FFI.h, which assume the value already has the declared C
+// type's representation. ffiWrappers establishes that, like FFIBuilder does for args.
+function FFICallbackReturnWrapper(cb, options) {
+  if (typeof cb !== "function") return cb;
+  const returnTypeId = FFIType[options?.returns];
+  // void: nothing to coerce. napi_value: the raw JSValue is the return value.
+  if (typeof returnTypeId !== "number" || returnTypeId === FFIType.void || returnTypeId === FFIType.napi_value) {
+    return cb;
+  }
+
+  var paramNames = "";
+  const argCount = options?.args?.length;
+  for (let i = 0; i < argCount; i++) paramNames += (i ? ",p" : "p") + i;
+  return new Function("cb", `return (${paramNames}) => (val=>${ffiWrappers[returnTypeId]})(cb(${paramNames}));`)(cb);
+}
 
 function FFIBuilder(params, returnType, functionToCall, name) {
   const hasReturnType = typeof FFIType[returnType] === "number" && FFIType[returnType as string] !== FFIType.void;

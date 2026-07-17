@@ -81,6 +81,46 @@ test.skipIf(!isDebug)("tsconfig 'extends' chain frees every intermediate TSConfi
 
 // Correctness: after freeing the intermediate structs, the merged config must
 // still resolve paths defined in the leaf and keep the merge semantics intact.
+// tsconfig "extends" accepts package specifiers (tsc resolves them against
+// node_modules, walking up parent directories). The extended config's
+// compilerOptions must apply: here experimentalDecorators (legacy decorator
+// call signature) and emitDecoratorMetadata (design:* metadata emission).
+test("tsconfig 'extends' resolves package specifiers from node_modules", async () => {
+  using dir = tempDir("tsconfig-extends-package", {
+    "node_modules/fake-tsconfig/package.json": JSON.stringify({ name: "fake-tsconfig", version: "1.0.0" }),
+    "node_modules/fake-tsconfig/flags.json": JSON.stringify({
+      compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true },
+    }),
+    "tsconfig.json": JSON.stringify({ extends: "fake-tsconfig/flags.json" }),
+    "index.ts": `
+      (Reflect as any).metadata = (key: string, value: any) => (target: any, prop: any) => {
+        if (key === "design:type") console.log("design:type:", value.name);
+      };
+      function dec(target: unknown, key?: unknown) {
+        console.log("decorator args:", typeof target, typeof key);
+      }
+      class Foo {
+        @dec name!: string;
+      }
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // Legacy decorators receive (prototype, key); TC39 would be (undefined, context).
+  expect(stdout).toBe("design:type: String\ndecorator args: object string\n");
+  expect(exitCode).toBe(0);
+});
+
 // Guards against accidentally freeing data the merged config still references
 // (the merged struct borrows string slices from the intermediates' source
 // buffers, which outlive the struct).

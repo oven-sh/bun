@@ -4062,6 +4062,53 @@ impl<'a> Resolver<'a> {
         Ok(Some(result))
     }
 
+    /// Resolve a tsconfig `extends` package specifier (e.g. `@tsconfig/node20`
+    /// or `pkg/tsconfig.base.json`) by walking up parent `node_modules`
+    /// directories like tsc: try `<path>/tsconfig.json`, `<path>`, `<path>.json`.
+    fn parse_tsconfig_extends_package(
+        &mut self,
+        start_dir: &[u8],
+        specifier: &[u8],
+    ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
+        let mut specifier_json = Vec::with_capacity(specifier.len() + b".json".len());
+        specifier_json.extend_from_slice(specifier);
+        specifier_json.extend_from_slice(b".json");
+
+        let mut dir = start_dir;
+        loop {
+            if !strings::eql(ResolvePath::basename(dir), b"node_modules") {
+                let node_modules: &[u8] = b"node_modules";
+                let candidates: [&[&[u8]]; 3] = [
+                    &[dir, node_modules, specifier, b"tsconfig.json"],
+                    &[dir, node_modules, specifier],
+                    &[dir, node_modules, &specifier_json],
+                ];
+                for parts in candidates {
+                    let abs_path = ResolvePath::join_abs_string_buf(
+                        dir,
+                        bufs!(tsconfig_path_abs),
+                        parts,
+                        bun_paths::Platform::AUTO,
+                    );
+                    match self.parse_tsconfig(abs_path, FD::INVALID) {
+                        // Candidate is missing or not a regular file: keep looking.
+                        Err(crate::Error::Sys(
+                            bun_errno::SystemErrno::ENOENT
+                            | bun_errno::SystemErrno::ENOTDIR
+                            | bun_errno::SystemErrno::EISDIR,
+                        )) => {}
+                        result => return result,
+                    }
+                }
+            }
+            let parent = Dirname::dirname(dir);
+            if parent.len() >= dir.len() {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOENT));
+            }
+            dir = parent;
+        }
+    }
+
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
         if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
             return &[];
@@ -6474,28 +6521,34 @@ impl<'a> Resolver<'a> {
                     );
                     while !current.extends.is_empty() {
                         let ts_dir_name = Dirname::dirname(&current.abs_path);
-                        let abs_path = ResolvePath::join_abs_string_buf(
-                            ts_dir_name,
-                            bufs!(tsconfig_path_abs),
-                            &[ts_dir_name, &current.extends],
-                            bun_paths::Platform::AUTO,
-                        );
-                        let parent_config_maybe: Option<*mut TSConfigJSON> =
-                            match self.parse_tsconfig(abs_path, FD::INVALID) {
-                                Ok(v) => v.map(bun_core::heap::into_raw),
-                                Err(err) => {
-                                    let _ = self.log_mut().add_debug_fmt(
-                                        None,
-                                        bun_ast::Loc::EMPTY,
-                                        format_args!(
-                                            "{} loading tsconfig.json extends {}",
-                                            bstr::BStr::new(err.name()),
-                                            bun_core::fmt::quote(abs_path)
-                                        ),
-                                    );
-                                    break;
-                                }
-                            };
+                        // tsc resolves non-relative `extends` specifiers
+                        // (e.g. "@tsconfig/node20") against node_modules.
+                        let parse_result = if is_package_path(&current.extends) {
+                            self.parse_tsconfig_extends_package(ts_dir_name, &current.extends)
+                        } else {
+                            let abs_path = ResolvePath::join_abs_string_buf(
+                                ts_dir_name,
+                                bufs!(tsconfig_path_abs),
+                                &[ts_dir_name, &current.extends],
+                                bun_paths::Platform::AUTO,
+                            );
+                            self.parse_tsconfig(abs_path, FD::INVALID)
+                        };
+                        let parent_config_maybe: Option<*mut TSConfigJSON> = match parse_result {
+                            Ok(v) => v.map(bun_core::heap::into_raw),
+                            Err(err) => {
+                                let _ = self.log_mut().add_debug_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "{} loading tsconfig.json extends {}",
+                                        bstr::BStr::new(err.name()),
+                                        bun_core::fmt::quote(&current.extends[..])
+                                    ),
+                                );
+                                break;
+                            }
+                        };
                         if let Some(parent_config) = parent_config_maybe {
                             parent_configs.append(parent_config)?;
                             current = bun_ptr::BackRef::from(

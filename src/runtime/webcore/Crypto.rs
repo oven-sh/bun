@@ -247,7 +247,12 @@ pub(crate) fn bun_random_uuid_v7(
             .unwrap();
         }
 
-        break 'brk u64::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
+        // jsDateNow() is the exact value JS Date.now() would return (same
+        // precise system clock as milli_timestamp() on every platform since
+        // oven-sh/WebKit#304, plus any setSystemTime() override), so a caller
+        // bracketing this call with Date.now() always observes
+        // before <= embedded-timestamp <= after.
+        break 'brk global.js_date_now().max(0.0) as u64;
     };
 
     // SAFETY: `bun_vm()` never returns null for a Bun-owned global.

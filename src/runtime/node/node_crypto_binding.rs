@@ -517,8 +517,8 @@ pub mod random {
                 }
             }
 
-            // jsDateNow() is exactly what JS Date.now() returns, so the embedded
-            // timestamp is never behind a Date.now() sample taken by the caller.
+            // Same clock source and UUID7 path as Bun.randomUUIDv7(); only the
+            // option validation and disableEntropyCache differ.
             let now_ms = global.js_date_now().max(0.0) as u64;
             let mut entropy = [0u8; 10];
             if disable_entropy_cache {

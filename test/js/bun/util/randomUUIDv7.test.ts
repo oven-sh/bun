@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 
 describe("randomUUIDv7", () => {
   test("basic", () => {
@@ -208,6 +208,80 @@ describe("randomUUIDv7", () => {
     // With an 11-bit random seed, 64 independent draws collapsing to one value
     // has probability 2^-693. A fixed reset (the old behavior) yields size 1.
     expect(Number(stdout.trim())).toBeGreaterThan(1);
+    expect(exitCode).toBe(0);
+  });
+
+  // https://github.com/oven-sh/WebKit/pull/304
+  test("default timestamp is bracketed by Date.now()", async () => {
+    // Before oven-sh/WebKit#304, Windows Date.now() (WTF QPC-interpolated) ran
+    // up to ~1ms ahead of the native precise clock the runtime read for default
+    // timestamps, so before > embedded-timestamp in ~80% of samples. With that
+    // fixed, Bun.randomUUIDv7 / crypto.randomUUIDv7 / File.lastModified all
+    // default to global.js_date_now(), which is Date.now() exactly.
+    // Subprocess keeps the process-global UUIDv7 last-timestamp untouched.
+    const N = isWindows ? 50_000 : 5_000;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const crypto = require("node:crypto");
+          const tsOf = buf => buf.readUIntBE(0, 6);
+          const tsOfHex = s => parseInt(s.replaceAll("-", "").slice(0, 12), 16);
+          let bad = { bun: null, node: null, file: null };
+          for (let i = 0; i < ${N}; i++) {
+            const before = Date.now();
+            const b = tsOf(Bun.randomUUIDv7("buffer"));
+            const c = tsOfHex(crypto.randomUUIDv7());
+            const f = new File([], "x").lastModified;
+            const after = Date.now();
+            if (bad.bun  === null && !(before <= b && b <= after)) bad.bun  = { i, before, b, after };
+            if (bad.node === null && !(before <= c && c <= after)) bad.node = { i, before, c, after };
+            if (bad.file === null && !(before <= f && f <= after)) bad.file = { i, before, f, after };
+            if (bad.bun && bad.node && bad.file) break;
+          }
+          console.log(JSON.stringify(bad));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ bun: null, node: null, file: null });
+    expect(exitCode).toBe(0);
+  });
+
+  test("default timestamp respects setSystemTime()", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { setSystemTime } = require("bun:test");
+          const crypto = require("node:crypto");
+          const tsOf = s => parseInt(s.replaceAll("-", "").slice(0, 12), 16);
+          const pin = 1_700_000_000_000;
+          setSystemTime(pin);
+          console.log(JSON.stringify({
+            dateNow: Date.now(),
+            bun: tsOf(Bun.randomUUIDv7()),
+            node: tsOf(crypto.randomUUIDv7()),
+            file: new File([], "x").lastModified,
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      dateNow: 1_700_000_000_000,
+      bun: 1_700_000_000_000,
+      node: 1_700_000_000_000,
+      file: 1_700_000_000_000,
+    });
     expect(exitCode).toBe(0);
   });
 });

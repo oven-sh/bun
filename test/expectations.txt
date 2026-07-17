@@ -54,6 +54,14 @@ test/js/node/test/parallel/test-stream-wrap.js [ FAIL ] # needs internal/test/bi
 test/js/node/test/parallel/test-stream-wrap-drain.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 test/js/node/test/parallel/test-stream-wrap-encoding.js [ FAIL ] # needs internal/js_stream_socket (net.Socket({handle}) libuv compat layer)
 
+# Spawns test-http-max-http-headers.js, which is not vendored, and asserts its
+# exit code. Only "passed" before #32631 because the old node:test shim never
+# awaited done-style callbacks, so the cp.on('close') assertions never ran.
+# With the real (t, done) support, the second/fourth tests fail (child exits 1
+# with "Module not found" where exit 0 is expected). Remove this entry once
+# test-http-max-http-headers.js is vendored.
+test/js/node/test/parallel/test-set-http-max-http-headers.js [ FAIL ] # spawns test-http-max-http-headers.js which is not vendored
+
 # Pre-existing fs.watch leak unmasked by this PR's eval-entry exception fix:
 # the child's thrown leak error ("fs.watch(dir) leaked N MB") used to be
 # swallowed by the silent-exit-0 eval bug (uncaught throw in a CJS -e script

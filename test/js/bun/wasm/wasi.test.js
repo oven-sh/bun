@@ -239,4 +239,19 @@ describe.concurrent("proc_exit / returnOnExit", () => {
       expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
     );
   });
+
+  it("`bun file.wasm` still exits with the guest's proc_exit code", async () => {
+    using dir = tempDir("wasi-runner-exit", {
+      "exit7.wasm": craftProcExitModule(START_EXIT_7),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exit7.wasm"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "", stderr: "", exitCode: 7 });
+  });
 });

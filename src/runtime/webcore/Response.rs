@@ -675,7 +675,7 @@ impl Response {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: crate::vm::ConsoleFormatter,
+        F: crate::jsc_ext::ConsoleFormatter,
         W: core::fmt::Write,
     {
         // return type narrowed to `core::fmt::Result`. The trait
@@ -701,7 +701,7 @@ impl Response {
             )?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    crate::vm::FormatAs::Boolean,
+                    crate::jsc_ext::FormatAs::Boolean,
                     writer,
                     JSValue::from(self.is_ok()),
                     bun_jsc::JSType::BooleanObject,
@@ -729,7 +729,7 @@ impl Response {
             )?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    crate::vm::FormatAs::Double,
+                    crate::jsc_ext::FormatAs::Double,
                     writer,
                     JSValue::js_number(self.init.get().status_code as f64),
                     bun_jsc::JSType::NumberObject,
@@ -762,7 +762,7 @@ impl Response {
             let headers_js = Self::get_headers(self, formatter.global_this()).map_err(js_err)?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    crate::vm::FormatAs::Private,
+                    crate::jsc_ext::FormatAs::Private,
                     writer,
                     headers_js,
                     bun_jsc::JSType::DOMWrapper,
@@ -779,7 +779,7 @@ impl Response {
             )?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    crate::vm::FormatAs::Boolean,
+                    crate::jsc_ext::FormatAs::Boolean,
                     writer,
                     JSValue::from(self.redirected.get()),
                     bun_jsc::JSType::BooleanObject,

@@ -149,7 +149,3 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 # reliably. Follow-up: rewrite without the external-IP dependence (repo rule forbids
 # contacting external hosts) using a deterministic local hanging connect.
 [ DARWIN ] test/js/bun/io/fetch/fetch-abort-slow-connect.test.ts [ FLAKY ] # connect-during-abort race depends on host routing of 192.0.2.1; darwin CI agents return an immediate routing error
-
-
-# node:http servers cannot listen on Windows named pipes yet (ENOENT from
-# uv_pipe bind), so common.PIPE-based http tests cannot run there.

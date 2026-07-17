@@ -101,8 +101,16 @@ test.concurrent("node:http: server.close() with a half-closed connection drains 
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
+    // Regression mode is a hang; bound the child so the assertion reports a
+    // clear signalCode diff instead of the outer runner timing out.
+    timeout: 10_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "CLOSED", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "CLOSED",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });

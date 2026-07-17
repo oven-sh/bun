@@ -208,7 +208,7 @@ Every `extern "Rust"` symbol, `link_interface!`, and manual hook vtable, with it
 | `__bun_blob_from_build_artifact`                                                                                                                     | `bun_jsc` (group B) → `runtime`     | Same-crate after split: direct call                                                |
 | `__BUN_SQL_RUNTIME_HOOKS`                                                                                                                            | `sql_jsc` → `runtime`               | Same-crate after split: direct field access                                        |
 
-**Result:** zero `extern "Rust"` blocks remain. They are replaced by: 11 direct calls (same-crate after merge/split), 7 `OnceLock<struct of fn>` single-registration tables, 2 `AtomicUsize` fn-pointer hooks, 2 `dyn Trait` trait objects.
+**Result:** zero `extern "Rust"` blocks remain. The 36 symbols (33 fns + 3 statics, per the source audit in `research-catalogs.md` §A) are replaced by a mix of mechanisms; buckets here are by replacement kind, not a partition: same-crate direct calls/deletions after the split, `OnceLock` registrations, `AtomicUsize` hooks, and `dyn Trait`. Appendix B is the authoritative inventory of all 10 `OnceLock`/`AtomicUsize` statics introduced across §3.1 and §3.2 combined.
 
 ### 3.2 `link_interface!` (10 sites) → 2
 
@@ -408,7 +408,7 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 1. New `src/macros/{Cargo.toml,lib.rs}` with `proc-macro = true`. `lib.rs` `#[path]`-mounts `../bun_core_macros/lib.rs`, `../clap_macros/lib.rs`, `../jsc_macros/lib.rs`, `../css_derive/lib.rs`, `../dispatch/lib.rs` as `mod core_macros_impl;` etc. **`#[proc_macro*]` items must live at the crate root** (re-exports do not satisfy rustc), so in each mounted file rename `#[proc_macro…] pub fn foo` → `pub fn foo_impl` (plain fn), and in `src/macros/lib.rs` add one-line wrappers at the root: `#[proc_macro] pub fn foo(t: TokenStream) -> TokenStream { core_macros_impl::foo_impl(t) }`. Same for `#[proc_macro_derive]`/`#[proc_macro_attribute]` (~18 wrappers total).
 2. Rewrite `dispatch/lib.rs` codegen: replace the `unsafe extern "Rust" { … }` emission with `static __VTABLE_<Iface>_<Variant>: <Iface>MethodTable = …;` + `static __VTABLES_<Iface>: [&<Iface>MethodTable; N] = [&__VTABLE_…, …];`. `link_impl_*!` fills the static. No `extern "Rust"` in output.
-3. Update `bun_core_macros` derive emissions: `::bun_ptr::` → `::bun_core::ptr::` (deferred: add `pub use crate as bun_ptr;` alias in `bun_core/lib.rs` so this step is optional).
+3. Update `bun_core_macros` derive emissions: `::bun_ptr::` → `::bun_core::` (the items are flat-re-exported at `bun_core` root in Step 3.1). This rewrite is **required**, not optional: a `pub use crate as bun_ptr;` alias in `bun_core` does not put `bun_ptr` into downstream crates' extern prelude, so `::bun_ptr::…` in macro expansion would still fail there. 16 emission sites: `src/bun_core_macros/lib.rs:332,344,356,373,374,381,389,449,470,472,520,522,528,533,538,544`.
 4. Every `Cargo.toml` that depends on one of the 5 absorbed proc-macro crates: replace with `bun_macros.workspace = true`. Add `bun_macros` to `[workspace.dependencies]`.
 
 ### Step 3: Merge `bun_core`
@@ -518,7 +518,7 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 - **Debug cold-build prefix serialization.** `bun_core` (86k) + `bun_sys` (46k) compile serially before any fan-out, vs today's ~33k + parallel siblings. Estimated ~1.5–2× wall-clock on that prefix. `-Zthreads=8` (`scripts/build/rust.ts:423-438`) partially mitigates. Release unaffected (`lto = "fat"` + `codegen-units = 1` already serialize, per `Cargo.toml:114-131`).
 - **`bun_runtime` at ~392k LOC** (from 331k). Longer incremental rebuild when touching any runtime/VM/console/SQL-driver/WebSocket code. Buys: elimination of all hook tables and `*mut c_void` VM fields.
-- **`OnceLock<fn-struct>` vs link-time.** 7 `OnceLock` tables + 2 `AtomicUsize` hooks replace 20 `extern "Rust"` blocks. Each call is now `static.get().unwrap().slot(…)` vs a direct symbol. On the hot paths (`TIMER_DISPATCH`, `POLL_DISPATCH`, `TASK_DISPATCH`) this is one predictable branch + one load; under `lto = "fat"` the `OnceLock::get` inlines to a relaxed load. `JS_LOOP_VTABLE` calls are on the event-loop tick path but behind a branch that already exists (`Js` vs `Mini`).
+- **`OnceLock<fn-struct>` vs link-time.** The `OnceLock` tables + `AtomicUsize` hooks (Appendix B) replace 20 `extern "Rust"` blocks. Each call is now `static.get().unwrap().slot(…)` vs a direct symbol: `OnceLock::get` is an **acquire** load on the init flag (a plain `mov` on x86_64 under TSO; `ldar` on aarch64) plus one indirect call through the stored fn pointer. The current `extern "Rust"` path is already an indirect call (cross-crate, resolved at link time, not inlined without LTO), so the delta is the acquire load + the `Option` null check; benchmark the hot paths (`TIMER_DISPATCH`, `POLL_DISPATCH`, `TASK_DISPATCH`) in the implementation PR rather than asserting equivalence here. `JS_LOOP_VTABLE` calls sit behind an `EventLoopCtx::Js` branch that already exists.
 
 ## 8.3 Out of scope
 

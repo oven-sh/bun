@@ -240,8 +240,21 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
         this.force_sync.set(true);
         // SAFETY(JsCell): single-field write; does not call into JS.
         this.writer.with_mut(|w| w.force_sync = true);
-        if this.fd.get() != Fd::INVALID {
-            let _ = sys::update_nonblocking(this.fd.get(), false);
+        // `setup()` hands the opened fd straight to the writer without storing
+        // it on `self.fd`, so the writer is the one that knows it here.
+        let fd = this.writer.get().get_fd();
+        if fd != Fd::INVALID {
+            // O_NONBLOCK lives on the open file description, which is shared
+            // with every dup of this descriptor -- including the one a child
+            // spawned with stdio: "inherit" gets. Left set, those children fail
+            // their writes with EAGAIN.
+            let _ = sys::update_nonblocking(fd, false);
+            this.nonblocking.set(false);
+            // Keep the poll's view in step with the descriptor, as the
+            // isatty path in `open_for_writing` already does.
+            if let Some(poll) = this.writer.get().get_poll() {
+                poll.unset_flag(bun_io::FilePollFlag::Nonblocking);
+            }
         }
     }
     #[cfg(windows)]

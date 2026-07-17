@@ -835,9 +835,8 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 }
                 if (s->readable_ended) {
                     /* on_end already fired (half-open); a level-triggered EOF
-                     * hint re-derived it. Don't re-dispatch and don't re-arm
-                     * WRITABLE - just drop READABLE (left set by a resume())
-                     * so the 0-byte recv() does not repeat next tick. */
+                     * hint re-derived it. Don't re-dispatch or force WRITABLE;
+                     * drop READABLE in case something re-armed it regardless. */
                     us_poll_change(&s->p, loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
                 } else if(s->flags.allow_half_open) {
                     /* EOF with half-open allowed: stop polling readable but KEEP

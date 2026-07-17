@@ -403,12 +403,13 @@ struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned cha
 }
 
 /* Re-arm writable for a backpressured write without resuming the read side of
- * a paused socket: us_poll_change sets absolute flags, so including READABLE
- * unconditionally would silently undo us_socket_pause mid-backpressure and
- * deliver data the caller asked to defer. */
+ * a paused socket (caller asked to defer data) or a socket whose readable side
+ * has ended (recv()==0 would fire every tick). us_poll_change sets absolute
+ * flags, so READABLE must be added back explicitly for the common case. */
 static void us_internal_rearm_writable(struct us_socket_t *s) {
     us_poll_change(&s->p, s->group->loop,
-                   LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
+                   LIBUS_SOCKET_WRITABLE |
+                   ((s->flags.is_paused || s->readable_ended) ? 0 : LIBUS_SOCKET_READABLE));
 }
 
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
@@ -854,11 +855,14 @@ void us_socket_resume(struct us_socket_t *s) {
     // closed cannot be resumed
     if (us_socket_is_closed(s)) return;
 
+    /* The peer's FIN was already delivered; recv() can only return 0 now.
+     * Re-arming READABLE would just fire that 0-byte read on the next tick. */
+    int readable = s->readable_ended ? 0 : LIBUS_SOCKET_READABLE;
     if (us_socket_is_shut_down(s)) {
         // we already sent FIN so we resume only readable side we are read-only
-        us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE);
+        us_poll_change(&s->p, s->group->loop, readable);
         return;
     }
     // we are readable and writable so we resume everything
-    us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+    us_poll_change(&s->p, s->group->loop, readable | LIBUS_SOCKET_WRITABLE);
 }

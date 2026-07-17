@@ -677,6 +677,58 @@ describe("HTTP server CONNECT", () => {
     expect(endCount).toBe(1);
     expect(exitCode).toBe(0);
   });
+
+  // A CONNECT proxy typically keeps writing upstream data after the downstream
+  // client half-closes. A backpressured write re-arms the poll for writable,
+  // which on the short-write path used to also re-arm readable unconditionally
+  // (now gated on readable_ended). Verify that path also settles and that
+  // 'end' is delivered once.
+  test("half-open CONNECT socket still settles after peer FIN with a backpressured write", async () => {
+    const fixture = `
+      const http = require("http");
+      const net = require("net");
+      let endCount = 0;
+      const server = http.createServer((req, res) => { res.end(); });
+      server.on("connect", (req, socket, head) => {
+        socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");
+        socket.on("end", () => {
+          endCount++;
+          // Enough to overrun the kernel send buffer so the short-write path
+          // re-arms the poll.
+          socket.write(Buffer.alloc(4 * 1024 * 1024, "x"));
+          let ticks = 0;
+          const i = setInterval(() => {
+            if (++ticks === 20) {
+              clearInterval(i);
+              console.log(JSON.stringify({ endCount }));
+              socket.destroy();
+              server.close();
+            }
+          }, 5);
+        });
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = net.connect(server.address().port, "127.0.0.1", () => {
+          client.write("CONNECT example.com:80 HTTP/1.1\\r\\nHost: example.com:80\\r\\n\\r\\n");
+        });
+        client.on("data", () => client.end());
+        // Keep draining so the server's write can make progress.
+        client.resume();
+      });
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const line = stdout.trim().split("\n").pop() ?? "";
+    const { endCount } = JSON.parse(line);
+    expect(endCount).toBe(1);
+    expect(exitCode).toBe(0);
+  });
 });
 
 /**

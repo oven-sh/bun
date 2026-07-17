@@ -26,6 +26,9 @@ docs/bundler/minifier.mdx
 # Not authored by hand; no value in normalizing it.
 docs/.rust-rewrite-verified-claims.md
 # same prettier `_`/`*` mis-pairing failure mode: frozen historical research
-# docs (see docs/crate-consolidation/README.md); the canonical plan is
-# docs/crate-consolidation-plan.md.
+# docs (see docs/crate-consolidation/README.md) and the canonical plan itself
+# (dense inline-code identifiers with `_`/`*` that prettier can't reformat to a
+# fixed point; the in-file <!-- prettier-ignore --> guards proved insufficient
+# inside ordered lists, so ignore the whole file).
 docs/crate-consolidation/
+docs/crate-consolidation-plan.md

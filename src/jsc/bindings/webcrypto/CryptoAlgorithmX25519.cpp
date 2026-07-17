@@ -129,6 +129,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
 void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap usages, KeyCallback&& callback, ExceptionCallback&& exceptionCallback)
 {
     RefPtr<CryptoKeyOKP> result;
+    bool keyTypeMismatch = false;
     switch (format) {
     case CryptoKeyFormat::Jwk: {
         JsonWebKey key = WTF::move(std::get<JsonWebKey>(data));
@@ -141,12 +142,18 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
         }
         isUsagesAllowed = isUsagesAllowed || !usages;
         if (!isUsagesAllowed) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
             return;
         }
 
         if (usages && !key.use.isNull() && key.use != "enc"_s) {
-            exceptionCallback(ExceptionCode::DataError, ""_s);
+            exceptionCallback(ExceptionCode::DataError, "Invalid JWK \"use\" Parameter"_s);
+            return;
+        }
+
+        // RFC 8037: "crv" must name the requested curve.
+        if (!key.crv.isNull() && key.crv != "X25519"_s) {
+            exceptionCallback(ExceptionCode::DataError, "JWK \"crv\" Parameter and algorithm name mismatch"_s);
             return;
         }
 
@@ -155,28 +162,28 @@ void CryptoAlgorithmX25519::importKey(CryptoKeyFormat format, KeyData&& data, co
     }
     case CryptoKeyFormat::Raw:
         if (usages) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
             return;
         }
         result = CryptoKeyOKP::importRaw(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
         break;
     case CryptoKeyFormat::Spki:
         if (usages) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
             return;
         }
-        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     case CryptoKeyFormat::Pkcs8:
         if (usages && (usages ^ CryptoKeyUsageDeriveKey) && (usages ^ CryptoKeyUsageDeriveBits) && (usages ^ (CryptoKeyUsageDeriveKey | CryptoKeyUsageDeriveBits))) {
-            exceptionCallback(ExceptionCode::SyntaxError, ""_s);
+            exceptionCallback(ExceptionCode::SyntaxError, "Unsupported key usage for a X25519 key"_s);
             return;
         }
-        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages);
+        result = CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier::X25519, CryptoKeyOKP::NamedCurve::X25519, WTF::move(std::get<Vector<uint8_t>>(data)), extractable, usages, &keyTypeMismatch);
         break;
     }
     if (!result) {
-        exceptionCallback(ExceptionCode::DataError, ""_s);
+        exceptionCallback(ExceptionCode::DataError, keyTypeMismatch ? "Invalid key type"_s : "Invalid keyData"_s);
         return;
     }
 

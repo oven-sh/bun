@@ -148,10 +148,10 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
 
     auto identifier = CryptoAlgorithmRegistry::singleton().identifier(params.name);
     if (!identifier) [[unlikely]]
-        return Exception { NotSupportedError };
+        return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 
     if (*identifier == CryptoAlgorithmIdentifier::Ed25519 && !isSafeCurvesEnabled(state))
-        return Exception { NotSupportedError };
+        return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
 
     std::unique_ptr<CryptoAlgorithmParameters> result;
     switch (operation) {
@@ -197,7 +197,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         default:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
         break;
     case Operations::Sign:
@@ -225,7 +225,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         default:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
         break;
     case Operations::Digest:
@@ -241,7 +241,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
         break;
     case Operations::GenerateKey:
@@ -304,7 +304,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
         break;
     case Operations::DeriveBits:
@@ -366,7 +366,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             break;
         }
         default:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
         break;
     case Operations::ImportKey:
@@ -426,9 +426,9 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         case CryptoAlgorithmIdentifier::SHA3_256:
         case CryptoAlgorithmIdentifier::SHA3_384:
         case CryptoAlgorithmIdentifier::SHA3_512:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         case CryptoAlgorithmIdentifier::None:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
 
         break;
@@ -439,7 +439,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
         break;
     case Operations::GetKeyLength:
@@ -469,7 +469,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
             result = makeUnique<CryptoAlgorithmParameters>(params);
             break;
         default:
-            return Exception { NotSupportedError };
+            return Exception { NotSupportedError, "Unrecognized algorithm name"_s };
         }
         break;
     }
@@ -846,7 +846,7 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
     auto paramsOrException = normalizeCryptoAlgorithmParameters(state, WTF::move(algorithmIdentifier), Operations::Digest);
     RETURN_IF_EXCEPTION(scope, void());
     if (paramsOrException.hasException()) {
-        promise->reject(paramsOrException.releaseException().code(), "Unrecognized algorithm name"_s);
+        promise->reject(paramsOrException.releaseException());
         return;
     }
     auto params = paramsOrException.releaseReturnValue();
@@ -1073,7 +1073,10 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
     auto callback = [index, weakThis](CryptoKey& key) mutable {
         if (auto promise = getPromise(index, weakThis)) {
             if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
+                rejectWithException(promise.releaseNonNull(), SyntaxError,
+                    key.type() == CryptoKeyType::Private
+                        ? "Usages cannot be empty when importing a private key."_s
+                        : "Usages cannot be empty when importing a secret key."_s);
                 return;
             }
             promise->resolve<IDLInterface<CryptoKey>>(key);

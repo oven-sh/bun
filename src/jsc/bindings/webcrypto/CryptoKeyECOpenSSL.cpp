@@ -248,7 +248,7 @@ static bool supportedAlgorithmIdentifier(CryptoAlgorithmIdentifier identifier, c
     }
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     // In this function we extract the subjectPublicKey after verifying that the algorithm in the SPKI data
     // match the given identifier and curve. Then construct an EC key with the named curve and set the public key.
@@ -289,8 +289,11 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     if (value->type != V_ASN1_OBJECT)
         return nullptr;
 
-    if (!supportedAlgorithmIdentifier(identifier, value->value.object))
+    if (!supportedAlgorithmIdentifier(identifier, value->value.object)) {
+        if (keyTypeMismatch)
+            *keyTypeMismatch = true;
         return nullptr;
+    }
 
     // ECParameters ::= CHOICE {
     //  namedCurve         OBJECT IDENTIFIER
@@ -345,7 +348,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     return adoptRef(new CryptoKeyEC(identifier, curve, CryptoKeyType::Public, WTF::move(pkey), extractable, usages));
 }
 
-RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve curve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     // We need a local pointer variable to pass to d2i (DER to internal) functions().
     const uint8_t* ptr = keyData.begin();
@@ -358,8 +361,13 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportPkcs8(CryptoAlgorithmIdentifier i
         return nullptr;
 
     auto pkey = EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));
-    if (!pkey || EVP_PKEY_base_id(pkey.get()) != EVP_PKEY_EC)
+    if (!pkey)
         return nullptr;
+    if (EVP_PKEY_base_id(pkey.get()) != EVP_PKEY_EC) {
+        if (keyTypeMismatch)
+            *keyTypeMismatch = true;
+        return nullptr;
+    }
 
     auto ecKey = EVP_PKEY_get0_EC_KEY(pkey.get());
     if (!ecKey)

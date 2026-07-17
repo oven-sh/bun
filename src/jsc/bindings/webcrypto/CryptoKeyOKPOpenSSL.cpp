@@ -33,8 +33,29 @@
 #include <wtf/text/Base64.h>
 #include <openssl/curve25519.h>
 #include "CommonCryptoDERUtilities.h"
+#include "OpenSSLCryptoUniquePtr.h"
+#include <openssl/evp.h>
+#include <openssl/x509.h>
 
 namespace WebCore {
+
+// The OID scans below are hand-rolled byte compares and cannot tell a well-formed
+// key of another type from malformed bytes, so ask the real parser before a caller
+// reports "Invalid key type" rather than "Invalid keyData".
+static bool parsesAsSubjectPublicKeyInfo(const Vector<uint8_t>& keyData)
+{
+    const uint8_t* ptr = keyData.begin();
+    return !!EvpPKeyPtr(d2i_PUBKEY(nullptr, &ptr, keyData.size()));
+}
+
+static bool parsesAsPrivateKeyInfo(const Vector<uint8_t>& keyData)
+{
+    const uint8_t* ptr = keyData.begin();
+    auto p8inf = PKCS8PrivKeyInfoPtr(d2i_PKCS8_PRIV_KEY_INFO(nullptr, &ptr, keyData.size()));
+    if (!p8inf)
+        return false;
+    return !!EvpPKeyPtr(EVP_PKCS82PKEY(p8inf.get()));
+}
 
 bool CryptoKeyOKP::isPlatformSupportedCurve(NamedCurve namedCurve)
 {
@@ -72,7 +93,7 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
 // id-Ed25519   OBJECT IDENTIFIER ::= { 1 3 101 112 }
 // id-Ed448     OBJECT IDENTIFIER ::= { 1 3 101 113 }
 // For all of the OIDs, the parameters MUST be absent.
-RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
 
@@ -95,8 +116,11 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
 
     // Read OID
     // FIXME: spec says this is 1 3 101 11X but WPT tests expect 6 3 43 101 11X.
-    if (keyData[index++] != 6 || keyData[index++] != 3 || keyData[index++] != 43 || keyData[index++] != 101)
+    if (keyData[index++] != 6 || keyData[index++] != 3 || keyData[index++] != 43 || keyData[index++] != 101) {
+        if (keyTypeMismatch && parsesAsSubjectPublicKeyInfo(keyData))
+            *keyTypeMismatch = true;
         return nullptr;
+    }
 
     switch (namedCurve) {
     case NamedCurve::X25519:
@@ -191,7 +215,7 @@ ExceptionOr<Vector<uint8_t>> CryptoKeyOKP::exportSpki() const
 // id-Ed25519   OBJECT IDENTIFIER ::= { 1 3 101 112 }
 // id-Ed448     OBJECT IDENTIFIER ::= { 1 3 101 113 }
 // For all of the OIDs, the parameters MUST be absent.
-RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages)
+RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identifier, NamedCurve namedCurve, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap usages, bool* keyTypeMismatch)
 {
     // FIXME: We should use the underlying crypto library to import PKCS8 OKP keys.
 
@@ -221,8 +245,11 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
         return nullptr;
 
     // Read OID
-    if (keyData[index++] != OKPOIDFirstByte || keyData[index++] != OKPOIDSecondByte || keyData[index++] != OKPOIDThirdByte || keyData[index++] != OKPOIDFourthByte)
+    if (keyData[index++] != OKPOIDFirstByte || keyData[index++] != OKPOIDSecondByte || keyData[index++] != OKPOIDThirdByte || keyData[index++] != OKPOIDFourthByte) {
+        if (keyTypeMismatch && parsesAsPrivateKeyInfo(keyData))
+            *keyTypeMismatch = true;
         return nullptr;
+    }
 
     switch (namedCurve) {
     case NamedCurve::X25519:

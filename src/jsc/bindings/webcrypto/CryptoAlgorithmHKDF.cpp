@@ -56,6 +56,14 @@ void CryptoAlgorithmHKDF::deriveBits(const CryptoAlgorithmParameters& parameters
         return;
     }
 
+    // Node caps info at 1024 bytes (OpenSSL 3.x EVP_PKEY_CTX_add1_hkdf_info);
+    // BoringSSL imposes no such limit, so match Node explicitly.
+    constexpr size_t maximumInfoLength = 1024;
+    if (downcast<CryptoAlgorithmHkdfParams>(parameters).info.length() > maximumInfoLength) {
+        exceptionCallback(OperationError, "algorithm.info must be at most 1024 bytes"_s);
+        return;
+    }
+
     dispatchOperationInWorkQueue(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback),
         [parameters = crossThreadCopy(downcast<CryptoAlgorithmHkdfParams>(parameters)), baseKey = WTF::move(baseKey), length = *length] {
             return platformDeriveBits(parameters, downcast<CryptoKeyRaw>(baseKey.get()), length);

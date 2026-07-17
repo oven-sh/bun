@@ -9,7 +9,7 @@ use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
 use bun_io::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
-use bun_s3_signing::error::S3Error;
+use bun_s3_signing::s3_signing::error::S3Error;
 use bun_sys::threading::Mutex;
 
 bun_core::declare_scope!(S3, hidden);

@@ -105,7 +105,7 @@ use bun_jsc::GlobalRef;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::S3Credentials;
-use bun_s3_signing::error::S3Error;
+use bun_s3_signing::s3_signing::error::S3Error;
 use bun_s3_signing::storage_class::StorageClass;
 
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`

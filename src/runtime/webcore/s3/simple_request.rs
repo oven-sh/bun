@@ -14,7 +14,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
 use bun_s3_signing::credentials::{S3Credentials, SignOptions, SignResult};
-use bun_s3_signing::error::{S3Error, get_sign_error_code_and_message};
+use bun_s3_signing::s3_signing::error::{S3Error, get_sign_error_code_and_message};
 use bun_s3_signing::storage_class::StorageClass;
 use bun_sys::threading::thread_pool;
 use bun_core::url::URL;

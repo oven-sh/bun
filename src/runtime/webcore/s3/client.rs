@@ -15,7 +15,7 @@ pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 pub use bun_s3_signing::acl::ACL;
 pub use bun_s3_signing::storage_class::StorageClass;
 
-pub use bun_s3_signing::error as Error;
+pub use bun_s3_signing::s3_signing::error as Error;
 // `throw_sign_error` / `get_js_sign_error` live in `error_jsc.rs` (jsc-side
 // of the s3_signing error tables). The pure error module is `bun_s3_signing::error`;
 // the jsc helpers are mounted here as a child module of this umbrella

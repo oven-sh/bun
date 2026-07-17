@@ -3,8 +3,8 @@
 
 use bun_core::String as BunString;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
-use bun_s3_signing::Error as SignError;
-use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
+use bun_s3_signing::s3_signing::Error as SignError;
+use bun_s3_signing::s3_signing::error::{self as s3_error, get_sign_error_message};
 
 pub use s3_error::S3Error;
 

@@ -1465,6 +1465,9 @@ pub struct H2FrameParser {
     /// A native write returned a terminal result (socket closed, shut down, or the kernel
     /// rejected the send). Latched once; the deferred tick closes the transport.
     transport_write_fatal: Cell<bool>,
+    /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
+    /// tick reports it, because it is detected inside a user submit call.
+    pending_header_compression_error: Cell<bool>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
     /// Read only by `release_refs_stranded_by_exit()`.
@@ -2982,6 +2985,19 @@ impl H2FrameParser {
         );
     }
 
+    /// A header block the HPACK encoder cannot emit fails the whole session in nghttp2, so node
+    /// reports ERR_HTTP2_SESSION_ERROR (COMPRESSION_ERROR) rather than resetting the stream.
+    /// The stream is left open for the session teardown to error, matching node's request error.
+    fn schedule_header_compression_session_error(&self) {
+        if self.pending_header_compression_error.get() {
+            return;
+        }
+        // Detected inside the caller's own submit(): node delivers session errors from the
+        // event loop, so that call still returns with its stream usable for the rest of the tick.
+        self.pending_header_compression_error.set(true);
+        self.register_auto_flush();
+    }
+
     fn cork(&self) {
         if let Some(corked) = CORKED_H2.with(|c| c.get()) {
             if std::ptr::eq(corked, self.as_ctx_ptr()) {
@@ -3336,6 +3352,11 @@ impl H2FrameParser {
         if !self.auto_flusher.get().registered.get() {
             return;
         }
+        // A write that drains the buffer must not cancel the deferred tick a pending session
+        // error is waiting on; on_auto_flush unregisters once it has reported it.
+        if self.pending_header_compression_error.get() {
+            return;
+        }
         debug_assert!(self.auto_flusher.get().registered.get());
         let ctx = NonNull::new(self.as_ctx_ptr().cast::<c_void>());
         let removed = self
@@ -3431,6 +3452,15 @@ impl H2FrameParser {
                 self.transport_write_fatal.set(false);
             }
             return false;
+        }
+        if self.pending_header_compression_error.get() {
+            self.pending_header_compression_error.set(false);
+            self.dispatch_with_2_extra(
+                JSH2FrameParser::Gc::onError,
+                JSValue::js_number(ErrorCode::COMPRESSION_ERROR.0 as f64),
+                JSValue::js_number(self.last_stream_id.get() as f64),
+                JSValue::UNDEFINED,
+            );
         }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty
@@ -8846,18 +8876,12 @@ impl H2FrameParser {
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
                             stream.set_context(stream_ctx_arg, global_object);
                         }
-                        stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
+                        this.schedule_header_compression_session_error();
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
                 }
@@ -9038,13 +9062,7 @@ impl H2FrameParser {
                             {
                                 stream.set_context(stream_ctx_arg, global_object);
                             }
-                            stream.state = StreamState::CLOSED;
-                            stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                            this.dispatch_with_extra(
-                                JSH2FrameParser::Gc::onStreamError,
-                                stream.get_identifier(),
-                                JSValue::js_number(stream.rst_code as f64),
-                            );
+                            this.schedule_header_compression_session_error();
                             return Ok(JSValue::UNDEFINED);
                         }
                     }
@@ -9123,18 +9141,12 @@ impl H2FrameParser {
                         };
                         // SAFETY: stream is a *mut Stream from self.streams (heap::alloc); valid while the map entry exists
                         let stream = unsafe { &mut *stream };
-                        stream.state = StreamState::CLOSED;
                         if !stream_ctx_arg.is_empty_or_undefined_or_null()
                             && stream_ctx_arg.is_object()
                         {
                             stream.set_context(stream_ctx_arg, global_object);
                         }
-                        stream.rst_code = ErrorCode::COMPRESSION_ERROR.0;
-                        this.dispatch_with_extra(
-                            JSH2FrameParser::Gc::onStreamError,
-                            stream.get_identifier(),
-                            JSValue::js_number(stream.rst_code as f64),
-                        );
+                        this.schedule_header_compression_session_error();
                         return Ok(JSValue::js_number(stream_id as f64));
                     }
                 }
@@ -9778,6 +9790,7 @@ impl H2FrameParser {
             hpack: JsCell::new(None),
             has_nonnative_backpressure: Cell::new(false),
             transport_write_fatal: Cell::new(false),
+            pending_header_compression_error: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),

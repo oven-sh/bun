@@ -578,8 +578,10 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await doHttp2Request(HTTPS_SERVER, HTTPS_SERVER, { ":path": "/", "test-header": "A".repeat(90000) });
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-            expect(err.message).toBe("Stream closed with error code NGHTTP2_COMPRESSION_ERROR");
+            // Verified against node v26.3.0: a header block the encoder cannot emit fails the
+            // session with COMPRESSION_ERROR (9), it does not just reset the stream.
+            expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+            expect(err.message).toBe("Session closed with error code 9");
           }
         });
         it("should be destroyed after close", async () => {
@@ -3485,6 +3487,64 @@ it("http2 server sends each session's frames to its own peer under interleaved r
       { i: 0, status: 200, total: BIG.length * N },
       { i: 1, status: 200, total: BIG.length * N },
     ]);
+  } finally {
+    server.close();
+  }
+});
+
+it("fails the whole session when an outbound header block cannot be encoded", async () => {
+  // A header block the HPACK encoder cannot emit is a COMPRESSION_ERROR (9) against the
+  // session in node, so the session and the in-flight request both see
+  // ERR_HTTP2_SESSION_ERROR rather than a per-stream error.
+  const server = http2.createServer();
+  try {
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`, { maxSendHeaderBlockLength: 100000 });
+    const sessionError = new Promise(resolve => client.on("error", resolve));
+    const requestError = new Promise(resolve => {
+      const req = client.request({ "test-header": "A".repeat(90000) });
+      req.on("error", resolve);
+      req.end();
+    });
+
+    const [sessionErr, reqErr] = await Promise.all([sessionError, requestError]);
+    expect(sessionErr.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(sessionErr.message).toBe("Session closed with error code 9");
+    expect(reqErr.code).toBe("ERR_HTTP2_SESSION_ERROR");
+  } finally {
+    server.close();
+  }
+});
+
+it("delivers a session error from the event loop, not inside the call that detected it", async () => {
+  // node surfaces session errors from the event loop, so the submit call that tripped one
+  // still returns and its stream stays usable for the rest of the tick.
+  const server = http2.createServer({ maxSendHeaderBlockLength: 100000 });
+  try {
+    const observed = {};
+    const sessionError = new Promise(resolve => server.on("sessionError", resolve));
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.additionalHeaders({ "test-header": "A".repeat(90000) });
+      observed.destroyedAfterSubmit = stream.destroyed;
+      stream.respond();
+      stream.end();
+      observed.submitsReturned = true;
+    });
+
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    const req = client.request();
+    req.on("error", () => {});
+    req.end();
+
+    const err = await sessionError;
+    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(err.message).toBe("Session closed with error code 9");
+    expect(observed.destroyedAfterSubmit).toBe(false);
+    expect(observed.submitsReturned).toBe(true);
+    client.destroy();
   } finally {
     server.close();
   }

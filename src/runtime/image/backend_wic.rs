@@ -905,7 +905,7 @@ fn load_factory() {
     let dll = unsafe {
         windows::kernel32::LoadLibraryExW(
             bun_core::wstr!("windowscodecs.dll").as_ptr(),
-            core::ptr::null_mut(),
+            ptr::null_mut(),
             LOAD_LIBRARY_SEARCH_SYSTEM32,
         )
     };

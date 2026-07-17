@@ -2518,7 +2518,9 @@ it("ClientRequest.destroy(err) with a throwing error listener still tears down; 
 it("keep-alive socket reused after a 304 response still frames the next response body", async () => {
   // The native per-request reset must clear the 204/304 no-body flag, or the
   // 200 that follows a 304 on the same connection is sent with no framing
-  // and no body.
+  // and no body. That 200 is chunked rather than Content-Length: writeHead()
+  // freezes the framing while _contentLength is still null, which is what Node
+  // sends here too (verified against the v26.3.0 binary).
   const server = createServer((req, res) => {
     if (req.url === "/cached") {
       res.writeHead(304);
@@ -2543,7 +2545,7 @@ it("keep-alive socket reused after a 304 response still frames the next response
           sentSecond = true;
           socket.write("GET /fresh HTTP/1.1\r\nHost: localhost\r\n\r\n");
         }
-        if (sentSecond && data.endsWith("hello")) {
+        if (sentSecond && data.endsWith("0\r\n\r\n")) {
           socket.end();
           resolve(data);
         }
@@ -2555,8 +2557,8 @@ it("keep-alive socket reused after a 304 response still frames the next response
     expect(out).toContain("HTTP/1.1 304");
     const second = out.slice(out.indexOf("HTTP/1.1 200"));
     expect(second).toContain("HTTP/1.1 200");
-    expect(second).toContain("Content-Length: 5");
-    expect(second).toEndWith("\r\n\r\nhello");
+    expect(second).toContain("Transfer-Encoding: chunked");
+    expect(second).toEndWith("\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
   } finally {
     server.close();
   }

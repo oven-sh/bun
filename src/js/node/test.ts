@@ -806,7 +806,9 @@ function runWithNode<T>(node: TestNode, fn: () => T): T {
 function getTestContext(): TestContext | SuiteContext | undefined {
   const node = currentNode();
   if (node === undefined) return undefined;
-  return node.isSuite ? node.getSuiteCtx() : node.getCtx();
+  // The root has isSuite=true but parent=undefined; Node's root is a Test,
+  // so match hookArgFor() and give it a TestContext.
+  return node.isSuite && node.parent !== undefined ? node.getSuiteCtx() : node.getCtx();
 }
 
 // -----------------------------------------------------------------------------
@@ -930,14 +932,17 @@ function getRootNode(): TestNode {
   // alone can't detect a rerun of the same file.
   const generation = fileGeneration();
   if (rootNode === undefined || rootGeneration !== generation) {
-    const isNewFile = rootNode !== undefined;
+    const oldRoot = rootNode;
     rootGeneration = generation;
     // Publish the new root before resetting so re-entrant calls (user code run
     // by a mock's restore) see an up-to-date root and don't reset again.
     rootNode = new TestNode(kRootName, undefined, kDefaultOptions, true, false);
-    if (isNewFile) {
+    if (oldRoot !== undefined) {
       // Node also scopes these per process: drop the previous file's
       // module-level mocks and assert.register() additions with its root.
+      // The root's own mockTracker (reachable via a file-level before hook's
+      // `t.mock`) is distinct from the module-level `mock` export.
+      oldRoot.mockTracker?.reset();
       mock.reset();
       customAssertions = { __proto__: null } as unknown as Record<string, Function>;
       tagsExperimentalWarningEmitted = false;

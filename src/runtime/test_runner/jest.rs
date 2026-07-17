@@ -577,9 +577,18 @@ pub(crate) fn js_node_test_mark_result(
     let bound = match dcb_ref {
         Some(refdata) => refdata.phase.clone(),
         // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
-        // drain before it stamps the DoneCallback — the runner has not moved
-        // on, so the live index IS the intended sequence.
-        None if !dcb_called => buntest.get_current_state_data(),
+        // drain before it stamps the DoneCallback. `get_current_state_data()`
+        // can't name a sequence inside a concurrent group, but
+        // `on_stack_entry_data` holds exactly the `cfg_data` that
+        // `run_test_callback` was invoked with (set/restored around it), so
+        // the mark lands on the right sequence under --concurrent too.
+        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
+            Some(entry_data) => bun_test::RefDataValue::Execution {
+                group_index: buntest.execution.group_index,
+                entry_data: Some(entry_data),
+            },
+            None => buntest.get_current_state_data(),
+        },
         // done() already ran and reported — nothing left to mark.
         None => return Ok(JSValue::UNDEFINED),
     };

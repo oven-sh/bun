@@ -93,6 +93,20 @@ describe("node:test", () => {
     });
   });
 
+  test("should count runtime t.todo()/t.skip() as todo/skip under --concurrent too", async () => {
+    // markCurrentResult's microtask-drain fallback could not name a sequence
+    // inside a concurrent group, so the skip/todo mark was dropped and both
+    // tests were reported as pass.
+    const { exitCode, stderr } = await runTests(["12-runtime-todo-and-mock-timers.js"], {}, ["--concurrent"]);
+    expect(stderr).toContain("3 pass");
+    expect(stderr).toContain("1 skip");
+    expect(stderr).toContain("1 todo");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
   test("should run todo bodies under --todo instead of registering an empty function", async () => {
     const { exitCode, stderr } = await runTests(["13-todo-bodies.js"], {}, ["--todo"]);
     expect(stderr).toContain("2 todo");

@@ -6294,7 +6294,11 @@ function closeAllSessions(server: Http2Server | Http2SecureServer) {
   }
 }
 
-const { connectionListenerHTTP1, closeIdleHttp1Connections, kHttp1Connections } = require("internal/http1_server_fallback");
+const {
+  connectionListenerHTTP1,
+  closeIdleHttp1Connections,
+  kHttp1Connections,
+} = require("internal/http1_server_fallback");
 
 function connectionListener(socket: Socket) {
   const options = this[bunSocketServerOptions] || {};

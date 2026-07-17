@@ -38,7 +38,7 @@ extern "C" void Request__setInternalEventCallback(void*, EncodedJSValue, JSC::JS
 extern "C" void Request__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" bool NodeHTTPResponse__setTimeout(void*, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
-extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, bool use_insecure_http_parser, bool http_allow_half_open);
+extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setMaxHTTPHeaderSize(JSC::JSGlobalObject*, EncodedJSValue, uint64_t);
@@ -1275,7 +1275,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue useInsecureHTTPParser = callFrame->uncheckedArgument(3);
+    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
     JSValue maxHeaderSize = callFrame->uncheckedArgument(4);
     JSValue callback = callFrame->uncheckedArgument(5);
     JSValue onConnectionCallback = callFrame->argument(6);
@@ -1284,7 +1284,7 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject,
     double maxHeaderSizeNumber = maxHeaderSize.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), useInsecureHTTPParser.toBoolean(globalObject), httpAllowHalfOpen.toBoolean(globalObject));
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientHttpFlags.toInt32(globalObject) & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     Server__setMaxHTTPHeaderSize(globalObject, JSValue::encode(serverValue), maxHeaderSizeNumber);
@@ -1313,10 +1313,10 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetAppFlags, (JSGlobalObject * globalObject, Call
     JSValue serverValue = callFrame->uncheckedArgument(0);
     JSValue requireHostHeader = callFrame->uncheckedArgument(1);
     JSValue useStrictMethodValidation = callFrame->uncheckedArgument(2);
-    JSValue useInsecureHTTPParser = callFrame->uncheckedArgument(3);
+    JSValue lenientHttpFlags = callFrame->uncheckedArgument(3);
     JSValue httpAllowHalfOpen = callFrame->argument(4);
 
-    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), useInsecureHTTPParser.toBoolean(globalObject), httpAllowHalfOpen.toBoolean(globalObject));
+    Server__setAppFlags(globalObject, JSValue::encode(serverValue), requireHostHeader.toBoolean(globalObject), useStrictMethodValidation.toBoolean(globalObject), static_cast<uint8_t>(lenientHttpFlags.toInt32(globalObject) & 0x3), httpAllowHalfOpen.toBoolean(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
 
     return JSValue::encode(jsUndefined());

@@ -25,7 +25,7 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    insecureHTTPParser: boolean,
+    lenientHttpFlags: number,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
     onConnection?: (socketHandle: any) => undefined,
@@ -34,7 +34,7 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
-    insecureHTTPParser: boolean,
+    lenientHttpFlags: number,
     httpAllowHalfOpen: boolean,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;

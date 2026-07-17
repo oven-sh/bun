@@ -1190,7 +1190,7 @@ function applyServerCustomOptions(server: Server) {
     handle,
     server.requireHostHeader,
     true,
-    serverIsLenient(server),
+    serverLenientFlags(server),
     typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
     onServerClientError.bind(server),
     onServerConnection.bind(server),
@@ -1207,11 +1207,16 @@ function httpAllowHalfOpenGet(this: Server) {
 // alone: setServerCustomOptions() would also re-register the connection filter, which
 // appends rather than replaces and can reallocate the vector uWS is iterating.
 // Same resolution the client applies: httpValidation wins, then an explicit
-// insecureHTTPParser, then the process-wide --insecure-http-parser. Coercing the
-// option straight to a boolean would drop the flag. Only the lenient-headers bit
-// exists natively, so every non-strict result maps to true.
-function serverIsLenient(server: Server) {
-  return calculateLenientFlags(server.httpValidation, server.insecureHTTPParser) !== HTTPParser.kLenientNone;
+// insecureHTTPParser, then the process-wide --insecure-http-parser. Native
+// implements two of llhttp's lenient bits, addressed here as bit 0 = lenient
+// header values (LENIENT_HEADERS) and bit 1 = lenient transfer-encoding
+// (LENIENT_TRANSFER_ENCODING). "relaxed" relaxes header values only; the full
+// kLenientAll surface (insecureHTTPParser / httpValidation: "insecure" /
+// --insecure-http-parser) gets both.
+function serverLenientFlags(server: Server) {
+  const lenient = calculateLenientFlags(server.httpValidation, server.insecureHTTPParser);
+  if (lenient === HTTPParser.kLenientNone) return 0;
+  return lenient === HTTPParser.kLenientAll ? 0b11 : 0b01;
 }
 
 function httpAllowHalfOpenSet(this: Server, value) {
@@ -1220,7 +1225,7 @@ function httpAllowHalfOpenSet(this: Server, value) {
   const next = !!value;
   if (previous === next) return;
   const handle = this[serverSymbol];
-  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, serverIsLenient(this), next);
+  if (handle) setServerAppFlags(handle, this.requireHostHeader, true, serverLenientFlags(this), next);
 }
 
 // Node.js keeps httpAllowHalfOpen as an own enumerable property of the server.

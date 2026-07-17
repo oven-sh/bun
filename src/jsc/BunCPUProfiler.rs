@@ -56,7 +56,9 @@ pub fn publish_inherited_config(config: CPUProfilerConfig) {
 /// `--cpu-prof-name` is inherited, so every thread writes that one path and the
 /// last wins — node does the same (v26.3.0: named gives 1 file, default 2).
 pub fn inherited_config_for_worker(thread_id: u32) -> Option<CPUProfilerConfig> {
-    INHERITED_CONFIG.get().map(|c| CPUProfilerConfig { thread_id, ..*c })
+    INHERITED_CONFIG
+        .get()
+        .map(|c| CPUProfilerConfig { thread_id, ..*c })
 }
 
 // C++ function declarations

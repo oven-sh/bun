@@ -475,6 +475,15 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
           }
           expect(ab.byteLength).toBe(64);
         });
+        // WebAssembly.Memory buffers carry a non-undefined [[ArrayBufferDetachKey]]
+        // and must be rejected from a transfer list (per HTML's
+        // StructuredSerializeWithTransfer), unlike a Bun-pinned buffer above.
+        test("A WebAssembly.Memory buffer is rejected from the transfer list", () => {
+          const mem = new WebAssembly.Memory({ initial: 1 });
+          const buf = mem.buffer;
+          expect(() => structuredCloneFn(buf, { transfer: [buf] })).toThrow(TypeError);
+          expect(buf.byteLength).toBe(65536);
+        });
         // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal
         // Serializing (not transferring) a detached ArrayBuffer must throw a
         // "DataCloneError" DOMException, not a TypeError.

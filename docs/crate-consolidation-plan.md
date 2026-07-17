@@ -142,11 +142,11 @@ Absorbs `options_types`, `install_types`, `parsers`, `sourcemap`, `dotenv`, `res
 
 Absorbs `bun_io` (minus `write.rs`), `bun_event_loop`, `bun_spawn`, `bun_patch`. Depends on `bun_ast` (for `dotenv::Loader` return types in `JsEventLoop::env()`, see §7 objection 8).
 
-`EventLoopCtx` becomes `#[derive(Clone, Copy)] enum EventLoopCtx { Mini(NonNull<MiniEventLoop>), Js(NonNull<()>) }` (both arms are pointers; 16 bytes, `Copy`, matches current layout). The `Js` arm's methods route through `pub static JS_LOOP_VTABLE: OnceLock<JsLoopVTable>` (a 21-slot struct of fn pointers matching the current `JsEventLoop` interface) that `bun_runtime` fills at VM init. This replaces `link_interface! EventLoopCtx` + `link_interface! JsEventLoop` + 9 `__bun_spawn_sync_*` externs + `__bun_js_event_loop_current` + `__bun_js_vm_get` + `__bun_stdio_blob_store_new` + `__bun_get_vm_ctx` with one registered vtable.
+`EventLoopCtx` becomes `#[derive(Clone, Copy)] enum EventLoopCtx { Mini(NonNull<MiniEventLoop>), Js(NonNull<()>) }` (both arms are pointers; 16 bytes, `Copy`, matches current layout). The `Js` arm's methods route through `pub static JS_LOOP_VTABLE: OnceLock<JsLoopVTable>` (a 21-slot struct of fn pointers matching the current `JsEventLoop` interface) that `bun_runtime` fills at VM init. This replaces `link_interface! EventLoopCtx` + `link_interface! JsEventLoop` + 8 `__bun_spawn_sync_*` externs + `__bun_js_event_loop_current` + `__bun_js_vm_get` + `__bun_stdio_blob_store_new` + `__bun_get_vm_ctx` with one registered vtable.
 
 `BufferedReaderParentLink` and `ProcessExit` **stay as `link_interface!`** (macro now in `bun_macros`). See §4.2 for why these cannot become `dyn Trait`.
 
-`__bun_fire_timer` / `__bun_js_timer_epoch` / `__bun_run_file_poll` / `__bun_io_pollable_on_*`: these dispatch on tag enums whose variants name `bun_runtime` types. They become `pub static TIMER_DISPATCH: OnceLock<fn(tag, *mut (), Timespec, *mut ()) -> TimerResult>` etc., set by `bun_runtime::dispatch` (the file renamed `src/runtime/task_dispatch.rs`, not deleted). The 96-arm `Task` match stays where it is (in `bun_runtime`); only the 4 `#[no_mangle]`/`extern "Rust"` pairs become `OnceLock<fn>` registrations.
+`__bun_fire_timer` / `__bun_js_timer_epoch` / `__bun_run_file_poll` / `__bun_io_pollable_on_*`: these dispatch on tag enums whose variants name `bun_runtime` types. They become `pub static TIMER_DISPATCH: OnceLock<fn(tag, *mut (), Timespec, *mut ()) -> TimerResult>` etc., set by `bun_runtime::register_dispatch_tables()` called from `bun_bin::main()` **before CLI dispatch** (not at VM init: `bun install` runs `FilePoll`/`MiniEventLoop` with no VM for lifecycle-script pipes, so `POLL_DISPATCH` must be set process-wide). The 96-arm `Task` match stays where it is (in `bun_runtime`); only the 4 `#[no_mangle]`/`extern "Rust"` pairs become `OnceLock<fn>` registrations.
 
 ### 2.6 `bun_bundler`
 
@@ -172,7 +172,7 @@ Grows from ~331k to ~392k LOC. Absorbs:
 
 `jsc_hooks.rs` is renamed `src/runtime/vm/init.rs`. The `RuntimeHooks`/`LoaderHooks` structs delete; their ~25+4 slot bodies become `impl VirtualMachine { … }` methods. `RuntimeState` fields (`timer`, `sql_rare`, `ssl_ctx_cache`, `editor_context`, `global_dns_data`, `body_value_pool`) become direct `VirtualMachine` fields.
 
-`runtime/dispatch.rs` is renamed `src/runtime/task_dispatch.rs` and **kept**. Its 96-arm `Task` match, 24-arm `EventLoopTimer` match, 15-arm `FilePoll` match stay as-is (see §4.3). Only the `#[no_mangle]` attributes delete; the functions are registered into `bun_loop`'s `OnceLock`s at `VirtualMachine::init`. `runtime/dispatch_js2native.rs` stays untouched (it is the `$rust()` landing pad, unrelated to the hooks file).
+`runtime/dispatch.rs` is renamed `src/runtime/task_dispatch.rs` and **kept**. Its 96-arm `Task` match, 24-arm `EventLoopTimer` match, 15-arm `FilePoll` match stay as-is (see §4.3). Only the `#[no_mangle]` attributes delete; the functions are registered into `bun_loop`'s `OnceLock`s via `register_dispatch_tables()` at process init (called from `bun_bin::main` before CLI dispatch, since `bun install` reaches the `FilePoll` match on Mini with no VM). `runtime/dispatch_js2native.rs` stays untouched (it is the `$rust()` landing pad, unrelated to the hooks file).
 
 `hw_exports.rs` deletes its `__BUN_SQL_RUNTIME_HOOKS` block (~110 LOC); `sql_jsc` is now same-crate and names `timer::All`/`SSLConfig`/`Blob` directly.
 
@@ -284,7 +284,7 @@ This section is the honest accounting of the gap between "remove all dyn/extern/
 
 `runtime/dispatch.rs` has a 96-arm match over `TaskTag`. The arms are not uniform: some call `.run_from_js()`, some `.run_from_js(vm, global)`, some `.on_poll()`, some return `RunTaskResult::EarlyReturn`, ~50 destroy-after-run via `heap::destroy`. A `dyn Runnable` trait with one signature cannot express "some variants early-return from the drain loop" or "some variants are not even `task.ptr` but `vm.modules`". Additionally `Task` is a packed `{tag: u16, ptr: *mut ()}` that fits in a 64-bit word passed to C++ (`Bun__Task`); a fat `NonNull<dyn>` is 16 bytes and breaks the C ABI.
 
-**Disposition:** The match stays in `bun_runtime::task_dispatch`. The `#[no_mangle]` attributes delete; the 4 functions (`tick_queue_with_count`, `fire_timer`, `run_file_poll`, `release_task_at_shutdown`) register into `bun_loop::{TASK,TIMER,POLL}_DISPATCH: OnceLock<…>` at VM init. This is not a LOC reduction; it is a mechanism change from link-time to init-time binding.
+**Disposition:** The match stays in `bun_runtime::task_dispatch`. The `#[no_mangle]` attributes delete; the 4 functions (`tick_queue_with_count`, `fire_timer`, `run_file_poll`, `release_task_at_shutdown`) register into `bun_loop::{TASK,TIMER,POLL}_DISPATCH: OnceLock<…>` via `bun_runtime::register_dispatch_tables()` at process init (from `bun_bin::main`), not VM init, because `bun install` reaches `run_file_poll` on the `MiniEventLoop` path with no VM. This is not a LOC reduction; it is a mechanism change from link-time to init-time binding.
 
 ### 4.4 `AllocatorVTable` address-identity is load-bearing
 
@@ -441,6 +441,8 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 ### Step 6: Slim `bun_jsc` to group A
 
+**Steps 6 and 7 form one `cargo check` unit.** Step 6 removes group-B `mod` declarations from `bun_jsc` while `bun_runtime` + the 11 `*_jsc` crates still import `bun_jsc::{virtual_machine, event_loop, …}`; the consumer-side rewrites are in Step 7.5/7.12. Do not stop between them.
+
 1. `src/jsc/lib.rs`: remove `mod` declarations for all group-B files (per §2.1 table). Keep `pub mod __macro_support` path unchanged.
 2. `src/jsc/JSGlobalObject.rs`: delete `pub use bun_bundler::…`, delete `run_on_{load,resolve}_plugins`/`throw_invalid_scrypt_params` (move to step 7 ext-trait).
 3. `src/jsc/error.rs`: shrink `CrateError` to `JsError | Core | Sys | Ast` arms only (drop `Resolver`/`Bundler`/`Install`/`Patch`/`Uws`/`Watcher`).
@@ -456,9 +458,9 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 4. Delete `link_interface! EventLoopCtx` / `JsEventLoop`. Keep `link_interface! BufferedReaderParentLink` / `ProcessExit` (now using `bun_macros::link_interface!`).
 5. `src/runtime/lib.rs`: add `#[path = "../jsc/VirtualMachine.rs"] pub mod virtual_machine;` and likewise for every group-B file; add `pub mod vm { pub use super::{virtual_machine::*, module_loader::*, …}; }`. `#[path]`-mount `../sql_jsc/lib.rs` as `pub mod sql;`, and `http_jsc`, `css_jsc`, `bundler_jsc`, `install_jsc`, `js_parser_jsc`, `sourcemap_jsc`, `patch_jsc`, `semver_jsc`, `sys_jsc`, `ast_jsc`.
 6. `src/runtime/jsc_ext.rs` new: `pub trait JSGlobalObjectExt { fn bun_vm(&self)->…; fn run_on_load_plugins(…); fn run_on_resolve_plugins(…); fn throw_invalid_scrypt_params(…); } impl JSGlobalObjectExt for JSGlobalObject { … }`. Same for `FetchHeadersExt::to_uws_response`, `SystemErrorExt::from_verify_error`.
-7. `VirtualMachine.rs`: delete `extern "Rust" { static __BUN_RUNTIME_HOOKS }`; add real fields `timer: timer::All, sql_rare: crate::sql::RareData, ssl_ctx_cache: …, editor_context: …, global_dns_data: …, body_value_pool: …`; delete `link_impl_EventLoopCtx!`; add `fn register_loop_vtables(&self)` that fills `bun_loop::{JS_LOOP_VTABLE, TIMER_DISPATCH, POLL_DISPATCH, TASK_DISPATCH}`.
+7. `VirtualMachine.rs`: delete `extern "Rust" { static __BUN_RUNTIME_HOOKS }`; add real fields `timer: timer::All, sql_rare: crate::sql::RareData, ssl_ctx_cache: …, editor_context: …, global_dns_data: …, body_value_pool: …`; delete `link_impl_EventLoopCtx!`; add `fn register_js_loop_vtable(&self)` that fills `bun_loop::JS_LOOP_VTABLE` only (needs the live VM pointer).
 8. Rename `jsc_hooks.rs` → `vm/init.rs`; delete `__BUN_RUNTIME_HOOKS`/`__BUN_LOADER_HOOKS` statics + `RuntimeState` struct; inline hook bodies as `impl VirtualMachine { fn generate_entry_point(…), fn load_preloads(…), fn ensure_debugger(…), fn auto_tick(…) }` and `impl ModuleLoader { fn transpile_source_code(…), fn fetch_builtin_module(…), fn transpile_file(…) }`. Delete `#[no_mangle]` on `__bun_{get_vm_ctx,js_vm_get,stdio_blob_store_*}`; bodies stay as the `JS_LOOP_VTABLE` slot impls.
-9. Rename `dispatch.rs` → `task_dispatch.rs`; delete `#[no_mangle]` on the 4 entry fns; register them into `bun_loop` statics in `VirtualMachine::init`. Keep `dispatch_js2native.rs` unchanged.
+9. Rename `dispatch.rs` → `task_dispatch.rs`; delete `#[no_mangle]` on the 4 entry fns. Add `pub fn register_dispatch_tables()` that fills `bun_loop::{TIMER_DISPATCH, POLL_DISPATCH, TASK_DISPATCH}` (no VM needed; the fn bodies null-check for Mini-path tags as today). `src/bun_bin/lib.rs`: call `bun_runtime::register_dispatch_tables()` before `cli::dispatch()` (so `bun install` + lifecycle-script `FilePoll`s find `POLL_DISPATCH` set). Keep `dispatch_js2native.rs` unchanged.
 10. `hw_exports.rs`: delete `__BUN_SQL_RUNTIME_HOOKS` block; `sql_jsc/jsc.rs` callers use `crate::{timer, socket::SSLConfig, webcore::Blob}` directly.
 11. `event_loop.rs` (group B, now in runtime): delete `extern "Rust" __bun_tick_queue_*` etc.; call `crate::task_dispatch::*` directly. Delete `link_impl_JsEventLoop!`.
 12. In `src/runtime/**`, `src/*_jsc/**`: `use bun_jsc::{VirtualMachine, virtual_machine, EventLoop, event_loop, ConsoleObject, module_loader, rare_data, RareData, Debugger, debugger, ipc, web_worker, hot_reloader, Formatter, CrateError, plugin_runner, webcore_types::{Blob, S3…}}` → `use crate::vm::…`. Add `use crate::jsc_ext::JSGlobalObjectExt as _;` where `.bun_vm()` is called.
@@ -543,9 +545,9 @@ See §2.1. The source-of-truth table (118 files) is derived from scanning each f
 | `PREFETCH_HOOK`                  | `bun_sys::dns`           | `bun_runtime` VM init          | 1      | No                      |
 | `ACTION_FORMATTER`               | `bun_sys::crash_handler` | `bun_bundler` linker init      | 1      | No (crash only)         |
 | `JS_LOOP_VTABLE`                 | `bun_loop`               | `bun_runtime` VM init          | 21     | Yes (event-loop tick)   |
-| `TIMER_DISPATCH`                 | `bun_loop`               | `bun_runtime` VM init          | 2      | Yes                     |
-| `POLL_DISPATCH`                  | `bun_loop`               | `bun_runtime` VM init          | 3      | Yes                     |
-| `TASK_DISPATCH`                  | `bun_loop`               | `bun_runtime` VM init          | 1      | Yes                     |
+| `TIMER_DISPATCH`                 | `bun_loop`               | `bun_bin::main` (process init) | 2      | Yes                     |
+| `POLL_DISPATCH`                  | `bun_loop`               | `bun_bin::main` (process init) | 3      | Yes                     |
+| `TASK_DISPATCH`                  | `bun_loop`               | `bun_bin::main` (process init) | 1      | Yes                     |
 | `HOT_RELOAD_HOOK`                | `bun_bundler`            | `bun_runtime` bake init        | 1      | No                      |
 
-All set-once at init, read-many. The `bun_install` / `MiniEventLoop` path never sets `JS_LOOP_VTABLE` etc.; callers check `EventLoopCtx::Js` first so `.get().unwrap()` is never reached on the Mini path.
+All set-once at init, read-many. `JS_LOOP_VTABLE` is set at VM init and only read behind an `EventLoopCtx::Js` branch, so the `bun_install` / `MiniEventLoop` path (no VM) never reaches its `.get().unwrap()`. `{TIMER,POLL,TASK}_DISPATCH` are **not** guarded that way (`FilePoll::on_update` calls `POLL_DISPATCH` unconditionally, and `bun install` creates `FilePoll`s for lifecycle-script pipes on Mini), so they are set at process init from `bun_bin::main` via `bun_runtime::register_dispatch_tables()` before any CLI command runs.

@@ -759,8 +759,26 @@ function asyncWrap(fn: any, name: string) {
       async function ondone() {
         if (done) return;
         done = true;
+        // Release the listener with the stream it was cancelling, so a drained
+        // stream is not retained for the rest of the handle's life.
+        handle.removeListener("close", onFileHandleClose);
         handle[kUnref]();
         if (autoClose) await handle.close();
+      }
+
+      // Node cancels the stream from here with the internal readableStreamCancel,
+      // which is not reachable from JS. Closing the controller and then settling
+      // any outstanding BYOB request ends the stream the same way, including when
+      // a reader is attached and waiting on a read.
+      function onFileHandleClose() {
+        if (done) return;
+        try {
+          controllerRef?.close();
+        } catch {}
+        try {
+          controllerRef?.byobRequest?.respond(0);
+        } catch {}
+        ondone();
       }
 
       const readable = new ReadableStream({
@@ -801,20 +819,7 @@ function asyncWrap(fn: any, name: string) {
       });
 
       this[kRef]();
-      // Node cancels the stream from here with the internal readableStreamCancel,
-      // which is not reachable from JS. Closing the controller and then settling
-      // any outstanding BYOB request ends the stream the same way, including when
-      // a reader is attached and waiting on a read.
-      this.once("close", function onFileHandleClose() {
-        if (done) return;
-        try {
-          controllerRef?.close();
-        } catch {}
-        try {
-          controllerRef?.byobRequest?.respond(0);
-        } catch {}
-        ondone();
-      });
+      this.once("close", onFileHandleClose);
 
       return readable;
     }

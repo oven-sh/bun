@@ -248,7 +248,7 @@ impl PosixLoop {
     /// `&mut` — the body is one atomic load, so it must not alias mutably.
     pub fn idle_ns(&self) -> u64 {
         // SAFETY: self is a valid loop pointer; the counter is read atomically.
-        unsafe { c::us_loop_idle_ns(self as *const Loop as *mut Loop) }
+        unsafe { c::us_loop_idle_ns(core::ptr::from_ref(self).cast_mut()) }
     }
 
     #[inline]
@@ -485,7 +485,7 @@ impl WindowsLoop {
     /// `&mut` — the body is one atomic load, so it must not alias mutably.
     pub fn idle_ns(&self) -> u64 {
         // SAFETY: self is a valid loop pointer; the counter is read atomically.
-        unsafe { c::us_loop_idle_ns(self as *const Loop as *mut Loop) }
+        unsafe { c::us_loop_idle_ns(core::ptr::from_ref(self).cast_mut()) }
     }
 
     #[inline]

@@ -431,6 +431,8 @@ pub(crate) unsafe extern "C" fn WebWorker__getELU(
         // Idle BEFORE elapsed, matching node's order — reversed, idle is dated
         // after now and active = now - idle comes out short.
         let idle_ms = loop_.idle_ns() as f64 / 1_000_000.0;
+        // SAFETY: vm_ptr is published under vm_lock and non-null here;
+        // loop_start is Copy and fixed before the VM was published.
         let elapsed_ms = unsafe { (*vm_ptr).loop_start }.elapsed().as_secs_f64() * 1000.0;
         // SAFETY: per fn contract — out params are writable.
         unsafe {
@@ -914,6 +916,8 @@ impl WebWorker {
         // fresh defaults whenever execArgv is given (node_worker.cc).
         let own_exec_argv = self.exec_argv();
         let exec_argv = match own_exec_argv {
+            // SAFETY: `a` is this worker's execArgv, owned by the WebWorker and
+            // alive for the call; the hook only reads it.
             Some(a) => unsafe { (hooks.parse_worker_exec_argv)(a) },
             None => Default::default(),
         };

@@ -8,7 +8,7 @@ const { SafeMap } = require("internal/primordials");
 const Readable = require("internal/streams/readable");
 const { internalEventLoopUtilization } = require("internal/perf/event_loop_utilization");
 const Writable = require("internal/streams/writable");
-const { throwNotImplemented, warnNotImplementedOnce } = require("internal/shared");
+const { throwNotImplemented } = require("internal/shared");
 const {
   validateString,
   validateObject,

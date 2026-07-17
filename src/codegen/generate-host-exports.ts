@@ -500,10 +500,10 @@ const importCandidates: Array<[string, string]> = [
   ["bun_jsc", "JSObject"],
   ["bun_jsc", "JSPromise"],
   ["bun_jsc", "ZigStackFrame"],
-  ["bun_jsc::virtual_machine", "VirtualMachine"],
+  ["crate::virtual_machine", "VirtualMachine"],
   ["crate::bake::dev_server::inspector_agent", "InspectorBunFrontendDevServerAgentHandle"],
-  ["bun_jsc::debugger", "LifecycleHandle"],
-  ["bun_jsc::debugger", "TestReporterHandle"],
+  ["crate::debugger", "LifecycleHandle"],
+  ["crate::debugger", "TestReporterHandle"],
 ];
 const importLines: string[] = [];
 for (const [modPath, name] of importCandidates) {

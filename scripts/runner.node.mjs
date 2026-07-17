@@ -513,17 +513,32 @@ async function runTests() {
     // prints "failed to connect to /var/run/docker.sock" on every alpine
     // shard, and the coordinator's one-shot `docker version` then races it by
     // a handful of seconds. Poll for the daemon briefly so the coordinator's
-    // prestart does not fire before the socket exists. If the daemon never
-    // comes up (bad VM boot) we fall through after the budget and
-    // container-backed tests fail loudly, which is the intended signal from
-    // isDockerEnabled().
+    // prestart does not fire before the socket exists.
     const dockerDaemonUp = () => spawnSync("docker", ["version"], { stdio: "ignore" }).status === 0;
     if (!dockerDaemonUp()) {
       console.log("Docker daemon not reachable yet; waiting up to 30s for it...");
       for (let i = 0; i < 30 && !dockerDaemonUp(); i++) {
         await setTimeoutPromise(1000);
       }
-      console.log("Docker daemon:", dockerDaemonUp() ? "ready" : "still unreachable after 30s");
+      if (dockerDaemonUp()) {
+        console.log("Docker daemon: ready");
+      } else {
+        // Still unreachable after the budget: the daemon failed to start on
+        // this boot. Running on would burn 4x retries of every docker-backed
+        // test on a dead host and paint an unrelated PR red; the Linux test
+        // agents are ephemeral, so bounce to Buildkite's automatic-retry hook
+        // (EX_TEMPFAIL, see getRetry() in .buildkite/ci.mjs) for a fresh VM.
+        // limit:1 there means a fleet-wide docker regression still surfaces
+        // on the second attempt.
+        const msg = `Docker daemon never became reachable on this agent (\`${getHostname()}\`); exiting for automatic retry on a fresh VM.`;
+        console.error(msg);
+        reportAnnotationToBuildKite({
+          label: "docker-daemon-unreachable",
+          content: msg,
+          style: "warning",
+        });
+        process.exit(75);
+      }
     }
 
     const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);

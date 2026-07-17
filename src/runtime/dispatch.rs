@@ -1198,6 +1198,21 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
             for_each_fs_async_op!(__fs_destroy);
             true
         }
+        // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry
+        // completion) enqueued this after the event loop's last tick. The
+        // dispatch arm above would have `delete`d it; mirror that here so the
+        // re-queue path doesn't keep it alive past worker VM dealloc. Runs
+        // before JSC teardown, so ~Ref<TicketData> is safe.
+        task_tag::JSCDeferredWorkTask => {
+            unsafe extern "C" {
+                fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
+            }
+            // SAFETY: every JSCDeferredWorkTask payload is heap-allocated by
+            // `new JSCDeferredWorkTask` in JSCTaskScheduler::onScheduleWorkSoon;
+            // we own it once popped.
+            unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
+            true
+        }
         // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
         // that were already batch-moved into `self.tasks`. Must run before
         // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks

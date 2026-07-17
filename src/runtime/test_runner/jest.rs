@@ -7,7 +7,7 @@ use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult, RegularExpression,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsClass as _, JsResult, RegularExpression,
 };
 use bun_jsc::StringJsc as _;
 use crate::timer::ElTimespec;
@@ -534,6 +534,75 @@ pub mod Jest {
 
         Ok(JSValue::UNDEFINED)
     }
+}
+
+/// Reached only from `node:test`, through `$newRustFunction` rather than the
+/// public `bun:test` module object. Returns 0 outside `bun test`.
+pub(crate) fn js_file_generation(
+    _global: &JSGlobalObject,
+    _callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    // `runner_ptr()` rather than `runner()`: node:test calls this on every test
+    // registration, and an exclusive `&mut TestRunner` would invalidate the
+    // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
+    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
+    let generation =
+        Jest::runner_ptr().map_or(0, |p| unsafe { (*p.as_ptr()).bun_test_root.file_generation });
+    Ok(JSValue::from(generation))
+}
+
+/// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
+/// the running sequence's result so bun:test reports skip/todo instead of pass.
+/// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
+/// late call after the watchdog moved on cannot mark the currently-running one.
+pub(crate) fn js_node_test_mark_result(
+    _global: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
+    use super::execution::Result as ExecResult;
+    let [mode, done] = callframe.arguments_as_array::<2>();
+    let Some(buntest_strong) = bun_test::clone_active_strong() else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
+    let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
+    // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
+    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done);
+    let Some(dcb) = bun_test::DoneCallback::from_js(wrapper) else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: `dcb` is the live `*mut DoneCallback` from `from_js`; single-
+    // threaded JS VM, GC roots `done` (and its bound-this) for this frame.
+    let (dcb_ref, dcb_called) = unsafe { ((*dcb).r#ref.as_deref(), (*dcb).called) };
+    let bound = match dcb_ref {
+        Some(refdata) => refdata.phase.clone(),
+        // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
+        // drain before it stamps the DoneCallback. `get_current_state_data()`
+        // can't name a sequence inside a concurrent group, but
+        // `on_stack_entry_data` holds exactly the `cfg_data` that
+        // `run_test_callback` was invoked with (set/restored around it), so
+        // the mark lands on the right sequence under --concurrent too.
+        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
+            Some(entry_data) => bun_test::RefDataValue::Execution {
+                group_index: buntest.execution.group_index,
+                entry_data: Some(entry_data),
+            },
+            None => buntest.get_current_state_data(),
+        },
+        // done() already ran and reported — nothing left to mark.
+        None => return Ok(JSValue::UNDEFINED),
+    };
+    let Some((sequence_ptr, _)) =
+        buntest.execution.get_current_and_valid_execution_sequence(&bound)
+    else {
+        return Ok(JSValue::UNDEFINED);
+    };
+    // SAFETY: NonNull into `execution.sequences`; deref at point-of-use only.
+    let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+    if sequence.result == ExecResult::Pending {
+        sequence.result = if mode.to_boolean() { ExecResult::Todo } else { ExecResult::Skip };
+    }
+    Ok(JSValue::UNDEFINED)
 }
 
 pub mod on_unhandled_rejection {

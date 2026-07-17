@@ -207,6 +207,9 @@ unsafe extern "C" {
     // safe: opaque `&JSGlobalObject` handle (see above); takes the contexts-map
     // lock and flips an atomic flag, no Rust-visible state touched.
     safe fn ScriptExecutionContext__markTerminating(global: &JSGlobalObject);
+    // safe: same opaque-handle contract; flips JSCTaskScheduler::m_isShuttingDown
+    // under its own lock and returns. Idempotent.
+    safe fn Bun__JSCTaskScheduler__markShuttingDown(global: &JSGlobalObject);
     // safe: `cpp_worker` is an opaque round-trip pointer owned by C++ (allocated
     // there, stored in `WebWorker.cpp_worker`, and only ever passed back to C++
     // — never dereferenced as Rust data); same contract as `JSC__VM__holdAPILock`'s
@@ -1291,6 +1294,11 @@ impl WebWorker {
             // posted in the gap would sit in concurrent_tasks past the raw VM
             // dealloc and leak under LSan.
             ScriptExecutionContext__markTerminating(vm.global());
+            // Same for JSCTaskScheduler: a cross-thread Atomics.notify that
+            // races this shutdown either enqueues (and is caught by the drain)
+            // or observes m_isShuttingDown under m_lock and drops. Idempotent;
+            // teardownJSCVM sets it again.
+            Bun__JSCTaskScheduler__markShuttingDown(vm.global());
             // Reclaim queued CppTasks (the per-worker stdio/messaging
             // MessagePort drain tasks that can be in self.tasks mid-tick when
             // terminate() lands, and any Worker dispatchExit close task from a

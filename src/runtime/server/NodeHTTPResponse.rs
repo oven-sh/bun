@@ -373,6 +373,10 @@ struct PendingPinnedWrite {
     offset: usize,
     /// The ArrayBuffer/View to `unpin()` on release. ZERO for string inputs.
     pinned_value: JSValue,
+    /// The JSNodeHTTPResponse wrapper, captured at write time so the
+    /// `pendingWriteBuffer` slot can be cleared on terminal paths where
+    /// `get_this_value()` already returns ZERO (SOCKET_CLOSED / UPGRADED).
+    this_value: JSValue,
 }
 
 impl Default for PendingPinnedWrite {
@@ -382,6 +386,7 @@ impl Default for PendingPinnedWrite {
             len: 0,
             offset: 0,
             pinned_value: JSValue::ZERO,
+            this_value: JSValue::ZERO,
         }
     }
 }
@@ -695,9 +700,8 @@ impl NodeHTTPResponse {
         });
 
         let vm = vm_get();
-        let this_value = self.get_this_value();
-        self.clear_on_data_callback(this_value, vm.global());
-        self.clear_pending_pinned_write(this_value, vm.global());
+        self.clear_on_data_callback(self.get_this_value(), vm.global());
+        self.clear_pending_pinned_write(vm.global());
         self.upgrade_context.with_mut(|c| c.reset());
 
         self.buffered_request_body_data_during_pause
@@ -1463,6 +1467,9 @@ pub(crate) fn node_http_request_on_resolve(
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
         scoped_log!(NodeHTTPResponse, "clearOnData");
+        // Put any held zero-copy tail on the wire before terminating so the
+        // chunked stream stays well-formed.
+        this.spill_pending_pinned_write(global_object);
         if let Some(raw_response) = this.raw_response.get() {
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
@@ -1511,6 +1518,9 @@ pub(crate) fn node_http_request_on_reject(
             js::on_aborted_set_cached(this_value, global_object, JSValue::ZERO);
         }
         scoped_log!(NodeHTTPResponse, "clearOnData");
+        // Put any held zero-copy tail on the wire before the terminating chunk
+        // so the client's chunked decoder stays in sync.
+        this.spill_pending_pinned_write(global_object);
         if let Some(raw_response) = this.raw_response.get() {
             raw_response.clear_on_data();
             raw_response.clear_on_writable();
@@ -1681,7 +1691,7 @@ impl NodeHTTPResponse {
     }
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.
-    fn clear_pending_pinned_write(&self, js_this: JSValue, global_object: &JSGlobalObject) {
+    fn clear_pending_pinned_write(&self, global_object: &JSGlobalObject) {
         let p = self
             .pending_pinned_write
             .replace(PendingPinnedWrite::default());
@@ -1693,15 +1703,15 @@ impl NodeHTTPResponse {
                 self.pending_pinned_write_owner
                     .replace(crate::node::StringOrBuffer::EMPTY),
             );
-            if !js_this.is_empty() {
-                js::pending_write_buffer_set_cached(js_this, global_object, JSValue::ZERO);
+            if !p.this_value.is_empty() {
+                js::pending_write_buffer_set_cached(p.this_value, global_object, JSValue::ZERO);
             }
         }
     }
 
     /// Copy a pending zero-copy write's tail into the uWS backpressure buffer
     /// so a subsequent write()/end() stays ordered behind it, then release.
-    fn spill_pending_pinned_write(&self, js_this: JSValue, global_object: &JSGlobalObject) {
+    fn spill_pending_pinned_write(&self, global_object: &JSGlobalObject) {
         let p = self.pending_pinned_write.get();
         if !p.is_some() {
             return;
@@ -1713,7 +1723,7 @@ impl NodeHTTPResponse {
                 unsafe { core::slice::from_raw_parts(p.ptr.add(p.offset), p.len - p.offset) };
             raw.spill_body(remaining);
         }
-        self.clear_pending_pinned_write(js_this, global_object);
+        self.clear_pending_pinned_write(global_object);
     }
 
     /// Continue a zero-copy write from the stored offset. Returns `true` if
@@ -1737,8 +1747,7 @@ impl NodeHTTPResponse {
             });
             return true;
         }
-        let global_this = self.server.global_this();
-        self.clear_pending_pinned_write(self.get_this_value(), global_this);
+        self.clear_pending_pinned_write(self.server.global_this());
         false
     }
 
@@ -1967,7 +1976,7 @@ impl NodeHTTPResponse {
         // A previous zero-copy write's tail must hit the wire before this one;
         // copy it into backpressure so ordering is preserved. No-op when the
         // caller correctly waited for 'drain' (the tail was already consumed).
-        self.spill_pending_pinned_write(js_this, global_object);
+        self.spill_pending_pinned_write(global_object);
 
         if IS_END {
             // Discard the body read ref if it's pending and no onData callback is set at this point.
@@ -2049,6 +2058,7 @@ impl NodeHTTPResponse {
                     len: bytes_len,
                     offset: consumed,
                     pinned_value,
+                    this_value: js_this,
                 });
                 if input_value.is_cell() {
                     js::pending_write_buffer_set_cached(js_this, global_object, input_value);

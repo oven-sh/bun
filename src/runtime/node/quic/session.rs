@@ -1850,7 +1850,6 @@ impl QuicSession {
         false
     }
 
-
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
         let Some(c) = self.conn() else { return };
         if app || code != 0 || reason.len() > 1 {

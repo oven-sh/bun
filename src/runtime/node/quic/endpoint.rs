@@ -262,7 +262,8 @@ pub struct QuicEndpoint {
     global: Cell<*const JSGlobalObject>,
 }
 
-/// Mirrors `struct us_nq_driver_s` in node_quic_shim.c.
+/// Mirrors `struct us_nq_driver_s` in node_quic_shim.c. Owned by the endpoint
+/// it belongs to; the C side only ever links it into the loop's list.
 #[repr(C)]
 pub(crate) struct UsNqDriver {
     next: *mut UsNqDriver,
@@ -285,57 +286,87 @@ unsafe extern "C" {
     fn us_nq_loop_unregister(loop_: *mut c_void, d: *mut UsNqDriver);
 }
 
-/// One process pass per loop turn (loop_pre/loop_post/microtask drain): the
-/// writes a JS turn queued leave as one engine pass and one sendmmsg batch.
-/// The send scope keeps nested loop ticks from re-entering lsquic mid-call.
+impl QuicEndpoint {
+    /// Links this endpoint into the loop's driver list. Idempotent.
+    fn link_loop_driver(&self) {
+        if self.nq_registered.replace(true) {
+            return;
+        }
+        // SAFETY: the node lives in `self` and is only reachable through the
+        // list, which `unlink_loop_driver` clears before the endpoint dies.
+        unsafe {
+            us_nq_loop_register(
+                uws::Loop::get().cast(),
+                self.nq_driver.as_ptr(),
+                core::ptr::from_ref(self).cast_mut().cast(),
+            );
+        }
+    }
+
+    /// Unlinks from the loop's driver list. Idempotent; must run before the
+    /// endpoint can be freed so the walk never reaches dead memory.
+    fn unlink_loop_driver(&self) {
+        if !self.nq_registered.replace(false) {
+            return;
+        }
+        // SAFETY: registered by `link_loop_driver` on this same loop.
+        unsafe { us_nq_loop_unregister(uws::Loop::get().cast(), self.nq_driver.as_ptr()) };
+    }
+
+    /// Marks that lsquic has work queued, so the next driver pass runs.
+    fn mark_driver_pending(&self) {
+        self.nq_driver.with_mut(|d| d.pending = 1);
+    }
+
+    /// Runs a driver pass, or hands `pending` back when one cannot run now.
+    /// `defer_closes` distinguishes the microtask-drain pass, which must not
+    /// let a session end mid-chain, from the loop_pre/loop_post pass.
+    fn run_driver_pass(&self, defer_closes: bool) {
+        if self.closed.get() {
+            return;
+        }
+        // A pass is already on the stack (the walker cleared `pending` before
+        // calling): give the flag back so that pass's tail flush sees it,
+        // otherwise the write that set it waits out the backstop timer.
+        let global_ptr = self.global.get();
+        if self.send_scope_depth.get() != 0 || global_ptr.is_null() {
+            self.mark_driver_pending();
+            return;
+        }
+        // SAFETY: `global_ptr` is the realm that created this endpoint and
+        // outlives it; null was ruled out above.
+        let global = unsafe { &*global_ptr };
+        self.defer_closes.set(defer_closes);
+        self.process(global);
+        self.defer_closes.set(false);
+    }
+
+    /// Borrows the endpoint behind a driver callback's owner pointer.
+    ///
+    /// # Safety
+    /// `owner` must be the pointer installed by `link_loop_driver`, which
+    /// `unlink_loop_driver` removes from the list before the endpoint dies.
+    unsafe fn from_driver_owner<'a>(owner: *mut c_void) -> &'a Self {
+        // SAFETY: guaranteed by the caller's contract.
+        unsafe { &*owner.cast::<Self>() }
+    }
+}
+
 /// The microtask-drain pass: full processing, but session close events hold
 /// until the next loop point so a running microtask chain never observes a
 /// session ending mid-chain (node's loop never interleaves that way).
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
-    // SAFETY: as in Bun__nodeQuic__processEndpoint below.
-    let this = unsafe { &*owner.cast::<QuicEndpoint>() };
-    if this.closed.get() {
-        return;
-    }
-    if this.send_scope_depth.get() != 0 {
-        // The walker cleared `pending` before calling; a pass is already on
-        // the stack and its tail flush must still see the flag, or the write
-        // that set it sits out the 1ms backstop timer.
-        this.nq_driver.with_mut(|d| d.pending = 1);
-        return;
-    }
-    let global_ptr = this.global.get();
-    if global_ptr.is_null() {
-        this.nq_driver.with_mut(|d| d.pending = 1);
-        return;
-    }
-    this.defer_closes.set(true);
-    // SAFETY: as in `on_data`.
-    this.process(unsafe { &*global_ptr });
-    this.defer_closes.set(false);
+    // SAFETY: `owner` comes from the loop's driver list.
+    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(true);
 }
 
+/// One process pass per loop turn (loop_pre/loop_post): the writes a JS turn
+/// queued leave as one engine pass and one sendmmsg batch.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
-    // SAFETY: registered by `ensure_bound`, unregistered by `release_native`
-    // before the endpoint can be freed.
-    let this = unsafe { &*owner.cast::<QuicEndpoint>() };
-    if this.closed.get() {
-        return;
-    }
-    if this.send_scope_depth.get() != 0 {
-        // As in drainEndpoint: give the flag back to the pass on the stack.
-        this.nq_driver.with_mut(|d| d.pending = 1);
-        return;
-    }
-    let global_ptr = this.global.get();
-    if global_ptr.is_null() {
-        this.nq_driver.with_mut(|d| d.pending = 1);
-        return;
-    }
-    // SAFETY: as in `on_data`.
-    this.process(unsafe { &*global_ptr });
+    // SAFETY: `owner` comes from the loop's driver list.
+    unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(false);
 }
 
 bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
@@ -1323,18 +1354,10 @@ impl QuicEndpoint {
             Some(&mut err),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );
-        if !socket.is_null() && !self.nq_registered.replace(true) {
+        if !socket.is_null() {
             // Linked only while we hold a socket, so an idle endpoint costs
             // the loop nothing.
-            // SAFETY: the node lives in `self`; `release_native` unlinks it
-            // before anything can free the endpoint.
-            unsafe {
-                us_nq_loop_register(
-                    uws::Loop::get().cast(),
-                    self.nq_driver.as_ptr(),
-                    core::ptr::from_ref(self).cast_mut().cast(),
-                )
-            };
+            self.link_loop_driver();
         }
         if socket.is_null() {
             self.this_value
@@ -1537,7 +1560,7 @@ impl QuicEndpoint {
         // loop point (no 1ms timer wait); the timer below stays as backstop
         // for lsquic's time-driven state (RTO, ACK delay, idle) and the
         // deferred endpoint close.
-        self.nq_driver.with_mut(|d| d.pending = 1);
+        self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         timer_all().update(self.event_loop_timer.as_ptr(), &next);
     }
@@ -2004,11 +2027,8 @@ impl QuicEndpoint {
         if self.closed.replace(true) {
             return false;
         }
-        if self.nq_registered.replace(false) {
-            // Unlink first: the driver walk must never reach a freed endpoint.
-            // SAFETY: registered by `ensure_bound` on this same loop.
-            unsafe { us_nq_loop_unregister(uws::Loop::get().cast(), self.nq_driver.as_ptr()) };
-        }
+        // Unlink first: the driver walk must never reach a freed endpoint.
+        self.unlink_loop_driver();
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }

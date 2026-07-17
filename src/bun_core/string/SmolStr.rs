@@ -1,6 +1,6 @@
 use core::mem;
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 // NOTE: the tag-bit scheme below only works on little-endian systems.
 const _: () = assert!(cfg!(target_endian = "little"));

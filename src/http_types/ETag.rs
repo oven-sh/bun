@@ -64,7 +64,7 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) {
 
 #[inline]
 fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-    bun_core::hash::xxhash64(seed, bytes)
+    bun_core::util::hash::xxhash64(seed, bytes)
 }
 
 /// Split an `If-None-Match` list into entity-tag fragments, honoring RFC 9110
@@ -158,7 +158,7 @@ pub struct HeaderEntry {
     pub value: StringPointer,
 }
 
-pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
+pub type HeaderEntryList = bun_core::collections::MultiArrayList<HeaderEntry>;
 
 /// Column accessors for `HeaderEntry` MultiArrayList storage.
 ///
@@ -168,7 +168,7 @@ pub trait HeaderEntryColumns {
     fn items_name(&self) -> &[StringPointer];
     fn items_value(&self) -> &[StringPointer];
 }
-impl HeaderEntryColumns for bun_collections::multi_array_list::Slice<HeaderEntry> {
+impl HeaderEntryColumns for bun_core::collections::multi_array_list::Slice<HeaderEntry> {
     #[inline]
     fn items_name(&self) -> &[StringPointer] {
         self.items::<"name", StringPointer>()
@@ -203,7 +203,7 @@ impl Clone for Headers {
             entries: self
                 .entries
                 .clone()
-                .unwrap_or_else(|_| bun_alloc::out_of_memory()),
+                .unwrap_or_else(|_| bun_core::out_of_memory()),
             buf: self.buf.clone(),
         }
     }
@@ -247,7 +247,7 @@ impl Headers {
                 name: name_ptr,
                 value: value_ptr,
             })
-            .unwrap_or_else(|_| bun_alloc::out_of_memory());
+            .unwrap_or_else(|_| bun_core::out_of_memory());
     }
 
     pub fn get_content_disposition(&self) -> Option<&[u8]> {

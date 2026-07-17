@@ -1659,7 +1659,7 @@ impl uv_fs_event_t {
     /// Wyhash over
     /// `path ?? "null"`, `events` bytes, `filename`, `status` bytes.
     pub fn hash(&self, filename: &[u8], events: c_int, status: ReturnCode) -> u64 {
-        let mut hasher = bun_wyhash::Wyhash::init(0);
+        let mut hasher = bun_core::Wyhash::init(0);
         if self.path.is_null() {
             hasher.update(b"null");
         } else {
@@ -2125,14 +2125,14 @@ pub struct uv_thread_options_t {
 // are `0` on success, `-errno` on failure.
 // ──────────────────────────────────────────────────────────────────────────
 /// Map a negative `UV_E*` libuv error code to the stable `bun.sys.E` /
-/// `bun_errno::E` discriminant (e.g. `UV_ENOENT (-4058)` → `2`).
+/// `bun_core::errno::E` discriminant (e.g. `UV_ENOENT (-4058)` → `2`).
 ///
 /// Layering forbids depending on `bun_errno` here, so
 /// the integer discriminants are inlined; they are ABI-stable POSIX values
 /// plus a fixed Bun-assigned tail (`UNKNOWN=134`..`FTYPE=137`). Unmapped
 /// codes return `None`.
 ///
-/// Keep in sync with `bun_errno::E` (src/errno/windows_errno.rs).
+/// Keep in sync with `bun_core::errno::E` (src/errno/windows_errno.rs).
 #[inline]
 pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
     Some(match code {
@@ -2207,7 +2207,7 @@ pub const fn uv_err_to_e_discriminant(code: c_int) -> Option<u16> {
         UV_ECHARSET => 135,       // E::CHARSET
         UV_EOF => 136,            // E::EOF
         UV_UNKNOWN => 134,        // E::UNKNOWN
-        // EAI_* codes — `bun_errno::E::UV_EAI_*` discriminants are defined as
+        // EAI_* codes — `bun_core::errno::E::UV_EAI_*` discriminants are defined as
         // `(-UV_EAI_*) as u16`, i.e. the raw magnitude is the discriminant.
         UV_EAI_ADDRFAMILY => (-UV_EAI_ADDRFAMILY) as u16,
         UV_EAI_AGAIN => (-UV_EAI_AGAIN) as u16,

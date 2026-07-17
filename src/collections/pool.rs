@@ -482,7 +482,7 @@ where
     /// at `MAX_COUNT` this frees the node, and freeing an allocation that a live
     /// `&mut` **function argument** points into is UB (the reference is
     /// protected for the whole call). Same reason
-    /// [`CellRefCounted::deref`](bun_ptr::CellRefCounted::deref) takes a raw
+    /// [`CellRefCounted::deref`](bun_core::ptr::CellRefCounted::deref) takes a raw
     /// pointer.
     ///
     /// # Safety

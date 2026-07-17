@@ -18,7 +18,7 @@ use bun_libuv_sys as uv;
 // Single source of truth for the 86 UV_* variants that form the tail of BOTH
 // `enum E` and `enum SystemErrno`. Both enum tails are
 // driven from this one list so they cannot drift. (The UV_*→E* fold-down
-// lives in `bun_libuv_sys::uv_err_to_e_discriminant`.)
+// lives in `bun_core::libuv_sys::uv_err_to_e_discriminant`.)
 //
 // Entry shape:
 //   [UV_X => EX]   — UV_X has a non-UV_ counterpart `SystemErrno::EX`
@@ -332,8 +332,8 @@ impl E {
     pub const EFTYPE: E = E::FTYPE;
 }
 
-/// Mirrors `bun_errno::posix` on POSIX targets so callers can `use
-/// bun_errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
+/// Mirrors `bun_core::errno::posix` on POSIX targets so callers can `use
+/// bun_core::errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
 /// `errno`, so this is the minimal subset higher tiers reach for.
 pub mod posix {
     pub type mode_t = i32;
@@ -346,7 +346,7 @@ pub mod posix {
     pub use super::s as S;
 }
 
-/// Uppercase re-export so `bun_errno::S::IFDIR` compiles cross-platform.
+/// Uppercase re-export so `bun_core::errno::S::IFDIR` compiles cross-platform.
 pub use self::s as S;
 
 use super::GetErrno;
@@ -799,7 +799,7 @@ pub fn translate_uv_error_to_e(code: c_int) -> E {
         .unwrap_or(E::UNKNOWN)
 }
 
-// Thin adapter over the canonical row table in `bun_libuv_sys::uv_err_to_e_discriminant`.
+// Thin adapter over the canonical row table in `bun_core::libuv_sys::uv_err_to_e_discriminant`.
 #[inline]
 fn uv_code_to_system_errno(mag: u16) -> Option<SystemErrno> {
     let d = uv::uv_err_to_e_discriminant(-c_int::from(mag))?;
@@ -819,7 +819,7 @@ pub mod uv_e {
     // libuv-synthetic `-UV_E*` constant.
     macro_rules! __v {
         ($i:tt, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -::bun_core::libuv_sys::$uv
         };
     }
     crate::__uv_e_rows!(__v);

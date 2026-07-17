@@ -1,6 +1,6 @@
 use crate::string::ZStr;
 use crate::strings;
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 /// VTable surface for `bun.ast.E.String` (CYCLEBREAK b0: GENUINE upward dep on
 /// `bun_ast::E::String`). Low tier defines the interface; high tier

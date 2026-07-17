@@ -1,5 +1,5 @@
 use bun_core::strings;
-use bun_url::PercentEncoding;
+use bun_core::url::PercentEncoding;
 
 // TODO: lifetime — every `&'static [u8]` field below actually borrows from
 // either the `parse()` input slice or, when the input was percent-encoded, from
@@ -46,7 +46,7 @@ impl URLPath {
 // `_decoded_storage`. This costs one small allocation only on the
 // percent-encoded path, which is the rare case.
 
-pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
+pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::url::DecodeError> {
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
     let mut needs_redirect = false;
@@ -173,7 +173,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
         // SAFETY: local fn-item — every call below passes a slice that borrows
         // either the parser's input or `decoded_storage`, both of which are
         // moved into / outlive the returned `URLPath` (self-referential store).
-        unsafe { bun_collections::detach_lifetime(s) }
+        unsafe { bun_core::collections::detach_lifetime(s) }
     }
 
     Ok(URLPath {

@@ -1,5 +1,6 @@
 //! bun_collections — crate root. Thin re-export hub.
 
+#![allow(unused_attributes)]
 #![feature(
     type_info,
     adt_const_params,
@@ -17,8 +18,8 @@ pub mod multi_array_list;
 pub mod vec_ext;
 // `bounded_array` moved down to `bun_core` (cycle-break for the
 // `bun_string → bun_core` merge — `bun_core::string::immutable` needs it).
-// Re-exported here unchanged so existing `bun_collections::BoundedArray` /
-// `bun_collections::bounded_array::*` paths keep resolving.
+// Re-exported here unchanged so existing `bun_core::collections::BoundedArray` /
+// `bun_core::collections::bounded_array::*` paths keep resolving.
 pub use bun_core::bounded_array;
 pub mod identity_context;
 pub mod linear_fifo;
@@ -95,7 +96,7 @@ impl<T, C> PriorityQueue<T, C> {
 }
 impl<T: Copy, C: PriorityCompare<T>> PriorityQueue<T, C> {
     /// Push and sift-up.
-    pub fn add(&mut self, elem: T) -> Result<(), bun_alloc::AllocError> {
+    pub fn add(&mut self, elem: T) -> Result<(), bun_core::AllocError> {
         self.items.push(elem);
         let mut child = self.items.len() - 1;
         while child > 0 {
@@ -173,14 +174,14 @@ pub use hashbrown;
 pub mod string_map;
 pub use string_map::StringMap;
 
-// Re-export from bun_ptr so callers can name it as `bun_collections::TaggedPtrUnion`
+// Re-export from bun_ptr so callers can name it as `bun_core::collections::TaggedPtrUnion`
 // (PORTING.md groups it under Collections; the impl lives in src/ptr/).
-pub use bun_ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
+pub use bun_core::ptr::tagged_pointer::{TaggedPtr as TaggedPointer, TaggedPtrUnion};
 // Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
 // crates that already depend on `bun_collections` (logger, css, js_parser,
 // crash_handler, watcher, http_types) can route the borrowck-dodge through
 // one centralised `unsafe fn` instead of open-coding the lifetime cast.
-pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};
+pub use bun_core::ptr::{RawSlice, detach_lifetime, detach_ref};
 
 // ──────────────────────────────────────────────────────────────────────────
 // SmallList
@@ -313,7 +314,7 @@ impl<T, const N: usize> SmallList<T, N> {
     /// `SmallVec::drop` would call `dealloc` on a pointer it never handed out.
     #[cfg_attr(bun_asan, inline(never))]
     #[cfg_attr(not(bun_asan), inline)]
-    pub fn from_arena_iter<I>(arena: &bun_alloc::Arena, iter: I) -> Self
+    pub fn from_arena_iter<I>(arena: &bun_core::Arena, iter: I) -> Self
     where
         I: IntoIterator<Item = T>,
         I::IntoIter: ExactSizeIterator,
@@ -510,7 +511,7 @@ impl<T, const N: usize> SmallList<T, N> {
 pub mod zig_hash_map;
 pub use zig_hash_map::{AutoHashContext, HashContext, HashMap};
 
-/// std-compat path so call sites that wrote `bun_collections::hash_map::Entry`
+/// std-compat path so call sites that wrote `bun_core::collections::hash_map::Entry`
 /// against the old std-alias keep compiling.
 pub mod hash_map {
     pub use crate::array_hash_map::{MapEntry as Entry, OccupiedEntry, VacantEntry};

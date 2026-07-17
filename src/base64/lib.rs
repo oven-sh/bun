@@ -1,4 +1,4 @@
-use bun_simdutf_sys::simdutf::{self, SIMDUTFResult};
+use bun_core::simdutf::{self, SIMDUTFResult};
 
 pub use zig_base64::STANDARD_ALPHABET_CHARS;
 
@@ -117,7 +117,7 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
     Ok(dest)
 }
 
-pub use bun_core::base64::encode;
+pub use bun_core::util::base64::encode;
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
     let len = encode_len(source);
@@ -179,7 +179,7 @@ pub const fn encode_len(source: &[u8]) -> usize {
 
 #[inline]
 pub const fn encode_len_from_size(source: usize) -> usize {
-    bun_core::base64::standard_encoder_calc_size(source)
+    bun_core::util::base64::standard_encoder_calc_size(source)
 }
 
 #[inline]
@@ -327,7 +327,7 @@ pub mod vlq {
         pub start: usize,
     }
 
-    const BASE64: &[u8; 64] = &crate::zig_base64::STANDARD_ALPHABET_CHARS;
+    const BASE64: &[u8; 64] = &crate::base64::zig_base64::STANDARD_ALPHABET_CHARS;
 
     /// Maximum value of a 7-bit integer (Rust has no native u7).
     const U7_MAX: u8 = 127;
@@ -995,13 +995,13 @@ pub mod zig_base64 {
 
 // TODO: replace with bun's hash
 pub fn wyhash_url_safe<'a>(
-    bump: &'a bun_alloc::Arena,
+    bump: &'a bun_core::Arena,
     args: core::fmt::Arguments<'_>,
     at_start: bool,
 ) -> &'a [u8] {
     use std::io::Write as _;
 
-    let mut hasher = bun_wyhash::Wyhash11::init(0);
+    let mut hasher = bun_core::Wyhash11::init(0);
     // Write into a scratch Vec then hash; freed immediately.
     let mut fmt_str: Vec<u8> = Vec::with_capacity(128);
     write!(&mut fmt_str, "{}", args).expect("unreachable");

@@ -1,12 +1,12 @@
 use core::fmt;
 use core::ptr::NonNull;
 
-use bun_alloc::AllocError;
-use bun_collections::IntegerBitSet;
+use bun_core::AllocError;
+use bun_core::collections::IntegerBitSet;
 use bun_core::strings;
 
-use crate::range::{Comparator, Op as RangeOp};
-use crate::{Range, SlicedString, Version, version};
+use crate::semver::range::{Comparator, Op as RangeOp};
+use crate::semver::{Range, SlicedString, Version, version};
 
 // Re-export sub-namespace so
 // `crate::query::token::Wildcard` resolves for sibling modules.

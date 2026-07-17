@@ -17,16 +17,21 @@ strum.workspace = true
 bstr.workspace = true
 const_format.workspace = true
 libc.workspace = true
-bun_alloc.workspace = true
-bun_hash.workspace = true
-bun_dispatch.workspace = true
-bun_simdutf_sys.workspace = true
-bun_core_macros.workspace = true
+bun_macros.workspace = true
 bun_output_tags.workspace = true
-# merged from bun_string:
-bun_highway.workspace = true
-bun_wyhash.workspace = true
 thiserror.workspace = true
+# Step 3.1 mounts:
+scopeguard.workspace = true
+enum-map.workspace = true
+enumset.workspace = true
+bitflags.workspace = true
+allocator-api2.workspace = true
+bumpalo.workspace = true
+typed-arena.workspace = true
+hashbrown = { workspace = true, features = ["raw-entry"] }
+smallvec = { workspace = true, features = ["const_generics", "union"] }
+paste = "1"
+rustc-hash = "2"
 
 [target.'cfg(windows)'.dependencies]
 bun_windows_sys.workspace = true

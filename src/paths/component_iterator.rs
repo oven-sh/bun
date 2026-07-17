@@ -68,7 +68,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
     /// For Windows paths, returns `BadPathName` if `path` has an explicit
     /// namespace prefix (`\\.\`, `\\?\`, `\??\`) or is a UNC path with more
     /// than two leading separators. POSIX `init` is infallible.
-    pub fn init(path: &'a [T], fmt: PathFormat) -> crate::Result<Self> {
+    pub fn init(path: &'a [T], fmt: PathFormat) -> crate::paths::Result<Self> {
         let root_end = match fmt {
             PathFormat::Posix => {
                 let mut i = 0;
@@ -209,7 +209,7 @@ impl<'a, T: PathChar> ComponentIterator<'a, T> {
 /// Native-format convenience wrapper over
 /// `ComponentIterator::init` for `u8` paths.
 #[inline]
-pub fn component_iterator(path: &[u8]) -> crate::Result<ComponentIterator<'_, u8>> {
+pub fn component_iterator(path: &[u8]) -> crate::paths::Result<ComponentIterator<'_, u8>> {
     ComponentIterator::init(path, PathFormat::NATIVE)
 }
 
@@ -270,7 +270,7 @@ pub fn make_path_with<'a, T: PathChar, E>(
 // only see `ComponentIterator::init`; for ad-hoc root-length probing
 // `resolve_path::windows_filesystem_root_t` already exists.
 
-fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
+fn windows_root_end<T: PathChar>(path: &[T]) -> crate::paths::Result<usize> {
     #[inline(always)]
     fn sep<T: PathChar>(c: T) -> bool {
         c == T::from_u8(b'/') || c == T::from_u8(b'\\')
@@ -290,12 +290,12 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
             if c1 == T::from_u8(b'?') {
                 // `\??\` (NT) — only when both outer seps are real backslashes.
                 if c2 == T::from_u8(b'?') && bs0 && bs3 {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
+                    return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::EINVAL));
                 }
             } else if sep(c1) {
                 // `\\?\` (verbatim/fake-verbatim) or `\\.\` (local-device).
                 if c2 == T::from_u8(b'?') || c2 == T::from_u8(b'.') {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
+                    return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::EINVAL));
                 }
             }
         }
@@ -317,7 +317,7 @@ fn windows_root_end<T: PathChar>(path: &[T]) -> crate::Result<usize> {
         // .unc_absolute → consume `\\server\share\`; reject `\\\x`.
         let mut i = 2usize;
         if i < path.len() && sep(path[i]) {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::EINVAL));
+            return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::EINVAL));
         }
         while i < path.len() && !sep(path[i]) {
             i += 1;

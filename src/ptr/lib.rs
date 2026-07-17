@@ -1,3 +1,4 @@
+#![allow(unused_attributes)]
 #![feature(allocator_api)]
 #![allow(
     non_snake_case,
@@ -59,9 +60,9 @@ pub use ref_count::{
     ThreadSafeRefCounted, finalize_js_box, finalize_js_box_noop,
 };
 // Derive macros — same names as the traits (separate namespace). The derives
-// expand to `::bun_ptr::…` paths, so this crate is the canonical re-export
-// point: `#[derive(bun_ptr::CellRefCounted)]`.
-pub use bun_core_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCounted};
+// expand to `::bun_core::ptr::…` paths, so this crate is the canonical re-export
+// point: `#[derive(bun_core::ptr::CellRefCounted)]`.
+pub use bun_macros::{Anchored, CellRefCounted, RefCounted, ThreadSafeRefCounted};
 
 pub mod parent_ref;
 pub use parent_ref::{Anchored, LiveMarker, ParentRef};
@@ -74,7 +75,7 @@ pub use weak_ptr::WeakPtr;
 
 // Intrusive parent-from-field recovery — canonical helpers live in `bun_core`
 // (lowest tier, every crate can reach them); re-exported here so callers can
-// spell `bun_ptr::container_of` / `bun_ptr::from_field_ptr!`.
+// spell `bun_core::ptr::container_of` / `bun_core::ptr::from_field_ptr!`.
 pub use bun_core::{
     IntrusiveField, container_of, container_of_const, from_field_ptr, impl_field_parent,
     intrusive_field,
@@ -82,7 +83,7 @@ pub use bun_core::{
 
 // C-callback `void *user_data` → `&mut T` recovery — same tiering rationale
 // as `container_of`; canonical impl lives in `bun_core`, re-exported here so
-// runtime crates spell `bun_ptr::callback_ctx::<T>(ctx)`.
+// runtime crates spell `bun_core::ptr::callback_ctx::<T>(ctx)`.
 pub use bun_core::callback_ctx;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -643,7 +644,7 @@ unsafe impl<T: ?Sized + Sync> Sync for BackRef<T> {}
 // through `Cell` / `JsCell` / `UnsafeCell` interior-mutability fields.
 //
 // Blanket-implemented for all `T`: bring the trait into scope with
-// `use bun_ptr::AsCtxPtr;` and the inherent-looking `self.as_ctx_ptr()`
+// `use bun_core::ptr::AsCtxPtr;` and the inherent-looking `self.as_ctx_ptr()`
 // resolves on any type. Replaces 19 identical hand-rolled
 // `fn as_ctx_ptr(&self) -> *mut Self { (self as *const Self).cast_mut() }`
 // inherent methods scattered across runtime JS-class wrappers.

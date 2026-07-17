@@ -122,9 +122,9 @@ pub mod options {
         MaxPathExceeded,
     }
 
-    impl From<Error> for crate::Error {
+    impl From<Error> for crate::paths::Error {
         fn from(_e: Error) -> Self {
-            crate::Error::MaxPathExceeded
+            crate::paths::Error::MaxPathExceeded
         }
     }
 
@@ -279,10 +279,10 @@ impl PathUnit for u8 {
         unsafe { ZStr::from_raw(ptr, len) }
     }
     fn pool_get() -> Box<PathBuffer> {
-        crate::path_buffer_pool::get().into_box()
+        crate::paths::path_buffer_pool::get().into_box()
     }
     fn pool_put(buf: Box<PathBuffer>) {
-        crate::path_buffer_pool::put(buf)
+        crate::paths::path_buffer_pool::put(buf)
     }
     #[inline]
     fn buffer_as_mut_slice(buf: &mut PathBuffer) -> &mut [u8] {
@@ -675,7 +675,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         this
     }
 
-    pub fn init_fd_path(fd: Fd) -> crate::Result<Self> {
+    pub fn init_fd_path(fd: Fd) -> crate::paths::Result<Self> {
         match Kind::from_u8(KIND) {
             Kind::Abs => {}
             Kind::Rel => panic!("cannot create a relative path from getFdPath"),
@@ -707,9 +707,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                     // FileNotFound (return_length==0 → -1) or
                     // NameTooLong (return_length>=buf.len → -2).
                     return Err(if n == -2 {
-                        crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
+                        crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG)
                     } else {
-                        crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                        crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENOENT)
                     });
                 }
                 let wide = &wslice[..n as usize];
@@ -727,7 +727,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // `fd_path_raw` returns 0 on misc failure — do not swallow as
                 // an empty path; propagate an error.
                 if n <= 0 {
-                    return Err(crate::Error::Sys(bun_errno::SystemErrno::EBADF)); // EBADF — fd_path_raw surfaces no errno
+                    return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::EBADF)); // EBADF — fd_path_raw surfaces no errno
                 }
                 let raw = &buf[..n as usize];
                 let trimmed = trim_input(TrimInputKind::Abs, raw);
@@ -744,9 +744,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
                 // FileNotFound (return_length==0 → -1) or
                 // NameTooLong (return_length>=buf.len → -2).
                 return Err(if n == -2 {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)
+                    crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG)
                 } else {
-                    crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                    crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENOENT)
                 });
             }
             let raw = &buf[..n as usize];
@@ -1119,7 +1119,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
         match (c_is_u8, u_is_u8) {
             (true, true) => {
                 // part: &[u8], unit: u8
-                let mut cwd_path_buf = crate::path_buffer_pool::get();
+                let mut cwd_path_buf = crate::paths::path_buffer_pool::get();
                 // RAII guard puts back on Drop.
                 let current_slice: &[u8] = U::id_u8(self.slice());
                 let cwd_path = &mut cwd_path_buf[..current_slice.len()];
@@ -1156,7 +1156,7 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             }
             (false, true) => {
                 // part: &[u16], unit: u8 → transcode then recurse
-                let mut path_buf = crate::path_buffer_pool::get();
+                let mut path_buf = crate::paths::path_buffer_pool::get();
                 let part_u16: &[u16] = C::id_u16(part);
                 let converted =
                     strings::convert_utf16_to_utf8_in_buffer(&mut path_buf[..], part_u16);
@@ -1192,9 +1192,9 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
             let from_u16: &[u16] = U::id_u16(self.slice());
             let to_u16: &[u16] = U::id_u16(to.slice());
 
-            let mut from_buf = crate::path_buffer_pool::get();
-            let mut to_buf = crate::path_buffer_pool::get();
-            let mut rel_buf = crate::path_buffer_pool::get();
+            let mut from_buf = crate::paths::path_buffer_pool::get();
+            let mut to_buf = crate::paths::path_buffer_pool::get();
+            let mut rel_buf = crate::paths::path_buffer_pool::get();
 
             let from_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut from_buf[..], from_u16);
             let to_u8 = strings::convert_utf16_to_utf8_in_buffer(&mut to_buf[..], to_u16);

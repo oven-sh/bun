@@ -4,14 +4,14 @@
 use core::fmt;
 use core::marker::PhantomData;
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Context trait — `.hash(k)` / `.eql(a, b)`
 // ──────────────────────────────────────────────────────────────────────────
 
 // Canonical definitions live in `crate::zig_hash_map`; re-exported here so the
-// path `bun_collections::static_hash_map::{HashContext, AutoContext}` keeps
+// path `bun_core::collections::static_hash_map::{HashContext, AutoContext}` keeps
 // resolving for downstream callers.
 pub use crate::zig_hash_map::{AutoHashContext as AutoContext, HashContext};
 
@@ -70,7 +70,7 @@ impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for Entry<K, V> {
     }
 }
 
-pub use crate::hash_map::GetOrPutResult;
+pub use crate::collections::hash_map::GetOrPutResult;
 
 // ──────────────────────────────────────────────────────────────────────────
 // const helpers
@@ -542,7 +542,7 @@ mod tests {
     use super::*;
 
     /// xoshiro256++ with the state seeded by splitmix64. `AutoHashContext`
-    /// routes through `bun_wyhash::auto_hash` (mum-mix). The 100%-load probe
+    /// routes through `bun_core::auto_hash` (mum-mix). The 100%-load probe
     /// bound of the static test was validated for this hash by exact
     /// simulation of all 128 seeds: max slot index touched (incl. delete's
     /// `i + 1` backshift read) is 548 of 632, with no 64-bit hash collisions

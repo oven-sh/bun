@@ -205,7 +205,7 @@ pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> 
 }
 
 pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
-    let mut renormalized = crate::path_buffer_pool::get();
+    let mut renormalized = crate::paths::path_buffer_pool::get();
 
     // Longer than the pooled scratch buffer (and than any path the OS can
     // address) — fail-safe to "" like `to_w_path_maybe_dir` does, instead of
@@ -518,7 +518,7 @@ pub fn basename<T: Ch>(input: &[T]) -> &[T] {
 mod tests {
     use super::*;
 
-    use bun_simdutf_sys::simdutf::{SIMDUTFResult, Status};
+    use bun_core::simdutf::{SIMDUTFResult, Status};
 
     /// Scalar `simdutf::convert::utf8::to::utf16::with_errors::le`: writes
     /// the UTF-16LE form of the valid prefix to `utf16_output` and returns

@@ -188,7 +188,7 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalSharedOptional<T> {
 
 // SAFETY: ref/deref delegate to JSC's WTF::StringImpl atomic refcount via FFI;
 // the pointee remains valid while count > 0 (JSC contract).
-unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
+unsafe impl ExternalSharedDescriptor for bun_core::WTFStringImplStruct {
     unsafe fn ext_ref(this: *mut Self) {
         // SAFETY: caller guarantees `this` is a live WTFStringImpl.
         unsafe { (*this).r#ref() }
@@ -200,4 +200,4 @@ unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
 }
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`.
-pub type WTFString = ExternalShared<bun_alloc::WTFStringImplStruct>;
+pub type WTFString = ExternalShared<bun_core::WTFStringImplStruct>;

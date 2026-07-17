@@ -10,16 +10,16 @@
 #[cfg(not(windows))]
 macro_rules! impl_get_errno_libc {
     ($($t:ty),+ $(,)?) => {$(
-        impl $crate::GetErrno for $t {
+        impl $crate::errno::GetErrno for $t {
             #[inline]
             fn get_errno(self) -> $crate::E {
                 // `as i64` would zero-extend u32, never matching -1. Compare
                 // against the type's own all-ones value instead (== -1 for
                 // signed, == MAX for unsigned — both are libc's failure rc).
                 if self == !(0 as $t) {
-                    $crate::E::from_raw($crate::posix::errno() as u16)
+                    $crate::errno::E::from_raw($crate::errno::posix::errno() as u16)
                 } else {
-                    $crate::E::SUCCESS
+                    $crate::errno::E::SUCCESS
                 }
             }
         }
@@ -87,14 +87,14 @@ macro_rules! __decl_uv_e {
 // The (IDENT, "E…") column pair is byte-for-byte identical across
 // linux/darwin/freebsd/windows; only the middle `i32` value differs by design
 // (native `SystemErrno::$e as i32` on POSIX vs libuv-synthetic
-// `-bun_libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
+// `-bun_core::libuv_sys::UV_E*` on Windows / for codes the host OS lacks). Rather
 // than re-list the rows 4×, the caller supplies a tiny *value-producer* macro
 // `$cb!($id, $e, $uv) -> i32-expr` and this forwards each row to the existing
 // `__decl_uv_e!` expander (consts + reverse `name()` fn).
 //
 // `$id`/`$e`/`$uv` are passed as **literal** tokens (never captured as
 // `:ident`), so the per-OS `$cb` can override individual rows by literal-token
-// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_libuv_sys::$uv }` — while
+// match — e.g. `(CHARSET, $e:tt, $uv:tt) => { -::bun_core::libuv_sys::$uv }` — while
 // a final `($i:tt, $e:tt, $uv:tt)` arm handles the native default.
 // ──────────────────────────────────────────────────────────────────────────
 #[macro_export]

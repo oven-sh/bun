@@ -796,7 +796,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Lives here (not in the `bun` crate) because every consumer names it through
-// `bun_collections::HiveRef`, and its only collaborator is `Fallback` above.
+// `bun_core::collections::HiveRef`, and its only collaborator is `Fallback` above.
 //
 // The self-referential pool type is spelled out as
 // `Fallback<HiveRef<T, CAPACITY>, CAPACITY>`. CAPACITY is `usize` to line up

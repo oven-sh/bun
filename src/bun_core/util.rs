@@ -755,7 +755,7 @@ pub type OSPathSliceZ = WStr;
 #[cfg(not(windows))]
 pub type OSPathSliceZ = ZStr;
 
-pub use bun_alloc::SEP;
+pub use bun_core::SEP;
 
 /// `[u8; MAX_PATH_BYTES]` stack buffer for path syscalls.
 ///
@@ -1965,7 +1965,7 @@ pub mod io {
         }
     }
 
-    impl<'a> Write for bun_alloc::BabyVec<'a, u8> {
+    impl<'a> Write for bun_core::BabyVec<'a, u8> {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             self.extend_from_slice(buf);
@@ -3785,11 +3785,11 @@ pub fn fast_random() -> u64 {
 // `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
 // the xxhash64 entry point that ETag/bundler need.
 pub mod hash {
-    pub use bun_hash::XxHash64;
+    pub use bun_core::XxHash64;
     /// One-shot seeded XXH64 over `bytes`.
     #[inline]
     pub fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-        bun_hash::XxHash64::hash(seed, bytes)
+        bun_core::XxHash64::hash(seed, bytes)
     }
     /// Wyhash one-shot (`bun.hash`).
     #[inline]
@@ -3803,7 +3803,7 @@ pub mod hash {
 // tier-0/1 callers need (npm auth, sourcemaps,
 // ansi_renderer). Full URL-safe / streaming variants stay in bun_base64.
 pub mod base64 {
-    use bun_simdutf_sys::simdutf;
+    use bun_core::simdutf;
 
     /// Max encoded length for `source.len()` input bytes (standard alphabet,
     /// padded). Port of `bun.base64.encodeLen`.
@@ -3903,13 +3903,13 @@ pub mod base64 {
 /// copy. Returns a raw `*const c_char` because the SSLConfig FFI surface
 /// stores C-strings. Caller frees via [`free_sensitive`].
 ///
-/// Allocated via the default allocator (`bun_alloc::default_alloc` —
+/// Allocated via the default allocator (`bun_core::default_alloc` —
 /// mimalloc, or `std::alloc::System` under `cfg(bun_asan)`), so the
 /// allocation is visible to ASAN's interceptor and LeakSanitizer like every
 /// other heap allocation. Pairs with [`free_sensitive`], which frees through
 /// the same `default_alloc::free`.
 pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
-    let p = bun_alloc::default_alloc::malloc(bytes.len() + 1).cast::<u8>();
+    let p = bun_core::default_alloc::malloc(bytes.len() + 1).cast::<u8>();
     if p.is_null() {
         crate::out_of_memory();
     }
@@ -3924,9 +3924,9 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
 /// case used by http SSLConfig — re-exported from `bun_alloc` so the
 /// secure-zero core stays single-sourced. Pairs with [`dupe_z`].
-pub use bun_alloc::free_sensitive_cstr as free_sensitive;
+pub use bun_core::free_sensitive_cstr as free_sensitive;
 /// Optimization-resistant memory zeroing — re-exported from `bun_alloc`.
-pub use bun_alloc::secure_zero;
+pub use bun_core::secure_zero;
 
 // ── argv ──────────────────────────────────────────────────────────────────
 // `bun.argv` — process argv as a slice of NUL-terminated byte strings.

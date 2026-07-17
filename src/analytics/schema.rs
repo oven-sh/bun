@@ -2,7 +2,7 @@
 // Hand-ported subset — the remaining analytics::* types are unused at runtime
 // and come back with the next peechy regen (see the `analytics` mod below).
 
-use crate::Error;
+use crate::analytics::Error;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Reader / Writer
@@ -15,7 +15,7 @@ use crate::Error;
 
 #[inline]
 pub(crate) fn eof() -> Error {
-    crate::Error::EOF
+    crate::analytics::Error::EOF
 }
 
 /// Primitive integers encodable in the peechy wire format (native-endian raw

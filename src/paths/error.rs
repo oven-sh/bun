@@ -3,7 +3,7 @@ pub enum Error {
     #[error("MaxPathExceeded")]
     MaxPathExceeded,
     #[error(transparent)]
-    Sys(#[from] bun_errno::SystemErrno),
+    Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
     Core(#[from] bun_core::Error),
 }

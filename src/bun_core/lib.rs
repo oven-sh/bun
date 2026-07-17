@@ -1,6 +1,16 @@
 #![feature(allocator_api)]
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
+#![feature(arbitrary_self_types_pointers)]
+#![feature(hasher_prefixfree_extras)]
+#![feature(type_info)]
+#![feature(unsized_const_params)]
+#![feature(const_cmp)]
+#![feature(const_trait_impl)]
+#![feature(core_intrinsics)]
+#![allow(incomplete_features, internal_features)]
+#![allow(ambiguous_glob_reexports)]
+#![allow(macro_expanded_macro_exports_accessed_by_absolute_paths)]
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and
 // bun_collections depend on; importing any of them to satisfy the disallowed-*
@@ -17,6 +27,87 @@ extern crate self as bun_core;
 
 #[path = "../io/write.rs"]
 pub mod io;
+
+// ──────────────────────────────────────────────────────────────────────────
+// §8 Step 3.1 — absorbed-crate #[path] mounts + flat root re-exports.
+// Source files stay at their original disk paths; only crate-of-record changes.
+// ──────────────────────────────────────────────────────────────────────────
+#[path = "../bun_alloc/lib.rs"]
+pub mod alloc_impl;
+#[path = "../mimalloc_sys/lib.rs"]
+pub mod mimalloc_sys;
+#[path = "../simdutf_sys/lib.rs"]
+pub mod simdutf_sys;
+#[path = "../wyhash/lib.rs"]
+pub mod wyhash;
+#[path = "../highway/lib.rs"]
+pub mod highway;
+#[path = "../hash/lib.rs"]
+pub mod hash;
+#[path = "../ptr/lib.rs"]
+pub mod ptr;
+#[path = "../safety/lib.rs"]
+pub mod safety;
+#[path = "../collections/lib.rs"]
+pub mod collections;
+#[path = "../base64/lib.rs"]
+pub mod base64;
+#[path = "../errno/lib.rs"]
+pub mod errno;
+#[path = "../paths/lib.rs"]
+pub mod paths;
+#[path = "../libuv_sys/lib.rs"]
+pub mod libuv_sys;
+#[path = "../url/lib.rs"]
+pub mod url;
+#[path = "../semver/lib.rs"]
+pub mod semver;
+#[path = "../http_types/lib.rs"]
+pub mod http_types;
+#[path = "../analytics/lib.rs"]
+pub mod analytics;
+#[path = "../picohttp/lib.rs"]
+pub mod picohttp;
+#[path = "../valkey/lib.rs"]
+pub mod valkey;
+
+// Disambiguate glob-vs-glob name collisions between `util::*` / `Global::*`
+// and the absorbed-crate globs below (explicit wins over all globs).
+pub use util::{Mode, Mutex, MutexGuard, OSPathChar, OSPathSlice, OSPathSliceZ, SEP, Version};
+pub use Global::features;
+
+#[allow(ambiguous_glob_reexports, unused_imports)]
+pub use alloc_impl::*;
+pub use mimalloc_sys::*;
+pub use simdutf_sys::*;
+pub use wyhash::*;
+pub use highway::*;
+pub use hash::*;
+pub use ptr::*;
+pub use safety::*;
+pub use collections::*;
+pub use base64::*;
+pub use errno::*;
+pub use paths::*;
+pub use libuv_sys::*;
+pub use url::*;
+pub use semver::*;
+pub use http_types::*;
+pub use analytics::*;
+pub use picohttp::*;
+pub use valkey::*;
+
+// `bun_output` facade surface (not mounted; impl is native in `output.rs`).
+pub use output::{
+    ScopedLogger, Visibility, error_writer, error_writer_buffered, flush, print_elapsed,
+};
+
+#[macro_export]
+macro_rules! scope_is_visible {
+    ($scope:ident) => {
+        $scope.is_visible()
+    };
+}
 
 pub mod Global;
 pub mod atomic_cell;
@@ -266,7 +357,7 @@ pub mod feature_flags;
 /// these as the canonical `is_sep_*` set.
 pub mod path_sep {
     use crate::strings_impl::PathByte;
-    pub use bun_alloc::{SEP, SEP_STR};
+    pub use bun_core::{SEP, SEP_STR};
 
     // ─── u8 const fns (kept const for match-guard / const-eval callers) ─────
 
@@ -586,7 +677,7 @@ pub mod output;
 
 // `bun_core` (T0) cannot name `bun_sys` I/O primitives. Single-variant
 // link-interface (owner is unused / null); `bun_sys` provides the `Sys` arm.
-bun_dispatch::link_interface! {
+bun_macros::link_interface! {
     pub OutputSink[Sys] {
         fn stderr() -> output::File;
         fn make_path(cwd: Fd, dir: &[u8]) -> core::result::Result<(), Error>;
@@ -612,7 +703,7 @@ impl OutputSink {
 // `bun_core` (T0) cannot name `bun_errno` (cycle). Single-variant link-interface
 // (owner is unused / null); `bun_errno` provides the `Sys` arm. Gives `result.rs`
 // access to the per-OS `SystemErrno` strum table without duplicating it here.
-bun_dispatch::link_interface! {
+bun_macros::link_interface! {
     pub ErrnoNames[Sys] {
         fn name(errno: i32) -> Option<&'static str>;
         fn max_dense() -> u32;
@@ -631,7 +722,7 @@ impl ErrnoNames {
 
 /// Compile-time `<tag>` → ANSI rewrite (proc-macro). Re-exported at crate root
 /// so `$crate::pretty_fmt!` resolves from the wrapper macros in `output.rs`.
-pub use bun_core_macros::{EnumTag, pretty_fmt};
+pub use bun_macros::{EnumTag, pretty_fmt};
 
 /// Build-time configuration values. Written at
 /// configure time by `scripts/build/buildOptionsRs.ts` from the resolved
@@ -642,8 +733,7 @@ pub mod build_options {
 }
 
 // ── re-exports (the tier-0 surface downstream crates need) ────────────────
-pub use bun_alloc::oom_from_alloc;
-pub use bun_alloc::{
+pub use bun_core::{
     Alignment, AllocError, Allocator, is_slice_in_buffer, is_slice_in_buffer_t, out_of_memory,
     page_size, range_of_slice_in_buffer,
 };
@@ -938,7 +1028,7 @@ pub enum JsError {
     Terminated = 2,
 }
 
-bun_alloc::oom_from_alloc!(JsError);
+bun_core::oom_from_alloc!(JsError);
 
 impl From<crate::Error> for JsError {
     fn from(_: crate::Error) -> Self {
@@ -1258,7 +1348,7 @@ pub(crate) mod strings_impl {
         }
     }
 
-    pub use ::bun_alloc::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
+    pub use ::bun_core::{ascii_lowercase_buf, copy_lowercase, trim, trim_left, trim_right};
 
     /// Byte length of `input` after replacing every
     /// occurrence of `needle` with `replacement`. Empty `needle` ⇒ `input.len()`
@@ -1451,7 +1541,7 @@ pub(crate) mod strings_impl {
     // collections::Vec<u8> can call it without depending on bun_string.
     // Allocator params dropped per PORTING.md §Allocators.
     // ──────────────────────────────────────────────────────────────────────
-    use bun_simdutf_sys::simdutf;
+    use bun_core::simdutf;
 
     #[inline]
     pub fn is_all_ascii(slice: &[u8]) -> bool {
@@ -1846,7 +1936,7 @@ pub(crate) mod strings_impl {
 
         const HIGHWAY_MIN_LEN: usize = 64;
         if src.len() >= HIGHWAY_MIN_LEN {
-            return bun_highway::copy_ascii_prefix(src, dst);
+            return bun_core::copy_ascii_prefix(src, dst);
         }
 
         const HIGH_BITS: u64 = 0x8080_8080_8080_8080;
@@ -2340,7 +2430,7 @@ pub use strings_impl::*;
 pub use crate::string::immutable as strings;
 
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
-// `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
+// `std::alloc::System` is installed instead. Mirrors `bun_core::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 pub mod debug_allocator_data {
     /// Only referenced from `debug_assert!` — dead in release builds.

@@ -40,7 +40,7 @@ impl Slicable for crate::external_string::ExternalString {
     }
 }
 
-/// Alias so callers can name `bun_semver::string::Formatter` etc.
+/// Alias so callers can name `bun_core::semver::string::Formatter` etc.
 pub use crate::semver_string as string;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ impl StringBuilder for crate::semver_string::Builder {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: bun_install_types::sliced_string → bun_semver::sliced_string
+// MOVE-IN: bun_install_types::sliced_string → bun_core::semver::sliced_string
 // ══════════════════════════════════════════════════════════════════════════
 pub mod sliced_string {
     use super::external_string::ExternalString;
@@ -111,7 +111,7 @@ pub mod sliced_string {
             ExternalString::init(
                 self.buf,
                 self.slice,
-                bun_wyhash::Wyhash11::hash(0, self.slice),
+                bun_core::Wyhash11::hash(0, self.slice),
             )
         }
 
@@ -129,7 +129,7 @@ pub mod sliced_string {
         #[inline]
         pub fn sub(self, input: &'a [u8]) -> SlicedString<'a> {
             if cfg!(debug_assertions) {
-                if !bun_alloc::is_slice_in_buffer(input, self.buf) {
+                if !bun_core::is_slice_in_buffer(input, self.buf) {
                     let start_buf = self.buf.as_ptr() as usize;
                     let end_buf = (self.buf.as_ptr() as usize) + self.buf.len();
                     let start_i = input.as_ptr() as usize;
@@ -153,7 +153,7 @@ pub mod sliced_string {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: bun_install_types::external_string → bun_semver::external_string
+// MOVE-IN: bun_install_types::external_string → bun_core::semver::external_string
 // ══════════════════════════════════════════════════════════════════════════
 pub mod external_string {
     use core::cmp::Ordering;
@@ -187,7 +187,7 @@ pub mod external_string {
             ExternalString {
                 value: String::init(in_, in_),
                 // Wyhash with seed 0.
-                hash: bun_wyhash::hash(in_),
+                hash: bun_core::hash(in_),
             }
         }
 
@@ -222,14 +222,14 @@ pub mod external_string {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// MOVE-IN: bun_install_types::semver_string → bun_semver::semver_string
+// MOVE-IN: bun_install_types::semver_string → bun_core::semver::semver_string
 // ══════════════════════════════════════════════════════════════════════════
 pub mod semver_string {
     use core::cmp::Ordering;
     use core::fmt;
 
-    use bun_alloc::AllocError;
-    use bun_collections::HashMap;
+    use bun_core::AllocError;
+    use bun_core::collections::HashMap;
     use bun_core::strings;
 
     use super::external_string::ExternalString;
@@ -762,7 +762,7 @@ pub mod semver_string {
 
         pub fn hash(&self, arg: String) -> u64 {
             let str = arg.slice(self.arg_buf);
-            bun_wyhash::hash(str)
+            bun_core::hash(str)
         }
     }
 
@@ -778,14 +778,14 @@ pub mod semver_string {
 
         pub fn hash(&self, arg: String) -> u32 {
             let str = arg.slice(self.arg_buf);
-            bun_wyhash::hash(str) as u32
+            bun_core::hash(str) as u32
         }
     }
 
-    // Bridge to `bun_collections::ArrayHashMap` adapted lookups so callers can
+    // Bridge to `bun_core::collections::ArrayHashMap` adapted lookups so callers can
     // pass `ArrayHashContext` directly to `get_adapted` / `get_or_put_adapted`
     // / `put_assume_capacity_context` without a per-crate orphan-rule wrapper.
-    impl<'a> bun_collections::array_hash_map::ArrayHashAdapter<String, String>
+    impl<'a> bun_core::collections::array_hash_map::ArrayHashAdapter<String, String>
         for ArrayHashContext<'a>
     {
         #[inline]
@@ -810,7 +810,7 @@ pub mod semver_string {
         #[inline]
         pub fn init(buf: &[u8], in_: &[u8]) -> Pointer {
             if cfg!(debug_assertions) {
-                debug_assert!(bun_alloc::is_slice_in_buffer(in_, buf));
+                debug_assert!(bun_core::is_slice_in_buffer(in_, buf));
             }
 
             Pointer {
@@ -869,7 +869,7 @@ pub mod semver_string {
 
     #[derive(Default)]
     pub struct StringPool {
-        map: HashMap<u64, String, bun_collections::IdentityContext<u64>>,
+        map: HashMap<u64, String, bun_core::collections::IdentityContext<u64>>,
     }
     pub struct StringPoolEntry<'a> {
         pub found_existing: bool,
@@ -911,7 +911,7 @@ pub mod semver_string {
     impl Builder {
         #[inline]
         pub fn string_hash(buf: &[u8]) -> u64 {
-            bun_wyhash::Wyhash11::hash(0, buf)
+            bun_core::Wyhash11::hash(0, buf)
         }
 
         #[inline]

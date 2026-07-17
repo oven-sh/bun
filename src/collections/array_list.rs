@@ -3,7 +3,7 @@
 
 use core::mem;
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 use super::vec_ext::VecExt;
 

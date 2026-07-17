@@ -32,7 +32,7 @@ pub fn get_zone(name: &[u8]) -> &'static Zone {
     struct ZoneTable(UnsafeCell<Vec<(Vec<u8>, Vec<u8>, &'static Zone)>>);
     // SAFETY: the inner `Vec` is only accessed while `LOCK` is held.
     unsafe impl Sync for ZoneTable {}
-    static LOCK: crate::Mutex = crate::Mutex::new();
+    static LOCK: crate::alloc_impl::Mutex = crate::alloc_impl::Mutex::new();
     static ZONES: ZoneTable = ZoneTable(UnsafeCell::new(Vec::new()));
     let _guard = LOCK.lock();
     // SAFETY: exclusive access — `ZONES.0` is only dereferenced while `LOCK`

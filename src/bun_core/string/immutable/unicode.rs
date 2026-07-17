@@ -3,7 +3,7 @@ use crate::string::immutable::{
     U3Fast, UNICODE_REPLACEMENT as unicode_replacement, eql_comptime_ignore_len as eql_ignore_len,
     first_non_ascii, first_non_ascii16,
 };
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 use crate::string::immutable::CodePoint; // i32
 /// Borrow `wbuf[..len]` as `&WStr` (NUL at `wbuf[len]`). Local copy of the
@@ -14,7 +14,7 @@ fn wstr_in_buf(wbuf: &[u16], len: usize) -> &WStr {
     WStr::from_buf(wbuf, len)
 }
 use crate::strings_impl::latin1_to_codepoint_bytes_assume_not_ascii;
-use bun_simdutf_sys::simdutf;
+use bun_core::simdutf;
 
 crate::declare_scope!(strings, hidden);
 
@@ -502,7 +502,7 @@ pub fn copy_u16_into_u8(output: &mut [u8], input: &[u16]) {
     debug_assert!(input.len() <= output.len());
     let count = input.len().min(output.len());
 
-    bun_highway::copy_u16_to_u8(&input[..count], &mut output[..count]);
+    bun_core::copy_u16_to_u8(&input[..count], &mut output[..count]);
 }
 
 pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {

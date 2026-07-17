@@ -1,7 +1,7 @@
-// posix types live in `crate::posix` (moved from bun_sys).
-pub use crate::posix::E;
-pub use crate::posix::S;
-pub use crate::posix::mode_t as Mode;
+// posix types live in `crate::errno::posix` (moved from bun_sys).
+pub use crate::errno::posix::E;
+pub use crate::errno::posix::S;
+pub use crate::errno::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(
@@ -162,10 +162,10 @@ pub mod uv_e {
     // Linux lacks (no kernel ECHARSET / EFTYPE).
     macro_rules! __v {
         (CHARSET, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -::bun_core::libuv_sys::$uv
         };
         (FTYPE,   $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -::bun_core::libuv_sys::$uv
         };
         ($i:tt,   $e:tt, $uv:tt) => {
             super::SystemErrno::$e as i32

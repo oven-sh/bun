@@ -5,7 +5,7 @@ use crate::strings;
 // `is_wtf_allocator` vtable-identity check is a local pointer compare with no
 // upward dependency. Re-exported here for back-compat with existing
 // `bun_core::wtf::*` / `bun_core::WTFStringImpl*` import paths.
-pub use bun_alloc::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
+pub use bun_core::{WTFStringImpl, WTFStringImplPtr, WTFStringImplStruct};
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`. The
 /// [`crate::external_shared::ExternalSharedDescriptor`] impl lives alongside

@@ -31,7 +31,7 @@ use crate::util::io;
 //
 // `bun_sys::{File, QuietWrite, file::QuietWriter, make_path, create_file,
 // deprecated::BufferedReader}` are higher-tier I/O primitives that `bun_core`
-// cannot name. The `bun_dispatch::link_interface!` `OutputSink[Sys]` (declared
+// cannot name. The `bun_macros::link_interface!` `OutputSink[Sys]` (declared
 // at crate root) provides the seam; `bun_sys` supplies the `Sys` arm.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -400,8 +400,8 @@ impl Source {
     // into `out.stdout_buffer`/`out.stderr_buffer`. Returning `Self` by value
     // would move the struct after those pointers were captured and dangle them.
     pub fn init(out: &mut Source, stream: StreamType, err_stream: StreamType) {
-        if crate::env::IS_DEBUG && bun_alloc::USE_MIMALLOC && !SOURCE_SET.get() {
-            bun_alloc::mimalloc::mi_option_set(bun_alloc::mimalloc::Option::show_errors, 1);
+        if crate::env::IS_DEBUG && bun_core::USE_MIMALLOC && !SOURCE_SET.get() {
+            bun_core::mimalloc::mi_option_set(bun_core::mimalloc::Option::show_errors, 1);
         }
         SOURCE_SET.set(true);
 
@@ -1802,7 +1802,7 @@ pub fn prettyln(payload: impl PrettyFmtInput) {
 ///
 /// The reference algorithm is `pretty_fmt_runtime` below (the proc-macro is
 /// tested against it).
-pub use bun_core_macros::pretty_fmt;
+pub use bun_macros::pretty_fmt;
 
 /// Input accepted by [`pretty_fmt`]: either a `&str`/`&[u8]` template or a
 /// pre-formatted `&fmt::Arguments<'_>` (which is first rendered to a string
@@ -2063,7 +2063,7 @@ pub fn pretty_fmt_args<A: FmtTuple>(
 /// the rare dynamic case.
 ///
 /// Colour table lives in `bun_output_tags`; the state machine is kept duplicated
-/// vs `bun_core_macros::rewrite` because the two intentionally diverge in the
+/// vs `bun_macros::rewrite` because the two intentionally diverge in the
 /// `{` arm (proc-macro rewrites specs `{s}`→`{}`; this side copies braces
 /// verbatim) and on unknown tags (proc-macro errors; this side emits `""`).
 pub fn pretty_fmt_runtime(fmt: &[u8], is_enabled: bool) -> Vec<u8> {
@@ -2934,7 +2934,7 @@ mod output_macro_tests {
     //! they assert that the macros *expand* for the expected call shapes
     //! and that the `*ln!` newline guard const-evaluates correctly.
     use super::_needs_nl;
-    use bun_core_macros::pretty_fmt;
+    use bun_macros::pretty_fmt;
 
     /// `note!`/`warn!`/`debug!` must accept a `concat!(..)` template. The
     /// `:literal` matcher rejected this; `:expr` + proc-macro `concat!`
@@ -3004,7 +3004,7 @@ mod pretty_fmt_tests {
     //! `pretty_fmt_runtime`. Guards against the
     //! macro leaking raw `<r>`/`<b>` markup into help text.
     use super::{RESET, pretty_fmt_runtime};
-    use bun_core_macros::pretty_fmt;
+    use bun_macros::pretty_fmt;
 
     #[test]
     fn reset_tag_emits_ansi_or_nothing() {

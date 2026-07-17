@@ -1,5 +1,5 @@
 // Direct `extern "C"` re-exports of the Google Highway SIMD C++ helpers.
-// Per crate map: `bun.highway.*` → `bun_highway::*` (same C++ backing).
+// Per crate map: `bun.highway.*` → `bun_core::*` (same C++ backing).
 
 unsafe extern "C" {
     fn highway_char_frequency(text: *const u8, text_len: usize, freqs: *mut i32, delta: i32);

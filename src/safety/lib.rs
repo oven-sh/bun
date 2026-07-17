@@ -51,7 +51,7 @@ static KNOWN_ALLOC_LEN: AtomicUsize = AtomicUsize::new(0);
 /// registration is at least slot-safe (no clobber); a reader racing the
 /// `fetch_add → slot.store` window would see a null slot, which is a harmless
 /// no-match (`needle` is always a non-null vtable address).
-pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
+pub fn register_alloc_vtable(vtable: &'static bun_core::AllocatorVTable) {
     let p = std::ptr::from_ref(vtable) as *mut ();
     let i = KNOWN_ALLOC_LEN.fetch_add(1, Ordering::Relaxed);
     debug_assert!(
@@ -64,7 +64,7 @@ pub fn register_alloc_vtable(vtable: &'static bun_alloc::AllocatorVTable) {
 }
 
 #[inline]
-pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
+pub(crate) fn known_alloc_vtable(alloc: bun_core::StdAllocator) -> bool {
     let needle = std::ptr::from_ref(alloc.vtable) as *mut ();
     let n = KNOWN_ALLOC_LEN.load(Ordering::Relaxed).min(KNOWN_ALLOC_CAP);
     KNOWN_ALLOC_VTABLES[..n]
@@ -76,8 +76,8 @@ pub(crate) fn known_alloc_vtable(alloc: bun_alloc::StdAllocator) -> bool {
 /// (no registry needed for this one).
 #[cfg(debug_assertions)]
 #[inline]
-pub(crate) fn is_mimalloc_arena(alloc: bun_alloc::StdAllocator) -> bool {
-    bun_alloc::MimallocArena::is_instance(&alloc)
+pub(crate) fn is_mimalloc_arena(alloc: bun_core::StdAllocator) -> bool {
+    bun_core::MimallocArena::is_instance(&alloc)
 }
 
 /// Dump a captured trace via the T0 fallback (raw addresses / std::backtrace).

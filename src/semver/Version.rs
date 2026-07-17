@@ -3,10 +3,10 @@ use core::fmt;
 
 use bun_core::strings;
 
-use crate::ExternalString;
-use crate::SlicedString;
-use crate::String as SemverString;
-use crate::query::token::Wildcard;
+use crate::semver::ExternalString;
+use crate::semver::SlicedString;
+use crate::semver::String as SemverString;
+use crate::semver::query::token::Wildcard;
 
 pub type Version = VersionType<u64>;
 
@@ -196,7 +196,7 @@ impl<T: VersionInt> VersionType<T> {
 
     pub fn count<B>(&self, buf: &[u8], builder: &mut B)
     where
-        B: crate::StringBuilder,
+        B: crate::semver::StringBuilder,
     {
         if self.tag.has_pre() && !self.tag.pre.is_inline() {
             builder.count(self.tag.pre.slice(buf));
@@ -208,7 +208,7 @@ impl<T: VersionInt> VersionType<T> {
 
     pub fn append<B>(&self, buf: &[u8], builder: &mut B) -> Self
     where
-        B: crate::StringBuilder,
+        B: crate::semver::StringBuilder,
     {
         let mut that = *self;
 

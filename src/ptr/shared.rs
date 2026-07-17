@@ -2,12 +2,12 @@
 //!
 //! Per `docs/PORTING.md` §Pointers, the Rust port maps `bun.ptr.Shared(*T)` →
 //! `std::rc::Rc<T>` and `bun.ptr.AtomicShared(*T)` → `std::sync::Arc<T>` directly,
-//! and explicitly forbids introducing a custom `bun_ptr::Shared<T>` to shave the
+//! and explicitly forbids introducing a custom `bun_core::ptr::Shared<T>` to shave the
 //! weak-count header word ("4 uses tree-wide, 8 bytes per allocation is negligible,
 //! and you lose `Rc::downgrade`/`make_mut`/`get_mut`").
 //!
 //! This module therefore re-exports `Rc`/`Arc`/`Weak` under the legacy names so that
-//! mechanical `bun_ptr::shared::*` references resolve, and documents the 1:1 method
+//! mechanical `bun_core::ptr::shared::*` references resolve, and documents the 1:1 method
 //! mapping.
 
 use std::rc::Rc;

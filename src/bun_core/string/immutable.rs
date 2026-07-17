@@ -6,9 +6,9 @@ use core::ffi::c_int;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::AllocError;
-use bun_highway as highway;
-use bun_simdutf_sys::simdutf;
+use bun_core::AllocError;
+use bun_core::highway;
+use bun_core::simdutf;
 
 pub use self::unicode::{
     CodepointIterator, Cursor, NewCodePointIterator, UnsignedCodepointIterator, codepoint_size,
@@ -3059,7 +3059,7 @@ impl From<ToUTF16Error> for crate::CrateError {
     fn from(e: ToUTF16Error) -> Self {
         match e {
             ToUTF16Error::InvalidByteSequence => crate::CrateError::InvalidByteSequence,
-            ToUTF16Error::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
+            ToUTF16Error::OutOfMemory => crate::CrateError::Alloc(bun_core::AllocError),
         }
     }
 }

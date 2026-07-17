@@ -26,7 +26,7 @@ pub enum Error {
     #[error("WriteFailed")]
     WriteFailed,
     #[error(transparent)]
-    Alloc(#[from] bun_alloc::AllocError),
+    Alloc(#[from] bun_core::AllocError),
 }
 
 impl Error {

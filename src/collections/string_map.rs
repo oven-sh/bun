@@ -1,7 +1,7 @@
 //! A `StringArrayHashMap<Box<[u8]>>` plus a `dupe_keys` flag controlling
 //! whether `insert` clones the key bytes. Values are always cloned.
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 use crate::array_hash_map::StringArrayHashMap;
 

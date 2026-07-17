@@ -5,11 +5,11 @@ pub use error::{Error, Result};
 
 use core::cell::RefCell;
 
-use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
+use bun_core::collections::bit_set::{ArrayBitSet, num_masks_for};
 use bun_core::{self, fmt as bun_fmt};
 use bun_core::{String as BunString, Tag as BunStringTag, strings};
-use bun_paths::resolve_path::{self, platform};
-use bun_wyhash::hash as wyhash;
+use bun_core::paths::resolve_path::{self, platform};
+use bun_core::hash as wyhash;
 
 // `bun.schema.api.StringPointer` — canonical definition lives in `bun_core`
 // (T0, already a dep). Re-exported under `api::` so `QueryStringMap` /
@@ -191,7 +191,7 @@ pub mod whatwg {
     }
 }
 // Re-export the free helpers at crate root so lower-tier callers can write
-// `bun_url::join(...)` / `bun_url::href_from_string(...)` (install, http, bake, js_parser).
+// `bun_core::url::join(...)` / `bun_core::url::href_from_string(...)` (install, http, bake, js_parser).
 pub use whatwg::{
     file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
 };
@@ -329,8 +329,8 @@ impl<'a> URL<'a> {
     pub fn host_with_path(&self) -> &'a [u8] {
         if !self.host.is_empty() {
             if self.path.len() > 1
-                && bun_alloc::is_slice_in_buffer(self.path, self.href)
-                && bun_alloc::is_slice_in_buffer(self.host, self.href)
+                && bun_core::is_slice_in_buffer(self.path, self.href)
+                && bun_core::is_slice_in_buffer(self.host, self.href)
             {
                 let end = self.path.as_ptr() as usize + self.path.len();
                 let start = self.host.as_ptr() as usize;
@@ -359,10 +359,10 @@ impl<'a> URL<'a> {
 
     // Ownership: returns an `OwnedURL` that owns the buffer; callers borrow
     // via `.url()` and Drop frees it.
-    pub fn from_string(input: &BunString) -> crate::Result<OwnedURL> {
+    pub fn from_string(input: &BunString) -> crate::url::Result<OwnedURL> {
         let href = whatwg::href_from_string(input);
         if href.tag() == BunStringTag::Dead {
-            return Err(crate::Error::InvalidURL);
+            return Err(crate::url::Error::InvalidURL);
         }
         // `to_owned_slice` is infallible so explicit
         // ordering suffices (no error path between alloc and deref).
@@ -371,7 +371,7 @@ impl<'a> URL<'a> {
         Ok(OwnedURL { href: owned })
     }
 
-    pub fn from_utf8(input: &[u8]) -> crate::Result<OwnedURL> {
+    pub fn from_utf8(input: &[u8]) -> crate::url::Result<OwnedURL> {
         Self::from_string(&BunString::borrow_utf8(input))
     }
 
@@ -562,7 +562,7 @@ impl<'a> URL<'a> {
         dirname: &[u8],
         basename: &[u8],
         extname: &[u8],
-    ) -> crate::Result<()> {
+    ) -> crate::url::Result<()> {
         let mut out = Self::join_buf_uninit();
         let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
 
@@ -579,7 +579,7 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
         absolute_path: &[u8],
-    ) -> crate::Result<Box<[u8]>> {
+    ) -> crate::url::Result<Box<[u8]>> {
         let has_uplevels = strings::index_of(dirname, b"../").is_some();
 
         if has_uplevels {
@@ -923,7 +923,7 @@ impl Clone for QueryStringMap {
         // caller keeps alive (nothing-needs-decoding fast path).
         let self_slice = unsafe { &*self.slice };
         let slice =
-            if !self.buffer.is_empty() && bun_alloc::is_slice_in_buffer(self_slice, &self.buffer) {
+            if !self.buffer.is_empty() && bun_core::is_slice_in_buffer(self_slice, &self.buffer) {
                 let len = self_slice.len();
                 &raw const buffer[..len]
             } else {
@@ -1009,7 +1009,7 @@ impl QueryStringMap {
 
     pub fn init_with_scanner(
         mut scanner: CombinedScanner<'_>,
-    ) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
+    ) -> Result<Option<QueryStringMap>, bun_core::AllocError> {
         let mut list = ParamList::default();
 
         let mut estimated_str_len: usize = 0;
@@ -1149,7 +1149,7 @@ impl QueryStringMap {
         }))
     }
 
-    pub fn init(query_string: &[u8]) -> Result<Option<QueryStringMap>, bun_alloc::AllocError> {
+    pub fn init(query_string: &[u8]) -> Result<Option<QueryStringMap>, bun_core::AllocError> {
         let mut list = ParamList::default();
 
         let mut scanner = Scanner::init(query_string);
@@ -1270,7 +1270,7 @@ impl QueryStringMap {
 }
 
 // Browsers typically limit URL lengths to around 64k
-// bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
+// bun_core::collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
 // pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 /// Hard cap on parsed query-string parameters, enforced in `init` /
 /// `init_with_scanner` so the fixed-size `VisitedMap` bitset is never indexed
@@ -1377,11 +1377,11 @@ impl From<bun_core::Error> for DecodeError {
         DecodeError::Write(e)
     }
 }
-impl From<DecodeError> for crate::Error {
+impl From<DecodeError> for crate::url::Error {
     fn from(e: DecodeError) -> Self {
         match e {
-            DecodeError::DecodingError => crate::Error::DecodingError,
-            DecodeError::Write(inner) => crate::Error::Core(inner),
+            DecodeError::DecodingError => crate::url::Error::DecodingError,
+            DecodeError::Write(inner) => crate::url::Error::Core(inner),
         }
     }
 }

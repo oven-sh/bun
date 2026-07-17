@@ -257,7 +257,7 @@ impl<T> DoublyLinkedList<T> {
 
 // Canonical impl lives in the leaf `bun_hash` crate; re-export so the
 // historical `crate::deprecated::RapidHash` path keeps resolving.
-pub use bun_hash::RapidHash;
+pub use bun_core::RapidHash;
 
 // ──────────────────────────────────────────────────────────────────────────
 // tests
@@ -401,5 +401,5 @@ mod tests {
         }
     }
 
-    // RapidHash test vectors live alongside the canonical impl in `bun_hash::rapidhash`.
+    // RapidHash test vectors live alongside the canonical impl in `bun_core::rapidhash`.
 }

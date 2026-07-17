@@ -56,13 +56,13 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // Canonical layout lives in `bun_alloc` (T0 TYPE_ONLY landing for
 // `bun.String`); re-exported so existing `bun_core::{Tag, StringImpl}` paths
 // keep working. `String` is a `#[repr(transparent)]` newtype over
-// `bun_alloc::String` so the FFI layout has ONE source of truth while this
+// `bun_core::alloc_impl::String` so the FFI layout has ONE source of truth while this
 // crate retains its inherent impl block (toJS/toUTF8/WTF refcounting).
-pub use bun_alloc::{StringImpl, Tag};
+pub use bun_core::alloc_impl::{StringImpl, Tag};
 
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct String(pub bun_alloc::String);
+pub struct String(pub bun_core::alloc_impl::String);
 
 // C++ mirror: `struct BunString { BunStringTag tag; BunStringImpl impl; }`
 // (`headers-handwritten.h`); returned **by value** from every `BunString__*`
@@ -110,8 +110,8 @@ pub(crate) type ExternalStringImplFreeFunction<Ctx> =
     extern "C" fn(ctx: Ctx, buffer: *mut core::ffi::c_void, len: usize);
 
 impl String {
-    pub const EMPTY: Self = Self(bun_alloc::String::EMPTY);
-    pub const DEAD: Self = Self(bun_alloc::String::DEAD);
+    pub const EMPTY: Self = Self(bun_core::alloc_impl::String::EMPTY);
+    pub const DEAD: Self = Self(bun_core::alloc_impl::String::DEAD);
 
     #[inline]
     pub const fn empty() -> Self {
@@ -126,12 +126,12 @@ impl String {
         self.0.tag
     }
 
-    /// Wrap a `bun_core::ZigString` under `tag`. Converts to the
-    /// layout-identical `bun_alloc::ZigString` for storage in the canonical
+    /// Wrap a `bun_core::alloc_impl::ZigString` under `tag`. Converts to the
+    /// layout-identical `bun_core::alloc_impl::ZigString` for storage in the canonical
     /// union (both `#[repr(C)] { *const u8, usize }`, same tag-bit scheme).
     #[inline(always)]
     fn wrap_zig(tag: Tag, z: ZigString) -> Self {
-        Self(bun_alloc::String {
+        Self(bun_core::alloc_impl::String {
             tag,
             value: StringImpl { zig_string: z.0 },
         })
@@ -145,7 +145,7 @@ impl String {
         debug_assert!(matches!(self.0.tag, Tag::ZigString | Tag::StaticZigString));
         // SAFETY: `tag` is `ZigString`/`StaticZigString` ⇒ `zig_string` is the
         // active union field. `ZigString` is `Copy`/POD so reading it is always
-        // sound. `ZigString` is `#[repr(transparent)]` over `bun_alloc::ZigString`.
+        // sound. `ZigString` is `#[repr(transparent)]` over `bun_core::alloc_impl::ZigString`.
         unsafe { &*core::ptr::addr_of!(self.0.value.zig_string).cast::<ZigString>() }
     }
 
@@ -202,10 +202,10 @@ impl String {
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
         // No UTF-8 mark on the static path.
-        Self(bun_alloc::String {
+        Self(bun_core::alloc_impl::String {
             tag: Tag::StaticZigString,
             value: StringImpl {
-                zig_string: bun_alloc::ZigString::init(s.as_ref()),
+                zig_string: bun_core::alloc_impl::ZigString::init(s.as_ref()),
             },
         })
     }
@@ -464,7 +464,7 @@ impl String {
         if wtf.is_null() {
             return Self::EMPTY;
         }
-        Self(bun_alloc::String {
+        Self(bun_core::alloc_impl::String {
             tag: Tag::WTFStringImpl,
             value: StringImpl {
                 wtf_string_impl: wtf,
@@ -514,7 +514,7 @@ impl String {
     pub fn debug_assert_thread_safe(&self) {
         debug_assert!(
             self.is_thread_safe(),
-            "bun_core::String crosses thread boundary with non-thread-safe \
+            "bun_core::alloc_impl::String crosses thread boundary with non-thread-safe \
              WTF::StringImpl (non-atomic refcount); call `to_thread_safe()` first"
         );
     }
@@ -1198,7 +1198,7 @@ impl From<WTFStringImpl> for String {
     #[inline]
     fn from(wtf: WTFStringImpl) -> Self {
         debug_assert!(!wtf.is_null());
-        Self(bun_alloc::String {
+        Self(bun_core::alloc_impl::String {
             tag: Tag::WTFStringImpl,
             value: StringImpl {
                 wtf_string_impl: wtf,
@@ -1386,7 +1386,7 @@ impl core::fmt::Display for ZigString {
 
 // ──────────────────────────────────────────────────────────────────────────
 // `ZigString` — `#[repr(transparent)]` newtype over the canonical T0
-// `bun_alloc::ZigString` (`{ ptr: *const u8, len: usize }` with flag bits in
+// `bun_core::alloc_impl::ZigString` (`{ ptr: *const u8, len: usize }` with flag bits in
 // the POINTER's high byte). The pointer-tag accessors / `slice` /
 // `utf16_slice_aligned` are reached via `Deref`; this crate adds the
 // encoding-aware + allocating methods (`to_slice`, `to_owned_slice`, `eql`,
@@ -1394,10 +1394,10 @@ impl core::fmt::Display for ZigString {
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct ZigString(pub bun_alloc::ZigString);
+pub struct ZigString(pub bun_core::alloc_impl::ZigString);
 
 impl core::ops::Deref for ZigString {
-    type Target = bun_alloc::ZigString;
+    type Target = bun_core::alloc_impl::ZigString;
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -1424,24 +1424,24 @@ impl Default for ZigString {
 }
 
 impl ZigString {
-    pub const EMPTY: Self = Self(bun_alloc::ZigString::EMPTY);
+    pub const EMPTY: Self = Self(bun_core::alloc_impl::ZigString::EMPTY);
 
     /// Construct from an already-tagged pointer + length pair. `ptr` is stored
     /// verbatim — tag bits are not touched.
     #[inline]
     pub const fn from_tagged_ptr(ptr: *const u8, len: usize) -> Self {
-        Self(bun_alloc::ZigString::from_tagged_ptr(ptr, len))
+        Self(bun_core::alloc_impl::ZigString::from_tagged_ptr(ptr, len))
     }
 
     #[inline]
     pub const fn init(s: &[u8]) -> Self {
-        Self(bun_alloc::ZigString::init(s))
+        Self(bun_core::alloc_impl::ZigString::init(s))
     }
     /// [`init`](Self::init) for `'static` literals — alias for callers
     /// spelling it `init_static`.
     #[inline]
     pub const fn init_static(s: &'static [u8]) -> Self {
-        Self(bun_alloc::ZigString::init(s))
+        Self(bun_core::alloc_impl::ZigString::init(s))
     }
     /// `ZigString.fromUTF8` — alias of [`init_utf8`].
     #[inline]
@@ -1481,7 +1481,7 @@ impl ZigString {
     /// `ZigString.initUTF16` — borrow UTF-16 code units (sets the 16-bit ptr-tag).
     #[inline]
     pub fn init_utf16(s: &[u16]) -> Self {
-        Self(bun_alloc::ZigString::init_utf16(s))
+        Self(bun_core::alloc_impl::ZigString::init_utf16(s))
     }
 
     /// `ZigString.from16Slice` — wraps a globally-allocated UTF-16 buffer
@@ -1524,7 +1524,7 @@ impl ZigString {
     /// Generic over `str`/`[u8]` so either `"lit"` or `b"lit"` is accepted.
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(slice: &'static S) -> Self {
-        Self(bun_alloc::ZigString::init(slice.as_ref()))
+        Self(bun_core::alloc_impl::ZigString::init(slice.as_ref()))
     }
     /// Alias of `static_` for callers that spell it `static_str`.
     #[inline]
@@ -1545,7 +1545,7 @@ impl ZigString {
         // Latin-1 path: simdutf utf8-from-latin1 length.
         let s = self.slice();
         // SAFETY: s describes a valid byte slice.
-        unsafe { bun_simdutf_sys::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
+        unsafe { bun_core::simdutf::simdutf__utf8_length_from_latin1(s.as_ptr(), s.len()) }
     }
 
     /// `ZigString.utf16ByteLength` — number of bytes the UTF-16LE encoding of
@@ -1555,7 +1555,7 @@ impl ZigString {
             let s = self.slice();
             // SAFETY: s describes a valid byte slice.
             return unsafe {
-                bun_simdutf_sys::simdutf::simdutf__utf16_length_from_utf8(s.as_ptr(), s.len())
+                bun_core::simdutf::simdutf__utf16_length_from_utf8(s.as_ptr(), s.len())
             } * 2;
         }
         if self.is_16bit() {
@@ -1730,7 +1730,7 @@ impl ZigString {
     pub fn deinit_global(&self) {
         // SAFETY: caller guarantees `slice()` was allocated by the default (global) allocator.
         unsafe {
-            bun_alloc::default_alloc::free(
+            bun_core::default_alloc::free(
                 self.slice().as_ptr().cast_mut().cast::<core::ffi::c_void>(),
             )
         };
@@ -1829,7 +1829,7 @@ impl ZigString {
 
     #[inline]
     pub fn untagged(ptr: *const u8) -> *const u8 {
-        bun_alloc::ZigString::untagged(ptr)
+        bun_core::alloc_impl::ZigString::untagged(ptr)
     }
     /// `ZigString.utf16Slice` — alias of [`utf16_slice_aligned`] (reached via
     /// `Deref`). Kept for port-diff parity with callers spelling it without

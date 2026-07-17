@@ -736,7 +736,7 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     )
 }
 
-pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_alloc::AllocError> {
+pub fn relative_alloc(from: &[u8], to: &[u8]) -> Result<Box<[u8]>, bun_core::AllocError> {
     let result = relative_platform::<platform::Auto, false>(from, to);
     Ok(Box::<[u8]>::from(result))
 }
@@ -1653,7 +1653,7 @@ pub(crate) fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(
 /// when the concatenation would overflow a single `PathBuffer`. The pooled
 /// buffer is not re-zeroed — callers write every byte they later read.
 enum JoinScratch {
-    Pooled(crate::path_buffer_pool::Guard),
+    Pooled(crate::paths::path_buffer_pool::Guard),
     Heap(Vec<u8>),
 }
 
@@ -1665,7 +1665,7 @@ impl JoinScratch {
             total += p.len() + 1;
         }
         if total <= MAX_PATH_BYTES {
-            JoinScratch::Pooled(crate::path_buffer_pool::get())
+            JoinScratch::Pooled(crate::paths::path_buffer_pool::get())
         } else {
             JoinScratch::Heap(vec![0u8; total])
         }
@@ -1967,7 +1967,7 @@ fn _join_abs_string_buf_windows<'a, const IS_SENTINEL: bool>(
 }
 
 // Separator predicates live in T0 `bun_core::path_sep`; re-export the full set
-// so existing `bun_paths::is_sep_*` callers are unchanged.
+// so existing `bun_core::paths::is_sep_*` callers are unchanged.
 pub use bun_core::path_sep::{
     is_sep_any, is_sep_any_t, is_sep_native, is_sep_native_t, is_sep_posix_t, is_sep_win32_t,
 };
@@ -2207,7 +2207,7 @@ impl PosixToWinNormalizer {
     }
 
     #[inline]
-    pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::Result<&'a [u8]> {
+    pub fn resolve_cwd<'a>(&'a mut self, maybe_posix_path: &'a [u8]) -> crate::paths::Result<&'a [u8]> {
         Self::resolve_cwd_with_external_buf(&mut self._raw_bytes, maybe_posix_path)
     }
 
@@ -2216,7 +2216,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_z<'a>(
         &'a mut self,
         maybe_posix_path: &'a [u8],
-    ) -> crate::Result<&'a mut ZStr> {
+    ) -> crate::paths::Result<&'a mut ZStr> {
         Self::resolve_cwd_with_external_buf_z(&mut self._raw_bytes, maybe_posix_path)
     }
     // On posix `_raw_bytes` is `()` so `resolve_cwd_z` is windows-only.
@@ -2311,7 +2311,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf<'a>(
         buf: &'a mut PosixToWinBuf,
         maybe_posix_path: &'a [u8],
-    ) -> crate::Result<&'a [u8]> {
+    ) -> crate::paths::Result<&'a [u8]> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2335,7 +2335,7 @@ impl PosixToWinNormalizer {
                     // combination can't exist on NT anyway, so error out
                     // instead of writing past a buffer.
                     if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2359,7 +2359,7 @@ impl PosixToWinNormalizer {
     pub fn resolve_cwd_with_external_buf_z<'a>(
         buf: &'a mut PathBuffer,
         maybe_posix_path: &[u8],
-    ) -> crate::Result<&'a mut ZStr> {
+    ) -> crate::paths::Result<&'a mut ZStr> {
         debug_assert!(crate::is_absolute_windows(maybe_posix_path));
 
         #[cfg(windows)]
@@ -2378,7 +2378,7 @@ impl PosixToWinNormalizer {
                     // can't exist on NT anyway, so error out instead of
                     // writing past it.
                     if sr_len + maybe_posix_path.len() > buf.len() {
-                        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2401,7 +2401,7 @@ impl PosixToWinNormalizer {
         }
 
         if maybe_posix_path.len() + 1 > buf.len() {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENAMETOOLONG));
         }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;

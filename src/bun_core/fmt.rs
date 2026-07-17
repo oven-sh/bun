@@ -361,7 +361,7 @@ impl<const SHORT: bool> Display for IntegrityFormatter<SHORT> {
         const BUF_LEN: usize = SHA512_DIGEST.div_ceil(3) * 4;
         let mut buf = [0u8; BUF_LEN];
         let count =
-            bun_simdutf_sys::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
+            bun_core::simdutf::base64::encode(&self.bytes[..SHA512_DIGEST], &mut buf, false);
         let encoded = &buf[..count];
         if SHORT {
             write!(
@@ -592,7 +592,7 @@ impl Display for DebugUTF32PathFormatter<'_> {
         let buf = path_buf.as_mut_slice();
         // SAFETY: FFI reads exactly path.len() u32s and writes ≤ MAX_PATH_BYTES bytes.
         let result = unsafe {
-            bun_simdutf_sys::simdutf::simdutf__convert_utf32_to_utf8_with_errors(
+            bun_core::simdutf::simdutf__convert_utf32_to_utf8_with_errors(
                 self.path.as_ptr(),
                 self.path.len(),
                 buf.as_mut_ptr(),
@@ -749,7 +749,7 @@ pub const fn raw(bytes: &[u8]) -> Raw<'_> {
 // `bun_alloc` so that crate can use them too; re-exported here for the
 // `bun_core::fmt::` callers and extended with an `io::Write` face so the same
 // struct also serves as a fixed-buffer write sink for write-only sites.
-pub use bun_alloc::{SliceCursor, buf_print, buf_print_len};
+pub use bun_core::{SliceCursor, buf_print, buf_print_len};
 
 impl crate::io::Write for SliceCursor<'_> {
     #[inline]
@@ -2464,7 +2464,7 @@ pub fn count(args: fmt::Arguments<'_>) -> usize {
     // Implementation sunk to T0 so `bun_alloc` (which sits below `bun_core`)
     // can share it; this stays as the canonical higher-tier entry point so
     // existing `bun_core::fmt::count` / `bun_fmt::count` callers are unchanged.
-    bun_alloc::fmt_count(args)
+    bun_core::fmt_count(args)
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3519,7 +3519,7 @@ impl<'a> OutOfRangeValue for &'a [u8] {
     }
 }
 // MOVE_DOWN: bun_core::String → bun_alloc (T0). Re-import from there.
-impl OutOfRangeValue for bun_alloc::String {
+impl OutOfRangeValue for bun_core::alloc_impl::String {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, " Received {}", self)
     }
@@ -3575,7 +3575,7 @@ impl<T: OutOfRangeValue> Display for NewOutOfRangeFormatter<'_, T> {
 pub type DoubleOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, f64>;
 pub type IntOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, i64>;
 pub type StringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, &'a [u8]>;
-pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_alloc::String>;
+pub type BunStringOutOfRangeFormatter<'a> = NewOutOfRangeFormatter<'a, bun_core::alloc_impl::String>;
 
 #[derive(Copy, Clone)]
 pub struct OutOfRangeOptions<'a> {

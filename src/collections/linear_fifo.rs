@@ -5,7 +5,7 @@ use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
 use core::ptr;
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 // 4096 is the conservative minimum page size on every platform Bun ships on.
 const PAGE_SIZE_MIN: usize = 4096;

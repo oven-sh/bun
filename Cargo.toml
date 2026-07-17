@@ -2,7 +2,6 @@
 resolver = "2"
 members = [
   "src/opaque",
-  "src/analytics",
   "src/api",
   "src/base64",
   "src/bundler",
@@ -17,7 +16,6 @@ members = [
   "src/io",
   "src/libarchive",
   "src/md",
-  "src/paths",
   "src/resolver",
   "src/safety",
   "src/semver",
@@ -65,7 +63,6 @@ members = [
   "src/perf",
   "src/resolve_builtins",
   "src/sourcemap_jsc",
-  "src/url",
   "src/windows_sys",
   "src/jsc",
   "src/jsc_macros",
@@ -351,7 +348,7 @@ itoa = "1"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
-bun_analytics = { path = "src/analytics" }
+bun_analytics = { path = "src/bun_core", package = "bun_core" }
 bun_api = { path = "src/api" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
@@ -365,7 +362,7 @@ bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
 bun_libarchive = { path = "src/libarchive" }
 bun_md = { path = "src/md" }
-bun_paths = { path = "src/paths" }
+bun_paths = { path = "src/bun_core", package = "bun_core" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
 bun_semver = { path = "src/semver" }
@@ -408,12 +405,13 @@ bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
 bun_zlib_sys = { path = "src/zlib_sys" }
 bun_dispatch = { path = "src/dispatch" }
+bun_macros = { path = "src/macros" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
 bun_perf = { path = "src/perf" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
-bun_url = { path = "src/url" }
+bun_url = { path = "src/bun_core", package = "bun_core" }
 bun_windows_sys = { path = "src/windows_sys" }
 bun_jsc = { path = "src/jsc" }
 bun_jsc_macros = { path = "src/jsc_macros" }

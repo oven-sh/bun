@@ -1,4 +1,4 @@
-use bun_wyhash::hash;
+use bun_core::hash;
 
 // Clone/Copy: bitwise OK — `ptr` borrows the caller-owned string passed to
 // `init`; `HashedString` is a non-owning (ptr,len,hash) view.

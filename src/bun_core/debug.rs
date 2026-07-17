@@ -168,7 +168,7 @@ impl Drop for MemoryAccessor {
 }
 
 fn is_valid_memory(address: usize) -> bool {
-    let page_size = bun_alloc::page_size();
+    let page_size = bun_core::page_size();
     let aligned_address = address & !(page_size - 1);
     if aligned_address == 0 {
         return false;

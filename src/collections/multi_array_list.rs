@@ -53,7 +53,7 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use core::ptr::{self, NonNull};
 use std::alloc::{Allocator, Global};
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 /// Declares typed column-accessor extension traits for a `MultiArrayList<$T>`
 /// element struct.

@@ -2,12 +2,9 @@
 // depend on; importing either to satisfy the disallowed-types lint would create
 // a dependency cycle.
 #![allow(clippy::disallowed_types)]
+#![allow(unused_attributes)]
 #![feature(arbitrary_self_types_pointers)]
 #![feature(allocator_api)]
-// `#[thread_local]` (vs the `thread_local!` macro) compiles to a bare
-// `__thread` slot — single `mov reg, fs:[OFFSET]` access, no `LocalKey`
-// `__getit()` wrapper, no lazy-init flag check, no dtor-registration probe.
-// Used for the per-allocation hot-path TLS in `ast_alloc::AST_ALLOC`.
 #![feature(thread_local)]
 
 use core::fmt::Write as _;
@@ -20,7 +17,7 @@ use std::collections::HashMap;
 // Re-exports
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_mimalloc_sys::mimalloc;
+pub use bun_core::mimalloc;
 pub mod c_thunks;
 
 // ── Allocator vtable ───────────────────────────────────────────────────────
@@ -318,12 +315,12 @@ pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
 
 // ── Allocator-vtable modules: per-module disposition (PORTING.md §Allocators) ──
 //
-//   MimallocArena            → prefer `bun_alloc::Arena` (= bumpalo::Bump)
+//   MimallocArena            → prefer `bun_core::Arena` (= bumpalo::Bump)
 //   NullableAllocator        → prefer `Option<&Arena>` or drop the param
 //   MaxHeapAllocator         → debug-only cap (single-allocation arena)
 //   BufferFallbackAllocator  → PORTING.md "StackFallbackAllocator → just use the heap"
 //   fallback                 → libc-malloc + zeroing wrapper
-//   maybe_owned              → prefer `std::borrow::Cow` / `bun_ptr::Owned`
+//   maybe_owned              → prefer `std::borrow::Cow` / `bun_core::ptr::Owned`
 //   heap_breakdown           → macOS malloc_zone_* per-tag heaps (debug builds)
 //   basic                    → `impl GlobalAlloc for Mimalloc` above is the canonical impl
 //
@@ -520,15 +517,15 @@ pub use allocator_api2::alloc::Allocator as HashbrownAllocator;
 
 // ── tier-0 local primitives ───────────────────────────────────────────────
 // Real, self-contained helpers used by the BSS containers below. These are the
-// canonical tier-0 definitions, re-exported by higher tiers (`bun_paths::SEP_STR`,
+// canonical tier-0 definitions, re-exported by higher tiers (`bun_core::paths::SEP_STR`,
 // `bun_core::strings::trim_right`, `bun_core::strings::trim_right`).
 
 /// `"\\"` on Windows, `"/"` elsewhere.
-/// Canonical tier-0 definition; re-exported by `bun_paths::SEP_STR`.
+/// Canonical tier-0 definition; re-exported by `bun_core::paths::SEP_STR`.
 pub const SEP_STR: &str = if cfg!(windows) { "\\" } else { "/" };
 
 /// `b'\\'` on Windows, `b'/'` elsewhere.
-/// Canonical tier-0 definition; re-exported by `bun_paths::SEP` / `bun_core::SEP`.
+/// Canonical tier-0 definition; re-exported by `bun_core::paths::SEP` / `bun_core::SEP`.
 pub const SEP: u8 = if cfg!(windows) { b'\\' } else { b'/' };
 
 /// Canonical tier-0 definition; re-exported by `bun_core::strings::trim_right`.
@@ -559,7 +556,7 @@ pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
 }
 
 // ─── ascii-lowercase helpers ──────────────────────────────────────────────
-// Sunk from bun_core::strings so bun_alloc::BSSList::append_lower_case can call
+// Sunk from bun_core::strings so bun_core::BSSList::append_lower_case can call
 // them without a dep cycle (bun_core → bun_alloc, not the reverse).
 // `bun_core::strings` re-exports `copy_lowercase` and `ascii_lowercase_buf`.
 
@@ -716,7 +713,7 @@ impl Mutex {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // SAFETY: lifetime extension only — `std::sync::MutexGuard<'a, ()>` and
-        // `<'static, ()>` have identical layout. Every `bun_alloc::Mutex` lives
+        // `<'static, ()>` have identical layout. Every `bun_core::Mutex` lives
         // in a `'static` BSS singleton, so the inner `&Mutex` the guard holds
         // is in fact valid for `'static`.
         let _guard = unsafe {
@@ -740,7 +737,7 @@ impl Default for Mutex {
     }
 }
 
-// Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_alloc::AllocError>`.
+// Per PORTING.md type map: `OOM!T` / `error{OutOfMemory}!T` → `Result<T, bun_core::AllocError>`.
 // This is the crate root, so define it here. Re-exported as `bun_core::OOM`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct AllocError;
@@ -775,7 +772,7 @@ macro_rules! oom_from_alloc {
 /// The mimalloc-backed `#[global_allocator]` payload.
 ///
 /// Per PORTING.md "Prereq for every crate":
-/// `#[global_allocator] static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;`
+/// `#[global_allocator] static ALLOC: bun_core::Mimalloc = bun_core::Mimalloc;`
 /// must be set at the binary root before any `Box`/`Rc`/`Arc`/`Vec` mapping is valid.
 ///
 /// Uses mimalloc's
@@ -996,7 +993,7 @@ pub const ZS_UNTAG_MASK: usize = (1usize << 53) - 1;
 /// source of truth) and adds the encoding-aware/allocating methods via
 /// `Deref`/`DerefMut`. The pointer-tag accessors (`is_*` / `mark_*` /
 /// `untagged` / `slice` / `utf16_slice_aligned`) live HERE so the T0
-/// `bun_alloc::String` union and `WTFStringImplStruct::to_zig_string` can use
+/// `bun_core::String` union and `WTFStringImplStruct::to_zig_string` can use
 /// them without an upward dep on `bun_core`. Higher-tier callers should name
 /// `bun_core::ZigString`; reaching the inherent methods through `Deref` is the
 /// intended path.
@@ -1740,8 +1737,8 @@ pub enum ItemStatus {
 // ──────────────────────────────────────────────────────────────────────────
 // `allocators` namespace shim
 //
-// Downstream crates use the `bun_alloc::allocators` path
-// (`use bun_alloc::allocators;`). Re-export the crate root
+// Downstream crates use the `bun_core::allocators` path
+// (`use bun_core::allocators;`). Re-export the crate root
 // so `allocators::IndexType`, `allocators::BSSMapInner`, etc. resolve without
 // rewriting every callsite.
 // ──────────────────────────────────────────────────────────────────────────
@@ -2088,7 +2085,7 @@ pub struct IdentityU64Hasher(u64);
 impl core::hash::Hasher for IdentityU64Hasher {
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
-        self.0 = bun_wyhash::hash_with_seed(self.0, bytes);
+        self.0 = bun_core::hash_with_seed(self.0, bytes);
     }
     #[inline]
     fn write_u64(&mut self, n: u64) {
@@ -3109,7 +3106,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         } else {
             denormalized_key
         };
-        bun_wyhash::hash(key)
+        bun_core::hash(key)
     }
 
     pub fn get_or_put(
@@ -3484,7 +3481,7 @@ impl<
 //   - AST crates: thread `&'bump bumpalo::Bump` (= `Arena`) directly.
 //
 // The trait below is kept ONLY as an empty marker so downstream code that
-// still says `&dyn bun_alloc::Allocator` continues to parse. Do not implement
+// still says `&dyn bun_core::Allocator` continues to parse. Do not implement
 // it; do not add methods. Callers should be rewritten to drop the param
 // entirely.
 

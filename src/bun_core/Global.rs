@@ -744,7 +744,7 @@ pub struct AllocatorConfiguration {
 pub fn mimalloc_cleanup(force: bool) {
     if USE_MIMALLOC {
         // `mi_collect` is declared `safe fn` in `bun_mimalloc_sys` (no preconditions).
-        bun_alloc::mimalloc::mi_collect(force);
+        bun_core::mimalloc::mi_collect(force);
     }
 }
 // Versions are now handled by build-generated header (bun_dependency_versions.h)

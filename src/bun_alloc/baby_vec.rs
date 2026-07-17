@@ -232,7 +232,7 @@ impl<'a, T> BabyVec<'a, T> {
     }
 
     /// Bitwise-move all elements from `src` to the *front* of `self`, leaving
-    /// `src` empty. Mirrors `bun_collections::prepend_from` for `Vec`.
+    /// `src` empty. Mirrors `bun_core::collections::prepend_from` for `Vec`.
     pub fn prepend_from(&mut self, src: &mut Self) {
         let src_len = src.len as usize;
         if src_len == 0 {

@@ -34,7 +34,7 @@ use core::mem;
 use core::ptr;
 use core::slice;
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 // ───────────────────────────── helpers ─────────────────────────────
 
@@ -1485,7 +1485,7 @@ impl AutoBitSet {
     }
 
     pub fn hash(&self) -> u64 {
-        bun_wyhash::hash(self.raw_bytes())
+        bun_core::hash(self.raw_bytes())
     }
 
     pub fn for_each<Ctx>(&self, ctx: &mut Ctx, function: fn(&mut Ctx, usize)) {

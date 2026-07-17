@@ -2,7 +2,7 @@
 //! units. Replaces per-crate re-definitions of the same abstraction.
 //!
 //! Tier-0: depends only on `bun_core`. Higher crates **extend** this trait
-//! (`bun_paths::PathUnit`, `bun_sys::make_path::MakePathUnit`,
+//! (`bun_core::paths::PathUnit`, `bun_sys::make_path::MakePathUnit`,
 //! `bun_runtime::node::path::PathCharCwd`, `bun_core::Ch`) — they never
 //! redefine the core surface.
 

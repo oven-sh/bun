@@ -3,9 +3,9 @@ use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 use std::sync::OnceLock;
 
 use bun_core::env_var;
-use bun_semver as semver;
+use bun_core::semver as semver;
 
-use crate::schema::analytics;
+use crate::analytics::schema::analytics;
 
 #[cfg(target_os = "macos")]
 use bun_core::slice_to_nul;

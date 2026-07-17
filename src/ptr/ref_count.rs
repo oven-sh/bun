@@ -14,7 +14,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_core::StoredTrace;
 use bun_core::ThreadLock;
 
-// was `bun_collections::{ArrayHashMap, HashMap}` (T1 → upward).
+// was `bun_core::collections::{ArrayHashMap, HashMap}` (T1 → upward).
 // Debug-only diagnostic storage; std HashMap drops insertion order for `frees`
 // which is acceptable for leak reports.
 #[cfg(debug_assertions)]

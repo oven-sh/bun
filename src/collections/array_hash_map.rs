@@ -24,11 +24,11 @@ use std::alloc::Global;
 // See workspace `Cargo.toml` hashbrown comment + `bun_alloc/hashbrown_bridge.rs`
 // for why `StringHashMap`'s `A` must implement *both* allocator traits and why
 // the default is `DefaultAlloc` rather than `std::alloc::Global`.
-use bun_alloc::{DefaultAlloc, HashbrownAllocator};
+use bun_core::{DefaultAlloc, HashbrownAllocator};
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions
@@ -37,7 +37,7 @@ use bun_alloc::AllocError;
 /// wyhash(seed=0) truncated to u32.
 #[inline]
 pub fn hash_string(s: &[u8]) -> u32 {
-    bun_wyhash::hash(s) as u32
+    bun_core::hash(s) as u32
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -104,7 +104,7 @@ pub struct CaseInsensitiveAsciiStringContext;
 
 impl CaseInsensitiveAsciiStringContext {
     pub fn hash_bytes(s: &[u8]) -> u32 {
-        bun_wyhash::hash_ascii_lowercase(0, s) as u32 // @truncate
+        bun_core::hash_ascii_lowercase(0, s) as u32 // @truncate
     }
 
     /// Precompute the case-folded hash of `input` so repeated probes against
@@ -240,7 +240,7 @@ impl<'a, K, V> Iterator for Iter<'a, K, V> {
     }
 }
 
-/// Extension surface dependents name as `bun_collections::ArrayHashMapExt` so
+/// Extension surface dependents name as `bun_core::collections::ArrayHashMapExt` so
 /// they can spell the iterator type generically (`<M as ArrayHashMapExt>::Iterator`).
 pub trait ArrayHashMapExt {
     type Key;
@@ -616,7 +616,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 
     /// Insert/replace using an externally-supplied
     /// hash/eql context instead of the stored `C`. Used when `C = AutoContext`
-    /// can't satisfy `K: Hash` (e.g. `bun_semver::String`, whose hash needs the
+    /// can't satisfy `K: Hash` (e.g. `bun_core::semver::String`, whose hash needs the
     /// owning `arg_buf`/`existing_buf`). Takes closures rather than an
     /// `ArrayHashAdapter` so callers with inherent-method contexts (no trait
     /// impl, by-value receivers) don't need a wrapper struct.
@@ -775,7 +775,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 
     /// Index lookup for callers whose context is an inherent-method
     /// struct (no `ArrayHashAdapter` impl). Takes the precomputed `u32` hash
-    /// plus an `eql` closure so e.g. `bun_semver::String::ArrayHashContext`
+    /// plus an `eql` closure so e.g. `bun_core::semver::String::ArrayHashContext`
     /// (which needs `arg_buf`/`existing_buf`) can drive a `&self` lookup.
     #[inline]
     pub fn get_index_adapted_raw<F: Fn(&K, usize) -> bool>(&self, h: u32, eq: F) -> Option<usize> {
@@ -1176,7 +1176,7 @@ impl<K, V, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, C, A> {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// std-HashMap-compat entry. Named `MapEntry` (not `Entry`) to avoid clashing
-/// with the iterator `Entry` above; re-exported as `bun_collections::hash_map::Entry`.
+/// with the iterator `Entry` above; re-exported as `bun_core::collections::hash_map::Entry`.
 pub enum MapEntry<'a, K, V, C, A: MapAllocator = Global> {
     Occupied(OccupiedEntry<'a, K, V, C, A>),
     Vacant(VacantEntry<'a, K, V, C, A>),
@@ -1557,7 +1557,7 @@ impl<V, C, A: MapAllocator> ArrayHashMapExt for StringArrayHashMap<V, C, A> {
 /// reachable via `Deref`.
 ///
 /// Allocator-generic so AST containers (`Scope::members` &c.) can route both
-/// the table *and* the owned-key boxes through `bun_alloc::AstAlloc`,
+/// the table *and* the owned-key boxes through `bun_core::AstAlloc`,
 /// so the map's backing store lives
 /// in the same arena as the AST nodes that hold it. The `A = Global` default
 /// keeps every existing `StringHashMap<V>` site source-compatible.
@@ -1573,13 +1573,13 @@ impl<V, C, A: MapAllocator> ArrayHashMapExt for StringArrayHashMap<V, C, A> {
 // loosen the bound there.
 #[derive(Clone)]
 pub struct StringHashMap<V, A: Allocator + HashbrownAllocator + Clone + Default = DefaultAlloc> {
-    inner: hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>,
+    inner: hashbrown::HashMap<StringHashMapKey<A>, V, bun_core::BuildHasher, A>,
 }
 
 /// Public alias for the underlying `hashbrown` map so downstream signatures
 /// (and `Deref::Target`) don't repeat the four-argument spelling.
 pub type StringHashMapInner<V, A = DefaultAlloc> =
-    hashbrown::HashMap<StringHashMapKey<A>, V, bun_wyhash::BuildHasher, A>;
+    hashbrown::HashMap<StringHashMapKey<A>, V, bun_core::BuildHasher, A>;
 
 /// Key stored in `StringHashMap`. Either an owned heap copy (`Owned`, the
 /// default produced by `put`/`get_or_put`) or a borrowed `&'static [u8]`
@@ -1781,7 +1781,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> Default for StringH
     fn default() -> Self {
         Self {
             inner: hashbrown::HashMap::with_hasher_in(
-                bun_wyhash::BuildHasher::default(),
+                bun_core::BuildHasher::default(),
                 A::default(),
             ),
         }
@@ -1846,7 +1846,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
         Self {
             inner: hashbrown::HashMap::with_capacity_and_hasher_in(
                 n,
-                bun_wyhash::BuildHasher::default(),
+                bun_core::BuildHasher::default(),
                 A::default(),
             ),
         }
@@ -2018,7 +2018,7 @@ impl<V, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A>
 /// `&mut K`, so this result omits `key_ptr` (unlike `GetOrPutResult` for the
 /// array-backed maps). Callers that need to overwrite the stored key must use
 /// `StringArrayHashMap` instead.
-pub use crate::hash_map::GetOrPutResult as StringHashMapGetOrPut;
+pub use crate::collections::hash_map::GetOrPutResult as StringHashMapGetOrPut;
 
 impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHashMap<V, A> {
     /// PERF: the previous shape (`contains_key` + `entry(Box::from(key))`)
@@ -2115,7 +2115,7 @@ pub mod StringHashMapContext {
     #[inline]
     pub fn pre(input: &[u8]) -> super::string_hash_map::Prehashed<'_> {
         super::string_hash_map::Prehashed {
-            value: bun_wyhash::hash(input),
+            value: bun_core::hash(input),
             input,
         }
     }
@@ -2124,12 +2124,12 @@ pub mod StringHashMapContext {
 }
 
 /// String-hash helpers, namespaced so call sites can write
-/// `bun_collections::string_hash_map::{hash, Prehashed, GetOrPutResult}`.
+/// `bun_core::collections::string_hash_map::{hash, Prehashed, GetOrPutResult}`.
 pub mod string_hash_map {
     /// wyhash(seed=0), full u64.
     #[inline]
     pub fn hash(s: &[u8]) -> u64 {
-        bun_wyhash::hash(s)
+        bun_core::hash(s)
     }
 
     /// `bun.StringHashMapContext.Prehashed` — caches the hash of one borrowed
@@ -2285,7 +2285,7 @@ impl StringHashMapUnownedKey {
     #[inline]
     pub fn init(s: &[u8]) -> Self {
         Self {
-            hash: bun_wyhash::hash(s),
+            hash: bun_core::hash(s),
             len: s.len(),
         }
     }

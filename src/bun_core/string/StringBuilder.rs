@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use core::slice;
 
 use crate::string::{String as BunString, StringPointer, ZStr};
-use bun_simdutf_sys::simdutf;
+use bun_core::simdutf;
 
 /// Two-phase string builder: callers first `count()` every slice they will
 /// append, then `allocate()` once, then `append()` each slice. Returned slices
@@ -36,7 +36,7 @@ impl StringBuilder {
         self.cap += slice.len();
     }
 
-    pub fn allocate(&mut self) -> Result<(), bun_alloc::AllocError> {
+    pub fn allocate(&mut self) -> Result<(), bun_core::AllocError> {
         let buf = Box::<[u8]>::new_uninit_slice(self.cap);
         self.ptr = NonNull::new(crate::heap::into_raw(buf).cast::<u8>());
         self.len = 0;
@@ -271,7 +271,7 @@ impl StringBuilder {
     }
 
     pub fn fmt_count(&mut self, args: fmt::Arguments<'_>) {
-        self.cap += bun_alloc::fmt_count(args);
+        self.cap += bun_core::fmt_count(args);
     }
 
     pub fn allocated_slice(&mut self) -> &mut [u8] {

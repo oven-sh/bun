@@ -1,4 +1,4 @@
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 use bun_core::strings;
 
 use crate::DELIMITER;

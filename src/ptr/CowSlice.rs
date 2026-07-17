@@ -20,7 +20,7 @@
 #[cfg(debug_assertions)]
 use core::ptr::NonNull;
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 /// "Copy on write" slice. See module docs.
 pub type CowSlice<T> = CowSliceZ<T, false>;

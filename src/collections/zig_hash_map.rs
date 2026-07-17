@@ -76,7 +76,7 @@ impl<K: Hash + Eq + ?Sized> HashContext<K> for AutoHashContext {
     fn ctx_hash(key: &K) -> u64 {
         // wyhash routed through `core::hash::Hash`; exact bucket order for
         // this context isn't relied on by any test today.
-        bun_wyhash::auto_hash(key)
+        bun_core::auto_hash(key)
     }
     #[inline]
     fn ctx_eql(a: &K, b: &K) -> bool {
@@ -212,7 +212,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
 
     /// Grow so `new_size` elements fit without further allocation. `Result`
     /// kept for call-site `?` symmetry.
-    pub fn ensure_total_capacity(&mut self, new_size: usize) -> Result<(), bun_alloc::AllocError> {
+    pub fn ensure_total_capacity(&mut self, new_size: usize) -> Result<(), bun_core::AllocError> {
         let new_size = new_size as u32;
         if new_size > self.size {
             self.grow_if_needed(new_size - self.size);
@@ -223,7 +223,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     pub fn ensure_unused_capacity(
         &mut self,
         additional: usize,
-    ) -> Result<(), bun_alloc::AllocError> {
+    ) -> Result<(), bun_core::AllocError> {
         self.ensure_total_capacity(self.size as usize + additional)
     }
 
@@ -422,7 +422,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     pub fn get_or_put(
         &mut self,
         key: K,
-    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
+    ) -> Result<crate::collections::hash_map::GetOrPutResult<'_, V>, bun_core::AllocError>
     where
         V: Default,
     {
@@ -431,7 +431,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
             self.slots[idx] = Some((key, V::default()));
         }
         let value_ptr = &mut self.slots[idx].as_mut().unwrap().1;
-        Ok(crate::hash_map::GetOrPutResult {
+        Ok(crate::collections::hash_map::GetOrPutResult {
             found_existing,
             value_ptr,
         })
@@ -444,7 +444,7 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
         &mut self,
         key: K,
         _ctx: Ctx,
-    ) -> Result<crate::hash_map::GetOrPutResult<'_, V>, bun_alloc::AllocError>
+    ) -> Result<crate::collections::hash_map::GetOrPutResult<'_, V>, bun_core::AllocError>
     where
         V: Default,
     {
@@ -465,13 +465,13 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
 
     /// Insert or overwrite.
     #[inline]
-    pub fn put(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
+    pub fn put(&mut self, key: K, value: V) -> Result<(), bun_core::AllocError> {
         self.insert(key, value);
         Ok(())
     }
 
     /// Insert asserting the key is new.
-    pub fn put_no_clobber(&mut self, key: K, value: V) -> Result<(), bun_alloc::AllocError> {
+    pub fn put_no_clobber(&mut self, key: K, value: V) -> Result<(), bun_core::AllocError> {
         let prev = self.insert(key, value);
         debug_assert!(prev.is_none(), "putNoClobber: key already present");
         Ok(())
@@ -507,9 +507,9 @@ impl<K, V, C: HashContext<K>> HashMap<K, V, C> {
     }
 
     /// Remove and return the owned `{key, value}` pair.
-    pub fn fetch_remove(&mut self, key: &K) -> Option<crate::hash_map::KV<K, V>> {
+    pub fn fetch_remove(&mut self, key: &K) -> Option<crate::collections::hash_map::KV<K, V>> {
         self.remove_entry(key)
-            .map(|(k, v)| crate::hash_map::KV { key: k, value: v })
+            .map(|(k, v)| crate::collections::hash_map::KV { key: k, value: v })
     }
 
     /// std `entry` API. `VacantEntry::insert` does a second probe (re-runs

@@ -17,7 +17,7 @@ use core::alloc::Allocator;
 use core::fmt;
 use core::mem::ManuallyDrop;
 
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 use bun_core::strings;
 
 pub trait VecExt<T>: Sized {
@@ -68,10 +68,10 @@ pub trait VecExt<T>: Sized {
     /// Prefer this over `unsafe { from_bump_slice(v.into_bump_slice_mut()) }`
     /// — it encodes the "source is leaked, never dropped again" contract in
     /// the type system instead of a `// SAFETY:` comment.
-    fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
+    fn from_bump_vec(v: bun_core::ArenaVec<'_, T>) -> Self;
     /// Arena pre-reservation: `Vec` cannot allocate from a bump arena, so this
     /// becomes a global-allocator `with_capacity`.  The arena is ignored.
-    fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self;
+    fn init_capacity_in(_arena: &bun_core::Arena, cap: usize) -> Self;
     /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
     /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
     /// Kept only for the `StreamResult::Temporary*` pattern; new code should
@@ -262,7 +262,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         v
     }
     #[inline]
-    fn from_bump_vec(mut src: bun_alloc::ArenaVec<'_, T>) -> Self {
+    fn from_bump_vec(mut src: bun_core::ArenaVec<'_, T>) -> Self {
         let len = src.len();
         let mut out = Vec::with_capacity_in(len, A::default());
         // SAFETY:
@@ -291,7 +291,7 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         out
     }
     #[inline]
-    fn init_capacity_in(_arena: &bun_alloc::Arena, cap: usize) -> Self {
+    fn init_capacity_in(_arena: &bun_core::Arena, cap: usize) -> Self {
         Vec::with_capacity_in(cap, A::default())
     }
     #[inline]
@@ -619,7 +619,7 @@ impl ByteVecExt for Vec<u8> {
     fn write_utf16(&mut self, str: &[u16]) -> Result<u32, AllocError> {
         let initial = self.len();
         let estimate = if (self.capacity() - self.len()) <= (str.len() * 3 + 2) {
-            bun_simdutf_sys::simdutf::length::utf8::from::utf16::le(str)
+            bun_core::simdutf::length::utf8::from::utf16::le(str)
         } else {
             str.len()
         };
@@ -725,7 +725,7 @@ impl OffsetByteList {
 /// Free function (not a `VecExt` method) so it is generic over *any*
 /// `A: Allocator` — the `VecExt` blanket impl carries an
 /// `A: Default + 'static` bound that `&'a MimallocArena` (i.e.
-/// [`bun_alloc::ArenaVec`]) does not satisfy. `src` and `dst` may use
+/// [`bun_core::ArenaVec`]) does not satisfy. `src` and `dst` may use
 /// distinct allocators.
 ///
 /// Implemented as `reserve → ptr::copy(shift) → copy_nonoverlapping →

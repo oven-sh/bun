@@ -24,7 +24,7 @@ mod loader_disc {
 // `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
-use bun_collections::StringHashMap;
+use bun_core::collections::StringHashMap;
 
 // `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
 // an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
@@ -111,7 +111,7 @@ impl Compact {
 }
 
 #[cold]
-pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
+pub fn create_hash_table() -> Result<Map, bun_core::AllocError> {
     let mut map = Map::default();
     map.reserve(Table::ALL.len() as u32 as usize);
     // `StringHashMap` boxes the key.

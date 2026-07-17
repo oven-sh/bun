@@ -14,7 +14,7 @@
 //!   Unmanaged                 Box<T> — managed/unmanaged split disappears
 //!
 //! Callers should use the std types directly (PORTING.md §Pointers). This file exists so
-//! `bun_ptr::owned::*` resolves and so the API surface has a 1:1 diffable mapping comment.
+//! `bun_core::ptr::owned::*` resolves and so the API surface has a 1:1 diffable mapping comment.
 
 /// An owned pointer or slice that was allocated using the default allocator.
 ///

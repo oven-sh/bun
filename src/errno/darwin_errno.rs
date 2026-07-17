@@ -1,7 +1,7 @@
-// posix types live in `crate::posix` (moved from bun_sys).
-pub use crate::posix::E;
-pub use crate::posix::S;
-pub use crate::posix::mode_t as Mode;
+// posix types live in `crate::errno::posix` (moved from bun_sys).
+pub use crate::errno::posix::E;
+pub use crate::errno::posix::S;
+pub use crate::errno::posix::mode_t as Mode;
 
 #[repr(u16)]
 #[derive(
@@ -127,16 +127,16 @@ pub mod uv_e {
     // Darwin lacks (ECHARSET / ENONET / EREMOTEIO / EUNATCH).
     macro_rules! __v {
         (CHARSET,  $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -::bun_core::libuv_sys::$uv
         };
         (NONET,    $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -::bun_core::libuv_sys::$uv
         };
         (REMOTEIO, $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -::bun_core::libuv_sys::$uv
         };
         (UNATCH,   $e:tt, $uv:tt) => {
-            -::bun_libuv_sys::$uv
+            -::bun_core::libuv_sys::$uv
         };
         ($i:tt,    $e:tt, $uv:tt) => {
             super::SystemErrno::$e as i32

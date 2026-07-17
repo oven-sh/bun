@@ -25,7 +25,7 @@
 //! the bitwise copy sound.
 //!
 //! Placed in `bun_alloc` (not `js_parser`) so that `bun_ast::
-//! ExprNodeList` and `bun_collections::VecExt` — both below `js_parser` in the
+//! ExprNodeList` and `bun_core::collections::VecExt` — both below `js_parser` in the
 //! crate graph — can name `Vec<T, AstAlloc>`.
 
 use core::alloc::{AllocError, Allocator, Layout};
@@ -508,7 +508,7 @@ unsafe impl Allocator for AstAlloc {
 // ── AstVec construction helpers ──────────────────────────────────────────
 // `Vec<T, A>` has no `Default` / `From<&[T]>` for non-`Global` `A`, so the
 // 81 `DeclList::default()` / `::from_slice()` etc. call sites need these.
-// Kept as free fns (not a trait) so `bun_collections::VecExt` can add a
+// Kept as free fns (not a trait) so `bun_core::collections::VecExt` can add a
 // blanket `impl<T> VecExt<T> for Vec<T, AstAlloc>` that forwards here without
 // a `bun_alloc → bun_collections` cycle.
 

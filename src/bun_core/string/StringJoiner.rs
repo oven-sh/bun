@@ -3,7 +3,7 @@
 //! length, so the join-time output buffer can be sized exactly once.
 
 use crate::strings;
-use bun_alloc::AllocError;
+use bun_core::AllocError;
 
 // Node and duplicated-string allocations use the global allocator (mimalloc);
 // there is no per-joiner allocator field.

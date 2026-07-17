@@ -1,8 +1,5 @@
 #![warn(unused_must_use)]
-// `Platform` is used as a const-generic param in resolve_path.rs and
-// downstream (`bun_runtime::node::path::normalize_string_t`).
-// Pinned nightly — enable the structural-match subset directly instead of the
-// `PlatformT` sealed-trait workaround.
+#![allow(unused_attributes)]
 #![feature(adt_const_params)]
 #![allow(incomplete_features)]
 
@@ -29,14 +26,14 @@ pub mod w_path_buffer_pool {
 // ──────────────────────────────────────────────────────────────────────────
 // `bun.strings.paths` — Windows path-shape transcoders. Hosted here (not in
 // `bun_core::string::immutable`) to avoid a `bun_core → bun_paths` cycle.
-// Exposed as both `bun_paths::string_paths::*` and the flattened
-// `bun_paths::strings::*`.
+// Exposed as both `bun_core::paths::string_paths::*` and the flattened
+// `bun_core::paths::strings::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod string_paths;
 /// `bun.strings.*` superset: the full `bun_core::strings` namespace plus the
 /// path-shape transcoders that live here. Downstream crates that previously
 /// wrote `bun_core::strings::paths::X` / `bun_core::strings::to_nt_path`
-/// import `bun_paths::strings` instead.
+/// import `bun_core::paths::strings` instead.
 pub mod strings {
     pub use super::string_paths::*;
     pub use bun_core::strings::*;
@@ -54,8 +51,8 @@ pub mod strings {
 }
 
 // Native separator re-exports (PORTING.md §Crate map: never std::path).
-pub use bun_alloc::SEP;
-pub use bun_alloc::SEP_STR;
+pub use bun_core::SEP;
+pub use bun_core::SEP_STR;
 
 /// `<SEP>node_modules<SEP>` — platform-dependent infix needle for detecting whether
 /// a path passes through a `node_modules` directory.
@@ -211,10 +208,10 @@ pub fn is_absolute(p: &[u8]) -> bool {
 // CANONICAL ALREADY EXISTS — no new primitive. Two entry points cover all
 // legitimate callers:
 //
-//   1. bun_paths::is_absolute(p)           — host cfg-dispatched. Use when
+//   1. bun_core::paths::is_absolute(p)           — host cfg-dispatched. Use when
 //      the path came from THIS host's filesystem.
 //
-//   2. bun_paths::resolve_path::Platform::Loose.is_absolute(p) — host-agnostic
+//   2. bun_core::paths::resolve_path::Platform::Loose.is_absolute(p) — host-agnostic
 //      (accepts '/', '\\', and 'X:/'|'X:\\' on ANY host). Use when the path is
 //      a normalized cross-platform map key / bundler specifier.
 //
@@ -348,7 +345,7 @@ pub mod classify;
 pub use classify::{RelPathFacts, classify_rel_t};
 // Crate-root re-exports for the path-mutation helpers so `#[cfg(windows)]`
 // install paths can call
-// `bun_paths::dangerously_convert_path_to_posix_in_place(..)` directly.
+// `bun_core::paths::dangerously_convert_path_to_posix_in_place(..)` directly.
 pub use resolve_path::{
     dangerously_convert_path_to_posix_in_place, dangerously_convert_path_to_windows_in_place,
     dirname_w, is_drive_letter, is_drive_letter_t, is_sep_any, is_sep_any_t, is_sep_native,
@@ -357,7 +354,7 @@ pub use resolve_path::{
     relative_to_common_path_buf, slashes_to_posix_in_place, slashes_to_windows_in_place,
     windows_volume_name_len,
 };
-// Re-export the pool *type* at crate root so `bun_paths::os_path_buffer_pool::get()`
+// Re-export the pool *type* at crate root so `bun_core::paths::os_path_buffer_pool::get()`
 // resolves on both targets (= `WPathBuffer` pool on Windows, `PathBuffer` on
 // POSIX).
 pub use path_buffer_pool::os_path_buffer_pool;
@@ -514,7 +511,7 @@ pub fn is_package_path_not_absolute(non_absolute_path: &[u8]) -> bool {
 // The full `FileSystem` (DirEntry cache, RealFS impl, FilenameStore/DirnameStore)
 // stays in `bun_resolver`; only the path-shaped types (`Path`, `PathName`,
 // `PathContentsPair`) and the `top_level_dir` singleton accessor move here so
-// lower tiers (`bun_logger`, `bun_paths::resolve_path`, `bun_paths::Path`) can
+// lower tiers (`bun_logger`, `bun_core::paths::resolve_path`, `bun_core::paths::Path`) can
 // resolve them without a `bun_resolver` edge.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod fs {
@@ -603,7 +600,7 @@ pub mod fs {
             extname: &[u8],
             buf: &'b mut [u8],
             hash: u64,
-        ) -> crate::Result<&'b mut ZStr> {
+        ) -> crate::paths::Result<&'b mut ZStr> {
             let hex_value: u64 =
                 (u128::from(hash) | (bun_core::time::nano_timestamp() as u128)) as u64;
 
@@ -617,10 +614,10 @@ pub mod fs {
                 TMPNAME_ID_NUMBER.fetch_add(1, Ordering::Relaxed),
                 bun_core::fmt::s(extname),
             )
-            .map_err(|_| crate::Error::Sys(bun_errno::SystemErrno::ENOSPC))?;
+            .map_err(|_| crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENOSPC))?;
             let written = len - cursor.len();
             if written >= len {
-                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENOSPC));
+                return Err(crate::paths::Error::Sys(bun_core::errno::SystemErrno::ENOSPC));
             }
             buf[written] = 0;
             Ok(ZStr::from_buf_mut(buf, written))
@@ -631,7 +628,7 @@ pub mod fs {
     /// filename) view over a borrowed path slice. All four fields point into the
     /// same backing allocation.
     ///
-    /// CANONICAL: `bun_paths::fs::PathName<'static>` / `bun_resolver::fs::PathName` are
+    /// CANONICAL: `bun_core::paths::fs::PathName<'static>` / `bun_resolver::fs::PathName` are
     /// re-exports of this type (D090).
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
@@ -800,9 +797,9 @@ pub mod fs {
     /// path (display `pretty`, canonical `text`, `namespace`, parsed `name`).
     ///
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
-    /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
+    /// the *resolver* `Path`; addressed as `bun_core::paths::fs::Path`.
     ///
-    /// CANONICAL: `bun_paths::fs::Path<'static>` / `bun_resolver::fs::Path` are re-exports
+    /// CANONICAL: `bun_core::paths::fs::Path<'static>` / `bun_resolver::fs::Path` are re-exports
     /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
     /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]

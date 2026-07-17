@@ -1,8 +1,8 @@
-//! This type can be used with `bun_ptr::Owned` to model "maybe owned" pointers:
+//! This type can be used with `bun_core::ptr::Owned` to model "maybe owned" pointers:
 //!
 //! ```ignore
 //! // Either owned by the default allocator, or borrowed
-//! type MaybeOwnedFoo = bun_ptr::OwnedIn<Foo, bun_alloc::MaybeOwned<bun_alloc::DefaultAllocator>>;
+//! type MaybeOwnedFoo = bun_core::ptr::OwnedIn<Foo, bun_core::MaybeOwned<bun_core::DefaultAllocator>>;
 //!
 //! let owned_foo: MaybeOwnedFoo = MaybeOwnedFoo::new(make_foo());
 //! let borrowed_foo: MaybeOwnedFoo = MaybeOwnedFoo::from_raw_in(some_foo_ptr, MaybeOwned::init_borrowed());

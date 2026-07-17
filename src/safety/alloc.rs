@@ -1,6 +1,6 @@
 //! Allocator-identity safety checks.
 //!
-//! [`bun_alloc::StdAllocator`] is a literal `{ptr, vtable}` struct; this
+//! [`bun_core::StdAllocator`] is a literal `{ptr, vtable}` struct; this
 //! module compares those two words to catch a single unmanaged container
 //! being driven by mismatched allocators — no fat-pointer transmutes.
 //!
@@ -14,8 +14,8 @@
 use core::fmt;
 
 #[cfg(debug_assertions)]
-use bun_alloc::NullableAllocator;
-use bun_alloc::{StdAllocator, basic};
+use bun_core::NullableAllocator;
+use bun_core::{StdAllocator, basic};
 use bun_core::Output;
 #[cfg(debug_assertions)]
 use bun_core::StoredTrace;
@@ -25,8 +25,8 @@ fn has_ptr(alloc: StdAllocator) -> bool {
     // In-tier vtable-identity checks (`bun_alloc` is a direct dep).
     core::ptr::eq(alloc.vtable, basic::C_ALLOCATOR.vtable)
         || core::ptr::eq(alloc.vtable, basic::Z_ALLOCATOR.vtable)
-        || bun_alloc::MimallocArena::is_instance(&alloc)
-        || bun_alloc::String::is_wtf_allocator(alloc)
+        || bun_core::MimallocArena::is_instance(&alloc)
+        || bun_core::alloc_impl::String::is_wtf_allocator(alloc)
         // Higher-tier allocators (arena, LinuxMemFdAllocator, MaxHeapAllocator,
         // CachedBytecode, bundle_v2, heap_breakdown::Zone)
         // push their vtable addresses into the registry at init. Empty

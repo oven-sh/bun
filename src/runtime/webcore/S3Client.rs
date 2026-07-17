@@ -108,7 +108,7 @@ where
         // `?` early-return below still leaves the formatter at its original
         // depth (observable when `print_as` throws and the caller continues
         // formatting).
-        let mut formatter = crate::vm::IndentScope::new(&mut *formatter);
+        let mut formatter = crate::jsc_ext::IndentScope::new(&mut *formatter);
 
         let endpoint: &[u8] = if !credentials.endpoint.is_empty() {
             &credentials.endpoint

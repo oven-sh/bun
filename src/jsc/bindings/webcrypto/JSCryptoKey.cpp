@@ -328,7 +328,6 @@ JSC_DEFINE_HOST_FUNCTION(jsCryptoKeyPrototype_inspectCustom, (JSGlobalObject * l
     RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "CryptoKey"_s, data));
 }
 
-
 JSC::GCClient::IsoSubspace* JSCryptoKey::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSCryptoKey, UseCustomHeapCellType::No>(

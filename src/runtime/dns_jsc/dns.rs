@@ -4220,9 +4220,11 @@ impl Resolver {
         let this = self.as_ctx_ptr();
         scopeguard::defer! {
             // SAFETY: `this` is the heap allocation from `init`. This releases the
-            // ref taken by `add_timer`; all callers of `request_completed` (the only
-            // path here) hold an `IntrusiveRc<Resolver>`, so the timer ref is never
-            // the last and this `deref` cannot reach 0 while `&self` is live.
+            // ref taken by `add_timer`. Callers via `request_completed` hold an
+            // `IntrusiveRc<Resolver>`; the `close_channel_for_terminate` caller is
+            // the global resolver, which carries a permanent +1 pin from
+            // `global_resolver()`. Either way the timer ref is never the last and
+            // this `deref` cannot reach 0 while `&self` is live.
             unsafe {
                 let uws_loop = (*this).vm().uws_loop();
                 let state = crate::jsc_hooks::runtime_state();

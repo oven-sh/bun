@@ -26,7 +26,7 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 
 ## 1. Target crate layout
 
-22 crates in 6 tiers. Topological order (every crate depends only on crates above it in this list):
+22 crates in 7 tiers. Topological order (every crate depends only on crates above it in this list):
 
 ### Tier 0: `#![no_std]` leaves (cannot merge up; see §4.1)
 
@@ -47,13 +47,13 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 | Crate      | Absorbs                                                                                                                                                                                                                                                                                                                                     | LOC     | Depends on                                                       |
 | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ---------------------------------------------------------------- |
 | `bun_core` | `bun_alloc`, `bun_mimalloc_sys`, `bun_simdutf_sys`, `bun_wyhash`, `bun_highway`, `bun_hash`, `bun_core`, `bun_ptr`, `bun_safety`, `bun_output`, `bun_collections`, `bun_base64`, `bun_errno`, `bun_paths`, `bun_libuv_sys`, `bun_url`, `bun_semver`, `bun_http_types`, `bun_analytics`, `bun_picohttp`, `bun_valkey`, **`src/io/write.rs`** | ~86,000 | `bun_opaque`, `bun_windows_sys`, `bun_output_tags`, `bun_macros` |
-| `bun_sys`  | `bun_sys`, `bun_which`, `bun_perf`, `bun_platform`, `bun_threading`, `bun_spawn_sys`, `bun_glob`, `bun_watcher`, `bun_libarchive`, `bun_zlib`, `bun_zlib_sys`, `bun_zstd`, `bun_brotli`, `bun_brotli_sys`, `bun_libdeflate_sys`, `bun_tcc_sys`, `bun_crash_handler`                                                                         | ~46,000 | `bun_core`, `bun_opaque`, `bun_windows_sys`                      |
+| `bun_sys`  | `bun_sys`, `bun_which`, `bun_perf`, `bun_platform`, `bun_threading`, `bun_spawn_sys`, `bun_glob`, `bun_watcher`, `bun_libarchive`, `bun_zlib`, `bun_zlib_sys`, `bun_zstd`, `bun_brotli`, `bun_brotli_sys`, `bun_libdeflate_sys`, `bun_tcc_sys`, `bun_cares_sys`, `bun_dns`, `bun_crash_handler`                                             | ~49,000 | `bun_core`, `bun_opaque`, `bun_windows_sys`                      |
 
 ### Tier 3: domain (all compile in parallel after `bun_sys`)
 
 | Crate        | Absorbs                                                                                                                                                                                   | LOC     | Depends on                                        |
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------- |
-| `bun_crypto` | `bun_boringssl_sys`, `bun_boringssl`, `bun_sha_hmac`, `bun_cares_sys`, `bun_dns`, `bun_csrf`, `bun_s3_signing`, `bun_exe_format`                                                          | ~9,500  | `bun_core`, `bun_sys`                             |
+| `bun_crypto` | `bun_boringssl_sys`, `bun_boringssl`, `bun_sha_hmac`, `bun_csrf`, `bun_s3_signing`, `bun_exe_format`                                                                                      | ~6,700  | `bun_core`, `bun_sys`                             |
 | `bun_ast`    | `bun_ast`, `bun_parsers`, `bun_sourcemap`, `bun_dotenv`, `bun_options_types`, `bun_install_types`, `bun_resolve_builtins`, `bun_shell_parser`, `bun_md`, `bun_clap`, `bun_api`, `bun_ini` | ~73,000 | `bun_core`, `bun_sys`, `bun_macros`               |
 | `bun_jsc`    | (group-A half of current `bun_jsc`; see §2.1 for the per-file table)                                                                                                                      | ~18,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_macros`    |
 | `bun_uws`    | `bun_uws_sys`, `bun_uws`                                                                                                                                                                  | ~11,100 | `bun_core`, `bun_sys`, `bun_crypto`, `bun_macros` |
@@ -85,7 +85,7 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 | `bun_bin`       | (unchanged)                                                                               | 260      | `bun_core`, `bun_sys`, `bun_runtime`                 |
 | `bun_shim_impl` | (unchanged, separate binary)                                                              | 400      | `bun_opaque`, `bun_windows_sys`                      |
 
-**DAG proof:** Every `Depends on` cell references only crates in a strictly lower tier (or same tier with no back-edge: within tier 3, `bun_jsc→bun_ast` and `bun_uws→bun_crypto` are the only intra-tier edges and neither has a reverse). `cargo metadata` will reject any cycle at step 13 of the migration; the adversarial review in §7 verified every edge against current imports.
+**DAG proof:** Every `Depends on` cell references only crates listed earlier in the table (strictly lower tier, or same tier but earlier row). Intra-tier edges: tier 3 `bun_jsc→bun_ast`, `bun_uws→bun_crypto`; tier 4 `bun_js→bun_react_compiler`; tier 5 `bun_bundler→{bun_resolver,bun_http}`, `bun_install→{bun_resolver,bun_http,bun_bundler}`. None has a reverse edge. `cargo metadata` will reject any cycle at step 13 of the migration; the adversarial review in §7 verified every edge against current imports.
 
 ---
 
@@ -95,17 +95,19 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 
 Today `bun_jsc` (54,148 LOC) depends on `bun_install`, `bun_bundler`, `bun_http`, `bun_resolver`, `bun_spawn`, `bun_transpiler`, `bun_patch` because `VirtualMachine` holds instances of those crates' types. After the split, `bun_jsc` is the pure FFI layer and `VirtualMachine` lives in `bun_runtime`.
 
-**Group A (stays in `bun_jsc`, ~18k LOC):** `AnyPromise`, `BunCPUProfiler`, `BunHeapProfiler`, `CallFrame`, `CommonAbortReason`, `CommonStrings`, `Counters`, `CustomGetterSetter`, `DOMFormData`, `DOMURL`, `DecodedJSValue`, `DeferredError`, `DeprecatedStrong`, `ErrorCode`, `Errorable`, `EventType`, `Exception`, `FFI`, `GetterSetter`, `JSArray`, `JSArrayIterator`, `JSBigInt`, `JSCell`, `JSErrorCode`, `JSFunction`, `JSMap`, `JSModuleLoader`, `JSONLineBuffer`, `JSObject`, `JSPromise`, `JSPromiseRejectionOperation`, `JSPropertyIterator`, `JSRef`, `JSRuntimeType`, `JSSecrets`, `JSString`, `JSType`, `JSUint8Array`, `JSValue`, `MarkedArgumentBuffer`, `RefString`, `RegularExpression`, `ResolvedSource`, `ScriptExecutionStatus`, `SourceProvider`, `SourceType`, `StringBuilder`, `Strong`, `TextCodec`, `TopExceptionScope`, `URL`, `URLSearchParams`, `VM`, `WTF`, `Weak`, `ZigErrorType`, `ZigException`, `ZigStackFrame`, `ZigStackFrameCode`, `ZigStackTrace`, `ZigString`, `array_buffer`, `bindgen`, `bindgen_test`, `bindings/GeneratedBindings`, `bun_string_jsc`, `codegen`, `comptime_string_map_jsc`, `cpp`, `fmt_jsc`, `generated`, `generated_classes_list`, `host_fn`, `host_object`, `jsc_abi`, `node_path`, `resolve_path_jsc`, `resolver_jsc`, `sizes`, `build.rs`.
+**Group A (stays in `bun_jsc`, ~18k LOC):** `AnyPromise`, `BunCPUProfiler`, `BunHeapProfiler`, `CallFrame`, `CommonAbortReason`, `CommonStrings`, `Counters`, `CustomGetterSetter`, `DOMFormData`, `DOMURL`, `DecodedJSValue`, `DeferredError`, `DeprecatedStrong`, `ErrorCode`, `Errorable`, `EventType`, `Exception`, `FFI`, `GetterSetter`, `JSArray`, `JSArrayIterator`, `JSBigInt`, `JSCell`, `JSErrorCode`, `JSFunction`, `JSMap`, `JSModuleLoader`, `JSONLineBuffer`, `JSObject`, `JSPromise`, `JSPromiseRejectionOperation`, `JSPropertyIterator`, `JSRef`, `JSRuntimeType`, `JSSecrets`, `JSString`, `JSType`, `JSUint8Array`, `JSValue`, `MarkedArgumentBuffer`, `RefString`, `RegularExpression`, `ResolvedSource`, `ScriptExecutionStatus`, `SourceProvider`, `SourceType`, `StringBuilder`, `Strong`, `TextCodec`, `TopExceptionScope`, `URL`, `URLSearchParams`, `VM`, `WTF`, `Weak`, `ZigErrorType`, `ZigException`, `ZigStackFrame`, `ZigStackFrameCode`, `ZigStackTrace`, `ZigString`, `array_buffer`, `bindgen`, `bindgen_test`, `bindings/GeneratedBindings`, `bun_string_jsc`, `codegen`, `comptime_string_map_jsc`, `cpp`, `fmt_jsc`, `generated`, `host_fn`, `host_object`, `jsc_abi`, `node_path`, `resolve_path_jsc`, `resolver_jsc`, `sizes`, `build.rs`.
 
 Plus, after trivial edits (≤3 lines each): `JSGlobalObject` (delete the `pub use bun_bundler::transpiler::BunPluginTarget` re-export; move `run_on_load_plugins`/`run_on_resolve_plugins`/`throw_invalid_scrypt_params` to a `JSGlobalObjectExt` trait in `bun_runtime`), `CachedBytecode` (keep; `Format` comes from `bun_ast` which is now a dep; `IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE` thread-local and `jsc::initialize()` stay here since they touch only WTF/VM C FFI), `uuid` (use `bun_core::rand_fill` which forwards to `getrandom` syscall, not `boringssl::rand_bytes`), `webcore_types` (move the `S3` sub-struct block at L823-892 to `bun_runtime::webcore::blob`; rest stays), `BuildMessage`/`ResolveMessage` (stay; use `bun_ast::Msg`).
 
 **Group B (moves to `bun_runtime`, ~37k LOC; becomes `src/runtime/vm/`):** `VirtualMachine`, `ModuleLoader`, `AsyncModule`, `ConsoleObject`, `Debugger`, `event_loop`, `hot_reloader`, `ipc`, `rare_data`, `web_worker`, `RuntimeTranspilerStore`, `RuntimeTranspilerCache`, `virtual_machine_exports`, `btjs`, `error` (the wide `CrateError`), `HTTPServerAgent`, `GarbageCollectionController`, `NodeModuleModule`, `PluginRunner`, `PosixSignalHandle`, `ProcessAutoKiller`, `SavedSourceMap`, `WorkTask`, `ConcurrentPromiseTask`, `CppTask`, `JSCScheduler`, `Task`, `EventLoopHandle`, `any_task_job`, `AbortSignal` (embeds `EventLoopTimer` by value and calls `VirtualMachine::timer_insert`), `FetchHeaders` (the `to_uws_response` helper only; the opaque handle + getters stay in group A as `FetchHeadersCore`), `SystemError` (the `us_bun_verify_error_t` helper only), `ZigStackFramePosition`, `lib.rs` runtime-glue half.
 
+**No migration needed:** `generated_classes_list.rs` is already `#[path]`-mounted from `src/runtime/lib.rs:51` (not from `src/jsc/lib.rs`) precisely because every alias is a `bun_runtime` module path; it stays where it is.
+
 **What this unlocks:** `bun_bundler` and `bun_install` can now depend on `bun_jsc` directly (for `RegularExpression`, `CachedBytecode::generate`), and `bun_runtime` can have `VirtualMachine { transpiler: Transpiler, package_manager: Option<Box<PackageManager>>, entry_point: ServerEntryPoint, timer: timer::All, … }` with real types.
 
 ### 2.2 `bun_core` — the foundation merge
 
-Absorbs 21 crates into one ~86k LOC foundation. Two former `link_interface!` sites dissolve because their impl is now in-crate:
+Absorbs 21 crates into one ~86k LOC foundation. The two former `link_interface!` sites declared in `bun_core` are addressed here: one dissolves (its impl is now in-crate), the other is replaced by a `OnceLock` registration:
 
 - `ErrnoNames[Sys]` (`src/bun_core/lib.rs:610`): delete. `bun_errno` is now `bun_core::errno`; callers use `crate::errno::SystemErrno::name()` directly.
 - `OutputSink[Sys]` (`src/bun_core/lib.rs:584`): does NOT dissolve (the impl is in `bun_sys`). Replaced by `pub static OUTPUT_SINK: OnceLock<OutputSinkVTable> = OnceLock::new();` where `OutputSinkVTable` is a plain `struct { stderr: fn()->File, is_terminal: fn(Fd)->bool, … }`. `bun_sys` calls `bun_core::OUTPUT_SINK.set(…)` in its crate-init. This is a cold-path 11-slot table called once per output stream; a `OnceLock<struct of fn>` is the idiomatic single-registration pattern (`tracing`, `log` crates use the same shape).
@@ -119,6 +121,8 @@ Absorbs 21 crates into one ~86k LOC foundation. Two former `link_interface!` sit
 ### 2.3 `bun_sys` — OS layer
 
 `bun_crash_handler` folds in. Its current `bun_ast`/`bun_options_types` deps are severed: the one `ImportKind` use at `crash_handler/lib.rs` passes `kind.label()` as `&[u8]` instead; the `options_types` use was for the feature-gated `Action` formatter, which becomes `pub static ACTION_FORMATTER: OnceLock<fn(&mut dyn core::fmt::Write, ActionTag, *const ())>` set by `bun_bundler` (replacing `link_interface! BundleGenerateChunkCtx`). `bun_io` dep is severed by the `write.rs→bun_core` move.
+
+`bun_cares_sys` + `bun_dns` fold in here, not `bun_crypto`: `bun_dns` (531 LOC) is `addrinfo` types and address formatting, not async I/O; the async c-ares driver is already in `bun_runtime::dns_jsc`. `bun_crypto::boringssl` reaches c-ares via `bun_sys::cares` (it already depends on `bun_sys`).
 
 `bun_exe_format` does **not** go here (would create `sys→crypto→sys` cycle via `macho.rs:814` SHA256 call). It goes to `bun_crypto` instead; its only consumer (`standalone_graph`, now in `bun_bundler`) is above `bun_crypto`.
 
@@ -192,7 +196,7 @@ Every `extern "Rust"` symbol, `link_interface!`, and manual hook vtable, with it
 | `__bun_crash_handler_dump_stack_trace`                                                                                                               | `bun_core` → `crash_handler`        | `bun_core::STACK_TRACE_HOOK: AtomicPtr<fn(…)>`                                     |
 | `__bun_regex_{compile,matches,drop}`                                                                                                                 | `install_types` → `bun_jsc`         | `bun_ast::REGEX_ENGINE: OnceLock<RegexEngineVTable>`, set by `bun_jsc` init        |
 | `__bun_resolver_init_package_manager`                                                                                                                | `resolver` → `install`              | Deleted; `install` constructs PM and passes `&dyn AutoInstaller` to resolver       |
-| `__bun_dns_prefetch`                                                                                                                                 | `dns` → `runtime`                   | `bun_crypto::dns::PREFETCH_HOOK: OnceLock<fn(&[u8],u16)>`                          |
+| `__bun_dns_prefetch`                                                                                                                                 | `dns` → `runtime`                   | `bun_sys::dns::PREFETCH_HOOK: OnceLock<fn(&[u8],u16)>`                             |
 | `__bun_macro_context_{init,deinit,call,get_remap}`, `__bun_macro_collect_vm_garbage`                                                                 | `js_parser` → `js_parser_jsc`       | `bun_js::MacroContext` holds `Option<Box<dyn MacroRunner>>`; impl in `bun_runtime` |
 | `__bun_jsc_generate_cached_bytecode`                                                                                                                 | `bundler` → `bun_jsc`               | Direct call: `bun_jsc::CachedBytecode::generate(…)` (bundler now depends on jsc)   |
 | `__bun_jsc_enable_hot_module_reloading_for_bundler`                                                                                                  | `bundler` → `bun_jsc` (group B)     | `bun_bundler::HOT_RELOAD_HOOK: OnceLock<fn(…)>`                                    |
@@ -318,7 +322,7 @@ Separate mechanical pass, independent of the crate moves:
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `RuntimeHooks`/`LoaderHooks`/`SqlRuntimeHooks` structs + statics + `*mut c_void` casts in `jsc_hooks.rs`/`hw_exports.rs`                                                     | ~1,600      | `jsc_hooks.rs` is 5,378 LOC but ~3,800 is hook **bodies** that become `impl VirtualMachine` methods (relocated, not deleted) |
 | `#[no_mangle]` wrappers + `extern "Rust"` decls (36 symbols × ~8 lines avg, both sides)                                                                                      | ~600        | Replaced by `OnceLock.set(…)` calls (~200 lines added) → net ~400                                                            |
-| `link_interface!` decls + `link_impl_*!` calls for the 6 eliminated interfaces                                                                                               | ~450        | 6 interfaces × ~25 lines decl + 10 impls × ~20 lines                                                                         |
+| `link_interface!` decls + `link_impl_*!` calls for the 8 eliminated interfaces                                                                                               | ~450        | 8 interfaces × ~25 lines decl + 10 impls × ~20 lines                                                                         |
 | `bun_dispatch` `extern "Rust"` codegen path                                                                                                                                  | ~120        | Macro body that emits `unsafe extern "Rust" { … }` → replaced by static-array codegen                                        |
 | Facade crates: `transpiler`(10), `output`(51), `api`(78 minus 40-line `Parser` kept)                                                                                         | ~100        |                                                                                                                              |
 | `bun_uws` re-export lines + redundant docs                                                                                                                                   | ~60         | 22 `pub use` lines + ~40 lines of "distinct from sys" commentary                                                             |
@@ -419,21 +423,21 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 ### Step 4: Merge `bun_sys`
 
-1. `src/sys/lib.rs`: `#[path]`-mount `which`, `perf`, `platform`, `threading`, `spawn_sys`, `glob`, `watcher`, `libarchive`, `zlib`, `zlib_sys`, `zstd`, `brotli`, `brotli_sys`, `libdeflate_sys`, `tcc_sys`, `crash_handler`. Flat re-exports.
+1. `src/sys/lib.rs`: `#[path]`-mount `which`, `perf`, `platform`, `threading`, `spawn_sys`, `glob`, `watcher`, `libarchive`, `zlib`, `zlib_sys`, `zstd`, `brotli`, `brotli_sys`, `libdeflate_sys`, `tcc_sys`, `cares_sys` (as `pub mod cares`), `dns`, `crash_handler`. Flat re-exports.
 2. `crash_handler/lib.rs`: replace `use bun_ast::ImportKind` with `&[u8]` param; delete `link_interface! BundleGenerateChunkCtx` → `pub static ACTION_FORMATTER: OnceLock<fn(&mut dyn core::fmt::Write, u32, *const ())>`; register `PANIC_HOOK`/`STACK_TRACE_HOOK` into `bun_core`.
-3. `[features] show_crash_trace = []`.
-4. Tree-wide `sed` + Cargo.toml updates for absorbed crates.
-5. `bun_bin/lib.rs:42`: `use bun_platform as _;` → `use bun_sys::platform as _;`.
+3. `dns/lib.rs:492`: delete `extern "Rust" __bun_dns_prefetch`; add `pub static PREFETCH_HOOK: OnceLock<fn(*mut Loop, *const u8, usize, u16)> = OnceLock::new();`. `src/runtime/dns_jsc/dns.rs:3167`: replace `#[no_mangle]` with registration at VM init.
+4. `[features] show_crash_trace = []`.
+5. Tree-wide `sed` + Cargo.toml updates for absorbed crates (including `bun_cares_sys::` → `bun_sys::cares::`, `bun_dns::` → `bun_sys::dns::`).
+6. `bun_bin/lib.rs:42`: `use bun_platform as _;` → `use bun_sys::platform as _;`.
 
 ### Step 5: Create `bun_crypto`; merge `bun_ast`; merge `bun_uws`
 
-1. New `src/crypto/{Cargo.toml,lib.rs}` `#[path]`-mounting `boringssl_sys`, `boringssl`, `sha_hmac`, `cares_sys`, `dns`, `csrf`, `s3_signing`, `exe_format`.
-2. `dns/lib.rs:492`: delete `extern "Rust" __bun_dns_prefetch`; add `pub static PREFETCH_HOOK: OnceLock<fn(*mut Loop, *const u8, usize, u16)> = OnceLock::new();`. `src/runtime/dns_jsc/dns.rs:3167`: replace `#[no_mangle]` with registration at VM init.
-3. `src/ast/lib.rs`: `#[path]`-mount `parsers`, `sourcemap`, `dotenv`, `options_types`, `install_types`, `resolve_builtins`, `shell_parser`, `md`, `clap`, `api`, `ini`. Add `pub use plugin_target::BunPluginTarget;`.
-4. `install_types/NodeLinker.rs:87`: delete `extern "Rust" __bun_regex_*`; add `pub struct RegexEngineVTable { compile: fn(&[u8])->Option<NonNull<()>>, matches: fn(NonNull<()>, &[u8])->bool, drop: fn(NonNull<()>) } pub static REGEX_ENGINE: OnceLock<RegexEngineVTable> = OnceLock::new();`. `src/jsc/RegularExpression.rs:106-124`: replace `#[no_mangle]` with `const YARR: RegexEngineVTable = …; pub fn register_regex() { bun_ast::REGEX_ENGINE.set(YARR).ok(); }`.
-5. `ast/transpiler_cache.rs:52`: delete `link_interface! TranspilerCacheImpl`; add `pub trait TranspilerCache: Sync { fn is_disabled(&self)->bool; fn get(&self, …)->bool; fn put(&self, …); }`. `parser::Options.runtime_transpiler_cache: Option<&'static dyn TranspilerCache>`.
-6. `src/uws_sys/Cargo.toml`: rename `name = "bun_uws"`. `#[path]`-mount `../uws/lib.rs` as `mod wrappers; pub use wrappers::*;`. Update deps to `bun_core, bun_sys, bun_crypto, bun_macros`.
-7. Tree-wide `sed` + Cargo.toml for absorbed crates → `bun_crypto::`/`bun_ast::`/`bun_uws::`.
+1. New `src/crypto/{Cargo.toml,lib.rs}` `#[path]`-mounting `boringssl_sys`, `boringssl`, `sha_hmac`, `csrf`, `s3_signing`, `exe_format`. `boringssl/lib.rs:10`: `use bun_cares_sys as c_ares;` → `use bun_sys::cares as c_ares;`.
+2. `src/ast/lib.rs`: `#[path]`-mount `parsers`, `sourcemap`, `dotenv`, `options_types`, `install_types`, `resolve_builtins`, `shell_parser`, `md`, `clap`, `api`, `ini`. Add `pub use plugin_target::BunPluginTarget;`.
+3. `install_types/NodeLinker.rs:87`: delete `extern "Rust" __bun_regex_*`; add `pub struct RegexEngineVTable { compile: fn(&[u8])->Option<NonNull<()>>, matches: fn(NonNull<()>, &[u8])->bool, drop: fn(NonNull<()>) } pub static REGEX_ENGINE: OnceLock<RegexEngineVTable> = OnceLock::new();`. `src/jsc/RegularExpression.rs:106-124`: replace `#[no_mangle]` with `const YARR: RegexEngineVTable = …; pub fn register_regex() { bun_ast::REGEX_ENGINE.set(YARR).ok(); }`.
+4. `ast/transpiler_cache.rs:52`: delete `link_interface! TranspilerCacheImpl`; add `pub trait TranspilerCache: Sync { fn is_disabled(&self)->bool; fn get(&self, …)->bool; fn put(&self, …); }`. `parser::Options.runtime_transpiler_cache: Option<&'static dyn TranspilerCache>`.
+5. `src/uws_sys/Cargo.toml`: rename `name = "bun_uws"`. `#[path]`-mount `../uws/lib.rs` as `mod wrappers; pub use wrappers::*;`. Update deps to `bun_core, bun_sys, bun_crypto, bun_macros`.
+6. Tree-wide `sed` + Cargo.toml for absorbed crates → `bun_crypto::`/`bun_ast::`/`bun_uws::`.
 
 ### Step 6: Slim `bun_jsc` to group A
 
@@ -536,7 +540,7 @@ See §2.1. The source-of-truth table (118 files) is derived from scanning each f
 | `OUTPUT_SINK`                    | `bun_core`               | `bun_sys::init`                | 11     | No (stderr/logger init) |
 | `PANIC_HOOK`, `STACK_TRACE_HOOK` | `bun_core`               | `bun_sys::crash_handler::init` | 1 each | No                      |
 | `REGEX_ENGINE`                   | `bun_ast`                | `bun_jsc::initialize`          | 3      | No (bunfig parse)       |
-| `PREFETCH_HOOK`                  | `bun_crypto::dns`        | `bun_runtime` VM init          | 1      | No                      |
+| `PREFETCH_HOOK`                  | `bun_sys::dns`           | `bun_runtime` VM init          | 1      | No                      |
 | `ACTION_FORMATTER`               | `bun_sys::crash_handler` | `bun_bundler` linker init      | 1      | No (crash only)         |
 | `JS_LOOP_VTABLE`                 | `bun_loop`               | `bun_runtime` VM init          | 21     | Yes (event-loop tick)   |
 | `TIMER_DISPATCH`                 | `bun_loop`               | `bun_runtime` VM init          | 2      | Yes                     |

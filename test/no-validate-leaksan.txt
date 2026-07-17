@@ -226,6 +226,7 @@ test/cli/test/parallel.test.ts
 
 # bun.assert(!this.hasPendingActivity() or jsc.VirtualMachine.get().isShuttingDown());
 # @call(bun.callmod_inline, Subprocess.finalize, .{thisValue});
+test/js/node/test/parallel/test-set-http-max-http-headers.js
 test/js/node/test/parallel/test-child-process-windows-hide.js
 test/cli/inspect/BunFrontendDevServer.test.ts
 test/cli/inspect/HTTPServerAgent.test.ts

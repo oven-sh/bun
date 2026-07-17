@@ -272,7 +272,11 @@ pub(crate) struct UsNqDriver {
 
 impl Default for UsNqDriver {
     fn default() -> Self {
-        Self { next: null_mut(), owner: null_mut(), pending: 0 }
+        Self {
+            next: null_mut(),
+            owner: null_mut(),
+            pending: 0,
+        }
     }
 }
 
@@ -1464,7 +1468,11 @@ impl QuicEndpoint {
         // the socket now, at the pass's outer edge, the way node's
         // SendPendingDataScope flushes when the receive path unwinds; left to
         // the loop driver they would sit out the next epoll timeout.
-        if self.nq_driver.with_mut(|d| core::mem::replace(&mut d.pending, 0)) != 0 {
+        if self
+            .nq_driver
+            .with_mut(|d| core::mem::replace(&mut d.pending, 0))
+            != 0
+        {
             self.drive_engines_once();
         }
     }

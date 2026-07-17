@@ -895,19 +895,13 @@ impl QuicSession {
             // SAFETY: teardown clears `endpoint` before the endpoint can die.
             let defer_closes = !endpoint.is_null() && unsafe { (*endpoint).defer_closes.get() };
             if (dispatched_js || defer_closes)
-                && matches!(
-                    event,
-                    SessionEvent::Closed | SessionEvent::GoawayReceived
-                )
+                && matches!(event, SessionEvent::Closed | SessionEvent::GoawayReceived)
             {
                 self.events.with_mut(|e| e.insert(0, event));
                 self.schedule_process();
                 break;
             }
-            if !matches!(
-                event,
-                SessionEvent::PeerClose { .. } | SessionEvent::Closed
-            ) {
+            if !matches!(event, SessionEvent::PeerClose { .. } | SessionEvent::Closed) {
                 dispatched_js = true;
             }
             if self.destroyed.get() {
@@ -950,7 +944,9 @@ impl QuicSession {
                                         // batches more events per pass than the
                                         // old timer did, so both closes now land
                                         // in the same batch as the confirmation.
-                                        SessionEvent::PeerClose { app_error, code, .. } => {
+                                        SessionEvent::PeerClose {
+                                            app_error, code, ..
+                                        } => {
                                             return !*app_error && *code != 0;
                                         }
                                         SessionEvent::Closed => return true,
@@ -1892,9 +1888,7 @@ impl QuicSession {
             } else {
                 let (app, code, reason) =
                     self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
-                let scope_held = self
-                    .endpoint_ref()
-                    .is_some_and(|ep| ep.scope_held());
+                let scope_held = self.endpoint_ref().is_some_and(|ep| ep.scope_held());
                 if scope_held {
                     self.pending_graceful
                         .with_mut(|p| *p = Some((app, code, reason)));

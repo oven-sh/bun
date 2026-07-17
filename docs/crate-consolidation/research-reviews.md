@@ -1,5 +1,3 @@
-
-
 ---
 
 ## review-whole:cycles
@@ -89,7 +87,7 @@ Group-B (~37k) + eleven `*_jsc` crates (~28k) + `sql`(6k) + `valkey`/`csrf`/`tcc
 
 ## 1. `BufferedReader` → `*const dyn BufferedReaderParent` is not object-safe and violates the documented aliasing contract
 
-**What's wrong:** The proposal says "`BufferedReader` holds `*const dyn BufferedReaderParent` (trait takes `&self` + interior mutability for the aliasing case)." The actual trait at `/workspace/bun/src/io/PipeReader.rs:69-91` takes **`*mut Self`** on every method, with a 17-line SAFETY comment explaining why: the parent *embeds* the `BufferedReader` as a field, and callbacks fire while `&mut BufferedReader` is live on the caller's stack — forming `&self` on the parent would alias that live `&mut` (Stacked-Borrows UB). "Interior mutability" doesn't fix this: `UnsafeCell` on the reader field still doesn't permit `&Parent` while `&mut parent.reader` is outstanding. Additionally the trait has `const KIND` and `const HAS_ON_READ_CHUNK: bool` (PipeReader.rs:72,74) — associated consts without `where Self: Sized` bounds make the trait non-object-safe.
+**What's wrong:** The proposal says "`BufferedReader` holds `*const dyn BufferedReaderParent` (trait takes `&self` + interior mutability for the aliasing case)." The actual trait at `/workspace/bun/src/io/PipeReader.rs:69-91` takes **`*mut Self`** on every method, with a 17-line SAFETY comment explaining why: the parent _embeds_ the `BufferedReader` as a field, and callbacks fire while `&mut BufferedReader` is live on the caller's stack — forming `&self` on the parent would alias that live `&mut` (Stacked-Borrows UB). "Interior mutability" doesn't fix this: `UnsafeCell` on the reader field still doesn't permit `&Parent` while `&mut parent.reader` is outstanding. Additionally the trait has `const KIND` and `const HAS_ON_READ_CHUNK: bool` (PipeReader.rs:72,74) — associated consts without `where Self: Sized` bounds make the trait non-object-safe.
 
 **Evidence:** `/workspace/bun/src/io/PipeReader.rs:52-68` (aliasing contract), `:72-90` (trait signature).
 
@@ -113,7 +111,7 @@ Group-B (~37k) + eleven `*_jsc` crates (~28k) + `sql`(6k) + `valkey`/`csrf`/`tcc
 
 ## 4. `Task` → `NonNull<dyn Runnable>` hand-waves over non-uniform dispatch signatures
 
-**What's wrong:** The proposal says "`Task` holds `NonNull<dyn Runnable>` (intrusive, zero-alloc — task structs embed the vtable ptr)". Two errors: (a) `NonNull<dyn T>` is a fat pointer — the vtable lives in the *pointer*, not embedded in the task struct; (b) the 96 arms in `/workspace/bun/src/runtime/dispatch.rs:252-620` are **not uniform**: some call `.run_from_js()`, some `.run_from_js(vm, global)`, some `.run_from_js_thread(el, global, vm)`, some `.on_progress_update()`, some `.on_poll()` (without even using `task.ptr` — `PollPendingModulesTask` at :348 calls `vm.modules.on_poll()`), some return `RunTaskResult::EarlyReturn` (`:364`), and ~50 of them `destroy()` after running (`run_then_destroy!` at :231). A single `fn run(&mut self)` trait cannot express "run then destroy via `heap::destroy`", nor "return early-exit from the drain loop", nor "access `&mut VirtualMachine`" without threading it as a parameter.
+**What's wrong:** The proposal says "`Task` holds `NonNull<dyn Runnable>` (intrusive, zero-alloc — task structs embed the vtable ptr)". Two errors: (a) `NonNull<dyn T>` is a fat pointer — the vtable lives in the _pointer_, not embedded in the task struct; (b) the 96 arms in `/workspace/bun/src/runtime/dispatch.rs:252-620` are **not uniform**: some call `.run_from_js()`, some `.run_from_js(vm, global)`, some `.run_from_js_thread(el, global, vm)`, some `.on_progress_update()`, some `.on_poll()` (without even using `task.ptr` — `PollPendingModulesTask` at :348 calls `vm.modules.on_poll()`), some return `RunTaskResult::EarlyReturn` (`:364`), and ~50 of them `destroy()` after running (`run_then_destroy!` at :231). A single `fn run(&mut self)` trait cannot express "run then destroy via `heap::destroy`", nor "return early-exit from the drain loop", nor "access `&mut VirtualMachine`" without threading it as a parameter.
 
 **Evidence:** `/workspace/bun/src/runtime/dispatch.rs:196-460`.
 
@@ -121,7 +119,7 @@ Group-B (~37k) + eleven `*_jsc` crates (~28k) + `sql`(6k) + `valkey`/`csrf`/`tcc
 
 ## 5. "Remove `UpgradedDuplex`/`WindowsNamedPipe` from `InternalSocket`; register as `vtable::Handler`" conflates C event callbacks with Rust-side imperative methods
 
-**What's wrong:** `InternalSocket` is matched in **38 places** across `/workspace/bun/src/uws_sys/socket.rs` (16 via the `on_socket!` macro) to dispatch **imperative** methods: `write()`, `raw_write()`, `raw_writev()`, `flush()`, `write_fd()`, `timeout()`, `set_timeout()`, `set_timeout_minutes()`, `pause_stream()`, `ssl()`, etc. These are calls *from* Rust *into* the variant type. `vtable::Handler` (`/workspace/bun/src/uws_sys/vtable.rs:38`) covers only the 11 *event* callbacks (on_open/on_data/on_close/...) that C calls *into* Rust. Removing the enum variants doesn't remove the need to dispatch `write`/`flush`/`timeout` to `UpgradedDuplex` — and since `UpgradedDuplex` is a JS Duplex stream wrapper (not a real C socket), it cannot be registered as a `us_socket_t`.
+**What's wrong:** `InternalSocket` is matched in **38 places** across `/workspace/bun/src/uws_sys/socket.rs` (16 via the `on_socket!` macro) to dispatch **imperative** methods: `write()`, `raw_write()`, `raw_writev()`, `flush()`, `write_fd()`, `timeout()`, `set_timeout()`, `set_timeout_minutes()`, `pause_stream()`, `ssl()`, etc. These are calls _from_ Rust _into_ the variant type. `vtable::Handler` (`/workspace/bun/src/uws_sys/vtable.rs:38`) covers only the 11 _event_ callbacks (on_open/on_data/on_close/...) that C calls _into_ Rust. Removing the enum variants doesn't remove the need to dispatch `write`/`flush`/`timeout` to `UpgradedDuplex` — and since `UpgradedDuplex` is a JS Duplex stream wrapper (not a real C socket), it cannot be registered as a `us_socket_t`.
 
 **Evidence:** `/workspace/bun/src/uws_sys/socket.rs:60,62` (enum variants), `:380-500` (imperative dispatches), grep count = 38 match sites.
 
@@ -138,6 +136,7 @@ Group-B (~37k) + eleven `*_jsc` crates (~28k) + `sql`(6k) + `valkey`/`csrf`/`tcc
 ## 7. "css/js/sourcemap/crash_handler drop `bun_io` dep" ignores that `FixedBufferStream`/`FmtAdapter`/`BufWriter` live in `bun_io`, not `bun_core`
 
 **What's wrong:** The proposal puts `bun_io` into `bun_loop` (which depends on `bun_uws` → `bun_crypto`), and lists `bun_css`, `bun_js`, `bun_ast` (absorbing sourcemap), and `bun_sys` (absorbing crash_handler) as NOT depending on `bun_loop`. But:
+
 - `/workspace/bun/src/css/css_parser.rs:6459` uses `bun_io::FixedBufferStream`
 - `/workspace/bun/src/sourcemap/ParsedSourceMap.rs:347` uses `bun_io::FmtAdapter`
 - `/workspace/bun/src/crash_handler/lib.rs:402` `pub use bun_io::{FmtAdapter, Write}`
@@ -185,7 +184,7 @@ Group-B (~37k) + eleven `*_jsc` crates (~28k) + `sql`(6k) + `valkey`/`csrf`/`tcc
 
 ## 13. -100k LOC claim (if made) is inflated by an order of magnitude
 
-**What's wrong:** The visible proposal text makes no explicit total, but the reviewer brief asks about a "-100k LOC" claim. Actual *deletable* code (not moved): `jsc_hooks.rs` 5,378 + `bun_dispatch` 407 + `bun_output` 51 + `bun_api` 78 + `bun_transpiler` 10 + `bun_uws` façade ~1,000 + `sql_jsc/jsc.rs` façade ~903 + `RuntimeHooks`/`LoaderHooks`/`SqlRuntimeHooks` structs+statics ~500 + `hw_exports.rs` SQL hooks ~100 + `ErasedJsError` twin ~50 + `BundleOptions` dup ~90 + 2 `js_printer` vtables ~100 + misc opaque_ffi stubs ~200 ≈ **~9k LOC** of genuine deletions. `dispatch.rs` (1,236) doesn't net-delete — arms become `impl` blocks (objection #4). Everything else is relocation. ~80 removed `Cargo.toml`+`lib.rs` boilerplate adds maybe ~3k. Total honest deletion: **~12-15k LOC**, not 100k.
+**What's wrong:** The visible proposal text makes no explicit total, but the reviewer brief asks about a "-100k LOC" claim. Actual _deletable_ code (not moved): `jsc_hooks.rs` 5,378 + `bun_dispatch` 407 + `bun_output` 51 + `bun_api` 78 + `bun_transpiler` 10 + `bun_uws` façade ~1,000 + `sql_jsc/jsc.rs` façade ~903 + `RuntimeHooks`/`LoaderHooks`/`SqlRuntimeHooks` structs+statics ~500 + `hw_exports.rs` SQL hooks ~100 + `ErasedJsError` twin ~50 + `BundleOptions` dup ~90 + 2 `js_printer` vtables ~100 + misc opaque_ffi stubs ~200 ≈ **~9k LOC** of genuine deletions. `dispatch.rs` (1,236) doesn't net-delete — arms become `impl` blocks (objection #4). Everything else is relocation. ~80 removed `Cargo.toml`+`lib.rs` boilerplate adds maybe ~3k. Total honest deletion: **~12-15k LOC**, not 100k.
 
 **What must change:** State the LOC delta as "~12-15k deleted, ~400k relocated" or drop the claim.
 
@@ -204,96 +203,116 @@ Group-B (~37k) + eleven `*_jsc` crates (~28k) + `sql`(6k) + `valkey`/`csrf`/`tcc
 # MIGRATION RISK & COMPLETENESS — Objections
 
 ## 1. Proposal is truncated; 24 crates unassigned
+
 **What's wrong:** The proposal text cuts off mid-sentence ("inversion of control, the idi"). Of the 99 workspace crates + `bun_shim_impl`, 24 have no stated destination: `bun_api`, `bun_bin`, `bun_bundler`, `bun_bunfig`, `bun_ini`, `bun_install`, `bun_standalone_graph`, `bun_transpiler`, `bun_tcc_sys`, `bun_valkey`, `bun_sql`, `bun_runtime`, `bun_shim_impl`, and all 11 `*_jsc` crates (`ast_jsc`, `bundler_jsc`, `css_jsc`, `http_jsc`, `install_jsc`, `js_parser_jsc`, `patch_jsc`, `semver_jsc`, `sourcemap_jsc`, `sql_jsc`, `sys_jsc`).
 **Evidence:** `/workspace/bun/Cargo.toml:3-103` lists 100 members; proposal's visible "Absorbs" lists cover 76.
-**What must change:** Every crate must be explicitly assigned before migration order can be validated. The architectural direction says *_jsc fold into runtime modules, but the proposal must state this and state `bun_bundler`/`bun_install`/`bun_bunfig`/`bun_standalone_graph`/`bun_ini` placement — the `bun_dispatch` deletion claim (obj #6) and `PnpmMatcher` move both hinge on it.
+**What must change:** Every crate must be explicitly assigned before migration order can be validated. The architectural direction says \*\_jsc fold into runtime modules, but the proposal must state this and state `bun_bundler`/`bun_install`/`bun_bunfig`/`bun_standalone_graph`/`bun_ini` placement — the `bun_dispatch` deletion claim (obj #6) and `PnpmMatcher` move both hinge on it.
 
 ## 2. `bun_sys` ↔ `bun_crypto` hard cycle via `bun_exe_format`
+
 **What's wrong:** Proposal puts `bun_exe_format` into `bun_sys`, and `bun_sha_hmac` into `bun_crypto`. But `bun_exe_format` calls `bun_sha_hmac::sha::SHA256::hash` for Mach-O code-signing. Proposal's `bun_crypto` → `bun_sys`. So `bun_sys` → `bun_crypto` → `bun_sys` — Cargo rejects this.
 **Evidence:** `/workspace/bun/src/exe_format/macho.rs:814`; dep graph `bun_exe_format: … bun_sha_hmac …`; proposal's `bun_crypto` "Depends on: bun_core, bun_sys".
 **What must change:** Either (a) move `bun_exe_format` out of `bun_sys` (it has exactly one consumer, `bun_standalone_graph`, so it can merge there or into `bun_bundler`/`bun_runtime`); or (b) put a small SHA256 impl in `bun_sys` (it's ~200 LOC of BoringSSL FFI from `bun_boringssl_sys`, which is zero-dep); or (c) move `bun_crypto` below `bun_sys` (infeasible — `bun_boringssl` uses `bun_sys`).
 
 ## 3. Proposal's `bun_jsc` group-A dep list won't compile — listed files need `bun_loop`/`bun_uws`
+
 **What's wrong:** Proposal says slimmed `bun_jsc` "Depends on: bun_core, bun_sys, bun_macros" and explicitly includes `AbortSignal` and `FetchHeaders` in group A. Both import from higher tiers.
 **Evidence:**
+
 - `/workspace/bun/src/jsc/AbortSignal.rs:9-12` — `use bun_event_loop::EventLoopTimer::{EventLoopTimer, InHeap, IntrusiveField, State, Tag, TimerFlags, Timespec}` (→ `bun_loop`). AbortSignal embeds an intrusive timer for `AbortSignal.timeout()`.
 - `/workspace/bun/src/jsc/FetchHeaders.rs:7,93,205` — `use bun_uws::ResponseKind`; `pub fn to_uws_response(&mut self, kind: ResponseKind, …)` (→ `bun_uws`).
-**What must change:** Either add `bun_loop` + `bun_uws` to `bun_jsc`'s deps (acyclic: `bundler`/`install`/`http` all already sit above `bun_loop`+`bun_uws`, so `bun_jsc` can too), or move the timer field / `to_uws_response` out of these types (the latter is hard — `AbortSignal` stores the `EventLoopTimer` by value).
+  **What must change:** Either add `bun_loop` + `bun_uws` to `bun_jsc`'s deps (acyclic: `bundler`/`install`/`http` all already sit above `bun_loop`+`bun_uws`, so `bun_jsc` can too), or move the timer field / `to_uws_response` out of these types (the latter is hard — `AbortSignal` stores the `EventLoopTimer` by value).
 
 ## 4. `bun_jsc` group-A/B classification omits ~50 files; several "obvious group-A" files pull higher-tier deps
+
 **What's wrong:** `src/jsc/` has 119 `.rs` files. Proposal lists ~26 for group A and the architectural direction names ~13 for group B (runtime). At least 50 are unclassified, and spot-checks show many need deps the proposal doesn't grant `bun_jsc`:
 **Evidence:**
+
 - `/workspace/bun/src/jsc/BuildMessage.rs:14,86` and `/workspace/bun/src/jsc/ResolveMessage.rs:4,18,71,160,204` — use `bun_ast::Msg`/`ImportKind` and `bun_resolver::is_package_path`. Proposal's `bun_jsc` doesn't depend on `bun_ast`. Proposal mentions only "ResolveMessage::is_package_path inlines the 3-line helper" but says nothing about the `bun_ast::Msg` field these structs hold by value.
 - `/workspace/bun/src/jsc/SystemError.rs:169` — `err: &bun_uws::us_bun_verify_error_t`.
 - `/workspace/bun/src/jsc/WorkTask.rs:1-3`, `/workspace/bun/src/jsc/ConcurrentPromiseTask.rs:1-3`, `/workspace/bun/src/jsc/CppTask.rs:4-5`, `/workspace/bun/src/jsc/JSCScheduler.rs:3`, `/workspace/bun/src/jsc/Task.rs:22`, `/workspace/bun/src/jsc/EventLoopHandle.rs:14` — all use `bun_event_loop` / `bun_io::KeepAlive` / `bun_threading`.
 - `/workspace/bun/src/jsc/GarbageCollectionController.rs:24-25,46` — `bun_event_loop::EventLoopTimer` + `bun_uws` + `impl_timer_owner!`.
 - `/workspace/bun/src/jsc/uuid.rs:23` — `bun_boringssl::rand_bytes` (→ `bun_crypto`).
 - `/workspace/bun/src/jsc/SavedSourceMap.rs:11-13,221-226` — `bun_sourcemap` (OK, → `bun_ast`) but also `bun_js_printer::OnSourceMapChunk` (→ `bun_js`). Unclassified; moves to group B presumably, but then `bun_jsc` group A loses the `SourceMapHandler` impl that `bun_js_printer` calls through — proposal says this becomes `Option<&mut dyn Trait>` with "one impl in bundler/runtime", so SavedSourceMap must move to runtime.
-**What must change:** Produce an explicit per-file A/B assignment table for all of `src/jsc/*.rs`. The realistic outcome is that `bun_jsc`'s dep list grows to at least `bun_core, bun_sys, bun_ast, bun_crypto, bun_uws, bun_loop, bun_macros` — still acyclic but materially different from "pure FFI depending only on bun_core-tier crates".
+  **What must change:** Produce an explicit per-file A/B assignment table for all of `src/jsc/*.rs`. The realistic outcome is that `bun_jsc`'s dep list grows to at least `bun_core, bun_sys, bun_ast, bun_crypto, bun_uws, bun_loop, bun_macros` — still acyclic but materially different from "pure FFI depending only on bun_core-tier crates".
 
 ## 5. `bun_dispatch` deletion contradicts `BufferedReaderParent` aliasing contract
+
 **What's wrong:** Proposal asserts `bun_dispatch` is "deleted, not absorbed" and `BufferedReader` becomes `*const dyn BufferedReaderParent` "(trait takes `&self` + interior mutability for the aliasing case)". The existing trait takes raw `*mut Self` specifically because forming `&Self` while `&mut self.reader` is live is Stacked-Borrows UB. Converting to `&self`+interior-mutability means all 13 parent structs must wrap their embedded `BufferedReader` in `UnsafeCell`, and every `&mut reader` access site across `bun_io`, `bun_runtime` (11 impls), and `bun_install` (2 impls) must go through `.get()`. This is a multi-thousand-line refactor stated as a throwaway.
 **Evidence:** `/workspace/bun/src/io/PipeReader.rs:50-91` — the "Aliasing contract (raw `*mut Self`, not `&mut self`)" doc block. The trait also has `const KIND` and `const HAS_ON_READ_CHUNK` associated constants (lines 72-74), which make it not object-safe as-is. The dyn_vtable catalog (CATALOG §Pattern 2) explicitly recommends "Keep `link_interface!`" for this interface.
 **What must change:** Either (a) keep `link_interface!` for `BufferedReaderParentLink` + `ProcessExit` (so `bun_dispatch` folds into `bun_macros`, not deleted), or (b) spell out the UnsafeCell refactor as a separate line item with its own risk assessment, or (c) hand-write a fn-ptr vtable struct (dropping the `link_interface!` macro but keeping the dispatch shape).
 
 ## 6. `bun_dispatch` deletion is unverifiable for `bun_bundler`'s two interfaces
+
 **What's wrong:** `link_interface! DevServerHandle[Bake]` and `link_interface! VmLoaderCtx[Runtime]` at `/workspace/bun/src/bundler/lib.rs:338,364` exist for `bun_bundler → bun_runtime` back-edges. Proposal is truncated before showing `bun_bundler`'s fate. If `bun_bundler` stays a separate crate (likely — 48k LOC, `bun_install`+`bun_standalone_graph`+`bun_bunfig` depend on it JSC-free), those two interfaces survive and `bun_dispatch` cannot be "deleted outright". Additionally, `BundleGenerateChunkCtx[Linker]` at `/workspace/bun/src/crash_handler/lib.rs:713` is `bun_sys → bun_bundler` after the merge — proposal replaces it with "`register_action_formatter(fn(&mut dyn Write, *const ()))`" but the existing interface passes typed `(chunk_index, part_range)` args that the formatter needs to print `Chunk`/`PartRange`, which live in `bun_bundler`.
 **Evidence:** `/workspace/bun/src/bundler/lib.rs:338-379`; `/workspace/bun/src/crash_handler/lib.rs:713`; impl at `/workspace/bun/src/bundler/LinkerContext.rs:60`.
 **What must change:** Change "deleted" to "absorbed into `bun_macros`" for `bun_dispatch`, OR show `bun_bundler` merging into `bun_runtime`. The crash-handler callback redesign must preserve enough type info for the formatter to actually print chunk context.
 
 ## 7. Codegen scripts hardcode crate names/paths that the split invalidates
+
 **What's wrong:** Multiple codegen `.ts` files embed `bun_jsc::`/`bun_runtime::` paths and filesystem locations that the VM→runtime move breaks.
 **Evidence:**
+
 - `/workspace/bun/src/codegen/generate-host-exports.ts:59-60` — `scanRoots = [{dir: src/runtime, crate: "bun_runtime"}, {dir: src/jsc, crate: "bun_jsc"}]`. After the split, group-B files (VirtualMachine, ModuleLoader, event_loop, Debugger, …) either physically move to `src/runtime/` or are `#[path]`-mounted; either way the scraper's `fm.crate === "bun_jsc"` branch (line 285,308) misroutes them.
 - `/workspace/bun/src/codegen/generate-host-exports.ts:503,505-506` — hardcodes import paths `["bun_jsc::virtual_machine", "VirtualMachine"]`, `["bun_jsc::debugger", "LifecycleHandle"]`, `["bun_jsc::debugger", "TestReporterHandle"]`. All three move to `bun_runtime` per architectural direction.
 - `/workspace/bun/src/codegen/generate-classes.ts:2020,2123,2141-2143` — walks only `src/runtime/lib.rs`; routes out-of-crate `.classes.ts` (i.e. `/workspace/bun/src/jsc/resolve_message.classes.ts`) to `crate::api::Name` assuming `/workspace/bun/src/runtime/api.rs:38-39` still has `pub use bun_jsc::{BuildMessage, ResolveMessage}`. If those types move to runtime (likely per obj #4), the `.classes.ts` file must move too.
-**What must change:** Add a migration line item: update `generate-host-exports.ts` scanRoots + import-path table, and update `generate-classes.ts` fallback routing, in the same PR that moves VirtualMachine.
+  **What must change:** Add a migration line item: update `generate-host-exports.ts` scanRoots + import-path table, and update `generate-classes.ts` fallback routing, in the same PR that moves VirtualMachine.
 
 ## 8. `build.rs` files assume fixed directory depth from repo root
+
 **What's wrong:** Each crate's `build.rs` computes repo root as `CARGO_MANIFEST_DIR/../..`. Absorbing crates may relocate manifest dirs (e.g., if `bun_parsers` becomes `src/ast/parsers/` the depth changes to 3).
 **Evidence:** `/workspace/bun/src/jsc/build.rs:22-26`, `/workspace/bun/src/parsers/build.rs:13-17` (same pattern in `src/runtime/build.rs`, `src/install/build.rs`, `src/bun_core/build.rs`). All do `manifest.parent().and_then(Path::parent)`.
 **What must change:** State whether absorbed crates' source files stay in place (via `#[path = "../parsers/lib.rs"]` mounts from the absorbing crate's `lib.rs`) or physically move. If they move, every `build.rs` needs the depth fixed; if they stay, the absorbing crate needs a single `build.rs` that re-exports `BUN_CODEGEN_DIR` for all included files.
 
 ## 9. Cargo bench/test targets and helper shims break
+
 **What's wrong:**
+
 - `/workspace/bun/scripts/bench-json-rust.sh:59,61` invokes `cargo test -p bun_parsers` / `cargo bench -p bun_parsers` — crate name disappears.
 - `/workspace/bun/src/js_parser/Cargo.toml:46-47` `[[bench]] name = "string_map_vs_hashmap"` — must move to `bun_js` (or `bun_react_compiler`?); the bench binary's link requirements will grow.
 - `/workspace/bun/src/parsers/native_test_shims.rs` defines `#[no_mangle]` stubs for `highway_*` and `__bun_crash_handler_out_of_memory` so `cargo test -p bun_parsers` links standalone. After `bun_parsers` folds into `bun_ast` (which now also contains sourcemap, dotenv, clap, …), the merged crate's `cargo test` binary references a much larger extern-C surface (simdutf, zstd, etc.) — shims must expand or `cargo test -p bun_ast` becomes unlinkable.
 - `/workspace/bun/src/dispatch/Cargo.toml:18` `[[test]]` (the `tests/shape.rs` fixture) — orphaned if `bun_dispatch` is deleted; must move to `bun_macros` if the macro survives (obj #5/#6).
-**What must change:** Add explicit migration steps for each `[[bench]]`/`[[test]]` target and for `native_test_shims.rs`; update `scripts/bench-json-rust.sh`.
+  **What must change:** Add explicit migration steps for each `[[bench]]`/`[[test]]` target and for `native_test_shims.rs`; update `scripts/bench-json-rust.sh`.
 
 ## 10. `show_crash_trace` feature-forwarding chain not rewired
+
 **What's wrong:** Feature chain is `bun_runtime/show_crash_trace → bun_bundler/show_crash_trace → bun_crash_handler/show_crash_trace`. Proposal folds `bun_crash_handler` into `bun_sys` but doesn't mention the feature.
 **Evidence:** `/workspace/bun/src/runtime/Cargo.toml:113`, `/workspace/bun/src/bundler/Cargo.toml:73`, `/workspace/bun/src/crash_handler/Cargo.toml:40`.
 **What must change:** `bun_sys` must declare `[features] show_crash_trace = []` and `bun_bundler` (wherever it lands) must forward to `bun_sys/show_crash_trace`.
 
 ## 11. `shim_standalone` feature must be declared by `bun_install`'s absorbing crate
+
 **What's wrong:** `/workspace/bun/src/install/windows-shim/bun_shim_impl.rs` is `#[path]`-mounted into `bun_install` and is riddled with `#[cfg(feature = "shim_standalone")]`. `/workspace/bun/src/install/lib.rs:256` + `src/install/Cargo.toml` declare an always-off `shim_standalone = []` feature solely so `unexpected_cfgs` (workspace lint, `/workspace/bun/Cargo.toml:188`) doesn't fire. Whatever crate absorbs `bun_install` must declare this feature or the workspace `-D warnings` fails the build.
 **Evidence:** `/workspace/bun/src/install/windows-shim/bun_shim_impl.rs:59,61,63,75,77,…`; `/workspace/bun/src/install/windows-shim/Cargo.toml` `required-features = ["shim_standalone"]`.
 **What must change:** Add `shim_standalone = []` to the `[features]` of whichever crate ends up `mod`-mounting `windows-shim/*.rs` (proposal truncated — unclear which).
 
 ## 12. `bun_ast` dep list omits `bun_macros` though it absorbs `bun_clap`
+
 **What's wrong:** Proposal's `bun_ast` "Depends on: bun_core, bun_sys" but absorbs `bun_clap`, whose `parse_param!` / `param!` wrap proc-macros from `bun_clap_macros` (→ `bun_macros`). Cargo requires a direct dep to invoke a proc-macro.
 **Evidence:** `/workspace/bun/src/clap/lib.rs` uses `bun_clap_macros::__parse_param_impl`; `/workspace/bun/src/clap_macros/lib.rs:1`. Proposal's `bun_css` correctly lists `bun_macros`; `bun_ast` does not.
 **What must change:** Add `bun_macros` to `bun_ast`'s deps.
 
 ## 13. `bun_css` / `bun_ast` use `bun_io::{FixedBufferStream, FmtAdapter}` — not in `bun_core`
-**What's wrong:** The `Write` *trait* lives in `bun_core::write`, but the helper types `FixedBufferStream` and `FmtAdapter` are defined only in `bun_io` (→ `bun_loop`). Proposal's `bun_css` and `bun_ast` don't depend on `bun_loop`.
+
+**What's wrong:** The `Write` _trait_ lives in `bun_core::write`, but the helper types `FixedBufferStream` and `FmtAdapter` are defined only in `bun_io` (→ `bun_loop`). Proposal's `bun_css` and `bun_ast` don't depend on `bun_loop`.
 **Evidence:** `/workspace/bun/src/io/write.rs:76,312` (definitions). Consumers: `/workspace/bun/src/css/css_parser.rs:6459` (`pub type FixedBufWriter<'a> = bun_io::FixedBufferStream<&'a mut [u8]>`); `/workspace/bun/src/sourcemap/ParsedSourceMap.rs:347` (`bun_io::FmtAdapter::new(f)`). Also `/workspace/bun/src/jsc/lib.rs:374,381` (`bun_io::FmtAdapter`) — group-A file per proposal, but `bun_jsc` doesn't list `bun_loop` either (see obj #3).
 **What must change:** Move `src/io/write.rs` (the ~400-LOC helper types, no event-loop coupling) into `bun_core::io` alongside the `Write` trait. Region-2 research already flags this ("unclear why the helpers are stranded in `io`"). Proposal must call this out as a prerequisite step.
 
 ## 14. `bun_jsc_macros` → `bun_macros` merge leaves emitted `::bun_jsc::` paths fragile during migration
+
 **What's wrong:** `#[host_fn]`/`#[host_call]`/`JsClass` derive emit `::bun_jsc::JSGlobalObject`, `::bun_jsc::__macro_support::host_fn_result`, etc. These are consumed by `bun_runtime` and by every `*_jsc` crate. During a single-PR migration, if `bun_jsc` is renamed, split, or its `__macro_support` module moves, every `#[host_fn]` expansion in ~200 files breaks simultaneously.
 **Evidence:** `/workspace/bun/src/jsc_macros/lib.rs:161-378` (30+ `::bun_jsc::` quote! emissions).
 **What must change:** State explicitly that `bun_jsc` keeps its crate name and the `__macro_support`/`host_fn` module paths unchanged, OR sequence the macro update before the crate rename.
 
 ## 15. `/workspace/bun/src/CLAUDE.md` prescribes `bun_sys_jsc::ErrorJsc::to_js` — crate disappears
-**What's wrong:** The project's in-tree Rust guide tells contributors to use `bun_sys_jsc::ErrorJsc` for syscall-error→JS conversion. `bun_sys_jsc` folds into `bun_runtime` per architectural direction (all *_jsc crates). Research also notes `bun_jsc::SysErrorJsc` is the dominant in-tree duplicate (30+ vs ~6 callers).
+
+**What's wrong:** The project's in-tree Rust guide tells contributors to use `bun_sys_jsc::ErrorJsc` for syscall-error→JS conversion. `bun_sys_jsc` folds into `bun_runtime` per architectural direction (all \*\_jsc crates). Research also notes `bun_jsc::SysErrorJsc` is the dominant in-tree duplicate (30+ vs ~6 callers).
 **Evidence:** `/workspace/bun/src/CLAUDE.md` "Convert to a JS exception via `bun_sys_jsc::ErrorJsc::to_js`"; `/workspace/bun/src/sys_jsc/error_jsc.rs:7` vs `/workspace/bun/src/jsc/lib.rs:1911`.
 **What must change:** Pick one (`bun_jsc::SysErrorJsc` survives in group A and is what the doc should name) and add a doc-update line item. Contributor-facing docs that reference disappearing crate names are a migration completeness item.
 
 ## 16. `rust.ts:775` comment claims shim crate graph is "bun_core/bun_sys/bun_string only" — contradicts both reality and proposal
-**What's wrong:** The build script has a stale comment and the proposal doesn't touch `rust.ts`. More substantively: `/workspace/bun/scripts/build/rust.ts:793-795` invokes `cargo build -p bun_shim_impl --features shim_standalone`. Proposal keeps `bun_shim_impl`, `bun_opaque`, `bun_windows_sys` intact — OK. But the shim's shared source (`/workspace/bun/src/install/windows-shim/bun_shim_impl.rs:60,64,206,274,343,386,…`) references `bun_core::ffi::{slice,slice_mut,zeroed}`, `bun_core::Environment`, `bun_core::RacyCell`, `bun_core::w!`, `bun_sys::windows`. These resolve to the *local stand-in modules* in `/workspace/bun/src/install/windows-shim/main.rs:166-end` when `shim_standalone` is set. After `bun_core` absorbs 20 crates and `bun_sys` absorbs 17, anyone editing the shared source may inadvertently reach for a newly-in-`bun_core` item (e.g., `bun_core::errno::E`), which compiles in the `bun_install` context but fails in the `bun_shim_impl` context with no CI coverage on non-Windows.
+
+**What's wrong:** The build script has a stale comment and the proposal doesn't touch `rust.ts`. More substantively: `/workspace/bun/scripts/build/rust.ts:793-795` invokes `cargo build -p bun_shim_impl --features shim_standalone`. Proposal keeps `bun_shim_impl`, `bun_opaque`, `bun_windows_sys` intact — OK. But the shim's shared source (`/workspace/bun/src/install/windows-shim/bun_shim_impl.rs:60,64,206,274,343,386,…`) references `bun_core::ffi::{slice,slice_mut,zeroed}`, `bun_core::Environment`, `bun_core::RacyCell`, `bun_core::w!`, `bun_sys::windows`. These resolve to the _local stand-in modules_ in `/workspace/bun/src/install/windows-shim/main.rs:166-end` when `shim_standalone` is set. After `bun_core` absorbs 20 crates and `bun_sys` absorbs 17, anyone editing the shared source may inadvertently reach for a newly-in-`bun_core` item (e.g., `bun_core::errno::E`), which compiles in the `bun_install` context but fails in the `bun_shim_impl` context with no CI coverage on non-Windows.
 **Evidence:** `/workspace/bun/src/install/windows-shim/main.rs:9-15,167-174`; `/workspace/bun/scripts/build/rust.ts:768-807` only runs on Windows targets.
 **What must change:** Add a CI lint (or `cargo check -p bun_shim_impl --features shim_standalone --target x86_64-pc-windows-msvc` on linux via `--target` without linking) to the migration checklist, and update the `main.rs` stand-in module to document the expanded `bun_core`/`bun_sys` surface it must shadow.
 
@@ -311,6 +330,7 @@ Group-B (~37k) + eleven `*_jsc` crates (~28k) + `sql`(6k) + `valkey`/`csrf`/`tcc
 ### 2. Six crates need `bun_io` helpers that stay in `bun_loop` — four "Depends on" lines are unsatisfiable
 
 The proposal drops the `bun_io` edge from `bun_sys`/`bun_ast`/`bun_css`/`bun_js` on the basis that the `Write` trait lives in `bun_core::write`. That is true for the trait (`/workspace/bun/src/io/write.rs:32` re-exports it), but these crates also use items defined **in** `src/io/write.rs` (absorbed into `bun_loop`):
+
 - `bun_io::FmtAdapter` — `src/sourcemap/ParsedSourceMap.rs:347`, `src/crash_handler/lib.rs:402`
 - `bun_io::FixedBufferStream` — `src/css/css_parser.rs:6459`
 - `bun_io::Result` alias — `src/zlib/lib.rs:251`, `src/brotli/lib.rs:599`, `src/js_parser/parser.rs:502`, `src/js_printer/lib.rs:7346`, `src/css/printer.rs:474`
@@ -325,7 +345,7 @@ Adding `bun_loop` as a dep of `bun_sys` is a cycle (`bun_loop → bun_uws → bu
 
 ### 4. `__bun_jsc_enable_hot_module_reloading_for_bundler` cannot become a direct call — do not count it in the "14 vanish
 
-`/workspace/bun/src/bundler/bundle_v2.rs:1417` is an `extern "Rust"` into `bun_jsc::hot_reloader`. The architectural directive places `hot_reloader` in **group B** (moves to `bun_runtime`). `bun_bundler → bun_runtime` is a cycle (runtime depends on bundler). The sibling extern at `:1403` (`__bun_jsc_generate_cached_bytecode`) *is* eliminable because `CachedBytecode` stays in group-A `bun_jsc`, but the hot-reloader one is not.
+`/workspace/bun/src/bundler/bundle_v2.rs:1417` is an `extern "Rust"` into `bun_jsc::hot_reloader`. The architectural directive places `hot_reloader` in **group B** (moves to `bun_runtime`). `bun_bundler → bun_runtime` is a cycle (runtime depends on bundler). The sibling extern at `:1403` (`__bun_jsc_generate_cached_bytecode`) _is_ eliminable because `CachedBytecode` stays in group-A `bun_jsc`, but the hot-reloader one is not.
 **Required change:** classify this extern as one of the surviving 7 (convert to `OnceLock<fn(NonNull<BundleV2<'static>>)>` set by runtime), and ensure the -100k tally does not double-count it under both "`bun_bundler` calls jsc directly" and "14 of 21 extern blocks vanish".
 
 ### 5. 88k `bun_core` + 49k `bun_sys` roughly doubles the serial critical-path prefix
@@ -340,7 +360,7 @@ Today `bun_core` is 33k LOC; after it, ~14 crates (collections 12.5k, paths 6.8k
 ## Objections to the −100k LOC accounting
 
 **1. The headline number is off by an order of magnitude — realistic net deletion is ~5–8k LOC, not 100k.**
-The proposal's per-crate "LOC estimate" rows are *target sizes equal to the sum of absorbed crates* (verified: bun_core target 88k ≈ measured 88,687; bun_sys 49k ≈ 48,676; bun_ast 68k ≈ 69,988; bun_js 57k ≈ 57,368; bun_loop 22k ≈ 22,116; bun_crypto 6.7k ≈ 6,701; bun_resolver 20k ≈ 19,810). Merging crates moves code, it does not delete it. The only sources of *net* deletion the proposal itemizes are `jsc_hooks.rs` (5,378), `runtime/dispatch.rs` (1,236), `bun_dispatch` (345 — proposal says 407, wrong), `bun_output` (51), plus scattered `extern "Rust"`/`link_interface!` glue. Even counting all of that as 100 % deletable yields <8k. Total repo is 1,040,273 LOC of Rust; there is no path to −100k in what's written.
+The proposal's per-crate "LOC estimate" rows are _target sizes equal to the sum of absorbed crates_ (verified: bun_core target 88k ≈ measured 88,687; bun_sys 49k ≈ 48,676; bun_ast 68k ≈ 69,988; bun_js 57k ≈ 57,368; bun_loop 22k ≈ 22,116; bun_crypto 6.7k ≈ 6,701; bun_resolver 20k ≈ 19,810). Merging crates moves code, it does not delete it. The only sources of _net_ deletion the proposal itemizes are `jsc_hooks.rs` (5,378), `runtime/dispatch.rs` (1,236), `bun_dispatch` (345 — proposal says 407, wrong), `bun_output` (51), plus scattered `extern "Rust"`/`link_interface!` glue. Even counting all of that as 100 % deletable yields <8k. Total repo is 1,040,273 LOC of Rust; there is no path to −100k in what's written.
 **Required change:** restate the claim as ~−6k LOC of hand-maintained indirection glue, or produce a line-by-line table that actually sums to ≥100k.
 
 **2. "`jsc_hooks.rs` (5,378 LOC) deletes entirely" is false — most of it is logic that must relocate, not vanish.**
@@ -360,6 +380,7 @@ The 11 `*_jsc` crates total 28,342 LOC (`sql_jsc` alone is 15,461; `http_jsc` 6,
 **Required change:** remove `*_jsc` folding and the uws shims from the deletion tally; count only per-crate boilerplate (~300 LOC) and acknowledge the C-ABI `UpgradedDuplex__*` surface cannot be replaced by a Rust trait object.
 
 ---
+
 **Files inspected:** `/workspace/bun/src/runtime/jsc_hooks.rs`, `/workspace/bun/src/runtime/dispatch.rs`, `/workspace/bun/src/dispatch/lib.rs`, `/workspace/bun/src/uws/lib.rs`, `/workspace/bun/src/event_loop/ConcurrentTask.rs`, `/workspace/bun/src/io/lib.rs`, `/workspace/bun/src/io/posix_event_loop.rs`, `/workspace/bun/src/spawn/lib.rs`, `/workspace/bun/src/runtime/socket/UpgradedDuplex.rs`, `/workspace/bun/src/uws_sys/lib.rs`, plus per-crate `wc -l` across all ~100 crates.
 
 ---
@@ -394,11 +415,11 @@ Three generators emit paths the split relocates, and the accounting never lists 
 
 These sit in the dep tiers already covered by the proposal (below `bun_resolver`, so not victims of truncation) and appear in no `Absorbs:` list:
 
-| crate | LOC | current deps | obvious home |
-|---|---|---|---|
-| `bun_sql` (`/workspace/bun/src/sql/`) | 5,969 | core/ptr/collections/sys/**boringssl**/**sha_hmac** | `bun_crypto` or new `bun_db` |
-| `bun_valkey` (`/workspace/bun/src/valkey/`) | 832 | core only | `bun_core` or `bun_crypto` |
-| `bun_tcc_sys` (`/workspace/bun/src/tcc_sys/`) | 493 | opaque/alloc/core/ptr | `bun_sys` |
+| crate                                         | LOC   | current deps                                        | obvious home                 |
+| --------------------------------------------- | ----- | --------------------------------------------------- | ---------------------------- |
+| `bun_sql` (`/workspace/bun/src/sql/`)         | 5,969 | core/ptr/collections/sys/**boringssl**/**sha_hmac** | `bun_crypto` or new `bun_db` |
+| `bun_valkey` (`/workspace/bun/src/valkey/`)   | 832   | core only                                           | `bun_core` or `bun_crypto`   |
+| `bun_tcc_sys` (`/workspace/bun/src/tcc_sys/`) | 493   | opaque/alloc/core/ptr                               | `bun_sys`                    |
 
 `/workspace/bun/Cargo.toml` workspace `members` still lists `"src/sql"`, `"src/valkey"`, `"src/tcc_sys"` with no destination. **Required change:** assign all three; the "-100k" delta is off by ~7.3k LOC.
 

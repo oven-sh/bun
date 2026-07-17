@@ -1,6 +1,7 @@
 ## Target crate layout
 
 ### `bun_opaque`
+
 **Absorbs**: (unchanged)
 **Depends on**: —
 **LOC estimate**: ~430
@@ -8,6 +9,7 @@
 **Workarounds eliminated**: none (this is a deliberate leaf, not a workaround)
 
 ### `bun_windows_sys`
+
 **Absorbs**: (unchanged)
 **Depends on**: —
 **LOC estimate**: ~1,900
@@ -15,6 +17,7 @@
 **Workarounds eliminated**: none
 
 ### `bun_output_tags`
+
 **Absorbs**: (unchanged)
 **Depends on**: —
 **LOC estimate**: ~100
@@ -22,6 +25,7 @@
 **Workarounds eliminated**: none
 
 ### `bun_macros`
+
 **Absorbs**: bun_core_macros, bun_clap_macros, bun_jsc_macros, bun_css_derive
 **Depends on**: bun_output_tags
 **LOC estimate**: ~4,000
@@ -29,6 +33,7 @@
 **Workarounds eliminated**: `bun_dispatch` proc-macro crate (407 LOC) deleted outright.
 
 ### `bun_core`
+
 **Absorbs**: bun_alloc, bun_mimalloc_sys, bun_simdutf_sys, bun_wyhash, bun_highway, bun_hash, bun_core, bun_ptr, bun_safety, bun_output, bun_collections, bun_base64, bun_errno, bun_paths, bun_libuv_sys, bun_url, bun_semver, bun_http_types, bun_analytics, bun_picohttp
 **Depends on**: bun_opaque, bun_windows_sys, bun_output_tags, bun_macros
 **LOC estimate**: ~88,000
@@ -36,6 +41,7 @@
 **Workarounds eliminated**: `link_interface! ErrnoNames[Sys]` (errno now in-crate); `extern "Rust" __bun_crash_handler_out_of_memory` and `__bun_crash_handler_dump_stack_trace` (basic impl in-crate, hook via `AtomicPtr`); `bun_alloc::String`↔`bun_core::String` transparent-newtype split; `bun_core::perf` T0 fork; `bun_core::base64::encode` dup; `bun_core::Global::features` ↔ `analytics::features` split-brain; `bun_core::spawn_ffi` dup (types stay here, used by sys); `bun_output` façade crate; wyhash→alloc ordering constraint; `::bun_ptr::` hardcoded paths in derives become `::bun_core::ptr::`; `http_types::MimeType::by_loader(u8)` can take real `Loader` once ast is visible (stays `u8` here, fixed at call site); `semver::String` no longer drags a crate into `sourcemap`; `KNOWN_ALLOC_VTABLES` registry (safety+alloc same crate).
 
 ### `bun_sys`
+
 **Absorbs**: bun_sys, bun_which, bun_perf, bun_platform, bun_threading, bun_spawn_sys, bun_glob, bun_watcher, bun_libarchive, bun_exe_format, bun_zlib, bun_zlib_sys, bun_zstd, bun_brotli, bun_brotli_sys, bun_libdeflate_sys, bun_crash_handler
 **Depends on**: bun_core, bun_opaque, bun_windows_sys
 **LOC estimate**: ~49,000
@@ -43,13 +49,15 @@
 **Workarounds eliminated**: `link_interface! OutputSink[Sys]` (impl registers into `bun_core`'s `OnceLock`); `link_interface! BundleGenerateChunkCtx[Linker]` → `crash_handler::register_action_formatter(fn(&mut dyn Write, *const ()))` plain callback; `bun_core::perf` fork; `spawn_sys→analytics` 1-line dep; `bun_core::io::Writer` head-struct vtable (use the real `Write` trait); 6 `*_sys`/wrapper crate pairs collapse.
 
 ### `bun_ast`
-**Absorbs**: bun_ast, bun_parsers, bun_sourcemap, bun_dotenv, bun_options_types, bun_install_types (minus `PnpmMatcher`), bun_resolve_builtins, bun_shell_parser, bun_md, bun_clap
+
+**Absorbs**: bun*ast, bun_parsers, bun_sourcemap, bun_dotenv, bun_options_types, bun_install_types (minus `PnpmMatcher`), bun_resolve_builtins, bun_shell_parser, bun_md, bun_clap
 **Depends on**: bun_core, bun_sys
 **LOC estimate**: ~68,000
 **Rationale**: All non-JS parsers + all shared vocabulary/config types. This is the `*_types` tier made honest: one crate that everything above can name for `Expr`/`Log`/`Loader`/`BundleOptions`-shape/`Dependency`/`ContextData`/`JSX::Pragma`. `PnpmMatcher` moves UP to `bun_install` (its only callers — ini/bunfig/install — are all there) so this crate has no JSC regex dependency. `TranspilerCacheImpl` becomes `Option<&'static dyn TranspilerCache>` in parser options — a normal trait object, impl in `bun_runtime`.
-**Workarounds eliminated**: `link_interface! TranspilerCacheImpl[Jsc]` + its `entry: *mut()` / `parser_options: NonNull<()>` double erasure; `bun_install_types` + `bun_options_types` as separate cycle-breaker crates; `extern "Rust" __bun_regex_*` (PnpmMatcher moved to install); `dotenv::S3Credentials` POD dup; `DirEntryProbe` trait stays (resolver above) but as normal generic bound; `bun_api` vestigial crate (schema re-exports here directly); `ast::ToJSError` can stay; `EqlParser` trait stays (js above); dead `options_types→libarchive/zlib` deps; dead `dotenv→bun_dispatch` dep; `sourcemap→semver` edge (semver in core).
+**Workarounds eliminated**: `link_interface! TranspilerCacheImpl[Jsc]` + its `entry: *mut()` / `parser_options: NonNull<()>` double erasure; `bun_install_types` + `bun_options_types` as separate cycle-breaker crates; `extern "Rust" \_\_bun_regex*\*`(PnpmMatcher moved to install);`dotenv::S3Credentials`POD dup;`DirEntryProbe`trait stays (resolver above) but as normal generic bound;`bun_api`vestigial crate (schema re-exports here directly);`ast::ToJSError`can stay;`EqlParser`trait stays (js above); dead`options_types→libarchive/zlib`deps; dead`dotenv→bun_dispatch`dep;`sourcemap→semver` edge (semver in core).
 
 ### `bun_react_compiler`
+
 **Absorbs**: (unchanged)
 **Depends on**: bun_core, bun_ast
 **LOC estimate**: ~63,000
@@ -57,6 +65,7 @@
 **Workarounds eliminated**: none (this is the one split we keep on purpose). `JsxImportKind` dup can be replaced with the real `bun_ast` enum now that ast is a direct dep.
 
 ### `bun_css`
+
 **Absorbs**: bun_css
 **Depends on**: bun_core, bun_sys, bun_ast, bun_macros
 **LOC estimate**: ~72,000
@@ -64,13 +73,15 @@
 **Workarounds eliminated**: local `MangledProps` type alias (now imports from `bun_js`... no, `bun_js` is parallel — keep the alias, it's 1 line and both crates define it identically from `bun_core` types).
 
 ### `bun_js`
-**Absorbs**: bun_js_parser, bun_js_printer
+
+**Absorbs**: bun*js_parser, bun_js_printer
 **Depends on**: bun_core, bun_sys, bun_ast, bun_react_compiler
 **LOC estimate**: ~57,000
 **Rationale**: JS/TS parser + printer as one unit. They share `bun_ast` node types; merging lets `RuntimeTranspilerCache`'s `parser_options` field be typed instead of `NonNull<()>`. `MacroContext` becomes `Option<Box<dyn MacroRunner>>` in `ParserOptions` — runtime supplies the impl. `SourceMapHandler`/`RequireOrImportMetaCallback` become `Option<&mut dyn Trait>` (each has one impl in bundler/runtime).
-**Workarounds eliminated**: `extern "Rust" __bun_macro_{context_init,deinit,call,get_remap,collect_vm_garbage}` (5 shims) → trait object; `MacroContext { data: *mut c_void }` + `MacroJSCtx(i64)` opaque; `SourceMapHandler`/`RequireOrImportMetaCallback` manual fn-ptr vtables → `&mut dyn`; dead `js_parser→bun_dispatch` Cargo dep; dead `css_jsc→js_parser` Cargo dep.
+**Workarounds eliminated**: `extern "Rust" \_\_bun_macro*{context_init,deinit,call,get_remap,collect_vm_garbage}`(5 shims) → trait object;`MacroContext { data: \*mut c_void }`+`MacroJSCtx(i64)`opaque;`SourceMapHandler`/`RequireOrImportMetaCallback`manual fn-ptr vtables →`&mut dyn`; dead `js_parser→bun_dispatch`Cargo dep; dead`css_jsc→js_parser` Cargo dep.
 
 ### `bun_crypto`
+
 **Absorbs**: bun_boringssl_sys, bun_boringssl, bun_sha_hmac, bun_cares_sys, bun_csrf, bun_s3_signing, bun_dns
 **Depends on**: bun_core, bun_sys
 **LOC estimate**: ~6,700
@@ -78,6 +89,7 @@
 **Workarounds eliminated**: `extern "Rust" __bun_dns_prefetch` + `extern "C" Bun__addrinfo_registerQuic` → `OnceLock<fn>` hooks; `boringssl`/`boringssl_sys` split; `sha_hmac` as separate crate.
 
 ### `bun_jsc`
+
 **Absorbs**: (group-A half of current bun_jsc only) — JSValue, JSGlobalObject, JSObject, JSString, VM, CallFrame, Strong, Weak, Exception, host_fn, array_buffer, cpp, WTF, ZigString, bun_string_jsc, ErrorCode, JSPromise, JSMap, FetchHeaders, AbortSignal, URL, DOMURL, RegularExpression, CachedBytecode (FFI only), codegen, generated
 **Depends on**: bun_core, bun_sys, bun_macros
 **LOC estimate**: ~17,000
@@ -85,6 +97,7 @@
 **Workarounds eliminated**: this crate creates none and now enables eliminating ~30 others downstream. Specifically, by depending on nothing above `bun_sys`, it can be depended on by bundler/install/http/resolver.
 
 ### `bun_uws`
+
 **Absorbs**: bun_uws_sys, bun_uws
 **Depends on**: bun_core, bun_sys, bun_crypto, bun_macros
 **LOC estimate**: ~11,000
@@ -92,13 +105,15 @@
 **Workarounds eliminated**: `bun_uws` re-export façade (~1,000 LOC of `pub use`); 25 `extern "C" UpgradedDuplex__*`/`WindowsNamedPipe__*` Rust→Rust shims (replaced by handler registration); `ParentEventLoopHandle` carrier trait (loop stores typed handle now); `uws_sys→http_types` edge.
 
 ### `bun_loop`
-**Absorbs**: bun_io, bun_event_loop, bun_spawn, bun_patch
+
+**Absorbs**: bun*io, bun_event_loop, bun_spawn, bun_patch
 **Depends on**: bun_core, bun_sys, bun_uws
 **LOC estimate**: ~22,000
 **Rationale**: The fd-poll / event-loop / process-spawn layer as one crate. Merging io+event_loop+spawn dissolves the `spawn_sys` split reason and the `io↔event_loop` externs for `Mini`. Upward calls to runtime go through **normal trait objects**: `Task` holds `NonNull<dyn Runnable>` (intrusive, zero-alloc — task structs embed the vtable ptr); `EventLoopTimer` holds `*mut dyn TimerCallback`; `FilePoll` holds `*mut dyn FilePollOwner`; `Process` holds `Option<Box<dyn ProcessExitHandler>>`; `BufferedReader` holds `*const dyn BufferedReaderParent` (trait takes `&self` + interior mutability for the aliasing case). `EventLoopCtx` becomes `enum { Mini(MiniEventLoop), Js(&'static dyn JsEventLoopHooks) }` — the `Js` impl lives in runtime. Drops `event_loop→dotenv` (env map passed as parameter).
-**Workarounds eliminated**: `link_interface! EventLoopCtx[Js,Mini]` + `JsEventLoop[Jsc]` + `BufferedReaderParentLink[13]` + `ProcessExit[12]` → all become trait objects; `extern "Rust" __bun_js_event_loop_current` + 8×`__bun_spawn_sync_*` + `__bun_fire_timer` + `__bun_js_timer_epoch` + `__bun_stdio_blob_store_new` + `__bun_js_vm_get` + `__bun_get_vm_ctx` + `__bun_run_file_poll` + `__bun_io_pollable_on_ready`/`on_io_error` → all become trait-object calls; `ErasedJsError`/`JsError` twin enums; `spawn_sys` crate split; 96 `task_tag::*` constants + `Task{tag,ptr}` + 24 `EventLoopTimer::Tag` + 15 `PollTag` variants (all become `dyn`); `io/heap.rs` pairing heap stays local; `Source::Any(Box<dyn SourceData>)` stays (legitimate).
+**Workarounds eliminated**: `link_interface! EventLoopCtx[Js,Mini]` + `JsEventLoop[Jsc]` + `BufferedReaderParentLink[13]` + `ProcessExit[12]` → all become trait objects; `extern "Rust" __bun_js_event_loop_current` + 8×`\_\_bun_spawn_sync*_`+`**bun_fire_timer`+`**bun_js_timer_epoch`+`**bun_stdio_blob_store_new`+`**bun_js_vm_get`+`**bun_get_vm_ctx`+`**bun_run_file_poll`+`\_\_bun_io_pollable_on_ready`/`on_io_error`→ all become trait-object calls;`ErasedJsError`/`JsError`twin enums;`spawn_sys`crate split; 96`task_tag::_`constants +`Task{tag,ptr}`+ 24`EventLoopTimer::Tag`+ 15`PollTag`variants (all become`dyn`); `io/heap.rs`pairing heap stays local;`Source::Any(Box<dyn SourceData>)` stays (legitimate).
 
 ### `bun_http`
+
 **Absorbs**: bun_http
 **Depends on**: bun_core, bun_sys, bun_ast, bun_crypto, bun_uws, bun_loop
 **LOC estimate**: ~18,000
@@ -106,6 +121,7 @@
 **Workarounds eliminated**: `HTTPClientResultCallback` manual vtable → closure; dead `bun_http→bun_dispatch` Cargo dep.
 
 ### `bun_resolver`
+
 **Absorbs**: bun_resolver, bun_router
 **Depends on**: bun_core, bun_sys, bun_ast, bun_js
 **LOC estimate**: ~20,000

@@ -195,6 +195,11 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
      * so it cannot live in `state`. */
     bool isConnectRequest = false;
 
+    /* Chunk-extension bytes consumed on the current chunk-size line, reset per
+     * chunk (llhttp's on_chunk_header); capped at MAX_CHUNK_EXTENSION_SIZE for
+     * both Bun.serve and node:http servers. */
+    uint64_t chunkedExtensionsByteCount = 0;
+
     /* node:http server compat: number of pipelined responses dispatched to JS
      * that have not yet become this connection's current response. While
      * non-zero, newly parsed requests keep being queued (preserving response
@@ -234,11 +239,6 @@ struct HttpResponseData<SSL, true> : HttpResponseData<SSL, false> {
      * Mirrors last_message_start_/headers_completed_ in Node's http parser
      * ConnectionsList, which back server.headersTimeout/requestTimeout. */
     uint64_t lastMessageStartMs = 0;
-    /* Bytes of chunk extensions consumed on the current chunk-size line of the
-     * request body, matching llhttp/Node which resets the counter in
-     * on_chunk_header (per chunk, not per message). The parser gets it as a
-     * nullable pointer (see HttpParser::consumePostPadded). */
-    uint64_t chunkedExtensionsByteCount = 0;
     /* Trailer fields set via response.addTrailers(), pre-rendered as
      * "name: value\r\n" lines. Written between the terminating 0 chunk and the
      * final CRLF of a chunked response (RFC 9112 7.1.2); non-empty also forces

@@ -1289,6 +1289,9 @@ walkDone:;
     // Finalize the last cluster's width contribution. If we broke early via
     // sawCutEnd, pending was already flushed close-only at the break.
     const bool reachedEOF = !sawCutEnd;
+    // When reachedEOF && hasPrev, `position` here is the start column of the
+    // last cluster, i.e. the highest break column the walk reached.
+    const size_t lastClusterCol = position;
     if (reachedEOF) {
         if (hasPrev) position += gs.width();
         // The last cluster may have overflowed specEnd (wide char straddling
@@ -1299,9 +1302,10 @@ walkDone:;
     // Degenerate: something was cut but no ellipsis fit in the range →
     // bare ellipsis, mirroring the ASCII fast path's !doStart && !doEnd
     // branch. `!include` covers a start budget that pushed `start` past
-    // all content.
+    // all content; the `lastClusterCol` arm catches the case where only
+    // zero-width clusters (tab/LF/ZWSP) reached the original start.
     if (ellipsisWidth > 0 && (!include || (!needStartEllipsis && !needEndEllipsis))
-        && (sawCutEnd || (cutStartForEllipsis && position > startBeforeBudget)))
+        && (sawCutEnd || (cutStartForEllipsis && (position > startBeforeBudget || (hasPrev && lastClusterCol >= startBeforeBudget)))))
         return ellipsis.toString();
 
     if (!include) return emptyString();

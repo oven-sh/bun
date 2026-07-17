@@ -3987,66 +3987,68 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeSqliteBackup, (JSGlobalObject * globalObject, Cal
         return rejectWithPending();
     }
 
-    // Node retries SQLITE_BUSY/LOCKED indefinitely (BackupJob just calls
-    // ScheduleWork() again with no timeout), so match that: no invented
-    // busy budget. Back off between retries so a contended destination
-    // doesn't busy-spin at 100% CPU. Unlike Node this loop runs on the JS
-    // thread, so a permanently-locked destination would be an unrecoverable
-    // hang; the progress callback fires on BUSY/LOCKED too so a caller can
-    // throw from it to abort. (Node fires progress between retries too, but
-    // gated on remaining_pages != 0 — Bun fires unconditionally so the
-    // escape hatch works even before the first successful step.)
+    // Node's BackupJob::AfterThreadPoolWork only reschedules when
+    // sqlite3_backup_remaining() != 0. A step that never reaches the page
+    // copy (destination locked, source == destination file, source in a
+    // write txn) returns BUSY with remaining still 0, so Node rejects on
+    // the first iteration instead of spinning. Match that gate exactly —
+    // this loop is synchronous on the JS thread, so an unconditional BUSY
+    // retry would be an unrecoverable process hang.
     constexpr int kBusyRetrySleepMs = 25;
 
     int totalPages = 0;
     while (true) {
         r = sqlite3_backup_step(backup, rate);
+
+        if (r != SQLITE_OK && r != SQLITE_DONE && r != SQLITE_BUSY && r != SQLITE_LOCKED) {
+            // Hard error. Node's HandleBackupError(resolver, backup_status_)
+            // builds the rejection from the step return code itself.
+            throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+            sqlite3_backup_finish(backup);
+            sqlite3_close_v2(dest);
+            return rejectWithPending();
+        }
+
         totalPages = sqlite3_backup_pagecount(backup);
         int remaining = sqlite3_backup_remaining(backup);
 
-        if (progressFn && (r == SQLITE_OK || r == SQLITE_BUSY || r == SQLITE_LOCKED)) {
-            JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
-            payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
-            payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);
-            MarkedArgumentBuffer args;
-            args.append(payload);
-            auto callData = JSC::getCallData(progressFn);
-            JSC::call(globalObject, progressFn, callData, jsNull(), args);
-            if (scope.exception()) [[unlikely]] {
+        if (remaining != 0) {
+            if (progressFn) {
+                JSObject* payload = constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
+                payload->putDirect(vm, Identifier::fromString(vm, "totalPages"_s), jsNumber(totalPages), 0);
+                payload->putDirect(vm, Identifier::fromString(vm, "remainingPages"_s), jsNumber(remaining), 0);
+                MarkedArgumentBuffer args;
+                args.append(payload);
+                auto callData = JSC::getCallData(progressFn);
+                JSC::call(globalObject, progressFn, callData, jsNull(), args);
+                if (scope.exception()) [[unlikely]] {
+                    sqlite3_backup_finish(backup);
+                    sqlite3_close_v2(dest);
+                    return rejectWithPending();
+                }
+            }
+            // Poll the termination trap so Worker.terminate() / the watchdog
+            // can break a very large copy; the VM is being torn down so
+            // clean up and unwind without allocating JS.
+            if (vm.traps().needHandling(VMTraps::NeedTermination) || vm.hasPendingTerminationException()) [[unlikely]] {
                 sqlite3_backup_finish(backup);
                 sqlite3_close_v2(dest);
-                return rejectWithPending();
+                scope.release();
+                return JSValue::encode(jsUndefined());
             }
-        }
-
-        if (r == SQLITE_DONE) break;
-        // Without a progress callback the loop never re-enters JS, so
-        // Worker.terminate() / the watchdog cannot land at a safepoint and
-        // hasTerminationRequest() is never set. Poll the trap bit directly
-        // (written atomically by notifyNeedTermination from the parent
-        // thread) so termination breaks a BUSY spin or a very large copy;
-        // Node's retry-forever semantics are preserved otherwise. The VM is
-        // being torn down, so just clean up and let the unwind happen — no
-        // JS allocation on a terminating VM.
-        if (vm.traps().needHandling(VMTraps::NeedTermination) || vm.hasPendingTerminationException()) [[unlikely]] {
-            sqlite3_backup_finish(backup);
-            sqlite3_close_v2(dest);
-            scope.release();
-            return JSValue::encode(jsUndefined());
-        }
-        if (r == SQLITE_OK) continue;
-        if (r == SQLITE_BUSY || r == SQLITE_LOCKED) {
-            sqlite3_sleep(kBusyRetrySleepMs);
+            if (r == SQLITE_BUSY || r == SQLITE_LOCKED) {
+                sqlite3_sleep(kBusyRetrySleepMs);
+            }
             continue;
         }
 
-        // sqlite3_backup_step()'s *return value* is the authoritative
-        // error here. It isn't reliably mirrored onto `dest`'s
-        // sqlite3_errcode() until sqlite3_backup_finish() runs (and
-        // that also clears some codes), so asking `dest` can yield
-        // "not an error"/errcode 0. Node's BackupJob uses the step
-        // return code directly for the rejected error — do the same.
-        throwSqliteMessage(globalObject, scope, r, WTF::String::fromUTF8(sqlite3_errstr(r)));
+        if (r == SQLITE_DONE) break;
+
+        // remaining == 0 with OK/BUSY/LOCKED: the step never advanced.
+        // Node's HandleBackupError(resolver) reads sqlite3_errcode(dest)
+        // here — which backup_step leaves untouched — so the observed
+        // error is errcode 0 / "not an error". Match that verbatim.
+        throwSqliteError(globalObject, scope, dest);
         sqlite3_backup_finish(backup);
         sqlite3_close_v2(dest);
         return rejectWithPending();

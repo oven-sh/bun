@@ -571,6 +571,7 @@ impl<Id> ComptimeClap<Id> {
             diagnostic: opt.diagnostic,
             state: streaming::State::Normal,
             positional: None,
+            short_aliases: opt.short_aliases,
         };
 
         while let Some(arg) = stream.next()? {

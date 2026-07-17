@@ -298,6 +298,13 @@ mod _impl {
                             }
                         }
                     }
+                    // Node's whole-token aliases are not params, so they never
+                    // land above; an alias takes a value iff its target does.
+                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
+                        if set.contains(to) {
+                            bun_core::handle_oom(set.insert(from));
+                        }
+                    }
                     set
                 });
 

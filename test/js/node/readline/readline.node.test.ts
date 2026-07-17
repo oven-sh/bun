@@ -2063,6 +2063,21 @@ describe("readline.createInterface()", () => {
     assert.strictEqual(closed, true);
   });
 
+  it("Symbol.dispose method is named '[Symbol.dispose]' (a string, as Node's assignFunctionName produces)", () => {
+    const fn = readline.Interface.prototype[Symbol.dispose];
+    // Node names it via assignFunctionName(SymbolDispose, fn), which stringifies the
+    // Symbol to `[${description}]`. A raw Symbol here throws on any coercion of .name.
+    assert.strictEqual(typeof fn.name, "string");
+    assert.strictEqual(fn.name, "[Symbol.dispose]");
+    assert.strictEqual(`${fn.name}`, "[Symbol.dispose]");
+    assert.deepStrictEqual(Object.getOwnPropertyDescriptor(fn, "name"), {
+      value: "[Symbol.dispose]",
+      writable: false,
+      enumerable: false,
+      configurable: true,
+    });
+  });
+
   it("should support Symbol.dispose as alias for close()", () => {
     const input = new PassThrough();
     const output = new PassThrough();

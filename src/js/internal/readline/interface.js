@@ -1504,7 +1504,7 @@ Interface.prototype[SymbolDispose] = ObjectDefineProperty(
     this.close();
   },
   "name",
-  { __proto__: null, configurable: true, value: SymbolDispose },
+  { __proto__: null, configurable: true, value: "[Symbol.dispose]" },
 );
 
 __node_module__.exports = {

@@ -856,6 +856,11 @@ static constexpr uint32_t kAutoHeaderDate = 1 << 0;
 static constexpr uint32_t kAutoHeaderConnKeepAlive = 1 << 1;
 static constexpr uint32_t kAutoHeaderConnClose = 1 << 2;
 static constexpr uint32_t kAutoHeaderKeepAliveTimeout = 1 << 3;
+// Node's _storeHeader emits the chunked Transfer-Encoding *after* the Connection
+// (and Keep-Alive) line, so it cannot ride along in the flat header array, which
+// is written before these. Carry it as an auto-header bit instead and render it
+// last, in Node's order.
+static constexpr uint32_t kAutoHeaderTransferEncodingChunked = 1 << 4;
 
 // "Date: <IMF-fixdate>\r\n", rebuilt at most once per second. Hand-rolled
 // (not strftime) so the day/month names are locale-independent.
@@ -913,6 +918,13 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     } else if (autoHeaderBits & kAutoHeaderConnClose) {
         static constexpr const char cl[] = "Connection: close\r\n";
         response->uWS::template AsyncSocket<isSSL>::write(cl, sizeof(cl) - 1);
+    }
+    if (autoHeaderBits & kAutoHeaderTransferEncodingChunked) {
+        static constexpr const char te[] = "Transfer-Encoding: chunked\r\n";
+        response->uWS::template AsyncSocket<isSSL>::write(te, sizeof(te) - 1);
+        // Same state the flat-array path sets when it sees the header, so uWS
+        // chunk-frames the body.
+        response->getHttpResponseData()->state |= uWS::HttpResponseData<isSSL>::HTTP_WROTE_TRANSFER_ENCODING_HEADER;
     }
 }
 

@@ -2272,6 +2272,10 @@ const AUTO_HEADER_DATE = 1 << 0;
 const AUTO_HEADER_CONN_KEEP_ALIVE = 1 << 1;
 const AUTO_HEADER_CONN_CLOSE = 1 << 2;
 const AUTO_HEADER_KEEP_ALIVE_TIMEOUT = 1 << 3;
+// Node's _storeHeader writes the chunked Transfer-Encoding after the Connection
+// line, so it is rendered natively with the other auto headers rather than being
+// pushed into the flat array (which goes out first).
+const AUTO_HEADER_TRANSFER_ENCODING_CHUNKED = 1 << 4;
 // Out-parameters of renderNativeHeaders, read by its callers in the same
 // tick (no JS can run in between).
 let renderedAutoHeaders = 0;
@@ -2445,9 +2449,11 @@ function renderNativeHeaders(res) {
       // response (it is not a real header).
       flat.push("\u0000", "1");
     } else if (forceChunked) {
-      // The user removed Content-Length (only): advertise chunked so the native
-      // side frames the body instead of auto-writing the removed header back.
-      flat.push("Transfer-Encoding", "chunked");
+      // Advertise chunked so the native side frames the body instead of
+      // auto-writing a Content-Length. Not pushed into the flat array: Node's
+      // _storeHeader emits this after the Connection line, and the flat array is
+      // written before the auto headers.
+      autoHeaders |= AUTO_HEADER_TRANSFER_ENCODING_CHUNKED;
     }
   } catch (e) {
     // String(value) above can run user toString() that throws; release the

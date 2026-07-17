@@ -1645,6 +1645,15 @@ extern crate alloc;
 /// casts back on the other side of each hook.
 pub type RuntimeState = *mut c_void;
 
+/// The subset of a Worker's `execArgv` that bun acts on. Flags whose value must
+/// outlive the parse (--cpu-prof-dir/-name) are absent; nothing needs them yet.
+#[derive(Default, Clone, Copy)]
+pub struct WorkerExecArgv {
+    pub allow_addons: Option<bool>,
+    pub cpu_prof: bool,
+    pub cpu_prof_interval: Option<u32>,
+}
+
 pub struct RuntimeHooks {
     /// `bun.api.Timer.All.init()` + `Body.Value.HiveAllocator.init()` +
     /// `configureDebugger()` — everything `init()` does that names a
@@ -1775,11 +1784,12 @@ pub struct RuntimeHooks {
     /// (`!args.flag("--no-addons")`), or `None` if parsing failed.
     /// The param table lives in
     /// `bun_runtime::cli` (forward-dep). Only `--no-addons` is honoured;
-    /// the caller writes the returned bool back into
+    /// the caller writes the returned `allow_addons` back into
     /// `transform_options.allow_addons` so the override semantics
-    /// ("override the existing even if it was set") match.
-    pub parse_worker_exec_argv_allow_addons:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> Option<bool>,
+    /// ("override the existing even if it was set") match, and applies
+    /// `cpu_prof` to the worker VM.
+    pub parse_worker_exec_argv:
+        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),

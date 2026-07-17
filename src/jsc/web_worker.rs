@@ -859,23 +859,24 @@ impl WebWorker {
         // and passes the owned struct as `args` to the new VM.
         let mut transform_options = (*parent.transpiler.options.transform_options).clone();
 
-        if let Some(exec_argv) = self.exec_argv() {
-            // Parse `execArgv` with the
-            // RunCommand param table. The param table lives in
-            // `bun_runtime::cli` (forward-dep), so dispatch through
-            // `RuntimeHooks::parse_worker_exec_argv_allow_addons`. Currently
-            // only honours `--no-addons`; the hook owns the temporary UTF-8
-            // alloc + clap parse + `args.deinit()`. `None` on parse failure
-            // (the parent's setting is kept).
-
-            // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
-            // owning `WebCore::Worker` for `self`'s lifetime; the hook only
-            // reads the slice and owns its own temporary allocations.
-            let parsed = unsafe { (hooks.parse_worker_exec_argv_allow_addons)(exec_argv) };
-            if let Some(allow_addons) = parsed {
-                // override the existing even if it was set
-                transform_options.allow_addons = Some(allow_addons);
-            }
+        // Honours `--no-addons` and `--cpu-prof`; the hook owns the temporary
+        // UTF-8 allocs. The param table lives in `bun_runtime::cli` (forward-dep),
+        // so dispatch through `RuntimeHooks::parse_worker_exec_argv`.
+        //
+        // SAFETY: `exec_argv` borrows C++ `WorkerOptions` kept alive by the
+        // owning `WebCore::Worker` for `self`'s lifetime; the hook only reads
+        // the slice and owns its own temporary allocations.
+        // `None` means "inherit from the parent" (WorkerOptions.h); an explicit
+        // list — even an empty one — replaces the parent's, as node resets to
+        // fresh defaults whenever execArgv is given (node_worker.cc).
+        let own_exec_argv = self.exec_argv();
+        let exec_argv = match own_exec_argv {
+            Some(a) => unsafe { (hooks.parse_worker_exec_argv)(a) },
+            None => Default::default(),
+        };
+        if let Some(allow_addons) = exec_argv.allow_addons {
+            // override the existing even if it was set
+            transform_options.allow_addons = Some(allow_addons);
         }
 
         // worker-thread only field; no other thread reads `arena`.
@@ -961,6 +962,32 @@ impl WebWorker {
             vm_ref.is_main_thread = false;
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
+
+            // Node profiles every thread; own execArgv wins, and only a worker
+            // inheriting the parent's picks up the process-wide --cpu-prof.
+            let profile = if exec_argv.cpu_prof {
+                let mut config = crate::bun_cpu_profiler::CPUProfilerConfig {
+                    json_format: true,
+                    thread_id: self.execution_context_id,
+                    ..Default::default()
+                };
+                if let Some(interval) = exec_argv.cpu_prof_interval {
+                    config.interval = interval;
+                }
+                Some(config)
+            } else if own_exec_argv.is_none() {
+                crate::bun_cpu_profiler::inherited_config_for_worker(self.execution_context_id)
+            } else {
+                None
+            };
+            if let Some(config) = profile {
+                vm_ref.cpu_profiler_config = Some(config);
+                // thread_local, so it must be set from this thread or the
+                // worker samples at the default rather than the requested rate.
+                crate::bun_cpu_profiler::set_sampling_interval(config.interval);
+                // SAFETY: `jsc_vm` is set by `init_worker` above.
+                crate::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm_ref.jsc_vm });
+            }
         }
 
         // Publish `vm` now (rather than at the end of startVM) so that:

@@ -1370,13 +1370,18 @@ impl Run {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+            let config = bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
                 name,
                 dir,
                 md_format: opts.md_format,
                 json_format: opts.json_format,
                 interval: opts.interval,
-            });
+                thread_id: 0,
+            };
+            vm.cpu_profiler_config = Some(config);
+            // Node profiles every thread when the process gets --cpu-prof, so
+            // publish for worker VMs to pick up as they start.
+            bun_jsc::bun_cpu_profiler::publish_inherited_config(config);
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
             // SAFETY: `vm.jsc_vm` set in `init`.
             bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });

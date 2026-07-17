@@ -130,12 +130,29 @@ domain.createDomain = domain.create = function () {
   };
   d.run = function (fn, ...args) {
     this.enter();
+    let exited = false;
     try {
       return fn.$apply(this, args);
     } catch (err) {
-      emitError(err);
-    } finally {
+      // Match node: exit before dispatching 'error' (see bindCallbackToDomain)
+      // and tag the error as thrown.
+      exited = true;
       this.exit();
+      if (typeof err === "object" && err !== null) {
+        try {
+          ObjectDefineProperty(err, "domain", {
+            __proto__: null,
+            configurable: true,
+            enumerable: false,
+            value: d,
+            writable: true,
+          });
+          err.domainThrown = true;
+        } catch {}
+      }
+      d.emit("error", err);
+    } finally {
+      if (!exited) this.exit();
     }
   };
   d.dispose = function () {

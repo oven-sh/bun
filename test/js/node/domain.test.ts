@@ -349,3 +349,35 @@ test.concurrent("domain routes frozen thrown values to the handler", async () =>
     exitCode: 0,
   });
 });
+
+// Sync twin of the above: a synchronous throw inside d.run() also dispatches
+// 'error' with the domain already exited, so a timer scheduled by the handler
+// is not bound to the failed domain and its throw crashes the process.
+test.concurrent("domain error handler for run() sync throw runs outside the domain", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const domain = require("domain").create();
+      domain.on("error", err => {
+        console.log("active in handler:", process.domain === null);
+        console.log("domainThrown:", err.domainThrown);
+        setTimeout(() => { throw new Error("second"); }, 1);
+      });
+      domain.run(() => {
+        throw new Error("first");
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("active in handler: true\ndomainThrown: true\n");
+  expect(stderr).toContain("second");
+  expect(exitCode).not.toBe(0);
+});

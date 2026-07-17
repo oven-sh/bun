@@ -155,6 +155,9 @@ JSC::EncodedJSValue DLOPEN_DISABLED(JSC::ThrowScope&, JSC::JSGlobalObject*, ASCI
 
 // URL
 
+/// `Invalid URL` with `.input` (and `.base` when provided) set on the error
+JSC::EncodedJSValue INVALID_URL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& input);
+JSC::EncodedJSValue INVALID_URL(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& input, const WTF::String& base);
 /// `URL must be of scheme {expectedScheme}`
 JSC::EncodedJSValue INVALID_URL_SCHEME(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::String& expectedScheme);
 /// `File URL host must be "localhost" or empty on {platform}`

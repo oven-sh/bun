@@ -1,22 +1,83 @@
 import { describe, expect, it } from "bun:test";
+import http from "node:http";
 
 describe("url", () => {
   it("URL throws", () => {
-    expect(() => new URL("")).toThrow('"" cannot be parsed as a URL');
-    expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
-    expect(() => new URL("boop", "http!/example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against "http!/example.com"',
+    expect(() => new URL("")).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_URL", message: "Invalid URL", input: "" }),
+    );
+    expect(() => new URL(" ")).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_URL", message: "Invalid URL", input: " " }),
     );
     expect(() => new URL("boop", "http!/example.com")).toThrow(
       expect.objectContaining({
+        name: "TypeError",
         code: "ERR_INVALID_URL",
+        message: "Invalid URL",
+        input: "boop",
+        base: "http!/example.com",
       }),
     );
+  });
 
-    // redact
-    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
-      '"boop" cannot be parsed as a URL against <redacted>',
-    );
+  it("ERR_INVALID_URL matches Node.js (message, input, base)", () => {
+    const capture = (fn: () => void) => {
+      let err: any;
+      try {
+        fn();
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toBeInstanceOf(TypeError);
+      return err;
+    };
+
+    // message is the constant "Invalid URL" and .input is the string-coerced argument
+    {
+      const e = capture(() => new URL("not a url"));
+      expect({ name: e.name, code: e.code, message: e.message, input: e.input }).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_URL",
+        message: "Invalid URL",
+        input: "not a url",
+      });
+      expect(Object.prototype.hasOwnProperty.call(e, "base")).toBe(false);
+    }
+
+    // with base, .base is set to the string-coerced base argument
+    {
+      const e = capture(() => new URL("not a url", "also not"));
+      expect({ code: e.code, message: e.message, input: e.input, base: e.base }).toEqual({
+        code: "ERR_INVALID_URL",
+        message: "Invalid URL",
+        input: "not a url",
+        base: "also not",
+      });
+    }
+
+    // href setter also throws the Node-shape error
+    {
+      const e = capture(() => {
+        const u = new URL("http://a");
+        u.href = "not a url";
+      });
+      expect({ name: e.name, code: e.code, message: e.message, input: e.input }).toEqual({
+        name: "TypeError",
+        code: "ERR_INVALID_URL",
+        message: "Invalid URL",
+        input: "not a url",
+      });
+    }
+
+    // node:http request propagates the same error from new URL()
+    {
+      const e = capture(() => http.request("not a url"));
+      expect({ code: e.code, message: e.message, input: e.input }).toEqual({
+        code: "ERR_INVALID_URL",
+        message: "Invalid URL",
+        input: "not a url",
+      });
+    }
   });
 
   it("should have correct origin and protocol", () => {

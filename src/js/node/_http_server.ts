@@ -846,6 +846,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         // on(), not once(): "finish" fires at most once per response and once()
         // allocates a wrapper closure per request.
         http_res.on("finish", emitResponseFinishHandleSocket);
+        // Registered before the 'request' event, like Node.js's resOnFinish:
+        // middleware that replaces res.on (e.g. @polka/compression) must not
+        // swallow the detach listener, or the socket keeps a stale _httpMessage.
+        http_res.on("finish", emitAsyncResponseFinish);
 
         if (hasObserver("http")) {
           startPerf(http_res, kServerResponseStatistics, {
@@ -1072,18 +1076,12 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (handle.finished || didFinish) {
           handle = undefined;
           http_res[kCloseCallback] = undefined;
+          http_res[kDispatcherDetached] = true;
           http_res.detachSocket(socket);
           if (socket[kPipelinedResponses] !== undefined) {
             advanceResponsePipeline(server, socket);
           }
           return;
-        }
-        if (http_res.socket) {
-          // Detach the socket first, then advance the response pipeline on
-          // the connection it was on (the same order as the two listeners
-          // this replaces). One shared function instead of two per-request
-          // bind() closures.
-          http_res.on("finish", emitAsyncResponseFinish);
         }
 
         const { resolve, promise } = $newPromiseCapability(Promise);
@@ -1412,6 +1410,9 @@ const kPipelinedQueuedState = Symbol("kPipelinedQueuedState");
 const kOutgoingData = Symbol("kOutgoingData");
 const kReplayingPipelinedOps = Symbol("kReplayingPipelinedOps");
 const kStopParsingOnCloseListener = Symbol("kStopParsingOnCloseListener");
+// Set when the dispatcher already detached a synchronously-finished response,
+// so the 'finish' listener does not detach/advance the pipeline a second time.
+const kDispatcherDetached = Symbol("kDispatcherDetached");
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/_http_server.js (socketOnError)
 const badRequestResponse = Buffer.from(`HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n`, "latin1");
@@ -2443,6 +2444,9 @@ function emitResponseFinishHandleSocket() {
 // in the same order as the two separate listeners this replaces.
 // advanceResponsePipeline already bails on a missing socket.
 function emitAsyncResponseFinish() {
+  // The dispatcher detached a synchronously-finished response itself;
+  // advancing the pipeline again here would skip a queued response.
+  if (this[kDispatcherDetached]) return;
   // Same destroyer-null fallback as emitResponseFinishHandleSocket: without
   // it a destroyed request leaves socket._httpMessage assigned and the next
   // kept-alive request fails with ERR_HTTP_SOCKET_ASSIGNED.
@@ -2586,7 +2590,6 @@ function advanceResponsePipeline(server, socket) {
     res.assignSocket(socket);
   }
   socket[kRequest] = res.req;
-  res.on("finish", emitAsyncResponseFinish);
 
   // Replay the writes buffered while the response was queued.
   // The buffered bytes are handed to the native handle below, so they no

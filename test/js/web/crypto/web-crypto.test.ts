@@ -585,6 +585,33 @@ describe("X25519 JWK import", () => {
   });
 });
 
+// Ed25519 and X25519 share the 1.3.101.* OID prefix and differ only in the last
+// byte, so importing one as the other must report the type mismatch rather than
+// the generic "Invalid keyData" the prefix-only check gave.
+describe("OKP spki/pkcs8 cross-curve import", () => {
+  const rejection = (p: Promise<unknown>) => p.then(() => "imported", e => `${e.name}: ${e.message}`);
+
+  it("Ed25519 key imported as X25519 reports 'Invalid key type'", async () => {
+    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
+    expect({
+      spki: await rejection(crypto.subtle.importKey("spki", spki, "X25519", true, [])),
+      pkcs8: await rejection(crypto.subtle.importKey("pkcs8", pkcs8, "X25519", true, ["deriveBits"])),
+    }).toEqual({ spki: "DataError: Invalid key type", pkcs8: "DataError: Invalid key type" });
+  });
+
+  it("X25519 key imported as Ed25519 reports 'Invalid key type'", async () => {
+    const x = await crypto.subtle.generateKey("X25519", true, ["deriveBits"]);
+    const spki = await crypto.subtle.exportKey("spki", x.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", x.privateKey);
+    expect({
+      spki: await rejection(crypto.subtle.importKey("spki", spki, "Ed25519", true, ["verify"])),
+      pkcs8: await rejection(crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", true, ["sign"])),
+    }).toEqual({ spki: "DataError: Invalid key type", pkcs8: "DataError: Invalid key type" });
+  });
+});
+
 // CryptoKey.usages and the JWK key_ops it is built from are ordered by the
 // KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
 // alphabetically, and not by the order the caller passed them in.
@@ -661,6 +688,7 @@ describe("crypto.getRandomValues argument types", () => {
   }
 
   const rejected = [
+    ["Float16Array", () => new Float16Array(4)],
     ["Float32Array", () => new Float32Array(4)],
     ["Float64Array", () => new Float64Array(4)],
     ["DataView", () => new DataView(new ArrayBuffer(4))],

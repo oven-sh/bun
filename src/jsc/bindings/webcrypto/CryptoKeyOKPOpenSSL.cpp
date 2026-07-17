@@ -116,20 +116,27 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importSpki(CryptoAlgorithmIdentifier identifi
 
     // Read OID
     // FIXME: spec says this is 1 3 101 11X but WPT tests expect 6 3 43 101 11X.
-    if (keyData[index++] != 6 || keyData[index++] != 3 || keyData[index++] != 43 || keyData[index++] != 101) {
+    auto reportKeyTypeMismatch = [&] {
         if (keyTypeMismatch && parsesAsSubjectPublicKeyInfo(keyData))
             *keyTypeMismatch = true;
+    };
+    if (keyData[index++] != 6 || keyData[index++] != 3 || keyData[index++] != 43 || keyData[index++] != 101) {
+        reportKeyTypeMismatch();
         return nullptr;
     }
 
     switch (namedCurve) {
     case NamedCurve::X25519:
-        if (keyData[index++] != 110)
+        if (keyData[index++] != 110) {
+            reportKeyTypeMismatch();
             return nullptr;
+        }
         break;
     case NamedCurve::Ed25519:
-        if (keyData[index++] != 112)
+        if (keyData[index++] != 112) {
+            reportKeyTypeMismatch();
             return nullptr;
+        }
         break;
     };
 
@@ -245,20 +252,27 @@ RefPtr<CryptoKeyOKP> CryptoKeyOKP::importPkcs8(CryptoAlgorithmIdentifier identif
         return nullptr;
 
     // Read OID
-    if (keyData[index++] != OKPOIDFirstByte || keyData[index++] != OKPOIDSecondByte || keyData[index++] != OKPOIDThirdByte || keyData[index++] != OKPOIDFourthByte) {
+    auto reportKeyTypeMismatch = [&] {
         if (keyTypeMismatch && parsesAsPrivateKeyInfo(keyData))
             *keyTypeMismatch = true;
+    };
+    if (keyData[index++] != OKPOIDFirstByte || keyData[index++] != OKPOIDSecondByte || keyData[index++] != OKPOIDThirdByte || keyData[index++] != OKPOIDFourthByte) {
+        reportKeyTypeMismatch();
         return nullptr;
     }
 
     switch (namedCurve) {
     case NamedCurve::X25519:
-        if (keyData[index++] != OKPOIDX25519Byte)
+        if (keyData[index++] != OKPOIDX25519Byte) {
+            reportKeyTypeMismatch();
             return nullptr;
+        }
         break;
     case NamedCurve::Ed25519:
-        if (keyData[index++] != OKPOIDEd25519Byte)
+        if (keyData[index++] != OKPOIDEd25519Byte) {
+            reportKeyTypeMismatch();
             return nullptr;
+        }
         break;
     };
 

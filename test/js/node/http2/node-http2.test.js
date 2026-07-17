@@ -1,6 +1,7 @@
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
@@ -2463,6 +2464,81 @@ it("http2 request.destroy() with error", async () => {
         throw new Error("end event should not be called");
       });
     });
+  });
+});
+
+describe("http2 session.destroy() closes active streams with the session's code and emits stream events before session events", () => {
+  // Node's closeSession: active streams get the session's error (none for NO_ERROR), rstCode is
+  // the given code (default 0), and per-stream 'error'/'close' fire before the session's own.
+  it.concurrent.each([
+    { name: "destroy()", args: [], expected: ["req:close(rst=0)", "ses:close"] },
+    { name: "destroy(0)", args: [0], expected: ["req:close(rst=0)", "ses:close"] },
+    {
+      name: "destroy(8)",
+      args: [8],
+      expected: [
+        "req:error(ERR_HTTP2_SESSION_ERROR)",
+        "req:close(rst=8)",
+        "ses:error(ERR_HTTP2_SESSION_ERROR)",
+        "ses:close",
+      ],
+    },
+    {
+      name: "destroy(9)",
+      args: [9],
+      expected: [
+        "req:error(ERR_HTTP2_SESSION_ERROR)",
+        "req:close(rst=9)",
+        "ses:error(ERR_HTTP2_SESSION_ERROR)",
+        "ses:close",
+      ],
+    },
+    {
+      name: "destroy(err)",
+      args: [new Error("boom")],
+      expected: ["req:error(boom)", "req:close(rst=2)", "ses:error(boom)", "ses:close"],
+    },
+  ])("$name", async ({ args, expected }) => {
+    const server = http2.createServer();
+    server.on("stream", s => {
+      s.on("error", () => {});
+      s.session.on("error", () => {});
+      s.respond({ ":status": 200 });
+      s.write("partial");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    let session;
+    try {
+      const events = [];
+      session = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      const done = Promise.withResolvers();
+      let reqClosed = false;
+      let sesClosed = false;
+      const maybeDone = () => {
+        if (reqClosed && sesClosed) done.resolve();
+      };
+      server.on("error", done.reject);
+      session.on("error", e => events.push(`ses:error(${e.code || e.message})`));
+      session.on("close", () => {
+        events.push("ses:close");
+        sesClosed = true;
+        maybeDone();
+      });
+      const req = session.request({ ":path": "/" });
+      req.on("error", e => events.push(`req:error(${e.code || e.message})`));
+      req.on("aborted", () => events.push("req:aborted"));
+      req.on("close", () => {
+        events.push(`req:close(rst=${req.rstCode})`);
+        reqClosed = true;
+        maybeDone();
+      });
+      req.on("data", () => session.destroy(...args));
+      await done.promise;
+      expect(events).toEqual(expected);
+    } finally {
+      session?.destroy();
+      server.close();
+    }
   });
 });
 

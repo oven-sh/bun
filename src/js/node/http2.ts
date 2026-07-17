@@ -475,10 +475,11 @@ function emitEventNT(self: any, event: string, ...args: any[]) {
     self.emit(event, ...args);
   }
 }
-// The frame is passed in: destroy() clears it off the session before emitting
-// 'error', so a throwing listener on either event cannot leave a retained
-// session pinning the store.
-function emitSessionCloseNT(self: Http2Session, frame) {
+// The frame is passed in (destroy() clears it off the session first) so a throwing listener
+// cannot leave a retained session pinning the store. 'error' and 'close' both fire on the next
+// tick so per-stream events queued synchronously from forEachStream land first.
+function emitSessionCloseNT(self: Http2Session, frame, error: Error | undefined) {
+  if (error) runInFrame(frame, self.emit, self, "error", error);
   if (self.listenerCount("close") > 0) {
     runInFrame(frame, self.emit, self, "close");
   }
@@ -4326,18 +4327,14 @@ class ServerHttp2Session extends Http2Session {
       return;
     }
     if (isEconnresetAfterGoaway(this, error)) {
-      this.destroy();
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
-      // An unobserved transport teardown (the peer dropped a connection
-      // nobody is listening to anymore): destroy quietly - the destroy still
-      // errors any remaining streams - instead of re-emitting on a session
-      // with no 'error' listener and crashing the process. (The server
-      // attaches sessionOnError at accept time, so this branch only matters
-      // for standalone sessions.) Anything that is not teardown noise keeps
-      // Node's EventEmitter contract and surfaces when unobserved.
-      this.destroy();
+      // An unobserved transport teardown: swallow the session error but mark active streams
+      // cancelled (rstCode=8) so a mid-flight request is not mistaken for clean completion.
+      // (sessionOnError is attached at accept time, so this matters only for standalone sessions.)
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     this.destroy(error);
@@ -4671,7 +4668,7 @@ class ServerHttp2Session extends Http2Session {
     }
   }
 
-  destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
+  destroy(error?: Error | number, code?: number) {
     // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
     // first line - so a second destroy (e.g. the received-GOAWAY handler
     // destroying with a session error after a socket error's destroy already
@@ -4685,6 +4682,7 @@ class ServerHttp2Session extends Http2Session {
       return;
     }
     this.#destroying = true;
+    const wasConnected = this.#connected;
     try {
       const server = this[kServer];
       if (server) {
@@ -4758,20 +4756,17 @@ class ServerHttp2Session extends Http2Session {
       // validateInteger, the native session rejecting a non-numeric error
       // code) throws mid-teardown, and a corrected retry must still run.
       this.#destroying = false;
+      this.#connected = wasConnected;
       throw e;
     }
     this[bunHTTP2Socket] = null;
 
-    // Read-and-clear the frame first: emitting 'error' with no listener throws,
-    // which would skip the clear and leave a retained session pinning the store.
+    // Clear the frame here and pass it in: emitSessionCloseNT's 'error' emit can throw,
+    // so clearing there would leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
-    if (error) {
-      runInFrame(asyncFrame, this.emit, this, "error", error);
-    }
-    // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // node emits session 'error' and 'close' together on next tick so per-stream events land first.
+    process.nextTick(emitSessionCloseNT, this, asyncFrame, error);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
@@ -5363,20 +5358,18 @@ class ClientHttp2Session extends Http2Session {
     }
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
-      this.destroy();
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     if (isEconnresetAfterGoaway(this, error)) {
-      this.destroy();
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
-      // A transport teardown on a session nobody observes (an idle pooled
-      // connection dropped by the peer): shut down quietly - the destroy
-      // still errors any remaining streams. Anything else (handshake
-      // failure, ECONNREFUSED, ...) keeps Node's EventEmitter contract and
-      // surfaces when unobserved.
-      this.destroy();
+      // An idle pooled connection reset by the peer with nobody listening: swallow the session
+      // error but still mark active streams cancelled (rstCode=8) so a mid-flight request is not
+      // mistaken for a clean completion. Anything else keeps the EventEmitter contract.
+      this.destroy(undefined, constants.NGHTTP2_CANCEL);
       return;
     }
     this.destroy(error);
@@ -5712,6 +5705,7 @@ class ClientHttp2Session extends Http2Session {
       return;
     }
     this.#destroying = true;
+    const wasConnected = this.#connected;
     try {
       if (this[kTimeout]) {
         clearTimeout(this[kTimeout]);
@@ -5771,17 +5765,15 @@ class ClientHttp2Session extends Http2Session {
       }
       const parser = this.#parser;
       if (parser) {
-        // node cancels streams still open when their session is destroyed: each gets
-        // ERR_HTTP2_STREAM_CANCEL (or the session error when one was provided), with the CANCEL
-        // rst code.
-        if (this[kSessionDestroyError] == null && error == null) {
-          this[kSessionDestroyError] = createPendingStreamCancelError();
-        }
-        // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
-        // precedence over the destroy code when streams are torn down.
+        // Node's closeSession: destroy every active stream with the session's error (none for NO_ERROR)
+        // synchronously so their events queue before the session's own.
+        const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
         this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
         try {
-          parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+          parser.forEachStream(
+            FunctionPrototypeBind.$call(destroyStreamForSessionDestroy, undefined, error, streamRstCode),
+          );
+          parser.emitErrorToAllStreams(streamRstCode);
         } finally {
           this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
         }
@@ -5792,21 +5784,18 @@ class ClientHttp2Session extends Http2Session {
       // validateInteger, the native session rejecting a non-numeric error
       // code) throws mid-teardown, and a corrected retry must still run.
       this.#destroying = false;
+      this.#connected = wasConnected;
       throw e;
     }
     this.#parser = null;
     this[bunHTTP2Socket] = null;
 
-    // Read-and-clear the frame first: emitting 'error' with no listener throws,
-    // which would skip the clear and leave a retained session pinning the store.
+    // Clear the frame here and pass it in: emitSessionCloseNT's 'error' emit can throw,
+    // so clearing there would leave a retained session pinning the store.
     const asyncFrame = this[bunHTTP2AsyncContextFrame];
     this[bunHTTP2AsyncContextFrame] = undefined;
-    if (error) {
-      runInFrame(asyncFrame, this.emit, this, "error", error);
-    }
-    // node emits the session 'close' event asynchronously (a listener attached right after
-    // close()/destroy() returns must still observe it).
-    process.nextTick(emitSessionCloseNT, this, asyncFrame);
+    // node emits session 'error' and 'close' together on next tick so per-stream events land first.
+    process.nextTick(emitSessionCloseNT, this, asyncFrame, error);
   }
 
   request(headers: any, options?: any) {

@@ -915,7 +915,6 @@ describe("inbound stream lifecycle", () => {
       toString:start
       toString:end
       sendTrailers:returned
-      req error ERR_HTTP2_STREAM_CANCEL
       req close"
     `);
     expect(proc.signalCode).toBeNull();
@@ -978,10 +977,14 @@ describe("inbound stream lifecycle", () => {
       stderr: "pipe",
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // The synchronous forEachStream teardown stores the non-numeric code as-is (never coerced by
+    // the runtime); the one valueOf call here is the fixture's own + concatenation stringifying
+    // req.rstCode in the close handler.
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "destroy threw: Expected errorCode to be a number
       destroy:done
       req error boom
+      valueOf:1
       req close rst=8"
     `);
     expect(proc.signalCode).toBeNull();

@@ -2591,7 +2591,7 @@ pub fn process_fetch_log(
                     .into_bytes()
                     .into_boxed_slice(),
             );
-            let mut message = crate::ZigString::init(message_text);
+            let mut message = bun_core::ZigString::init(message_text);
             message.mark_global();
             *ret = ErrorableResolvedSource::err(
                 ErrorCode(ErrorCode::JS_ERROR_OBJECT),
@@ -6331,7 +6331,7 @@ impl VirtualMachine {
                 cursor += i + 1;
             }
             if cursor > 0 {
-                let body = jsc::ZigString::init_utf8(&msg[cursor as usize..]);
+                let body = bun_core::ZigString::init_utf8(&msg[cursor as usize..]);
                 let _ = write!(writer, "{}", body.github_action());
             }
         } else {

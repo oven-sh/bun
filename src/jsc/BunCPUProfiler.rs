@@ -64,7 +64,7 @@ pub fn start_cpu_profiler(vm: &mut VM) {
     Bun__startCPUProfiler(vm);
 }
 
-pub(crate) fn stop_and_write_profile(
+pub fn stop_and_write_profile(
     vm: &mut VM,
     config: &CPUProfilerConfig,
 ) -> Result<(), ProfilerError> {

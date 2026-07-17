@@ -125,6 +125,35 @@ describe.concurrent("--cpu-prof", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("--cpu-prof-name is not inherited by workers (they get distinct files)", async () => {
+    using dir = tempDir("cpu-prof-name-worker", {
+      "test.js": `
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(\`const end = Date.now() + 100; while (Date.now() < end) {}\`, { eval: true });
+        const end = Date.now() + 100;
+        while (Date.now() < end) {}
+        await new Promise(r => w.on("exit", r));
+      `,
+    });
+
+    const customName = "main.cpuprofile";
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--cpu-prof", "--cpu-prof-name", customName, "test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    const exitCode = await proc.exited;
+
+    const profiles = readdirSync(String(dir)).filter(f => f.endsWith(".cpuprofile"));
+    // Main thread writes the named file; the worker writes a separate
+    // thread-id-suffixed default instead of clobbering it.
+    expect(profiles).toContain(customName);
+    expect(profiles.length).toBe(2);
+    expect(exitCode).toBe(0);
+  });
+
   test("--cpu-prof-dir sets custom directory", async () => {
     using dir = tempDir("cpu-prof-dir", {
       "test.js": `

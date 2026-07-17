@@ -139,6 +139,13 @@ const awaitedNonPromise = await send("Runtime.evaluate", {
   awaitPromise: true,
   returnByValue: true,
 });
+// CDP allows executionContextId-only (this === globalThis); JSC needs an
+// objectId, so the adapter fetches the global's first.
+const callOnGlobal = await send("Runtime.callFunctionOn", {
+  executionContextId: 1,
+  functionDeclaration: "function(){ return typeof this.process.pid }",
+  returnByValue: true,
+});
 console.warn("console-tag:warn");
 console.error("console-tag:error");
 console.info("console-tag:info");
@@ -165,6 +172,7 @@ console.log(
     evaluateValue: evaluate.result?.result?.value,
     awaitedResolveValue: awaitedResolve.result?.result?.value,
     awaitedNonPromiseValue: awaitedNonPromise.result?.result?.value,
+    callOnGlobalValue: callOnGlobal.result?.result?.value,
     consoleEventType: consoleEvent.type,
     consoleTypeByTag,
     debugPort: process.debugPort,
@@ -220,6 +228,7 @@ test("inspector.open() serves the DevTools protocol and /json discovery endpoint
   // Runtime.awaitPromise so DevTools top-level-await works.
   expect(summary.awaitedResolveValue).toBe(42);
   expect(summary.awaitedNonPromiseValue).toBe(42);
+  expect(summary.callOnGlobalValue).toBe("number");
   expect(summary.consoleEventType).toBe("log");
   // JSC reports warn/error/info/debug as {type:"log", level:...}; the adapter
   // must emit CDP's type, not flatten them all to "log".

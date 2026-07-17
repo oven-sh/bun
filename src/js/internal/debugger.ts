@@ -762,6 +762,7 @@ function bufferedWriter(writer: Writer): Writer {
             return;
           }
         }
+        pendingMessages.length = 0;
       } finally {
         draining = false;
       }

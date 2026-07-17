@@ -285,26 +285,43 @@ class InspectorCDPAdapter {
         );
         return;
 
-      case "Runtime.callFunctionOn":
-        if (!params.objectId) {
-          this.#replyErrorToClient(id, -32602, "Runtime.callFunctionOn requires objectId");
+      case "Runtime.callFunctionOn": {
+        const forward = (objectId: unknown) =>
+          this.#sendToBackend(
+            "Runtime.callFunctionOn",
+            {
+              objectId,
+              functionDeclaration: params.functionDeclaration,
+              arguments: params.arguments,
+              doNotPauseOnExceptionsAndMuteConsole: params.silent,
+              returnByValue: params.returnByValue,
+              generatePreview: params.generatePreview,
+              awaitPromise: params.awaitPromise,
+            },
+            id,
+            method,
+          );
+        if (params.objectId) {
+          forward(params.objectId);
           return;
         }
-        this.#sendToBackend(
-          "Runtime.callFunctionOn",
-          {
-            objectId: params.objectId,
-            functionDeclaration: params.functionDeclaration,
-            arguments: params.arguments,
-            doNotPauseOnExceptionsAndMuteConsole: params.silent,
-            returnByValue: params.returnByValue,
-            generatePreview: params.generatePreview,
-            awaitPromise: params.awaitPromise,
-          },
-          id,
-          method,
-        );
+        if (params.executionContextId === undefined) {
+          this.#replyErrorToClient(id, -32602, "Either objectId or executionContextId must be specified");
+          return;
+        }
+        // CDP allows executionContextId-only (calls with this === globalThis);
+        // JSC requires an objectId, so fetch the global's first. JSC has a
+        // single execution context and rejects contextId, so omit it.
+        this.#sendToBackend("Runtime.evaluate", { expression: "globalThis" }, null, method, (result, error) => {
+            const objectId = result.result?.objectId;
+            if (error || !objectId) {
+              this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
+              return;
+            }
+          forward(objectId);
+        });
         return;
+      }
 
       case "Runtime.releaseObject":
       case "Runtime.releaseObjectGroup":

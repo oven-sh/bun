@@ -41,11 +41,9 @@ function copyArrayBuffer(buf) {
 
 function checkMethods(certificate) {
 
-  /* spkacValid has a md5 based signature which is not allowed in boringssl
-  https://github.com/electron/electron/blob/5680c628b6718385bbd975b51ec2640aa7df226b/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L77
-  assert.strictEqual(certificate.verifySpkac(spkacValid), true);
+  if (!process.features.openssl_is_boringssl)
+    assert.strictEqual(certificate.verifySpkac(spkacValid), true);
   assert.strictEqual(certificate.verifySpkac(spkacFail), false);
-  */
 
   assert.strictEqual(
     stripLineEndings(certificate.exportPublicKey(spkacValid).toString('utf8')),
@@ -59,13 +57,12 @@ function checkMethods(certificate) {
   );
   assert.strictEqual(certificate.exportChallenge(spkacFail), '');
 
-  /* spkacValid has a md5 based signature which is not allowed in boringssl
-  https://github.com/electron/electron/blob/5680c628b6718385bbd975b51ec2640aa7df226b/patches/node/fix_crypto_tests_to_run_with_bssl.patch#L88
-  const ab = copyArrayBuffer(spkacValid);
-  assert.strictEqual(certificate.verifySpkac(ab), true);
-  assert.strictEqual(certificate.verifySpkac(new Uint8Array(ab)), true);
-  assert.strictEqual(certificate.verifySpkac(new DataView(ab)), true);
-  */
+  if (!process.features.openssl_is_boringssl) {
+    const ab = copyArrayBuffer(spkacValid);
+    assert.strictEqual(certificate.verifySpkac(ab), true);
+    assert.strictEqual(certificate.verifySpkac(new Uint8Array(ab)), true);
+    assert.strictEqual(certificate.verifySpkac(new DataView(ab)), true);
+  }
 }
 
 {
@@ -104,6 +101,22 @@ function checkMethods(certificate) {
 {
   // Test static methods
   checkMethods(Certificate);
+}
+
+{
+  const spkacText = spkacValid.toString('utf8').trimEnd();
+  const padded = Buffer.alloc(Buffer.byteLength(spkacText) + 1);
+  padded.write(spkacText);
+  const zeroLengthView = padded.subarray(0, 0);
+  assert.strictEqual(Certificate.verifySpkac(zeroLengthView), false);
+  assert.strictEqual(Certificate.exportPublicKey(zeroLengthView), '');
+  assert.strictEqual(Certificate.exportChallenge(zeroLengthView), '');
+
+  for (const input of [Buffer.alloc(0), Buffer.from(' \n\r\t'), '', ' \n\r\t']) {
+    assert.strictEqual(Certificate.verifySpkac(Buffer.from(input)), false);
+    assert.strictEqual(Certificate.exportPublicKey(input), '');
+    assert.strictEqual(Certificate.exportChallenge(input), '');
+  }
 }
 
 function stripLineEndings(obj) {

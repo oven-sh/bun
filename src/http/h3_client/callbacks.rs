@@ -10,7 +10,6 @@ use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
 use bstr::BStr;
-use bun_core::err;
 use bun_uws::quic;
 
 use super::client_context::ClientContext;
@@ -152,9 +151,9 @@ extern "C" fn on_conn_close(qs: *mut quic::Socket) {
         session.retry_or_fail(
             stream,
             if session.handshake_done {
-                err!(ConnectionClosed)
+                crate::Error::ConnectionClosed
             } else {
-                err!(HTTP3HandshakeFailed)
+                crate::Error::HTTP3HandshakeFailed
             },
         );
     }
@@ -229,7 +228,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code == 0
             && (is_malformed_response_field(name) || is_malformed_response_value(value))
         {
-            session.fail(stream, err!(HTTP3ProtocolError));
+            session.fail(stream, crate::Error::HTTP3ProtocolError);
             return;
         }
         stream
@@ -244,7 +243,7 @@ extern "C" fn on_stream_headers(s: *mut quic::Stream) {
         if stream.status_code != 0 {
             return;
         }
-        session.fail(stream, err!(HTTP3ProtocolError));
+        session.fail(stream, crate::Error::HTTP3ProtocolError);
         return;
     }
     if status >= 100 && status < 200 {
@@ -261,6 +260,19 @@ extern "C" fn on_stream_data(s: *mut quic::Stream, data: *const u8, len: c_uint,
     let slice = unsafe { bun_core::ffi::slice(data, len as usize) };
     stream.body_buffer.extend_from_slice(slice);
     stream.session_mut().deliver(stream, fin != 0);
+
+    let Some(stream) = stream_of(s) else { return };
+    if fin != 0 || stream.read_paused {
+        return;
+    }
+    let Some(client) = stream.client else { return };
+    if super::client_session::client_mut(client)
+        .signals
+        .is_receive_paused()
+    {
+        stream.read_paused = true;
+        s.want_read(false);
+    }
 }
 
 extern "C" fn on_stream_writable(s: *mut quic::Stream) {

@@ -16,14 +16,14 @@ pub struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
     #[cfg(not(windows))]
-    const BUNX_NAME: &'static str = if cfg!(debug_assertions) {
+    const BUNX_NAME: &'static str = if bun_core::env::IS_DEBUG {
         "bunx-debug"
     } else {
         "bunx"
     };
 
     #[cfg(not(windows))]
-    fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink_posix(cwd: &[u8]) -> Result<(), crate::Error> {
         let mut buf = PathBuffer::uninit();
 
         // don't install it if it's already there
@@ -103,7 +103,7 @@ impl InstallCompletionsCommand {
     }
 
     #[cfg(windows)]
-    fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink_windows(_cwd: &[u8]) -> Result<(), crate::Error> {
         use bun_core::{WStr, w};
         use bun_sys::windows;
 
@@ -119,12 +119,12 @@ impl InstallCompletionsCommand {
 
         let mut bunx_path_buf = WPathBuffer::uninit();
 
-        let cmd_suffix: &[u16] = if cfg!(debug_assertions) {
+        let cmd_suffix: &[u16] = if bun_core::env::IS_DEBUG {
             w!("bunx-debug.cmd")
         } else {
             w!("bunx.cmd")
         };
-        let exe_suffix_z: &[u16] = if cfg!(debug_assertions) {
+        let exe_suffix_z: &[u16] = if bun_core::env::IS_DEBUG {
             w!("bunx-debug.exe\0")
         } else {
             w!("bunx.exe\0")
@@ -160,7 +160,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), bun_core::Error> {
+    fn install_bunx_symlink(cwd: &[u8]) -> Result<(), crate::Error> {
         #[cfg(windows)]
         {
             Self::install_bunx_symlink_windows(cwd)
@@ -172,7 +172,7 @@ impl InstallCompletionsCommand {
     }
 
     #[cfg(windows)]
-    fn install_uninstaller_windows() -> Result<(), bun_core::Error> {
+    fn install_uninstaller_windows() -> Result<(), crate::Error> {
         use bun_core::w;
         use bun_sys::windows;
 
@@ -208,7 +208,7 @@ impl InstallCompletionsCommand {
         Ok(())
     }
 
-    pub fn exec() -> Result<(), bun_core::Error> {
+    pub fn exec() -> Result<(), crate::Error> {
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
             1

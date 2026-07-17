@@ -4,7 +4,7 @@ sidebarTitle: Generate UUID
 mode: center
 ---
 
-Use `crypto.randomUUID()` to generate a UUID v4. This API works in Bun, Node.js, and browsers. It requires no dependencies.
+Use `crypto.randomUUID()` to generate a UUID v4. It works in Bun, Node.js, and browsers, with no dependencies.
 
 ```ts
 crypto.randomUUID();
@@ -13,7 +13,7 @@ crypto.randomUUID();
 
 ---
 
-In Bun, you can also use `Bun.randomUUIDv7()` to generate a [UUID v7](https://www.ietf.org/archive/id/draft-peabody-dispatch-new-uuid-format-01.html).
+Bun also provides `Bun.randomUUIDv7()`, which generates a [UUID v7](https://www.ietf.org/archive/id/draft-peabody-dispatch-new-uuid-format-01.html).
 
 ```ts
 Bun.randomUUIDv7();
@@ -22,4 +22,4 @@ Bun.randomUUIDv7();
 
 ---
 
-See [Docs > API > Utils](/runtime/utils) for more useful utilities.
+See [Utils](/runtime/utils).

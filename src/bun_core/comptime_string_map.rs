@@ -1,6 +1,6 @@
 //! Static string→value maps with length-dispatched lookups.
 //!
-//! Rust port of `src/collections/comptime_string_map.zig`. Declared via
+//! Rust port of Zig's `ComptimeStringMap`. Declared via
 //! [`comptime_string_map!`] / [`comptime_string_set!`]; lookups compile to a
 //! `match key.len()` jump table plus constant-length byte compares (word-sized
 //! loads against immediates) — no hashing at runtime.

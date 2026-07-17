@@ -122,12 +122,12 @@ pub struct HttpThread {
 
     pub queued_shutdowns: Vec<ShutdownMessage>,
     pub queued_writes: Vec<WriteMessage>,
-    pub queued_response_body_drains: Vec<DrainMessage>,
+    pub queued_receive_resumes: Vec<u32>,
     pub queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
 
     pub queued_shutdowns_lock: Mutex,
     pub queued_writes_lock: Mutex,
-    pub queued_response_body_drains_lock: Mutex,
+    pub queued_receive_resumes_lock: Mutex,
     pub queued_cert_check_resumes_lock: Mutex,
 
     pub queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
@@ -177,11 +177,11 @@ impl HttpThread {
             has_pending_queued_abort: false,
             queued_shutdowns: Vec::new(),
             queued_writes: Vec::new(),
-            queued_response_body_drains: Vec::new(),
+            queued_receive_resumes: Vec::new(),
             queued_cert_check_resumes: Vec::new(),
             queued_shutdowns_lock: Mutex::new(),
             queued_writes_lock: Mutex::new(),
-            queued_response_body_drains_lock: Mutex::new(),
+            queued_receive_resumes_lock: Mutex::new(),
             queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
             has_awoken: AtomicBool::new(false),
@@ -267,10 +267,6 @@ pub enum WriteMessageType {
     End = 1,
 }
 
-pub struct DrainMessage {
-    pub async_http_id: u32,
-}
-
 pub struct ShutdownMessage {
     pub async_http_id: u32,
 }
@@ -282,29 +278,26 @@ pub struct CertCheckResumeMessage {
 }
 
 pub struct LibdeflateState {
-    pub decompressor: *mut bun_libdeflate_sys::libdeflate::Decompressor,
+    pub decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
+    pub compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
-// SAFETY: `*mut T` (null) and `[u8; N]` are both valid at the all-zero bit pattern.
+// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
+// `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
+// pattern.
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
     /// Mutable access to the libdeflate decompressor handle.
     ///
-    /// INVARIANT: `decompressor` is set once in [`HttpThread::deflater`] from
-    /// `libdeflate_alloc_decompressor` (panics on null) and is never freed
-    /// until thread teardown. The handle is a separate C heap allocation
-    /// disjoint from `self`, so the returned `&mut` does not alias
-    /// `shared_buffer`. HTTP-thread-only — sole live borrow. Centralises the
-    /// raw `&mut *deflater.decompressor` upgrade repeated at every
-    /// `decompress` call site.
+    /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
+    /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut<'a>(
-        &self,
-    ) -> &'a mut bun_libdeflate_sys::libdeflate::Decompressor {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.decompressor }
+    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+        self.decompressor
+            .as_deref_mut()
+            .expect("set in HttpThread::deflater()")
     }
 }
 
@@ -433,12 +426,10 @@ impl HttpThread {
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {
         if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::Decompressor::alloc();
-            if decompressor.is_null() {
-                bun_core::out_of_memory();
-            }
+            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+                .unwrap_or_else(|| bun_core::out_of_memory());
             let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
-            state.decompressor = decompressor;
+            state.decompressor = Some(decompressor);
             self.lazy_libdeflater = Some(state);
         }
 
@@ -479,7 +470,7 @@ impl HttpThread {
     pub fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
-    ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error> {
+    ) -> crate::Result<Option<crate::HTTPSocket<IS_SSL>>> {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
@@ -555,7 +546,7 @@ impl HttpThread {
                         InitError::FailedToOpenSocket
                         | InitError::InvalidCA
                         | InitError::InvalidCAFile
-                        | InitError::LoadCAFile => bun_core::err!("FailedToOpenSocket"),
+                        | InitError::LoadCAFile => crate::Error::FailedToOpenSocket,
                     });
                 }
 
@@ -585,7 +576,7 @@ impl HttpThread {
                     {
                         custom_context.connect(client, url.hostname, url.get_port_auto())
                     } else {
-                        return Err(bun_core::err!("UnsupportedProxyProtocol"));
+                        return Err(crate::Error::UnsupportedProxyProtocol);
                     }
                 } else {
                     let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
@@ -605,7 +596,7 @@ impl HttpThread {
                         url.get_port_auto(),
                     );
                 }
-                return Err(bun_core::err!("UnsupportedProxyProtocol"));
+                return Err(crate::Error::UnsupportedProxyProtocol);
             }
         }
         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
@@ -818,51 +809,53 @@ impl HttpThread {
         }
     }
 
-    fn drain_queued_http_response_body_drains(&mut self) {
+    fn drain_queued_receive_resumes(&mut self) {
         loop {
-            // socket.close() can potentially be slow
-            // Let's not block other threads while this runs.
-            let queued_response_body_drains = {
-                let _guard = self.queued_response_body_drains_lock.lock_guard();
-                core::mem::take(&mut self.queued_response_body_drains)
+            let queued = {
+                let _guard = self.queued_receive_resumes_lock.lock_guard();
+                core::mem::take(&mut self.queued_receive_resumes)
             };
-
-            for drain in &queued_response_body_drains {
-                if let Some(socket_ptr) = abort_tracker().get(&drain.async_http_id) {
+            if queued.is_empty() {
+                return;
+            }
+            for id in queued {
+                if let Some(socket_ptr) = abort_tracker().get(&id) {
                     match *socket_ptr {
                         uws::AnySocket::SocketTls(socket) => {
                             let tagged = HTTPContext::<true>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
+                                client.resume_receive::<true>(socket);
                                 client.drain_response_body::<true>(socket);
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.drain_response_body_by_http_id(drain.async_http_id);
+                                let _g = session.ref_scope();
+                                session.resume_receive_by_http_id(id);
+                                session.drain_response_body_by_http_id(id);
                             }
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
                             if let Some(client) = tagged.client_mut() {
+                                client.resume_receive::<false>(socket);
                                 client.drain_response_body::<false>(socket);
                             }
                             if let Some(session) = tagged.session_mut() {
-                                session.drain_response_body_by_http_id(drain.async_http_id);
+                                let _g = session.ref_scope();
+                                session.resume_receive_by_http_id(id);
+                                session.drain_response_body_by_http_id(id);
                             }
                         }
                     }
+                } else {
+                    h3::ClientContext::resume_receive_by_http_id(id);
                 }
             }
-            let len = queued_response_body_drains.len();
-            drop(queued_response_body_drains);
-            if len == 0 {
-                break;
-            }
-            bun_core::scoped_log!(HTTPThread, "drained {} queued drains", len);
         }
     }
 
     pub fn drain_events(&mut self) {
         // Process any pending writes **before** aborting.
-        self.drain_queued_http_response_body_drains();
+        self.drain_queued_receive_resumes();
         self.drain_queued_writes();
         self.drain_queued_shutdowns();
         // After shutdowns: an abort or cert-rejection scheduled in the same JS
@@ -964,22 +957,27 @@ impl HttpThread {
         }
     }
 
-    pub fn schedule_response_body_drain(&mut self, async_http_id: u32) {
+    pub fn schedule_receive_resume(&mut self, async_http_id: u32) {
         {
-            let _guard = self.queued_response_body_drains_lock.lock_guard();
-            self.queued_response_body_drains
-                .push(DrainMessage { async_http_id });
+            let _guard = self.queued_receive_resumes_lock.lock_guard();
+            if self.queued_receive_resumes.last() == Some(&async_http_id) {
+                return;
+            }
+            self.queued_receive_resumes.push(async_http_id);
         }
         self.wakeup();
     }
 
     pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
-        bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", http.async_http_id);
+        self.schedule_shutdown_by_id(http.async_http_id);
+    }
+
+    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u32) {
+        bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
         {
             let _guard = self.queued_shutdowns_lock.lock_guard();
-            self.queued_shutdowns.push(ShutdownMessage {
-                async_http_id: http.async_http_id,
-            });
+            self.queued_shutdowns
+                .push(ShutdownMessage { async_http_id });
         }
         self.wakeup();
     }
@@ -1049,6 +1047,8 @@ impl HttpThread {
                 let client = &mut (*nn.as_ptr()).async_http.client;
                 drop(core::mem::take(&mut client.redirect));
                 drop(core::mem::take(&mut client.prev_redirect));
+                drop(core::mem::take(&mut client.compressed_request_body));
+                drop(core::mem::take(&mut client.proxy_authorization));
                 if let Some(tunnel) = client.proxy_tunnel.take() {
                     (*tunnel.as_ptr()).detach_socket();
                     tunnel.deref();
@@ -1156,8 +1156,16 @@ fn start_queued_task(
     // Note: AsyncHttp is byte-copied here
     // since the original stays valid (real owner is `http`, copy is the
     // HTTP-thread working set).
-    let cloned = bun_core::heap::release(cloned);
-    in_flight.push(NonNull::from(&*cloned).cast::<crate::ThreadlocalAsyncHttp<'static>>());
+    //
+    // `in_flight` keeps the allocation's own pointer, not a `&*cloned`
+    // reborrow of it: the writes below go through `cloned`, and a shared
+    // reborrow would be frozen by the first of them.
+    let cloned_ptr = bun_core::heap::into_raw(cloned);
+    let cloned_nn = NonNull::new(cloned_ptr).expect("freshly leaked Box is non-null");
+    in_flight.push(cloned_nn.cast::<crate::ThreadlocalAsyncHttp<'static>>());
+    // SAFETY: freshly leaked; this thread is its sole owner until the request
+    // completes and `in_flight` gives the pointer back.
+    let cloned = unsafe { &mut *cloned_ptr };
     cloned.async_http.real = NonNull::new(http);
     // Clear stale queue pointers - the clone inherited http.next and http.task.node.next
     // which may point to other AsyncHTTP structs that could be freed before the callback
@@ -1173,6 +1181,23 @@ fn start_queued_task(
 #[inline]
 fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
     crate::abort_tracker()
+}
+
+/// Debug+ASAN invariant check: every socket pointer in the abort tracker must
+/// point at live (unfreed) memory. A stale entry here means some socket-close
+/// path forgot `unregister_abort_tracker`, which later manifests as a
+/// use-after-free in `drain_queued_shutdowns`/`drain_queued_writes` when the
+/// JS thread aborts that request id. Runs before and after each loop tick so
+/// the report fires at the tick that leaked, not at the eventual abort.
+#[inline]
+fn assert_abort_tracker_sockets_alive() {
+    if cfg!(debug_assertions) {
+        for socket in abort_tracker().values() {
+            if let Some(usocket) = socket.socket().get() {
+                bun_core::asan::assert_unpoisoned(usocket);
+            }
+        }
+    }
 }
 
 use core::cell::Cell;
@@ -1233,25 +1258,16 @@ mod _event_loop_draft {
     pub(super) fn on_start(opts: InitOpts) {
         Output::Source::configure_named_thread(bun_core::zstr!("HTTP Client"));
 
-        // uSockets' long-timeout counter is `% 240` minutes (see
-        // `us_socket_long_timeout` in packages/bun-usockets/src/socket.c), so
-        // values above 239 min wrap around and fire early. Clamp here — it's the
-        // only assignment — so the underlying timer can't wrap, and round values
-        // above 240s up to a whole minute so `socket.set_timeout`'s floor-to-
-        // minute long-timer path never yields a timeout *shorter* than requested.
-        // Normalising once here keeps the h1 (`HTTPClient::set_timeout`) and h2
-        // (`ClientSession::rearm_timeout`) paths identical without duplicating the
-        // math at each call site.
-        let raw: u64 = bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
-            .get()
-            .unwrap_or(300)
-            .min(239 * 60);
+        // Normalising once here (see `normalize_idle_timeout_seconds`) keeps
+        // the h1 (`HTTPClient::set_timeout`) and h2
+        // (`ClientSession::rearm_timeout`) paths identical without duplicating
+        // the math at each call site.
         crate::IDLE_TIMEOUT_SECONDS.store(
-            (if raw > 240 {
-                raw.div_ceil(60) * 60
-            } else {
-                raw
-            }) as core::ffi::c_uint,
+            crate::normalize_idle_timeout_seconds(
+                bun_core::env_var::BUN_CONFIG_HTTP_IDLE_TIMEOUT
+                    .get()
+                    .unwrap_or(300),
+            ),
             core::sync::atomic::Ordering::Relaxed,
         );
 
@@ -1347,12 +1363,23 @@ mod _event_loop_draft {
                     }
                 }
                 self.drain_events();
+                assert_abort_tracker_sockets_alive();
                 Output::flush();
 
                 let uws_loop = self.uws_loop_mut();
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();
+                // Run the deferred-free thunk (`Store::process_deferred_frees`)
+                // like `MiniEventLoop::tick_once` does after its raw tick; the
+                // FilePoll hive slots freed during this tick are reclaimed here.
+                // SAFETY: `loop_` was born `*mut` (`init_global`), so `cast_mut`
+                // keeps its provenance; it is HTTP-thread-only and disjoint from
+                // the C `us_loop_t` behind `uws_loop`, and no other `&`/`&mut`
+                // to this `MiniEventLoop` is live here (`uws_loop` re-derived
+                // per iteration, last used above).
+                unsafe { (*self.loop_.cast_mut()).on_after_event_loop() };
+                assert_abort_tracker_sockets_alive();
 
                 if cfg!(debug_assertions) {
                     Output::flush();

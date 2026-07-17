@@ -289,7 +289,8 @@ impl<'a> Loader<'a> {
         self.aws_credentials.as_ref().unwrap()
     }
 
-    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
+    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` (matching
+    /// Node's `=== '0'` check exactly).
     ///
     /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
     pub fn get_tls_reject_unauthorized(&mut self) -> bool {
@@ -298,10 +299,6 @@ impl<'a> Loader<'a> {
         }
         if let Some(reject) = self.get(b"NODE_TLS_REJECT_UNAUTHORIZED") {
             if reject == b"0" {
-                self.reject_unauthorized = Some(false);
-                return false;
-            }
-            if reject == b"false" {
                 self.reject_unauthorized = Some(false);
                 return false;
             }
@@ -503,7 +500,7 @@ impl<'a> Loader<'a> {
         &mut self,
         fs: &bun_paths::fs::FileSystem,
         override_node: &[u8],
-    ) -> Result<bool, bun_core::Error> {
+    ) -> crate::Result<bool> {
         let mut buf = PathBuffer::uninit();
 
         let node_path_to_use: Box<[u8]> = if !override_node.is_empty() {
@@ -650,7 +647,7 @@ impl<'a> Loader<'a> {
         env_files: &[&[u8]],
         suffix: DotEnvFileSuffix,
         skip_default_env: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
         let start = bun_core::time::nano_timestamp();
 
@@ -682,7 +679,7 @@ impl<'a> Loader<'a> {
         &mut self,
         env_files: &[&[u8]],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         // iterate backwards, so the latest entry in the latest arg instance assumes the highest priority
         let mut i: usize = env_files.len();
         while i > 0 {
@@ -710,7 +707,7 @@ impl<'a> Loader<'a> {
         suffix: DotEnvFileSuffix,
         dir: &D,
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let dir_handle = bun_sys::Fd::cwd();
 
         // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
@@ -757,7 +754,7 @@ impl<'a> Loader<'a> {
         dir_handle: bun_sys::Fd,
         name: &'static [u8],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if dir.has_comptime_query(name) {
             self.load_env_file::<false>(dir_handle, name, value_buffer)?;
             analytics::Features::dotenv_inc();
@@ -851,7 +848,7 @@ impl<'a> Loader<'a> {
         dir: bun_sys::Fd,
         base: &'static [u8],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if self.default_file_slot(base).is_some() {
             return Ok(());
         }
@@ -916,7 +913,7 @@ impl<'a> Loader<'a> {
         &mut self,
         file_path: &[u8],
         value_buffer: &mut Vec<u8>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         if self.custom_files_loaded.contains(file_path) {
             return Ok(());
         }
@@ -974,7 +971,7 @@ enum ReadEnvFile {
     Bytes(Vec<u8>),
 }
 
-fn read_env_file_contents(file: &bun_sys::File) -> Result<ReadEnvFile, bun_core::Error> {
+fn read_env_file_contents(file: &bun_sys::File) -> crate::Result<ReadEnvFile> {
     match file.read_to_end() {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),
@@ -1395,44 +1392,44 @@ impl Map {
         })
     }
 
-    /// Write the Windows environment block into a buffer
-    /// This can be passed to CreateProcessW's lpEnvironment parameter
-    pub fn write_windows_env_block(
-        &mut self,
-        result: &mut [u16; 32767],
-    ) -> Result<*const u16, bun_core::Error> {
-        let mut i: usize = 0;
-        let mut it = self.map.iterator();
-        while let Some(pair) = it.next() {
-            if i + pair.key_ptr.len() + 7 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
+    /// Build a heap-allocated Windows environment block suitable for
+    /// `CreateProcessW`'s `lpEnvironment` with `CREATE_UNICODE_ENVIRONMENT`.
+    ///
+    /// The 32,767-character limit applies to `CreateProcessA` (ANSI) only; the
+    /// Unicode block has no documented size limit, so this sizes the buffer to
+    /// the actual contents instead of failing when the environment is large.
+    pub fn write_windows_env_block(&mut self) -> Vec<u16> {
+        // UTF-16 output is at most one code unit per UTF-8 input byte (ASCII
+        // is 1:1; multi-byte sequences shrink; surrogate pairs are 2 units
+        // from 4 bytes), so the UTF-8 byte length is a safe upper bound.
+        let mut capacity: usize = 4;
+        {
+            let mut it = self.map.iterator();
+            while let Some(pair) = it.next() {
+                capacity += pair.key_ptr.len() + 1 + pair.value_ptr.value.len() + 1;
             }
-            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
-            if i + 7 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
-            }
-            result[i] = b'=' as u16;
-            i += 1;
-            if i + pair.value_ptr.value.len() + 5 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
-            }
-            i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], &pair.value_ptr.value)
-                .len();
-            if i + 5 >= result.len() {
-                return Err(bun_core::Error::from_name("TooManyEnvironmentVariables"));
-            }
-            result[i] = 0;
-            i += 1;
         }
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
-        i += 1;
-        result[i] = 0;
 
-        Ok(result.as_ptr())
+        let mut result = vec![0u16; capacity];
+        let mut i: usize = 0;
+        {
+            let mut it = self.map.iterator();
+            while let Some(pair) = it.next() {
+                i += strings::convert_utf8_to_utf16_in_buffer(&mut result[i..], pair.key_ptr).len();
+                result[i] = b'=' as u16;
+                i += 1;
+                i += strings::convert_utf8_to_utf16_in_buffer(
+                    &mut result[i..],
+                    &pair.value_ptr.value,
+                )
+                .len();
+                result[i] = 0;
+                i += 1;
+            }
+        }
+        // Terminator: four trailing NUL u16s (already zero-initialized above).
+        result.truncate(i + 4);
+        result
     }
 
     pub fn iterator(&mut self) -> <HashTable as ArrayHashMapExt>::Iterator<'_> {

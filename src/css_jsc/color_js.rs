@@ -129,7 +129,10 @@ pub mod ansi256 {
         let grey_idx = if grey_avg > 238 {
             23
         } else {
-            (grey_avg.wrapping_sub(3)) / 10
+            // tmux does this in signed int, where (2 - 3) / 10 truncates to 0.
+            // Wrapping on u32 would send the palette index into the hundreds of
+            // millions for any average below 3.
+            grey_avg.saturating_sub(3) / 10
         };
         let grey = 8u32.wrapping_add(10u32.wrapping_mul(grey_idx));
 
@@ -186,6 +189,13 @@ pub mod ansi256 {
     }
 }
 
+/// A missing color component (CSS Color 4's `none`, or the hue of an achromatic
+/// color) is stored as NaN, and behaves as zero outside of interpolation. Printing
+/// it as `NaN` would produce a string no CSS parser accepts.
+fn zero_if_none(component: f32) -> f32 {
+    if component.is_nan() { 0.0 } else { component }
+}
+
 pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::symbol::Map as SymbolMap;
     use bun_core::ZigStringSlice;
@@ -221,12 +231,19 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {
             let number: i64 = args[0].to_int64();
-            // u32 bit layout, LSB-first: blue, green, red, alpha (one byte each).
-            let int: u32 = number.rem_euclid(u32::MAX as i64).unsigned_abs() as u32;
+            // The color is the low 32 bits, LSB-first: blue, green, red,
+            // alpha (one byte each).
+            let int: u32 = number as u32;
             let blue = (int & 0xff) as u8;
             let green = ((int >> 8) & 0xff) as u8;
             let red = ((int >> 16) & 0xff) as u8;
-            let alpha = ((int >> 24) & 0xff) as u8;
+            // A 24-bit 0xRRGGBB number has no alpha byte and means an opaque
+            // color; only values wider than 24 bits carry alpha in the top byte.
+            let alpha = if int > 0x00ff_ffff {
+                (int >> 24) as u8
+            } else {
+                255
+            };
 
             break 'brk Ok(CssColor::Rgba(RGBA {
                 alpha,
@@ -283,8 +300,9 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let a: Option<u8> = if let Some(a_value) = args[0].get_truthy(global, b"a")? {
                 'brk2: {
                     if a_value.is_number() {
+                        // CSS spec says to clamp values to their valid range so we'll respect that here
                         break 'brk2 Some(
-                            u8::try_from(((a_value.as_number() * 255.0) as i64).rem_euclid(256))
+                            u8::try_from(((a_value.as_number() * 255.0) as i64).clamp(0, 255))
                                 .unwrap(),
                         );
                     }
@@ -477,27 +495,24 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                     ));
                                 }
                                 OutputColorFormat::Ansi16 => {
-                                    let ansi_16_color = ansi256::get16(
+                                    let index = ansi256::get16(
                                         rgba.red as u32,
                                         rgba.green as u32,
                                         rgba.blue as u32,
                                     );
-                                    // 16-color ansi, foreground text color
-                                    break 'color BunString::clone_latin1(&[
-                                        // 0x1b is the escape character
-                                        // 38 is the foreground color code
-                                        // 5 is the 16-color mode
-                                        // {d} is the color index
-                                        0x1b,
-                                        b'[',
-                                        b'3',
-                                        b'8',
-                                        b';',
-                                        b'5',
-                                        b';',
-                                        ansi_16_color,
-                                        b'm',
-                                    ]);
+                                    // 16-color SGR: 30..=37 for the first eight, 90..=97
+                                    // for their bright variants. The 38;5;{index} form
+                                    // only a 256-color terminal reads is ansi-256's job.
+                                    let sgr = if index < 8 { 30 + index } else { 82 + index };
+                                    let mut buf = [0u8; 8];
+                                    buf[0..2].copy_from_slice(b"\x1b[");
+                                    let extra_len = {
+                                        let mut cursor = &mut buf[2..];
+                                        let before = cursor.len();
+                                        write!(cursor, "{}m", sgr).expect("unreachable");
+                                        before - cursor.len()
+                                    };
+                                    break 'color BunString::clone_latin1(&buf[0..2 + extra_len]);
                                 }
                                 OutputColorFormat::Ansi16m => {
                                     // true color ansi
@@ -548,9 +563,14 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                 _ => break 'formatted,
                             };
 
+                            // Saturation and lightness are stored as 0..1 but hsl()
+                            // takes percentages. A missing component (an achromatic
+                            // hue, or `none`) is a zero value in a concrete color.
                             break 'color BunString::create_format(format_args!(
-                                "hsl({}, {}, {})",
-                                hsl.h, hsl.s, hsl.l
+                                "hsl({}, {}%, {}%)",
+                                zero_if_none(hsl.h),
+                                zero_if_none(hsl.s) * 100.0,
+                                zero_if_none(hsl.l) * 100.0
                             ));
                         }
                         OutputColorFormat::Lab => {
@@ -564,9 +584,13 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                 _ => break 'formatted,
                             };
 
+                            // lab() is space-separated and takes lightness as a
+                            // percentage, matching what the CSS printer emits.
                             break 'color BunString::create_format(format_args!(
-                                "lab({}, {}, {})",
-                                lab.l, lab.a, lab.b
+                                "lab({}% {} {})",
+                                zero_if_none(lab.l) * 100.0,
+                                zero_if_none(lab.a),
+                                zero_if_none(lab.b)
                             ));
                         }
                     }

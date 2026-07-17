@@ -33,9 +33,11 @@ pub mod wtf;
 pub mod write;
 pub use write::Write;
 
-// `bun.strings.*` — SIMD-backed scanners over highway/simdutf FFI.
+// `bun.strings.*` — SIMD-backed scanners over highway/simdutf FFI. Public as
+// `bun_core::strings` (the alias in lib.rs); `immutable` is the module name.
 #[path = "immutable.rs"]
 pub mod immutable;
+use crate::strings;
 
 // Unicode ID-Start/ID-Continue two-stage tables.
 // Pure data with no upward deps; hosted here so [`lexer`], [`mutable_string`],
@@ -894,7 +896,7 @@ impl String {
     /// `self`, treating ANSI escape sequences as zero-width.
     /// Dispatches on encoding to [`strings::visible::width::exclude_ansi_colors`].
     pub fn visible_width_exclude_ansi_colors(&self, ambiguous_as_wide: bool) -> usize {
-        use crate::string::strings::visible::width::exclude_ansi_colors as w;
+        use crate::strings::visible::width::exclude_ansi_colors as w;
         if self.is_utf16() {
             return w::utf16(self.utf16(), ambiguous_as_wide);
         }
@@ -903,7 +905,7 @@ impl String {
             // the UTF-8 byte view.
             return w::utf8(self.as_zig().slice());
         }
-        w::latin1(self.latin1())
+        w::latin1(self.latin1(), ambiguous_as_wide)
     }
 
     /// `bun.String.isGlobal` — true iff this is a `ZigString`
@@ -1609,7 +1611,7 @@ impl ZigString {
                 .iter()
                 .position(|&c| c < 256 && chars.contains(&(c as u8)))
         } else {
-            crate::string::strings::index_of_any(self.slice(), chars).map(|i| i as usize)
+            crate::strings::index_of_any(self.slice(), chars)
         }
     }
 
@@ -1811,18 +1813,15 @@ impl ZigString {
     /// `ZigString.sliceZBuf` — `Display`-format into `buf`, NUL-terminate, and
     /// return the borrowed `[:0]u8`. Errors if the formatted output (plus NUL)
     /// would not fit.
-    pub fn slice_z_buf<'a>(
-        &self,
-        buf: &'a mut crate::PathBuffer,
-    ) -> Result<&'a ZStr, crate::Error> {
+    pub fn slice_z_buf<'a>(&self, buf: &'a mut crate::PathBuffer) -> crate::CrateResult<&'a ZStr> {
         use std::io::Write as _;
         let buf_slice: &mut [u8] = &mut buf[..];
         let start_len = buf_slice.len();
         let mut cursor: &mut [u8] = buf_slice;
-        write!(cursor, "{}", self).map_err(|_| crate::err!("NoSpaceLeft"))?;
+        write!(cursor, "{}", self).map_err(|_| crate::CrateError::NoSpaceLeft)?;
         let written = start_len - cursor.len();
         if written >= buf.len() {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         buf[written] = 0;
         Ok(ZStr::from_buf(&buf[..], written))
@@ -2312,9 +2311,6 @@ pub mod encoding {
 }
 pub use encoding::Encoding as NodeEncoding;
 
-// `strings` is the canonical `bun.strings` namespace name; alias to the real module.
-pub use immutable as strings;
-
 // ──────────────────────────────────────────────────────────────────────────
 // `lexer` — identifier predicates. Thin `u32`-taking wrapper over the
 // [`identifier`] two-stage Unicode tables (moved down from `bun_js_parser`).
@@ -2466,7 +2462,7 @@ pub mod printer {
         ascii_only: bool,
         json: bool,
         encoding: StrEncoding,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         debug_assert!(!json || quote_char == b'"');
         // utf16 view over the same bytes (only used when encoding == Utf16).
         // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
@@ -2608,7 +2604,7 @@ pub mod printer {
         text: &[u8],
         bytes: &mut MutableString,
         ascii_only: bool,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         // PERF: consider pre-growing via an estimated UTF-8 length — profile if it shows up on a hot path.
         bytes.append_char(b'"')?;
         write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;

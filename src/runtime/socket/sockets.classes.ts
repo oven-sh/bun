@@ -7,6 +7,9 @@ function generate(ssl) {
     noConstructor: true,
     configurable: false,
     memoryCost: true,
+    // Visited slot holding the shared JSSocketHandlers cell, so the callbacks
+    // stay alive as long as any socket that can still fire them.
+    values: ["handlers"],
     proto: {
       getAuthorizationError: {
         fn: "getAuthorizationError",
@@ -65,6 +68,10 @@ function generate(ssl) {
         fn: "getTLSTicket",
         length: 0,
       },
+      setKeyCert: {
+        fn: "setKeyCert",
+        length: 1,
+      },
       exportKeyingMaterial: {
         fn: "exportKeyingMaterial",
         length: 3,
@@ -101,6 +108,18 @@ function generate(ssl) {
       setNoDelay: {
         fn: "setNoDelay",
         length: 1,
+      },
+      setTypeOfService: {
+        fn: "setTypeOfService",
+        length: 1,
+      },
+      getTypeOfService: {
+        fn: "getTypeOfService",
+        length: 0,
+      },
+      resumeSNI: {
+        fn: "resumeSNI",
+        length: 2,
       },
       setKeepAlive: {
         fn: "setKeepAlive",
@@ -254,6 +273,9 @@ export default [
     sharedThis: true,
     noConstructor: true,
     JSType: "0b11101110",
+    // Visited slot holding the JSSocketHandlers cell shared with every socket
+    // accepted by this listener.
+    values: ["handlers"],
     proto: {
       stop: {
         fn: "stop",

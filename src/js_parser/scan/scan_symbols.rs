@@ -9,7 +9,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         self.find_symbol_with_record_usage::<true>(loc, name)
     }
 
@@ -17,7 +17,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         // Every `break 'brk` below assigns `declare_loc` first; the one
         // early-`return` builds its own `FindSymbolResult` without reading it.
         let declare_loc: bun_ast::Loc;
@@ -82,11 +82,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 let ts_mut = &mut *ts_namespace;
                                 ts_mut.property_accesses.insert(name, new_ref);
                                 self.symbols[new_ref.inner_index() as usize].namespace_alias =
-                                    Some(js_ast::NamespaceAlias {
+                                    Some(bun_alloc::ast_box(js_ast::NamespaceAlias {
                                         namespace_ref: arg_ref,
                                         alias: js_ast::StoreStr::new(name),
                                         ..Default::default()
-                                    });
+                                    }));
                                 break 'brk new_ref;
                             }
                         }
@@ -138,7 +138,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // property on the target object of the "with" statement. We must not rename
         // it or we risk changing the behavior of the code.
         if is_inside_with_scope {
-            self.symbols[ref_.inner_index() as usize].must_not_be_renamed = true;
+            self.symbols[ref_.inner_index() as usize].set_must_not_be_renamed(true);
         }
 
         // Track how many times we've referenced this symbol

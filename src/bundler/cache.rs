@@ -249,7 +249,7 @@ impl Fs {
         path: &ZStr,
         cached_file_descriptor: Option<Fd>,
         shared: &mut MutableString,
-    ) -> Result<Entry, bun_core::Error> {
+    ) -> Result<Entry, crate::Error> {
         let rfs = &_fs.fs;
 
         let mut owned: Option<bun_sys::File> = None;
@@ -257,11 +257,11 @@ impl Fs {
             // `try handle.seekTo(0)` — rewind a cached fd before re-reading.
             bun_sys::File::borrow(&fd)
                 .seek_to(0)
-                .map_err(bun_core::Error::from)?;
+                .map_err(crate::Error::from)?;
             fd
         } else {
             let f = bun_sys::open_file_absolute_z(path, bun_sys::OpenFlags::READ_ONLY)
-                .map_err(bun_core::Error::from)?;
+                .map_err(crate::Error::from)?;
             let raw = f.handle();
             owned = Some(f);
             raw
@@ -286,7 +286,7 @@ impl Fs {
                         bstr::BStr::new(err.name()),
                     ));
                 }
-                return Err(err);
+                return Err(err.into());
             }
         };
 
@@ -300,7 +300,6 @@ impl Fs {
         Ok(Entry {
             contents,
             fd: if publish_fd { fd } else { Fd::INVALID },
-            external_free_function: ExternalFreeFunction::NONE,
         })
     }
 
@@ -311,7 +310,7 @@ impl Fs {
         dirname_fd: Fd,
         use_shared_buffer: bool,
         _file_handle: Option<Fd>,
-    ) -> Result<Entry, bun_core::Error> {
+    ) -> Result<Entry, crate::Error> {
         self.read_file_with_allocator(_fs, path, dirname_fd, use_shared_buffer, _file_handle, None)
     }
 
@@ -337,7 +336,7 @@ impl Fs {
         use_shared_buffer: bool,
         _file_handle: Option<Fd>,
         arena: Option<&bun_alloc::Arena>,
-    ) -> Result<Entry, bun_core::Error> {
+    ) -> Result<Entry, crate::Error> {
         let rfs = &_fs.fs;
 
         // Single let-expression assigning `file_handle` on each branch, avoiding
@@ -347,7 +346,7 @@ impl Fs {
         let fd: Fd = if let Some(f) = _file_handle {
             bun_sys::File::borrow(&f)
                 .seek_to(0)
-                .map_err(bun_core::Error::from)?;
+                .map_err(crate::Error::from)?;
             _owned = None;
             will_close = false;
             f
@@ -362,7 +361,7 @@ impl Fs {
                     Ok(f) => f,
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                            .map_err(bun_core::Error::from)?;
+                            .map_err(crate::Error::from)?;
                         bun_core::pretty_errorln!(
                             "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                             bstr::BStr::new(path),
@@ -374,7 +373,7 @@ impl Fs {
                 }
             } else {
                 bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
-                    .map_err(bun_core::Error::from)?
+                    .map_err(crate::Error::from)?
             };
             let raw = opened.handle();
             will_close = rfs.need_to_close_files();
@@ -414,7 +413,7 @@ impl Fs {
                                 bstr::BStr::new(err.name()),
                             ));
                         }
-                        return Err(err);
+                        return Err(err.into());
                     }
                 }
             }
@@ -438,7 +437,7 @@ impl Fs {
                                 bstr::BStr::new(err.name()),
                             ));
                         }
-                        return Err(err);
+                        return Err(err.into());
                     }
                 }
             }
@@ -453,7 +452,6 @@ impl Fs {
         Ok(Entry {
             contents,
             fd: if publish_fd { fd } else { Fd::INVALID },
-            external_free_function: ExternalFreeFunction::NONE,
         })
     }
 }
@@ -472,7 +470,7 @@ impl Css {
         &mut self,
         _log: &mut bun_ast::Log,
         _source: bun_ast::Source,
-    ) -> Result<CssResult, bun_core::Error> {
+    ) -> Result<CssResult, crate::Error> {
         Global::notimpl();
     }
 }
@@ -497,7 +495,7 @@ impl JavaScript {
         defines: &'a Define,
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
-    ) -> Result<Option<js_parser::Result<'a>>, bun_core::Error> {
+    ) -> Result<Option<js_parser::Result<'a>>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
         temp_log.level = log.level;
         let parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {
@@ -538,7 +536,7 @@ impl JavaScript {
         defines: &'a Define,
         log: &mut bun_ast::Log,
         source: &'a bun_ast::Source,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         if strings::trim(source.contents(), b"\n\t\r ").is_empty() {
             return Ok(());
         }
@@ -558,7 +556,7 @@ impl JavaScript {
         let res = parser.scan_imports(scan_pass_result);
         drop(parser);
         let _ = temp_log.append_to_maybe_recycled(log, source);
-        res
+        res.map_err(Into::into)
     }
 }
 

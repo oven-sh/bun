@@ -9,6 +9,7 @@ const {
   headersTuple,
   webRequestOrResponseHasBodyValue,
   setServerCustomOptions,
+  setServerAppFlags,
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer,
   drainMicrotasks,
   setServerIdleTimeout,
@@ -24,8 +25,17 @@ const {
     server: any,
     requireHostHeader: boolean,
     useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
     maxHeaderSize: number,
     onClientError: (ssl: boolean, socket: any, errorCode: number, rawPacket: ArrayBuffer) => undefined,
+    onConnection?: (socketHandle: any) => undefined,
+  ) => void;
+  setServerAppFlags: (
+    server: any,
+    requireHostHeader: boolean,
+    useStrictMethodValidation: boolean,
+    insecureHTTPParser: boolean,
+    httpAllowHalfOpen: boolean,
   ) => void;
   getCompleteWebRequestOrResponseBodyValueAsArrayBuffer: (arg: any) => ArrayBuffer | undefined;
   drainMicrotasks: () => void;
@@ -88,7 +98,6 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
-const kDeferredTimeouts = Symbol("deferredTimeouts");
 
 const kEmptyObject = Object.freeze(Object.create(null));
 
@@ -120,6 +129,8 @@ export const enum NodeHTTPBodyReadState {
 export const enum NodeHTTPResponseFlags {
   socket_closed = 1 << 0,
   request_has_completed = 1 << 1,
+  ended = 1 << 2,
+  upgraded = 1 << 3,
 
   closed_or_completed = socket_closed | request_has_completed,
 }
@@ -185,8 +196,46 @@ function emitCloseNTAndComplete(self) {
 }
 
 function emitEOFIncomingMessageOuter(self) {
-  self.push(null);
   self.complete = true;
+  // node:http server: trailer fields received after a chunked request body
+  // populate req.trailers/rawTrailers before 'end' is emitted, like Node's
+  // parserOnMessageComplete. Native moved the section onto THIS request's
+  // handle at its body fin, so pipelined requests can neither inherit nor
+  // overwrite another request's trailers.
+  // Trailers can only follow a chunked request body: a no-body request has
+  // none, so skip the native call (and the socket/server option walk) for the
+  // common GET/HEAD case.
+  if (self[kHandle] !== undefined && !self[noBodySymbol]) {
+    // The lenient (insecureHTTPParser) value bytes must match what the parser
+    // accepted on the wire, or a CTL byte in a trailer value would vanish here.
+    let rawTrailers = self[kHandle].takeRequestTrailers(self.socket?.server?.insecureHTTPParser === true);
+    if (rawTrailers !== undefined) {
+      // Apply server.maxHeadersCount to trailers like Node's parserOnHeaders
+      // does (the same maxHeaderPairs limit covers both). The parser hard-caps
+      // at 199 fields; Node's C++ imposes no count limit, only this JS clamp.
+      const maxHeadersCount = self.socket?.server?.maxHeadersCount;
+      if (typeof maxHeadersCount === "number" && maxHeadersCount > 0 && rawTrailers.length > maxHeadersCount * 2) {
+        rawTrailers.length = maxHeadersCount * 2;
+      }
+      self._addHeaderLines(rawTrailers, rawTrailers.length);
+    }
+  }
+  // The parser shim must not retain the request once it has ended. Node clears
+  // parser.incoming on the tick after 'end' so 'end' listeners still see
+  // `parser.incoming === req` (test-http-server-keepalive-end). push(null)
+  // schedules 'end' via nextTick (endReadableNT); a second nextTick scheduled
+  // here runs after that.
+  self.push(null);
+  const socket = self.socket;
+  if (socket != null) {
+    const parser = socket.parser;
+    if (parser != null && parser.incoming === self) {
+      process.nextTick(clearServerParserIncoming, parser, self);
+    }
+  }
+}
+function clearServerParserIncoming(parser, req) {
+  if (parser.incoming === req) parser.incoming = null;
 }
 function emitEOFIncomingMessage(self) {
   self[eofInProgress] = true;
@@ -350,9 +399,29 @@ function emitErrorNt(msg, err, callback) {
     msg.emit("error", err);
   }
 }
-const setMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "setMaxHTTPHeaderSize", 1);
-const getMaxHTTPHeaderSize = $newZigFunction("node_http_binding.zig", "getMaxHTTPHeaderSize", 0);
+const setMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "setMaxHTTPHeaderSize", 1);
+const getMaxHTTPHeaderSize = $newRustFunction("node_http_binding.rs", "getMaxHTTPHeaderSize", 0);
 const kOutHeaders = Symbol("kOutHeaders");
+const kNeedDrain = Symbol("kNeedDrain");
+const kProxyConfig = Symbol("kProxyConfig");
+const kWaitForProxyTunnel = Symbol("kWaitForProxyTunnel");
+
+// Cached HTTP Date header value, refreshed once a second like Node.js does.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http.js
+let utcCache;
+function utcDate() {
+  if (!utcCache) cacheUTCDate();
+  return utcCache;
+}
+function cacheUTCDate() {
+  const d = new Date();
+  utcCache = d.toUTCString();
+  const timer = setTimeout(resetUTCCache, 1000 - d.getMilliseconds());
+  if (typeof timer.unref === "function") timer.unref();
+}
+function resetUTCCache() {
+  utcCache = undefined;
+}
 
 function ipToInt(ip) {
   const octets = ip.split(".");
@@ -415,7 +484,7 @@ class ProxyConfig {
       // Follow curl's behavior: strip leading dot before matching suffixes.
       if (entry.startsWith(".")) {
         const suffix = entry.substring(1);
-        if (host.endsWith(suffix)) return false;
+        if (host === suffix || (host.endsWith(suffix) && host[host.length - suffix.length - 1] === ".")) return false;
       }
 
       // Handle wildcards like *.example.com
@@ -443,18 +512,27 @@ class ProxyConfig {
   }
 }
 
-function parseProxyConfigFromEnv(env, protocol, keepAlive) {
-  // We only support proxying for HTTP and HTTPS requests.
-  if (protocol !== "http:" && protocol !== "https:") return null;
+function parseProxyUrl(env, protocol) {
   // Get the proxy url - following the most popular convention, lower case takes precedence.
   // See https://about.gitlab.com/blog/we-need-to-talk-no-proxy/#http_proxy-and-https_proxy
   const proxyUrl = protocol === "https:" ? env.https_proxy || env.HTTPS_PROXY : env.http_proxy || env.HTTP_PROXY;
   // No proxy settings from the environment, ignore.
-  if (!proxyUrl) return null;
+  if (!proxyUrl) {
+    return null;
+  }
 
   if (proxyUrl.includes("\r") || proxyUrl.includes("\n")) {
     throw $ERR_PROXY_INVALID_CONFIG(`Invalid proxy URL: ${proxyUrl}`);
   }
+
+  return proxyUrl;
+}
+
+function parseProxyConfigFromEnv(env, protocol, keepAlive) {
+  // We only support proxying for HTTP and HTTPS requests.
+  if (protocol !== "http:" && protocol !== "https:") return null;
+  const proxyUrl = parseProxyUrl(env, protocol);
+  if (proxyUrl === null) return null;
 
   // Only http:// and https:// proxies are supported. Ignore instead of throw, in case other protocols are supposed to be handled by the user land.
   if (!proxyUrl.startsWith("http://") && !proxyUrl.startsWith("https://")) return null;
@@ -514,7 +592,6 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
-  kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,
   kEmptyObject,
@@ -525,6 +602,7 @@ export {
   kMaxHeaderSize,
   kMaxHeadersCount,
   kMethod,
+  kNeedDrain,
   kOptions,
   kOutHeaders,
   kParser,
@@ -532,6 +610,7 @@ export {
   kPendingCallbacks,
   kPort,
   kProtocol,
+  kProxyConfig,
   kRealListen,
   kRequest,
   kRes,
@@ -542,9 +621,11 @@ export {
   kTls,
   kUpgradeOrConnect,
   kUseDefaultPort,
+  kWaitForProxyTunnel,
   noBodySymbol,
   optionsSymbol,
   parseProxyConfigFromEnv,
+  parseProxyUrl,
   reqSymbol,
   runSymbol,
   serverSymbol,
@@ -552,6 +633,7 @@ export {
   setIsNextIncomingMessageHTTPS,
   setMaxHTTPHeaderSize,
   setRequestTimeout,
+  setServerAppFlags,
   setServerCustomOptions,
   setServerIdleTimeout,
   statusCodeSymbol,
@@ -559,6 +641,7 @@ export {
   timeoutTimerSymbol,
   tlsSymbol,
   typeSymbol,
+  utcDate,
   validateMsecs,
   webRequestOrResponse,
   webRequestOrResponseHasBodyValue,

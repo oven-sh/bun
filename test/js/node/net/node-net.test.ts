@@ -3,6 +3,8 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
+import fs from "node:fs";
 import {
   BlockList,
   connect,
@@ -705,6 +707,34 @@ it("socket should keep process alive if unref is not called", async () => {
   expect(await process.exited).toBe(1);
 });
 
+// Node never resumes a socket on the user's behalf: afterConnect only calls
+// read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
+// attached stay buffered instead of being emitted to nobody and lost.
+it("a connected socket is not flowing until the user reads from it", async () => {
+  const { promise: received, resolve: onClose, reject } = Promise.withResolvers<string>();
+  const server = createServer(c => {
+    c.on("error", reject);
+    c.end("early-data");
+  });
+  let client: Socket | undefined;
+  try {
+    // events.once rejects these awaits if 'error' is emitted instead.
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    client = createConnection(server.address().port, "127.0.0.1");
+    await once(client, "connect");
+    client.on("error", reject);
+    expect(client.readableFlowing).toBeNull();
+    client.setEncoding("utf8");
+    let data = "";
+    client.on("data", chunk => (data += chunk));
+    client.on("close", () => onClose(data));
+    expect(await received).toBe("early-data");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 it("should not hang after FIN", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
@@ -742,6 +772,9 @@ it("should not hang after destroy", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
   const server = net.createServer(c => {
+    // The client destroys without reading; the resulting RST surfaces as
+    // ECONNRESET here (Node behaves identically) — handle it.
+    c.on("error", () => {});
     c.write("Hello client");
   });
   try {
@@ -782,8 +815,11 @@ it("should trigger error when aborted even if connection failed #13126", async (
   socket.on("connect", reject);
   socket.on("error", resolve);
 
-  const err = (await promise) as Error;
-  expect(err.name).toBe("TimeoutError");
+  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
+  const err = (await promise) as Error & { code?: string; cause?: Error };
+  expect(err.name).toBe("AbortError");
+  expect(err.code).toBe("ABORT_ERR");
+  expect(err.cause?.name).toBe("TimeoutError");
 });
 
 it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
@@ -799,8 +835,11 @@ it("should trigger error when aborted even if connection failed, and the signal 
   socket.on("connect", reject);
   socket.on("error", resolve);
 
-  const err = (await promise) as Error;
-  expect(err.name).toBe("TimeoutError");
+  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
+  const err = (await promise) as Error & { code?: string; cause?: Error };
+  expect(err.name).toBe("AbortError");
+  expect(err.code).toBe("ABORT_ERR");
+  expect(err.cause?.name).toBe("TimeoutError");
 });
 
 it.if(isWindows)(
@@ -901,13 +940,15 @@ it.skipIf(isWindows)(
       // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
       // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
       // allocator's own bookkeeping, so it's independent of OS page
-      // reclamation and JSC heap oscillation — same result on every
-      // platform, every run.
+      // reclamation.
       function pageCount() {
         return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
       }
 
-      await run(2000);
+      // Warm up with the SAME workload as the measured run: on builds where
+      // JSC shares mimalloc, its heap keeps growing until the first full-size
+      // batch, so equal batches make the delta isolate the per-run leak.
+      await run(8000);
       const before = pageCount();
       await run(8000);
       const after = pageCount();
@@ -929,3 +970,164 @@ it.skipIf(isWindows)(
   },
   60_000,
 );
+
+describe("Socket fd adoption", () => {
+  it("writes synchronously to an adopted fd and closes it (> 2) on destroy", async () => {
+    const path = join(tmpdirSync(), "adopted-fd.txt");
+    const fd = fs.openSync(path, "w");
+    const socket = new Socket({ fd, readable: false, writable: true });
+    await new Promise<void>((resolve, reject) => {
+      socket.on("close", () => resolve());
+      socket.on("error", reject);
+      socket.end("hello");
+    });
+    expect(fs.readFileSync(path, "utf8")).toBe("hello");
+    // Sync fd writes must feed the byte counters (no native handle to do it).
+    expect(socket._bytesDispatched).toBe(5);
+    // The adopted fd must be released on destroy (node closes the wrapping
+    // libuv handle in the equivalent path).
+    expect(() => fs.fstatSync(fd)).toThrow();
+  });
+
+  it("throws ERR_INVALID_FD_TYPE for a writable fd that cannot be fstat'ed", () => {
+    let error: any;
+    try {
+      new Socket({ fd: 0x7ffff, writable: true });
+    } catch (e) {
+      error = e;
+    }
+    expect(error?.code).toBe("ERR_INVALID_FD_TYPE");
+    expect(error?.message).toBe("Unsupported fd type: UNKNOWN");
+  });
+
+  it("a bare { fd } does not throw so connect({ fd }) can attach a native handle", () => {
+    // No explicit writable: true -> no adoption, no fstat. child_process
+    // extra stdio relies on this path (connect({ fd }) attaches natively).
+    expect(() => new Socket({ fd: 0x7ffff })).not.toThrow();
+  });
+});
+
+describe("paused socket whose peer sends RST", () => {
+  // Regression: on Linux, epoll forwarded the raw EPOLLERR bit (8) as a libus
+  // close code, which the JS error path read as errno 8 and surfaced as a
+  // bogus `Error: read ENOEXEC` when the socket was not actively reading.
+  // kqueue already normalized the flag to 0/1.
+  it("does not surface a bogus errno error", async () => {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const errors: NodeJS.ErrnoException[] = [];
+    const server = createServer(c => {
+      c.on("error", () => {});
+      // RST only once the client says it has paused.
+      c.on("data", () => c.resetAndDestroy());
+    });
+    try {
+      await new Promise<void>(r => server.listen(0, "127.0.0.1", r));
+      const port = (server.address() as import("node:net").AddressInfo).port;
+      const c = connect(port, "127.0.0.1", () => {
+        c.pause();
+        c.write("x");
+      });
+      c.on("error", e => errors.push(e));
+      c.on("close", () => resolve());
+      await promise;
+    } finally {
+      server.close();
+    }
+    expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
+  });
+});
+
+// On Windows the native layer does not report fatal send errors yet (the WSA
+// error translation is a follow-up), so the write error never surfaces there.
+it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+  // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
+  // writable side open like Node, so the failure must surface from the write
+  // path (Node: errnoException(status, "write") via onWriteComplete).
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.resetAndDestroy();
+  });
+  try {
+    await new Promise<void>(r => server.listen(0, r));
+    const conn = connect({ port: (server.address() as { port: number }).port, host: "127.0.0.1", allowHalfOpen: true });
+    conn.on("error", resolve);
+    conn.on("close", () => reject(new Error("socket closed without emitting 'error'")));
+    const chunk = Buffer.alloc(16384, 97);
+    const pump = () => {
+      if (!conn.destroyed) {
+        conn.write(chunk);
+        setImmediate(pump);
+      }
+    };
+    conn.on("connect", pump);
+    const err = await promise;
+    expect(["EPIPE", "ECONNRESET", "ENOTCONN"]).toContain(err.code);
+    expect(typeof err.errno).toBe("number");
+  } finally {
+    server.close();
+  }
+});
+
+// libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a
+// client localPort that still has earlier connections in TIME_WAIT. Bun used
+// to call bind() bare here and fail with EADDRINUSE, which made
+// sequential/test-net-localport.js order-dependent in CI. Windows is skipped
+// because libuv intentionally does not set SO_REUSEADDR there.
+it.skipIf(isWindows)("connect({ localPort }) succeeds when the local port has TIME_WAIT sockets", async () => {
+  // Reserve a port and release it so nothing else is listening on it.
+  const probe = createServer();
+  await new Promise<void>((resolve, reject) => {
+    probe.on("error", reject);
+    probe.listen(0, "127.0.0.1", resolve);
+  });
+  const localPort = (probe.address() as import("node:net").AddressInfo).port;
+  await new Promise<void>(r => probe.close(() => r()));
+
+  // Leave a few server-side TIME_WAIT sockets on localPort: the server sends
+  // and then active-closes each connection, which is what puts its local end
+  // (localPort) into TIME_WAIT.
+  {
+    const { promise: drained, resolve: onDrained } = Promise.withResolvers<void>();
+    let accepted = 0;
+    let closed = 0;
+    const waitServer = createServer(c => {
+      if (++accepted === 4) waitServer.close();
+      c.end("x");
+      c.on("close", () => {
+        if (++closed === 4) onDrained();
+      });
+    });
+    await new Promise<void>((resolve, reject) => {
+      waitServer.on("error", reject);
+      waitServer.listen(localPort, "127.0.0.1", resolve);
+    });
+    for (let i = 0; i < 4; i++) {
+      const c = connect(localPort, "127.0.0.1");
+      c.on("error", () => {});
+      c.resume();
+    }
+    await drained;
+  }
+
+  // Now bind an outgoing connection's local port to localPort. Without
+  // SO_REUSEADDR the kernel rejects this with EADDRINUSE while the TIME_WAIT
+  // entries exist.
+  const target = createServer(c => c.end());
+  try {
+    await new Promise<void>((resolve, reject) => {
+      target.on("error", reject);
+      target.listen(0, "127.0.0.1", resolve);
+    });
+    const targetPort = (target.address() as import("node:net").AddressInfo).port;
+    const { promise, resolve, reject } = Promise.withResolvers<Socket>();
+    const c = connect({ host: "127.0.0.1", port: targetPort, localPort });
+    c.on("connect", () => resolve(c));
+    c.on("error", reject);
+    const sock = await promise;
+    expect(sock.localPort).toBe(localPort);
+    sock.destroy();
+  } finally {
+    target.close();
+  }
+});

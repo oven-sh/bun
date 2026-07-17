@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { constants, Database, SQLiteError } from "bun:sqlite";
 import { describe, expect, it } from "bun:test";
-import { readdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
@@ -1081,6 +1081,31 @@ it("Missing DB throws SQLITE_CANTOPEN", () => {
   }
 });
 
+it.each([
+  ["query().get() with a syntax error", db => db.query("selecx 1").get()],
+  ["query().all() with an unknown table", db => db.query("SELECT * FROM not_a_table").all()],
+  ["query().all() with an unknown column", db => db.query("SELECT not_a_column FROM foo").all()],
+  ["run() with a syntax error", db => db.run("selecx 1")],
+  ["exec() with a syntax error", db => db.exec("selecx 1")],
+  ["prepare() with a syntax error", db => db.prepare("selecx 1")],
+])("generic errors set code to SQLITE_ERROR: %s", (label, fn) => {
+  using db = new Database(":memory:");
+  db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY)");
+
+  let error;
+  try {
+    fn(db);
+  } catch (e) {
+    error = e;
+  }
+
+  expect(error).toBeInstanceOf(SQLiteError);
+  expect({ code: error.code, errno: error.errno }).toEqual({
+    code: "SQLITE_ERROR",
+    errno: 1,
+  });
+});
+
 it("empty blob", () => {
   const db = new Database(":memory:");
   db.run("CREATE TABLE foo (id INTEGER PRIMARY KEY AUTOINCREMENT, blob BLOB)");
@@ -1749,6 +1774,57 @@ it("binds sparse array holes as NULL instead of reading past the backing store",
   expect(exitCode).toBe(0);
 });
 
+it("run() reports a closed database when a bound parameter's getter closes it", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const out = {};
+
+    const db = new Database(":memory:");
+    db.run("CREATE TABLE t (a TEXT, b TEXT)");
+
+    let message = "did not throw";
+    try {
+      db.run("INSERT INTO t (a, b) VALUES ($a, $b)", {
+        get $a() {
+          db.close();
+          return "x";
+        },
+        get $b() {
+          return "y";
+        },
+      });
+    } catch (e) {
+      message = e.message;
+    }
+    out.closeDuringBind = message;
+
+    const db2 = new Database(":memory:");
+    db2.run("CREATE TABLE t (a TEXT, b TEXT)");
+    db2.run("INSERT INTO t (a, b) VALUES ($a, $b)", { $a: "x", $b: "y" });
+    out.plain = db2.query("SELECT a, b FROM t").get();
+    db2.close();
+
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ stdout: stdout.trim(), exitCode }).toEqual({
+    stdout: JSON.stringify({
+      closeDuringBind: "Database has closed",
+      plain: { a: "x", b: "y" },
+    }),
+    exitCode: 0,
+  });
+});
+
 // Several SQLITE_FCNTL_* opcodes (VFSNAME, MMAP_SIZE, FILE_POINTER, ...) write
 // a full pointer or int64 through the result argument, so the result buffer
 // must be at least 8 bytes. A 1-byte Uint8Array used to be passed through
@@ -1976,3 +2052,86 @@ it("keeps database handles working when many Workers open databases concurrently
     exitCode: 0,
   });
 }, 30000);
+
+it("exit-time WAL checkpoint runs even with a never-finalized prepared statement", async () => {
+  // Sibling of the node:sqlite test. With un-finalized statements, close_v2
+  // zombifies the connection and defers the WAL checkpoint to a finalize
+  // that never comes; Bun__closeAllSQLiteDatabasesForTermination now
+  // checkpoints explicitly first.
+  const dir = tempDirWithFiles("bun-sqlite-exit-zombie", {});
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Database } = require('bun:sqlite');
+       const db = new Database('exit.db');
+       db.exec('PRAGMA journal_mode = WAL');
+       db.exec('CREATE TABLE t (x INTEGER)');
+       const stmt = db.prepare('INSERT INTO t VALUES (?)');
+       stmt.run(42);
+       // stmt stays referenced and is never finalized; db is never closed.
+       console.log(require('node:fs').statSync('exit.db-wal').size > 0);`,
+    ],
+    env: bunEnv,
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("true\n");
+  const wal = path.join(dir, "exit.db-wal");
+  // TRUNCATE moved every frame into exit.db (or the sidecar was unlinked
+  // by a full close). Either way, no un-checkpointed data is stranded.
+  expect(existsSync(wal) ? statSync(wal).size : 0).toBe(0);
+  const verify = new Database(path.join(dir, "exit.db"));
+  expect(verify.query("SELECT x FROM t").get().x).toBe(42);
+  verify.close();
+  expect(exitCode).toBe(0);
+});
+
+// sqlite3_prepare_v3 treats an interior NUL byte as end-of-SQL. The exec/run
+// multi-statement loop used to re-prepare the same empty statement forever
+// once the head reached a NUL, pinning the event loop at 100% CPU.
+it("exec/run with an embedded NUL byte in the SQL string does not hang", async () => {
+  const src = `
+    const { Database } = require("bun:sqlite");
+    const db = new Database(":memory:");
+    const results = [];
+    const cases = [
+      ["lone", () => db.exec("\\0")],
+      ["trailing", () => db.exec("select 1\\0")],
+      ["leading", () => db.exec("\\0select 1")],
+      ["mid", () => db.exec("select 1\\0; select 2")],
+      ["run", () => db.run("select ?\\0x", [1])],
+    ];
+    for (const [name, fn] of cases) {
+      try {
+        fn();
+        results.push(name + ": ok");
+      } catch (e) {
+        results.push(name + ": " + e.message);
+      }
+    }
+    console.log(JSON.stringify(results));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    // Kill switch: before the fix, the first case spun forever at 100% CPU.
+    timeout: 20_000,
+    killSignal: "SIGKILL",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const empty = "Query contained no valid SQL statement; likely empty query.";
+  expect({ stdout: stdout.trim(), stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: JSON.stringify(["lone: " + empty, "trailing: ok", "leading: " + empty, "mid: ok", "run: ok"]),
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
+});

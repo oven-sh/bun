@@ -160,7 +160,7 @@ pub mod js {
 /// `ArrayBuffer` view must pass `buffer.slice().len()`, not the typed-array
 /// element count. `suffix` is `"bytes"` or `"bytes string"`.
 #[inline]
-fn send_status_to_js(
+pub(super) fn send_status_to_js(
     status: SendStatus,
     len: usize,
     op: &'static str,
@@ -266,8 +266,7 @@ impl ServerWebSocket {
 
     /// Route a publish through either the per-socket uWS handle (when
     /// `!publish_to_self && !closed`) or the app-wide broadcast, then map the
-    /// bool result to the JS number contract: success → `len & 0x7FFF_FFFF`,
-    /// failure → `0`.
+    /// aggregated `SendStatus` to the JS number contract shared with `send()`.
     #[inline]
     fn do_publish(
         &self,
@@ -279,16 +278,12 @@ impl ServerWebSocket {
         opcode: Opcode,
         compress: bool,
     ) -> JSValue {
-        let result = if !publish_to_self && !self.is_closed() {
+        let status = if !publish_to_self && !self.is_closed() {
             self.websocket().publish(topic, buffer, opcode, compress)
         } else {
             AnyWebSocket::publish_with_options(ssl, app, topic, buffer, opcode, compress)
         };
-        JSValue::js_number(if result {
-            (buffer.len() as u32 & 0x7FFF_FFFF) as f64
-        } else {
-            0.0
-        })
+        send_status_to_js(status, buffer.len(), "publish", "bytes")
     }
 
     /// Shared body for `subscribe` / `unsubscribe` / `isSubscribed`: identical
@@ -431,8 +426,8 @@ impl ServerWebSocket {
                 // we un-gracefully close the connection if there was an exception
                 // we don't want any event handlers to fire after this for anything other than error()
                 // https://github.com/oven-sh/bun/issues/1480
+                // close() dispatches on_close, which owns the accounting decrement.
                 self.websocket().close();
-                handler.active_connections_saturating_sub(1);
                 this_value.unprotect();
             }
 
@@ -633,12 +628,12 @@ impl ServerWebSocket {
         bun_output::scoped_log!(WebSocketServer, "onClose");
         // TODO: Can this called inside finalize?
         let handler = self.handler();
-        let was_closed = self.is_closed();
         self.update_flags(|f| f.set_closed(true));
+        // uws fires the close callback exactly once per opened socket, so this
+        // balances on_open's increment even when close()/terminate() already
+        // set the closed flag (which used to skip it and leak the count).
         scopeguard::defer! {
-            if !was_closed {
-                handler.active_connections_saturating_sub(1);
-            }
+            handler.on_connection_closed();
         }
         let signal = self.signal.take();
 
@@ -1032,7 +1027,7 @@ impl ServerWebSocket {
         }
 
         let mut corker = Corker {
-            args: &[],
+            args: &[this_value],
             global_object: global_this,
             this_value,
             callback,

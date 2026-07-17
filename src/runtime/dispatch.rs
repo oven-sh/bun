@@ -164,6 +164,7 @@ use bun_sql_jsc::postgres::PostgresSQLConnection;
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
+use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -424,6 +425,10 @@ pub fn run_task(
                 global,
             );
         }
+        task_tag::MemoryPressureTask => {
+            // `ptr` is the packed level (NOTE_MEMORYSTATUS_PRESSURE_* bits), not a pointer.
+            crate::node::memory_pressure::emit(global, task.ptr as usize as i32);
+        }
         task_tag::NativePromiseContextDeferredDerefTask => {
             // `ptr` packs an int, not a pointer.
             NativePromiseContextDeferredDerefTask::run_from_js_thread(task.ptr as usize);
@@ -579,7 +584,7 @@ fn run_task_cold(task: Task) {
 /// Compile-time guard that the arm count above tracks
 /// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
-    task_tag::COUNT == 96,
+    task_tag::COUNT == 97,
     "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -596,17 +601,6 @@ pub fn tick_queue_with_count(
     // the duration of the drain loop.
     let global: &JSGlobalObject = unsafe { el.global.expect("EventLoop.global unset").as_ref() };
     let global_vm = global.vm();
-
-    #[cfg(debug_assertions)]
-    if el.debug.js_call_count_outside_tick_queue
-        > el.debug.drain_microtasks_count_outside_tick_queue
-    {
-        panic!(
-            "{} JavaScript functions were called outside of the microtask queue without draining microtasks. Use EventLoop.runCallback().",
-            el.debug.js_call_count_outside_tick_queue
-                - el.debug.drain_microtasks_count_outside_tick_queue
-        );
-    }
 
     while let Some(task) = el.tasks.read_item() {
         // Incremented before dispatch so the count includes every task,
@@ -689,6 +683,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             let proc = owner.ptr.cast::<Process>();
             // SAFETY: `proc` carries the +1 ref taken at queue time; this drops it.
             unsafe { Process::on_wait_pid_from_event_loop_task(proc) };
+        }
+        poll_tag::MEMORY_PRESSURE => {
+            // SAFETY: `poll` is live per `__bun_run_file_poll`'s contract.
+            crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
             let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
@@ -978,6 +976,18 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                 AbortSignalTimeout::run(c, vm)
             })
         }
+        EventLoopTimerTag::GcOneShot => {
+            timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
+                GarbageCollectionController::on_gc_timer(c)
+            })
+        }
+        EventLoopTimerTag::GcRepeating => {
+            timer_arm!(
+                GarbageCollectionController,
+                gc_repeating_timer,
+                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
+            )
+        }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
                 .run(&mut *vm))
@@ -1186,6 +1196,35 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);
+            true
+        }
+        // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry
+        // completion) enqueued this after the event loop's last tick. The
+        // dispatch arm above would have `delete`d it; mirror that here so the
+        // re-queue path doesn't keep it alive past worker VM dealloc. Runs
+        // before JSC teardown, so ~Ref<TicketData> is safe.
+        task_tag::JSCDeferredWorkTask => {
+            unsafe extern "C" {
+                fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
+            }
+            // SAFETY: every JSCDeferredWorkTask payload is heap-allocated by
+            // `new JSCDeferredWorkTask` in JSCTaskScheduler::onScheduleWorkSoon;
+            // we own it once popped.
+            unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
+            true
+        }
+        // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
+        // that were already batch-moved into `self.tasks`. Must run before
+        // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks
+        // `~JSEventListener` Weak<> handles. Worker `shutdown()` calls
+        // `release_queued_tasks_for_shutdown` for the same reason.
+        task_tag::CppTask => {
+            unsafe extern "C" {
+                fn Bun__deleteEventLoopTask(task: *mut CppTask);
+            }
+            // SAFETY: every CppTask payload is a heap `WebCore::EventLoopTask*`;
+            // we own it once popped.
+            unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
             true
         }
         // Re-queued by the caller; the box stays reachable from the

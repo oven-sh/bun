@@ -94,6 +94,7 @@ static constexpr ASCIILiteral builtinModuleNames[] = {
     "inspector/promises"_s,
     "module"_s,
     "net"_s,
+    "node:sqlite"_s,
     "os"_s,
     "path"_s,
     "path/posix"_s,
@@ -1130,6 +1131,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
     return JSValue::encode(
         jsBoolean(defaultGlobalObject(globalObject)
                 ->hasOverriddenModuleResolveFilenameFunction));
+}
+
+extern "C" bool Bun__streamIterEnabled();
+
+// $cpp("NodeModuleModule.cpp", "createStreamIterEnabledFlag"): the write-once
+// `--experimental-stream-iter` CLI bit, so builtins don't have to consult the
+// user-mutable `process.execArgv`.
+JSC::JSValue createStreamIterEnabledFlag(Zig::GlobalObject*)
+{
+    return JSC::jsBoolean(Bun__streamIterEnabled());
 }
 
 } // namespace Bun

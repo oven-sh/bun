@@ -43,6 +43,11 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
         return Bun::ERR::CRYPTO_UNKNOWN_DH_GROUP(scope, globalObject);
     }
 
+    auto checkResult = dh.check();
+    if (checkResult == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
+        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
+    }
+
     // Get the appropriate structure and create the DiffieHellmanGroup object
     auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(zigGlobalObject);
@@ -61,7 +66,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
         RETURN_IF_EXCEPTION(scope, {});
     }
 
-    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh)));
+    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(checkResult)));
 }
 
 } // namespace Bun

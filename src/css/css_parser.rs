@@ -94,9 +94,9 @@ pub use gated_shims::*;
 mod gated_shims {
 
     // ── rules/ leaf-module payload re-exports ────────────────────────────
-    // The leaf modules are un-gated; re-export the real prelude payload types
-    // `AtRulePrelude` carries so the rule-parser impl bodies type-check
-    // against the same structs `CssRule` stores.
+    // Re-export the prelude payload types `AtRulePrelude` carries so the
+    // rule-parser impl bodies type-check against the same structs `CssRule`
+    // stores.
     pub use crate::rules::container::{ContainerCondition, ContainerName};
     pub use crate::rules::keyframes::KeyframesName;
     pub use crate::rules::page::PageSelector;
@@ -133,7 +133,7 @@ pub use crate::PrintErr;
 
 #[cold]
 #[inline(never)]
-pub fn oom(_e: bun_core::Error) -> ! {
+pub fn oom(_e: crate::Error) -> ! {
     bun_core::out_of_memory();
 }
 
@@ -918,7 +918,6 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             tag: Default::default(),
             loader: None,
             source_index: Default::default(),
-            module_id: 0,
             original_path: b"",
             flags: Default::default(),
         });
@@ -1266,14 +1265,6 @@ where
 }
 
 // ───────────────────── rule_parsers (heavy impl bodies) ──────────────────────
-// Un-gated: `declaration::parse_declaration_impl` + `selectors::parser` are
-// real, so the `QualifiedRuleParser`/`DeclarationParser`/`RuleBodyItemParser`
-// surface and `parse_nested`/`parse_style_block` compile end-to-end. The
-// at-rule arms now call the leaf-module parse fns directly (`LayerName`,
-// `SupportsCondition`, `KeyframesName`, `PageSelector`, `ContainerName`,
-// `ContainerCondition`, `FontPaletteValuesRule`, `PageRule`, `PropertyRule`
-// have un-gated). Only `@font-face`/`@keyframes` block bodies remain
-// inline-``-gated on their `RuleBodyItemParser` trait impls.
 mod rule_parsers {
     use super::*;
     use crate::selectors::parser as selector_parser;
@@ -1295,10 +1286,7 @@ mod rule_parsers {
         }
         fn record_composes(&mut self, composes: &mut Composes) {
             for ref_ in self.composes_refs.slice() {
-                let entry = self
-                    .composes
-                    .entry(*ref_)
-                    .or_insert_with(ComposesEntry::default);
+                let entry = self.composes.entry(*ref_).or_default();
                 entry.composes.push(composes.deep_clone(self.arena));
             }
         }
@@ -1815,27 +1803,22 @@ mod rule_parsers {
             let loc = this.get_loc(start);
             match prelude {
                 AtRulePrelude::FontFace => {
-                    // blocked_on: `FontFaceDeclarationParser: RuleBodyItemParser`
-                    // trait impls (rules/font_face.rs gated const block).
-                    {
-                        let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
-                        let mut parser = RuleBodyParser::new(input, &mut decl_parser);
-                        // todo_stuff.think_mem_mgmt
-                        let mut properties: Vec<css_rules::font_face::FontFaceProperty> =
-                            Vec::new();
-                        while let Some(result) = parser.next() {
-                            if let Ok(decl) = result {
-                                properties.push(decl);
-                            }
+                    let mut decl_parser = css_rules::font_face::FontFaceDeclarationParser;
+                    let mut parser = RuleBodyParser::new(input, &mut decl_parser);
+                    // todo_stuff.think_mem_mgmt
+                    let mut properties: Vec<css_rules::font_face::FontFaceProperty> = Vec::new();
+                    while let Some(result) = parser.next() {
+                        if let Ok(decl) = result {
+                            properties.push(decl);
                         }
-                        this.rules
-                            .v
-                            .push(CssRule::FontFace(css_rules::font_face::FontFaceRule {
-                                properties,
-                                loc,
-                            }));
-                        Ok(())
                     }
+                    this.rules
+                        .v
+                        .push(CssRule::FontFace(css_rules::font_face::FontFaceRule {
+                            properties,
+                            loc,
+                        }));
+                    Ok(())
                 }
                 AtRulePrelude::FontPaletteValues(name) => {
                     let rule = css_rules::font_palette_values::FontPaletteValuesRule::parse(
@@ -1914,28 +1897,24 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Keyframes { name, prefix } => {
-                    // blocked_on: `KeyframesListParser: RuleBodyItemParser` trait
-                    // impls (rules/keyframes.rs gated const block).
-                    {
-                        let mut parser = css_rules::keyframes::KeyframesListParser;
-                        let mut iter = RuleBodyParser::new(input, &mut parser);
-                        // todo_stuff.think_mem_mgmt
-                        let mut keyframes: Vec<css_rules::keyframes::Keyframe> = Vec::new();
-                        while let Some(result) = iter.next() {
-                            if let Ok(keyframe) = result {
-                                keyframes.push(keyframe);
-                            }
+                    let mut parser = css_rules::keyframes::KeyframesListParser;
+                    let mut iter = RuleBodyParser::new(input, &mut parser);
+                    // todo_stuff.think_mem_mgmt
+                    let mut keyframes: Vec<css_rules::keyframes::Keyframe> = Vec::new();
+                    while let Some(result) = iter.next() {
+                        if let Ok(keyframe) = result {
+                            keyframes.push(keyframe);
                         }
-                        this.rules.v.push(CssRule::Keyframes(
-                            css_rules::keyframes::KeyframesRule {
-                                name,
-                                keyframes,
-                                vendor_prefix: prefix,
-                                loc,
-                            },
-                        ));
-                        Ok(())
                     }
+                    this.rules
+                        .v
+                        .push(CssRule::Keyframes(css_rules::keyframes::KeyframesRule {
+                            name,
+                            keyframes,
+                            vendor_prefix: prefix,
+                            loc,
+                        }));
+                    Ok(())
                 }
                 AtRulePrelude::Page(selectors) => {
                     let rule =
@@ -2195,32 +2174,27 @@ mod rule_parsers {
             // We parsed a style rule with the `composes` property. Track which
             // properties it used so we can validate it later.
             if matches!(this.composes_state, ComposesState::Allow(_)) {
-                // blocked_on: `fill_property_bit_set` (Property variant reflection
-                // — properties_generated PropertyIdTag conversions). The type
-                // structure is real; only the bitset population stays gated.
-                {
-                    let len = input.position() - location;
-                    let mut usage = PropertyBitset::init_empty();
-                    let mut custom_properties: Vec<&'static [u8]> = Vec::new();
-                    fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
+                let len = input.position() - location;
+                let mut usage = PropertyBitset::init_empty();
+                let mut custom_properties: Vec<&'static [u8]> = Vec::new();
+                fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
 
-                    let custom_properties_slice = custom_properties.slice();
+                let custom_properties_slice = custom_properties.slice();
 
-                    for ref_ in this.composes_refs.slice() {
-                        let entry =
-                            this.local_properties
-                                .entry(*ref_)
-                                .or_insert_with(|| PropertyUsage {
-                                    range: bun_ast::Range {
-                                        loc: bun_ast::Loc {
-                                            start: i32::try_from(location).expect("int cast"),
-                                        },
-                                        len: i32::try_from(len).expect("int cast"),
+                for ref_ in this.composes_refs.slice() {
+                    let entry =
+                        this.local_properties
+                            .entry(*ref_)
+                            .or_insert_with(|| PropertyUsage {
+                                range: bun_ast::Range {
+                                    loc: bun_ast::Loc {
+                                        start: i32::try_from(location).expect("int cast"),
                                     },
-                                    ..Default::default()
-                                });
-                        entry.fill(&usage, custom_properties_slice);
-                    }
+                                    len: i32::try_from(len).expect("int cast"),
+                                },
+                                ..Default::default()
+                            });
+                    entry.fill(&usage, custom_properties_slice);
                 }
             }
 
@@ -2271,10 +2245,6 @@ mod rule_parsers {
         }
     }
 
-    /// `MediaList::parse` thunk. Kept local so the rule-parser arms above
-    /// type-check; becomes a one-line `MediaList::parse(input, options)` forwarder
-    /// once `media_query::MediaList::parse` un-gates.
-    // blocked_on: media_query::{MediaList,MediaQuery}::parse
     #[inline]
     fn parse_media_list(input: &mut Parser, options: &ParserOptions) -> CssResult<MediaList> {
         MediaList::parse(input, options)
@@ -2321,7 +2291,6 @@ pub type BundlerCssRule = CssRule<BundlerAtRule>;
 pub type BundlerLayerBlockRule = css_rules::layer::LayerBlockRule<BundlerAtRule>;
 pub type BundlerSupportsRule = css_rules::supports::SupportsRule<BundlerAtRule>;
 pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
-// blocked_on: printer.rs PrintResult<R> generic
 pub type BundlerPrintResult = PrintResult<BundlerAtRule>;
 
 pub struct BundlerTailwindState {
@@ -2990,7 +2959,6 @@ mod stylesheet_impl {
                             tag: Default::default(),
                             loader: None,
                             source_index: Default::default(),
-                            module_id: 0,
                             original_path: b"",
                             flags: Default::default(),
                         });
@@ -3507,7 +3475,6 @@ impl<'a> Parser<'a> {
                 tag: Default::default(),
                 loader: None,
                 source_index: Default::default(),
-                module_id: 0,
                 original_path: b"",
                 flags: Default::default(),
             });
@@ -5688,13 +5655,11 @@ impl TokenKind {
 pub use crate::Token;
 
 impl Token {
-    // blocked_on: generics::CssEql/CssHash blanket impls for Token payload set
     pub fn eql(lhs: &Token, rhs: &Token) -> bool {
         // TODO: derive PartialEq once payload lifetimes settle.
         generic::implement_eql(lhs, rhs)
     }
 
-    // blocked_on: generics::CssHash
     pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
@@ -6614,11 +6579,16 @@ impl Notation {
     }
 }
 
-/// Writes float with precision. Returns `None` notation if value was infinite.
+/// Writes float with precision. Returns `None` notation if value was not finite.
 pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Option<Notation>) {
-    // We can't give Infinity/-Infinity to dtoa_short_impl. We need to print a
-    // valid finite number otherwise browsers like Safari will render certain
-    // things wrong (https://github.com/oven-sh/bun/issues/18064).
+    // Only calc() yields non-finite values. CSS Values 4 #calc-ieee: a NaN
+    // escaping a top-level calculation is censored to zero; infinities clamp to
+    // the largest finite value (https://github.com/oven-sh/bun/issues/18064).
+    if value.is_nan() {
+        const S: &[u8] = b"0";
+        buf[..S.len()].copy_from_slice(S);
+        return (&buf[..S.len()], None);
+    }
     if value.is_infinite() && value.is_sign_positive() {
         const S: &[u8] = b"3.40282e38";
         buf[..S.len()].copy_from_slice(S);
@@ -6628,8 +6598,6 @@ pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Opt
         buf[..S.len()].copy_from_slice(S);
         return (&buf[..S.len()], None);
     }
-    // We shouldn't receive NaN here.
-    debug_assert!(!value.is_nan());
     let (str, notation) = dtoa_short_impl(buf, value, precision);
     (str, Some(notation))
 }

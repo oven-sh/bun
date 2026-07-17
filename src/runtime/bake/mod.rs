@@ -21,12 +21,18 @@ pub(crate) mod bake_body;
 mod dev_server_body;
 pub(crate) use dev_server_body::get_deinit_count_for_testing;
 pub(crate) use dev_server_body::is_allowed_dev_host;
+pub(crate) use dev_server_body::is_allowed_host_header;
 
 #[path = "FrameworkRouter.rs"]
 pub(crate) mod framework_router_body;
 
 #[path = "production.rs"]
 mod production_body;
+
+// `Bun__add{Bake,DevServer}SourceProvider*` host exports — the Rust side of
+// `BakeSourceProvider.h` / `DevServerSourceProvider.h`. Reached only via the
+// codegen-emitted `extern "C"` thunks in `generated_host_exports.rs`.
+pub mod source_provider_exports;
 
 // Re-exports from the submodule bodies so `production.rs` can name them
 // without going through the keystone stubs below.
@@ -215,7 +221,7 @@ impl Framework {
         renderer: Graph,
         out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
         bundler_options: &BuildConfigSubset,
-    ) -> Result<*mut bun_bundler::bake_types::Framework, bun_core::Error> {
+    ) -> crate::Result<*mut bun_bundler::bake_types::Framework> {
         use bun_options_types::schema as bun_schema;
 
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
@@ -367,7 +373,7 @@ impl Framework {
         server: &mut bun_resolver::Resolver,
         client: &mut bun_resolver::Resolver,
         arena: &bun_alloc::Arena,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         let mut had_errors = false;
 
         if let Some(rfr) = &mut self.react_fast_refresh {
@@ -417,7 +423,7 @@ impl Framework {
         }
 
         if had_errors {
-            return Err(bun_core::err!("ModuleNotFound"));
+            return Err(crate::Error::ModuleNotFound);
         }
         Ok(())
     }
@@ -624,9 +630,6 @@ pub use bake_body::get_hmr_runtime;
 // NUL-terminated `&ZStr` form for JSC handoff; the bundler-side one is plain
 // `&[u8]`.)
 
-// `bake.UserOptions` — top-level JS-facing options struct. Full body (with
-// `from_js`) lives in the un-gated `bake_body.rs` draft and is re-exported
-// above; the keystone `(())` stub is gone now that `bake_body` compiles.
 pub use bake_body::StringRefList;
 
 // ══════════════════════════════════════════════════════════════════════════

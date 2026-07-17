@@ -56,54 +56,6 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// Local FFI / pointer shims — the canonical impls live in cfg-gated
-// JSGlobalObject.rs / VM.rs (see src/jsc/lib.rs `_gated`). Until those are
-// un-gated, mirror the wrappers here so repl.rs compiles standalone.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn global_clear_exception(global: &JSGlobalObject) {
-    unsafe extern "C" {
-        fn JSGlobalObject__clearException(this: *const JSGlobalObject);
-    }
-    // SAFETY: `global` is a live opaque JSGlobalObject handle.
-    unsafe { JSGlobalObject__clearException(global) }
-}
-
-#[inline]
-fn global_to_js_value(global: &JSGlobalObject) -> JSValue {
-    JSValue::from_cell(std::ptr::from_ref::<JSGlobalObject>(global))
-}
-
-#[inline]
-fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
-    unsafe extern "C" {
-        fn JSC__VM__setExecutionForbidden(vm: *mut jsc::VM, forbidden: bool);
-    }
-    // SAFETY: `vm` is a live opaque JSC VM handle.
-    unsafe { JSC__VM__setExecutionForbidden(vm, forbidden) }
-}
-
-/// Reborrow `&VirtualMachine` as `&mut VirtualMachine`.
-///
-/// SAFETY: `VirtualMachine` is single-threaded per JS thread and the REPL
-/// is the sole driver of `tick()` / `wait_for_promise()` here, so no other
-/// `&mut` to the VM can be live. We store `&VirtualMachine` for borrowck
-/// simplicity and cast at the call site.
-#[inline]
-#[allow(invalid_reference_casting, clippy::mut_from_ref)]
-fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
-    // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
-    // silenced above because `VirtualMachine` is `!Sync` single-thread state and
-    // the REPL is its sole driver here.
-    let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
-    // SAFETY: `ptr` is non-null and points to a live `VirtualMachine` (derived from
-    // `&'a VirtualMachine`); the REPL is the sole driver on this single JS thread so
-    // no other `&mut` to this VM exists for `'a` (see fn-level SAFETY doc above).
-    unsafe { &mut *ptr }
-}
-
 // ============================================================================
 // Constants
 // ============================================================================
@@ -231,7 +183,7 @@ impl History {
         }
     }
 
-    pub(crate) fn load(&mut self) -> Result<(), bun_core::Error> {
+    pub(crate) fn load(&mut self) -> Result<(), crate::Error> {
         let Some(home_path) = env_var::HOME.get() else {
             return Ok(());
         };
@@ -909,6 +861,10 @@ pub(super) struct Repl<'a> {
     // Windows: saved console mode for restoration
     #[cfg(windows)]
     original_windows_mode: Option<bun_sys::windows::DWORD>,
+
+    // POSIX: the REPL's own stdin raw-mode state
+    #[cfg(unix)]
+    tty_state: tty::State,
 }
 
 impl<'a> Repl<'a> {
@@ -937,6 +893,8 @@ impl<'a> Repl<'a> {
             last_error: ProtectedJSValue::adopt(JSValue::UNDEFINED),
             #[cfg(windows)]
             original_windows_mode: None,
+            #[cfg(unix)]
+            tty_state: tty::State::new(),
         }
     }
 
@@ -975,7 +933,7 @@ impl<'a> Repl<'a> {
         // Enable raw mode
         #[cfg(unix)]
         {
-            let _ = tty::set_mode(0, tty::Mode::Raw);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
         }
         #[cfg(windows)]
         {
@@ -995,7 +953,7 @@ impl<'a> Repl<'a> {
     fn restore_terminal(&mut self) {
         #[cfg(unix)]
         {
-            let _ = tty::set_mode(0, tty::Mode::Normal);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
         }
         #[cfg(windows)]
         {
@@ -1020,7 +978,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = tty::set_mode(0, tty::Mode::Normal);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Normal);
 
             // Install SIGINT handler
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
@@ -1042,7 +1000,7 @@ impl<'a> Repl<'a> {
         #[cfg(unix)]
         {
             // Back to raw mode
-            let _ = tty::set_mode(0, tty::Mode::Raw);
+            let _ = self.tty_state.set_mode(0, tty::Mode::Raw);
 
             // Restore default SIGINT handling
             // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
@@ -1352,11 +1310,12 @@ impl<'a> Repl<'a> {
             // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
             // Wait for the promise to settle
-            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            vm.as_mut()
+                .wait_for_promise(jsc::AnyPromise::Normal(promise));
 
             // If execution was forbidden by SIGINT, clear it and report
             if vm.jsc_vm().execution_forbidden() {
-                vm_set_execution_forbidden(vm.jsc_vm, false);
+                vm.jsc_vm().set_execution_forbidden(false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
@@ -1374,7 +1333,7 @@ impl<'a> Repl<'a> {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.set_last_error(rejection);
                     // Set _error on the global object
-                    let global_this = global_to_js_value(global);
+                    let global_this = global.to_js_value();
                     global_this.put(global, b"_error", rejection);
                     self.print_js_error(rejection);
                     self.disable_signals_during_wait();
@@ -1403,7 +1362,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm_mut(vm).tick();
+                        vm.as_mut().tick();
                         return;
                     }
                 };
@@ -1418,7 +1377,7 @@ impl<'a> Repl<'a> {
         // Set _ to the last result (only if not undefined)
         // Use the global object as JSValue and put the property on it
         if !actual_result.is_undefined() {
-            let global_this = global_to_js_value(global);
+            let global_this = global.to_js_value();
             global_this.put(global, b"_", actual_result);
         }
 
@@ -1433,7 +1392,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm_mut(vm).tick();
+        vm.as_mut().tick();
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1512,7 +1471,8 @@ impl<'a> Repl<'a> {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
-            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            vm.as_mut()
+                .wait_for_promise(jsc::AnyPromise::Normal(promise));
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {
@@ -1547,10 +1507,10 @@ impl<'a> Repl<'a> {
         let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm_mut(vm).tick();
+        vm.as_mut().tick();
         while vm.is_event_loop_alive() {
-            vm_mut(vm).tick();
-            vm_mut(vm).auto_tick_active();
+            vm.as_mut().tick();
+            vm.as_mut().auto_tick_active();
         }
 
         if print_result {
@@ -1606,7 +1566,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm_mut(vm).tick();
+            vm.as_mut().tick();
         }
     }
 
@@ -1651,9 +1611,10 @@ impl<'a> Repl<'a> {
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
             // Note: reshaped for borrowck — disable_signals_during_wait called on each path
-            vm_mut(vm).wait_for_promise(jsc::AnyPromise::Normal(promise));
+            vm.as_mut()
+                .wait_for_promise(jsc::AnyPromise::Normal(promise));
             if vm.jsc_vm().execution_forbidden() {
-                vm_set_execution_forbidden(vm.jsc_vm, false);
+                vm.jsc_vm().set_execution_forbidden(false);
                 global.clear_termination_exception();
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
@@ -1688,7 +1649,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm_mut(vm).tick();
+                        vm.as_mut().tick();
                         return;
                     }
                 };
@@ -1699,7 +1660,7 @@ impl<'a> Repl<'a> {
 
         self.set_last_result(actual_result);
         if !actual_result.is_undefined() {
-            let global_this = global_to_js_value(global);
+            let global_this = global.to_js_value();
             global_this.put(global, b"_", actual_result);
         }
 
@@ -1708,7 +1669,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm_mut(vm).tick();
+        vm.as_mut().tick();
     }
 
     /// Format a JS value as a string suitable for clipboard.
@@ -1780,7 +1741,7 @@ impl<'a> Repl<'a> {
     }
 
     /// Write text to clipboard using OSC 52 escape sequence.
-    fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), bun_core::Error> {
+    fn copy_to_clipboard_osc52(&self, text: &[u8]) -> Result<(), crate::Error> {
         let mut it = strings::ANSIIterator::init(text);
         let Some(first) = it.next() else {
             return Ok(());
@@ -1853,14 +1814,12 @@ impl<'a> Repl<'a> {
         // which the REPL transform passes through intact.
 
         // Initialize macro context from transpiler (required for import processing).
-        // Note: `vm` is `&VirtualMachine` here, so go through `vm_mut` (see its
-        // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
-            vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
-                &mut vm_mut(vm).transpiler,
+            vm.as_mut().transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
+                &mut vm.as_mut().transpiler,
             ));
         }
-        opts.macro_context = vm_mut(vm).transpiler.macro_context.as_mut();
+        opts.macro_context = vm.as_mut().transpiler.macro_context.as_mut();
 
         // Create log for errors
         let mut log = bun_ast::Log::init();
@@ -1969,7 +1928,7 @@ impl<'a> Repl<'a> {
         .is_err()
         {
             // Formatting the error itself threw — clear it to avoid recursion and show a fallback.
-            global_clear_exception(global);
+            global.clear_exception();
             let _ = writer.write_all(b"error: [failed to format error]\n");
             return;
         }
@@ -2016,7 +1975,7 @@ impl<'a> Repl<'a> {
     pub(super) fn run_with_vm(
         &mut self,
         vm: Option<&'a VirtualMachine>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.vm = vm;
         if let Some(v) = vm {
             self.global = Some(v.global());
@@ -2177,7 +2136,7 @@ impl<'a> Repl<'a> {
         Ok(())
     }
 
-    fn handle_enter(&mut self) -> Result<(), bun_core::Error> {
+    fn handle_enter(&mut self) -> Result<(), crate::Error> {
         self.print(format_args!("\n"));
 
         // Note: reshaped for borrowck — copy line out so we can call &mut self methods
@@ -2387,7 +2346,7 @@ impl<'a> Repl<'a> {
         let len = match completions.get_length(global) {
             Ok(n) => n,
             Err(_) => {
-                global_clear_exception(global);
+                global.clear_exception();
                 0
             }
         };
@@ -2403,7 +2362,7 @@ impl<'a> Repl<'a> {
             let item = match completions.get_index(global, 0) {
                 Ok(v) => v,
                 Err(_) => {
-                    global_clear_exception(global);
+                    global.clear_exception();
                     JSValue::UNDEFINED
                 }
             };
@@ -2411,7 +2370,7 @@ impl<'a> Repl<'a> {
                 let slice = match item.to_slice(global) {
                     Ok(s) => s,
                     Err(_) => {
-                        global_clear_exception(global);
+                        global.clear_exception();
                         return;
                     }
                 };
@@ -2431,7 +2390,7 @@ impl<'a> Repl<'a> {
                 let item = match completions.get_index(global, i) {
                     Ok(v) => v,
                     Err(_) => {
-                        global_clear_exception(global);
+                        global.clear_exception();
                         JSValue::UNDEFINED
                     }
                 };
@@ -2446,7 +2405,7 @@ impl<'a> Repl<'a> {
                             ));
                         }
                         Err(_) => {
-                            global_clear_exception(global);
+                            global.clear_exception();
                             i += 1;
                             continue;
                         }
@@ -2489,7 +2448,7 @@ extern "C" fn sigint_handler(_: c_int) {
     if !vm.is_null() {
         // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
         // blocked in wait while the handler runs, so it stays valid).
-        vm_set_execution_forbidden(vm, true);
+        jsc::VM::opaque_ref(vm).set_execution_forbidden(true);
     }
 }
 

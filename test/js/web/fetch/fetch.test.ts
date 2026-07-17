@@ -9,6 +9,7 @@ import {
   gc,
   isASAN,
   isBroken,
+  isDebug,
   isFlaky,
   isMacOS,
   isWindows,
@@ -385,6 +386,113 @@ describe("AbortSignal", () => {
       expect(() => {}).toThrow();
     } catch (ex: any) {
       expect(ex.name).toBe("AbortError");
+    }
+  });
+
+  it("already-aborted signal returns an already-rejected promise", async () => {
+    // Fetch spec step 11: when the signal is already aborted, fetch() must
+    // return an already-rejected promise (not a pending one that settles after
+    // a round-trip to the HTTP thread).
+    {
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted");
+      controller.abort(reason);
+      const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // default reason → DOMException AbortError, identical to signal.reason
+      const controller = new AbortController();
+      controller.abort();
+      const p = fetch("http://127.0.0.1:1/", { signal: controller.signal });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      const err = Bun.peek(p);
+      expect(err).toBeInstanceOf(DOMException);
+      expect((err as DOMException).name).toBe("AbortError");
+      expect(err).toBe(controller.signal.reason);
+      await p.catch(() => {});
+    }
+    {
+      // via Request input
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-req");
+      controller.abort(reason);
+      const req = new Request("http://127.0.0.1:1/", { signal: controller.signal });
+      const p = fetch(req);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // AbortSignal.abort() static
+      const reason = new Error("pre-aborted-static");
+      const p = fetch("http://127.0.0.1:1/", { signal: AbortSignal.abort(reason) });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // plain-object first argument (request_init_object branch)
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-init");
+      controller.abort(reason);
+      const p = fetch({ url: "http://127.0.0.1:1/", signal: controller.signal } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // Request-constructor errors (spec step 4) still win over the abort:
+      // GET with a body rejects with TypeError, not the abort reason.
+      const reason = new Error("should-not-see-this");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "GET",
+        body: "x",
+        signal: AbortSignal.abort(reason),
+      } as any);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBeInstanceOf(TypeError);
+      expect(Bun.peek(p)).not.toBe(reason);
+      await p.catch(() => {});
+    }
+    {
+      // Request input body is consumed (step 4) before the abort (step 11).
+      const controller = new AbortController();
+      const reason = new Error("pre-aborted-bodyused");
+      controller.abort(reason);
+      const req = new Request("http://127.0.0.1:1/", {
+        method: "POST",
+        body: "hello",
+        signal: controller.signal,
+      });
+      const p = fetch(req);
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      expect(req.bodyUsed).toBe(true);
+      await p.catch(() => {});
+    }
+    {
+      // ReadableStream body is cancelled with the abort reason (abort-a-fetch
+      // step: "cancel request's body with error").
+      let cancelReason: unknown = "not called";
+      const stream = new ReadableStream({
+        cancel(r) {
+          cancelReason = r;
+        },
+      });
+      const reason = new Error("pre-aborted-stream");
+      const p = fetch("http://127.0.0.1:1/", {
+        method: "POST",
+        body: stream,
+        signal: AbortSignal.abort(reason),
+      });
+      expect(Bun.peek.status(p)).toBe("rejected");
+      expect(Bun.peek(p)).toBe(reason);
+      await p.catch(() => {});
+      expect(cancelReason).toBe(reason);
+      expect(stream.locked).toBe(false);
     }
   });
 });
@@ -1215,16 +1323,18 @@ describe("Response", () => {
   });
   describe("Response.redirect", () => {
     it("works", () => {
+      // Location is the serialization of the parsed url, so an empty path
+      // gains a trailing "/". https://fetch.spec.whatwg.org/#dom-response-redirect
       const inputs = [
-        "http://example.com",
-        "http://example.com/",
-        "http://example.com/hello",
-        "http://example.com/hello/",
-        "http://example.com/hello/world",
-        "http://example.com/hello/world/",
+        ["http://example.com", "http://example.com/"],
+        ["http://example.com/", "http://example.com/"],
+        ["http://example.com/hello", "http://example.com/hello"],
+        ["http://example.com/hello/", "http://example.com/hello/"],
+        ["http://example.com/hello/world", "http://example.com/hello/world"],
+        ["http://example.com/hello/world/", "http://example.com/hello/world/"],
       ];
-      for (let input of inputs) {
-        expect(Response.redirect(input).headers.get("Location")).toBe(input);
+      for (const [input, expected] of inputs) {
+        expect(Response.redirect(input).headers.get("Location")).toBe(expected);
       }
     });
 
@@ -1238,7 +1348,7 @@ describe("Response", () => {
         status: 307,
       });
       expect(response.headers.get("x-hello")).toBe("world");
-      expect(response.headers.get("Location")).toBe("https://example.com");
+      expect(response.headers.get("Location")).toBe("https://example.com/");
       expect(response.status).toBe(307);
       expect(response.type).toBe("default");
       expect(response.ok).toBe(false);
@@ -2447,6 +2557,10 @@ describe("fetch should allow duplex", () => {
 it("should allow to follow redirect if connection is closed, abort should work even if the socket was closed before the redirect", async () => {
   for (const type of ["normal", "delay"]) {
     await using server = net.createServer(socket => {
+      // Raw test server: tolerate client aborts, surface anything unexpected.
+      socket.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code !== "ECONNRESET" && err.code !== "EPIPE" && err.code !== "ECONNABORTED") throw err;
+      });
       let body = "";
       socket.on("data", data => {
         body += data.toString("utf8");
@@ -2543,6 +2657,49 @@ it("rejects a response with an unparseable Content-Length instead of treating it
   // A well-formed Content-Length is still delivered normally.
   const ok = await fetch(`http://localhost:${port}/valid`);
   expect(await ok.text()).toBe("hello");
+});
+
+it("combines duplicate response headers per the Fetch spec", async () => {
+  // WHATWG Fetch requires repeated header fields to be combined with ", " when
+  // read via Headers.get(), except Set-Cookie which is stored as separate
+  // values exposed by getSetCookie(). Previously Bun overwrote duplicate
+  // non-common header names with the last value, dropping earlier values.
+  await using server = net.createServer(socket => {
+    socket.once("data", () => {
+      socket.end(
+        "HTTP/1.1 200 OK\r\n" +
+          "Content-Length: 2\r\n" +
+          "X-Dup: first\r\n" +
+          "X-Dup: second\r\n" +
+          "X-Dup: third\r\n" +
+          "X-Once: only\r\n" +
+          "X-Gap: a\r\n" +
+          "X-Gap:\r\n" +
+          "X-Gap: c\r\n" +
+          "X-Empty:\r\n" +
+          "Accept: text/html\r\n" +
+          "Accept: application/json\r\n" +
+          "Set-Cookie: a=1\r\n" +
+          "Set-Cookie: b=2\r\n" +
+          "Connection: close\r\n" +
+          "\r\n" +
+          "ok",
+      );
+    });
+  });
+  await once(server.listen(0, "127.0.0.1"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  expect(await res.text()).toBe("ok");
+  expect(res.headers.get("x-dup")).toBe("first, second, third");
+  expect(res.headers.get("x-once")).toBe("only");
+  // the combine step has no empty-value exception, and a lone empty header is
+  // still visible — undici returns "a, , c" and "" here, not "a, c" and null
+  expect(res.headers.get("x-gap")).toBe("a, , c");
+  expect(res.headers.get("x-empty")).toBe("");
+  expect(res.headers.get("accept")).toBe("text/html, application/json");
+  expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
 });
 
 it("drops a custom Host header when following a cross-origin redirect", async () => {
@@ -2765,7 +2922,10 @@ it("releases interim 1xx response bytes as they are parsed while waiting for the
     // Only a small parse tail may be retained while the interim responses stream in;
     // the ~48 MB of already-consumed 1xx bytes must not accumulate in the process.
     const deltaMB = (rssDuringFlood - rssBefore) / 1024 / 1024;
-    expect(deltaMB).toBeLessThan(isASAN ? 48 : 16);
+    // A local `bun bd` debug build is ASAN-instrumented but not named
+    // `bun-asan`, so isASAN is false there; its quarantine retains the freed
+    // flood bytes the same way - give it the same allowance.
+    expect(deltaMB).toBeLessThan(isASAN || isDebug ? 48 : 16);
   } finally {
     for (const socket of sockets) socket.destroy();
     server.close();
@@ -2830,3 +2990,59 @@ it("does not reuse a keep-alive connection whose response carried more bytes tha
     server.close();
   }
 });
+
+// https://github.com/oven-sh/bun/issues/16682
+it("an explicit numeric `timeout` extends the socket idle deadline past the default", async () => {
+  // The child runs with a 1s idle default (BUN_CONFIG_HTTP_IDLE_TIMEOUT=1) and
+  // talks to an in-process server whose handler holds every request idle for
+  // 10s (longer than the worst-case firing window of the 1s idle timer, which
+  // is swept on uSockets' 4s tick) before responding.
+  //
+  //   - `timeout: 60_000` must override the 1s idle default and resolve.
+  //   - `timeout: 0` must keep meaning "no timeout" and resolve.
+  //   - no `timeout` at all must still hit the 1s idle default (control that
+  //     proves the env override and the stall are both real).
+  const script = /* js */ `
+    const HOLD_MS = 10_000;
+    using server = Bun.serve({
+      port: 0,
+      // Disable Bun.serve's own request idle timeout; only the client-side
+      // idle timer under test may abort anything here.
+      idleTimeout: 0,
+      async fetch(req) {
+        const arrived = Date.now();
+        // Hold the connection idle (no bytes in either direction) until the
+        // hold window has really elapsed on the server's clock.
+        while (Date.now() - arrived < HOLD_MS) {
+          await Bun.sleep(HOLD_MS - (Date.now() - arrived));
+        }
+        return new Response("hello");
+      },
+    });
+    const get = init => fetch(server.url, init).then(r => r.text(), e => "ERR:" + (e?.code ?? e?.name ?? e));
+    const [withTimeout, withZero, withInfinity, withDefault] = await Promise.all([
+      get({ timeout: 60_000 }),
+      get({ timeout: 0 }),
+      get({ timeout: Infinity }),
+      get(undefined),
+    ]);
+    console.log(JSON.stringify({ withTimeout, withZero, withInfinity, withDefault }));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const out = JSON.parse(stdout.trim().split("\n").pop()!) as Record<string, string>;
+  expect({ withTimeout: out.withTimeout, withZero: out.withZero, withInfinity: out.withInfinity }).toEqual({
+    withTimeout: "hello",
+    withZero: "hello",
+    withInfinity: "hello",
+  });
+  // Control: without an explicit `timeout`, the 1s idle default still aborts
+  // the stalled request.
+  expect(out.withDefault).toStartWith("ERR:");
+  expect(exitCode).toBe(0);
+}, 60_000);

@@ -29,6 +29,13 @@ pub enum FieldMessage {
 
 impl fmt::Display for FieldMessage {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.payload())
+    }
+}
+
+impl FieldMessage {
+    /// Every variant carries a single `bun.String` payload.
+    pub fn payload(&self) -> &String {
         match self {
             FieldMessage::Severity(s)
             | FieldMessage::LocalizedSeverity(s)
@@ -47,12 +54,10 @@ impl fmt::Display for FieldMessage {
             | FieldMessage::Constraint(s)
             | FieldMessage::File(s)
             | FieldMessage::Line(s)
-            | FieldMessage::Routine(s) => write!(f, "{s}"),
+            | FieldMessage::Routine(s) => s,
         }
     }
-}
 
-impl FieldMessage {
     pub fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
     ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
@@ -78,7 +83,7 @@ impl FieldMessage {
         Ok(messages)
     }
 
-    pub fn init(tag: FieldType, message: &[u8]) -> Result<FieldMessage, bun_core::Error> {
+    pub fn init(tag: FieldType, message: &[u8]) -> crate::Result<FieldMessage> {
         Ok(match tag {
             FieldType::SEVERITY => FieldMessage::Severity(String::clone_utf8(message)),
             // Ignore this one for now.
@@ -101,7 +106,7 @@ impl FieldMessage {
             FieldType::FILE => FieldMessage::File(String::clone_utf8(message)),
             FieldType::LINE => FieldMessage::Line(String::clone_utf8(message)),
             FieldType::ROUTINE => FieldMessage::Routine(String::clone_utf8(message)),
-            _ => return Err(bun_core::err!("UnknownFieldType")),
+            _ => return Err(crate::Error::UnknownFieldType),
         })
     }
 }

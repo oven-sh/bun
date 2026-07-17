@@ -194,7 +194,9 @@ fn get_argv0(
     let actual_argv0: ZBox = if path_to_use.is_empty() {
         ZBox::from_bytes(argv0_to_use)
     } else {
-        let Some(resolved) = bun_which::which(&mut path_buf, path_to_use, cwd, argv0_to_use) else {
+        let Some(resolved) =
+            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
+        else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
         ZBox::from_bytes(resolved.as_bytes())
@@ -370,6 +372,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let jsc_vm: &mut jsc::VirtualMachineRef = global_this.bun_vm().as_mut();
 
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut user_specified_cwd = false;
 
     let mut stdio: [Stdio; 3] = [Stdio::Ignore, Stdio::Pipe, Stdio::Inherit];
 
@@ -390,9 +393,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
+    #[cfg(not(windows))]
+    let mut socket_fd_indices: Vec<usize> = Vec::new();
     let mut argv0: Option<*const c_char> = None;
     let mut ipc_channel: i32 = -1;
     let mut timeout: Option<i32> = None;
+    let mut uid: Option<u32> = None;
+    let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
 
@@ -456,6 +463,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let argv0_str = argv0_.get_zig_string(global_this)?;
                 if argv0_str.len > 0 {
                     let owned = argv0_str.to_owned_slice_z();
+                    // Check for null bytes in argv0 (security: prevent null byte injection)
+                    if strings::index_of_char(owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.argv0' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     argv0 = Some(owned.as_ptr());
                     cstr_storage.push(owned);
                 }
@@ -466,9 +485,22 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 let cwd_str = cwd_.get_zig_string(global_this)?;
                 if cwd_str.len > 0 {
                     cwd_owned = cwd_str.to_owned_slice_z();
+                    // Check for null bytes in cwd (security: prevent null byte injection)
+                    if strings::index_of_char(cwd_owned.as_bytes(), 0).is_some() {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::INVALID_ARG_VALUE,
+                                format_args!(
+                                    "The property 'options.cwd' must be a string without null bytes. Received {}",
+                                    bun_fmt::quote(cwd_owned.as_bytes())
+                                ),
+                            )
+                            .throw());
+                    }
                     // `cwd_owned` is never mutated again, so this borrow is valid
                     // for every read of `cwd` below.
                     cwd = cwd_owned.as_bytes();
+                    user_specified_cwd = true;
                 }
             }
         }
@@ -660,6 +692,40 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(detached_val) = args.get(global_this, "detached")? {
                 if detached_val.is_boolean() {
                     detached = detached_val.to_boolean();
+                }
+            }
+
+            // Node semantics: uid/gid are int32s passed through to the OS
+            // (negative values are cast to uid_t/gid_t, matching libuv).
+            if let Some(uid_value) = args.get(global_this, "uid")? {
+                if uid_value != JSValue::NULL {
+                    let uid_int = global_this.validate_integer_range::<i32>(
+                        uid_value,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: i128::from(i32::MIN),
+                            max: i128::from(i32::MAX),
+                            field_name: b"uid",
+                            ..Default::default()
+                        },
+                    )?;
+                    uid = Some(uid_int as u32);
+                }
+            }
+
+            if let Some(gid_value) = args.get(global_this, "gid")? {
+                if gid_value != JSValue::NULL {
+                    let gid_int = global_this.validate_integer_range::<i32>(
+                        gid_value,
+                        0,
+                        bun_sql_jsc::jsc::IntegerRange {
+                            min: i128::from(i32::MIN),
+                            max: i128::from(i32::MAX),
+                            field_name: b"gid",
+                            ..Default::default()
+                        },
+                    )?;
+                    gid = Some(gid_int as u32);
                 }
             }
 
@@ -868,7 +934,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let _ = &inherited_env_storage;
 
     for fd_index in 0..stdio.len() {
-        if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
+        if stdio[fd_index].can_use_memfd() {
             if stdio[fd_index].use_memfd(fd_index as u32) {
                 jsc_vm.counters.mark(jsc::counters::Field::SpawnMemfd);
             }
@@ -1046,8 +1112,17 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
 
     let mut spawn_options = SpawnOptions {
-        cwd: cwd.to_vec().into_boxed_slice(),
+        // Empty means "inherit the parent's working directory". Only chdir
+        // when the user asked for it: the stored cwd path string can be stale
+        // if the directory was renamed out from under the process (#33819).
+        cwd: if user_specified_cwd {
+            cwd.to_vec().into_boxed_slice()
+        } else {
+            Box::default()
+        },
         detached,
+        uid,
+        gid,
         stdin: match stdio[0].as_spawn_option(0) {
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
@@ -1060,7 +1135,21 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             stdio::ResultT::Result(opt) => opt,
             stdio::ResultT::Err(e) => return Err(e.throw_js(global_this)),
         },
-        extra_fds: core::mem::take(&mut extra_fds).into_boxed_slice(),
+        extra_fds: {
+            // Record which extra-stdio slots are 'socket-fd' so we can
+            // downgrade them from OwnedFd to UnownedFd after all fallible
+            // init below succeeds. spawn_process_posix pushes OwnedFd for
+            // SocketFd so every error path's finalize_streams still closes
+            // the bun-created fd; the caller-owns-it contract only begins
+            // once the Subprocess is returned and .stdio[i] is readable.
+            #[cfg(not(windows))]
+            for (j, e) in extra_fds.iter().enumerate() {
+                if matches!(e, SpawnOptionsStdio::SocketFd) {
+                    socket_fd_indices.push(j);
+                }
+            }
+            core::mem::take(&mut extra_fds).into_boxed_slice()
+        },
         argv0,
         can_block_entire_thread_to_reduce_cpu_usage_in_fast_path,
         // Only pass pty_slave_fd for newly created terminals (for setsid+TIOCSCTTY setup).
@@ -1090,7 +1179,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut spawned = match unsafe {
         spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
     } {
-        Err(err) if err == bun_core::err!("EMFILE") || err == bun_core::err!("ENFILE") => {
+        Err(err)
+            if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE)
+                || err == bun_spawn::Error::Sys(bun_errno::SystemErrno::ENFILE) =>
+        {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
             // `uv_pipe_init`-registered on the spawn-sync loop. Skipping this
@@ -1105,7 +1197,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 ZStr::EMPTY
             };
             let mut systemerror = sys::Error::from_code(
-                if err == bun_core::err!("EMFILE") {
+                if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
                 } else {
                     sys::Errno::ENFILE
@@ -1114,7 +1206,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             )
             .with_path(display_path)
             .to_system_error();
-            systemerror.errno = if err == bun_core::err!("EMFILE") {
+            systemerror.errno = if err == bun_spawn::Error::Sys(bun_errno::SystemErrno::EMFILE) {
                 -UV_E::MFILE
             } else {
                 -UV_E::NFILE
@@ -1124,7 +1216,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         Err(err) => {
             // See EMFILE arm above.
             spawn_options.deinit();
-            let _ = global_this.throw_error(err, ": failed to spawn process");
+            let _ = global_this.throw_error(crate::Error::from(err), ": failed to spawn process");
             return Ok(JSValue::ZERO);
         }
         Ok(maybe) => match maybe {
@@ -1329,7 +1421,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             subprocess.deref();
             subprocess.deref();
             // Note: `Writable::init` returns
-            // `bun_core::Error`. Map non-thrown to OOM.
+            // `crate::Error`. Map non-thrown to OOM.
             if global_this.has_exception() {
                 return Err(JsError::Thrown);
             }
@@ -1357,11 +1449,16 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         IS_SYNC,
     ));
 
-    // For inline terminal options: close parent's slave_fd so EOF is received when child exits
-    // For existing terminal: keep slave_fd open so terminal can be reused for more spawns
+    // Inline terminals keep slave_fd until on_process_exit (BSD kernels flush
+    // pty output on last slave close; see Terminal::drain_and_close_slave_fd).
+    // Existing terminals keep slave_fd for reuse.
     if let Some(info) = terminal_info.take() {
         terminal_js_value = info.js_value;
-        // Spawn succeeded so the child holds its own copy of the slave fd.
+        #[cfg(unix)]
+        info.term().mark_inline_spawned();
+        // Windows: ConPTY's conhost buffers output, so the client handle can go
+        // now; EOF is delivered via close_pseudoconsole on exit.
+        #[cfg(windows)]
         info.term().close_slave_fd();
         subprocess.update_flags(|f| f.insert(Subprocess::Flags::OWNS_TERMINAL));
     }
@@ -1659,6 +1756,29 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     **should_close_memfd = false;
 
+    // Every `return Err` above is past; the Subprocess will be returned to
+    // JS. Downgrade 'socket-fd' slots from OwnedFd to UnownedFd so
+    // finalize_streams (on later GC) skips them and the caller is the sole
+    // owner via .stdio[i]. Placed here (not earlier) because the
+    // Writable::init error arm, the has_exception catch-all, the IPC
+    // open-socket failure, and the stdout/stderr Readable::Pipe .start()
+    // error paths all throw after populating stdio_pipes; on those paths
+    // the caller never receives the Subprocess, so the OwnedFd slot must
+    // remain for the GC'd wrapper's finalize_streams to close.
+    #[cfg(not(windows))]
+    if !socket_fd_indices.is_empty() {
+        subprocess.stdio_pipes.with_mut(|pipes| {
+            for j in &socket_fd_indices {
+                if let Some(slot @ ExtraPipe::OwnedFd(_)) = pipes.get_mut(*j) {
+                    let ExtraPipe::OwnedFd(fd) = *slot else {
+                        unreachable!()
+                    };
+                    *slot = ExtraPipe::UnownedFd(fd);
+                }
+            }
+        });
+    }
+
     // Once everything is set up, we can add the abort listener
     // Adding the abort listener may call the onAbortSignal callback immediately if it was already aborted
     // Therefore, we must do this at the very end.
@@ -1769,6 +1889,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
 
         let has_user_timespec = !user_timespec.eql(&Timespec::EPOCH);
+        let mut bun_test_fired = false;
 
         // SAFETY: jsc_vm_ptr is the live thread VM; re-borrowed for the nested arg.
         let sync_loop = unsafe { &mut *jsc_vm_ptr }
@@ -1777,12 +1898,13 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
         while subprocess.compute_has_pending_activity() {
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
-            let bun_test_timeout: Timespec =
-                if let Some(runner) = crate::test_runner::jest::Jest::runner() {
-                    runner.get_active_timeout()
-                } else {
-                    Timespec::EPOCH
-                };
+            let bun_test_timeout: Timespec = if bun_test_fired {
+                Timespec::EPOCH
+            } else if let Some(runner) = crate::test_runner::jest::Jest::runner() {
+                runner.get_active_timeout()
+            } else {
+                Timespec::EPOCH
+            };
             let has_bun_test_timeout = !bun_test_timeout.eql(&Timespec::EPOCH);
 
             if has_bun_test_timeout {
@@ -1834,6 +1956,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // different test fails, and that SHOULD be okay.
                     if has_bun_test_timeout {
                         if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
+                            bun_test_fired = true;
                             let mut active_file_strong = crate::test_runner::jest::Jest::runner()
                                 .unwrap()
                                 .bun_test_root
@@ -1859,10 +1982,20 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 // SAFETY: jsc_vm_ptr is the live thread VM.
                                 unsafe { &*jsc_vm_ptr },
                             );
+                            // The direct child may already be reaped (and
+                            // gone from the auto-killer), so kill it here too.
+                            let _ = subprocess.try_kill(subprocess.kill_signal);
                             // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
                         }
                     }
                 }
+            }
+
+            // Once the wait is being terminated (timeout, maxBuffer, bun:test
+            // per-test timeout), stop waiting on pipe EOF; a grandchild may
+            // still hold the write end (Node.js SyncProcessRunner::Kill()).
+            if did_timeout || bun_test_fired || subprocess.exited_due_to_maxbuf.get().is_some() {
+                subprocess.close_readable_pipes();
             }
         }
     }
@@ -2021,11 +2154,24 @@ pub(crate) fn append_envp_from_js(
             ZBox::from_vec(buf)
         };
 
-        if key.eql_comptime(b"PATH") {
+        // Windows environment variable names are case-insensitive: an env
+        // object carrying `Path` (the usual casing there) must still drive
+        // the executable lookup, like libuv's spawn does.
+        let line_bytes = line.as_bytes();
+        let key_end = line_bytes
+            .iter()
+            .position(|&b| b == b'=')
+            .unwrap_or(line_bytes.len());
+        let is_path_key = if cfg!(windows) {
+            strings::eql_case_insensitive_ascii(&line_bytes[..key_end], b"PATH", true)
+        } else {
+            &line_bytes[..key_end] == b"PATH"
+        };
+        if is_path_key && key_end < line_bytes.len() {
             // SAFETY: `line` is moved into `storage` below (a `Vec<ZBox>` that
             // outlives every read of `*path`), and `ZBox` is heap-backed so the
             // bytes don't move when the `ZBox` value itself is moved.
-            *path = unsafe { bun_ptr::detach_lifetime(&line.as_bytes()[b"PATH=".len()..]) };
+            *path = unsafe { bun_ptr::detach_lifetime(&line_bytes[key_end + 1..]) };
         }
 
         envp.push(line.as_ptr());

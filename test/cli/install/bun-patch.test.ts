@@ -9,6 +9,62 @@ const platformPath = (path: string) => path;
 
 setDefaultTimeout(1000 * 60 * 5);
 
+describe("error messages", () => {
+  test("'bun patch' with no package name shows a usage example", async () => {
+    const dir = tempDirWithFiles("bun-patch-noarg", {
+      "package.json": JSON.stringify({ name: "t" }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Missing package name to patch");
+    expect(stderr).toContain("bun patch <package>");
+    expect(stderr).toContain("bun patch --help");
+    expect(exitCode).toBe(1);
+  });
+
+  test("'bun patch --commit' with no directory shows a usage example", async () => {
+    const dir = tempDirWithFiles("bun-patch-commit-noarg", {
+      "package.json": JSON.stringify({ name: "t" }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch", "--commit"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Missing path to the package directory");
+    expect(stderr).toContain("bun patch --commit node_modules/<package>");
+    expect(stderr).toContain("bun patch --help");
+    expect(exitCode).toBe(1);
+  });
+
+  test("'bun patch-commit' with no directory shows a usage example", async () => {
+    const dir = tempDirWithFiles("bun-patchcommit-noarg", {
+      "package.json": JSON.stringify({ name: "t" }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "patch-commit"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("Missing path to the package directory");
+    expect(stderr).toContain("bun patch-commit node_modules/<package>");
+    expect(stderr).toContain("bun patch-commit --help");
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe("bun patch <pkg>", async () => {
   describe("workspace interactions", async () => {
     /**

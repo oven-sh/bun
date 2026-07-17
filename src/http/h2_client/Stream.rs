@@ -6,7 +6,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_core::Error;
+use crate::Error;
 use bun_picohttp as picohttp;
 
 // `live_streams` lives in the parent module of `h2_client/`.

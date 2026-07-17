@@ -46,9 +46,6 @@ pub static live_streams: AtomicI32 = AtomicI32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-// Un-gated: Stream/ClientSession/dispatch/encode now compile against the
-// real crate surface (bridge stubs below cover gated HTTPClient methods).
-// They no longer reference bun_str/bun_output/crate::state/crate::Signal.
 #[path = "h2_client/ClientSession.rs"]
 pub mod client_session;
 #[path = "h2_client/dispatch.rs"]
@@ -93,7 +90,7 @@ pub(crate) mod bridge {
             self.retry_from_h2();
         }
         #[inline]
-        pub fn h2_fail(&mut self, err: bun_core::Error) {
+        pub fn h2_fail(&mut self, err: crate::Error) {
             self.fail_from_h2(err);
         }
         #[inline]
@@ -117,7 +114,7 @@ pub(crate) mod bridge {
             &mut self,
             buf: &[u8],
             is_only_buffer: bool,
-        ) -> Result<bool, bun_core::Error> {
+        ) -> crate::Result<bool> {
             self.handle_response_body(buf, is_only_buffer)
         }
         #[inline]

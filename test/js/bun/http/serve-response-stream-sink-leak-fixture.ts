@@ -1,22 +1,23 @@
-// Exercises the no-promise fallback path in doRenderStream().
-//
-// A direct ReadableStream whose pull() writes synchronously and returns a
-// non-promise value falls through to the "is in progress, but did not return
-// a Promise" branch. That branch must destroy the heap-allocated
-// HTTPServerWritable/JSSink it created a few lines earlier; otherwise each
-// request leaks the struct plus its buffer.
-import { memoryUsage } from "bun:jsc";
+// Exercises sink teardown for a direct ReadableStream whose pull() writes
+// synchronously and returns a non-promise without ending the sink. The server
+// keeps the response open until controller.end(); each request allocates a
+// heap HTTPServerWritable/JSSink plus the promise plumbing used to wait for
+// the close, and all of it must be released when end() completes the
+// response; otherwise each request leaks the struct plus its buffer.
+let controller: any;
+let pulled: { promise: Promise<void>; resolve: () => void };
 
 const server = Bun.serve({
   port: 0,
   fetch() {
     const stream = new ReadableStream({
       type: "direct",
-      pull(controller: any) {
+      pull(c: any) {
         // Less than highWaterMark so it buffers instead of sending. pull()
-        // returns undefined (not a promise), so assignToStream() also returns
-        // undefined and doRenderStream drops into its no-promise fallback.
-        controller.write("x");
+        // returns undefined (not a promise), so the request waits for end().
+        c.write("x");
+        controller = c;
+        pulled.resolve();
       },
     } as any);
     return new Response(stream);
@@ -26,27 +27,55 @@ const server = Bun.serve({
 const url = server.url.href;
 
 async function once() {
-  const res = await fetch(url);
+  pulled = Promise.withResolvers();
+  const resPromise = fetch(url);
+  await pulled.promise;
+  controller.end();
+  const res = await resPromise;
   await res.arrayBuffer();
 }
 
-// Warm up: let JIT, caches, and pools settle before the baseline sample.
-for (let i = 0; i < 500; i++) await once();
-Bun.gc(true);
-await Bun.sleep(10);
-Bun.gc(true);
-const before = memoryUsage().currentCommit;
+// RSS, not currentCommit (which ratchets under hole purging, a discarded hole
+// stays "committed"); a leaked sink keeps its page resident, so RSS sees it.
+// Floor over rounds spanning the 100ms sweep rate limit drops transient peaks.
+async function settledRss() {
+  let min = Infinity;
+  for (let i = 0; i < 5; i++) {
+    Bun.gc(true);
+    await Bun.sleep(50);
+    min = Math.min(min, process.memoryUsage.rss());
+  }
+  return min;
+}
 
 const iterations = 10000;
-for (let i = 0; i < iterations; i++) {
-  await once();
-  if (i % 1000 === 0) Bun.gc(true);
+
+async function round() {
+  for (let i = 0; i < iterations; i++) {
+    await once();
+    if (i % 1000 === 0) Bun.gc(true);
+  }
+  return settledRss();
 }
-Bun.gc(true);
-await Bun.sleep(10);
-Bun.gc(true);
-const after = memoryUsage().currentCommit;
+
+// Warm up with the SAME workload as the measured rounds: JIT tiering, caches and
+// pools are still growing over the first rounds (~20 MB, then ~7 MB, then ~1 MB on a
+// macOS debug build), and that decaying tail would otherwise swamp the leak.
+await round();
+await round();
+
+// Median of per-round deltas: a leak is linear (every round pays it), the warmup
+// tail inflates only the first, and a page-return round can dip negative. Median
+// is robust to both ends; a min would pass on one dip even while the sink leaks.
+let prev = await round();
+const deltas: number[] = [];
+for (let r = 0; r < 3; r++) {
+  const rss = await round();
+  deltas.push(rss - prev);
+  prev = rss;
+}
 
 server.stop(true);
 
-process.stdout.write(JSON.stringify({ before, after, delta: after - before, iterations }));
+const delta = [...deltas].sort((a, b) => a - b)[Math.floor(deltas.length / 2)];
+process.stdout.write(JSON.stringify({ delta, deltas, iterations }));

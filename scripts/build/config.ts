@@ -10,7 +10,7 @@ import { execSync } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, symlinkSync } from "node:fs";
 import { homedir, arch as hostArch, platform as hostPlatform } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { NODEJS_ABI_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
+import { NODEJS_ABI_VERSION, NODEJS_V8_VERSION, NODEJS_VERSION } from "./deps/nodejs-headers.ts";
 import { WEBKIT_VERSION } from "./deps/webkit.ts";
 import { assert, BuildError } from "./error.ts";
 import { resolveMacosSdkPath } from "./macos-sdk.ts";
@@ -61,6 +61,7 @@ export interface Host {
 const versionDefaults = {
   nodejsVersion: NODEJS_VERSION,
   nodejsAbiVersion: NODEJS_ABI_VERSION,
+  nodejsV8Version: NODEJS_V8_VERSION,
   webkitVersion: WEBKIT_VERSION,
 };
 
@@ -143,6 +144,12 @@ export interface Config {
   tinycc: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
+  /**
+   * Compile usockets bsd_* syscall fault-injection hooks. Runtime-armed via
+   * `bun:internal-for-testing` socketFaultInjection; disarmed cost is one
+   * acquire atomic load per syscall, zero when compiled out.
+   */
+  socketFaultInjection: boolean;
   /** Bundle small .cpp files into unified TUs (WebKit-style). See unified.ts. */
   unifiedSources: boolean;
   /**
@@ -307,6 +314,7 @@ export interface Config {
   /** Node.js compat version. Default in versions.ts; override to test a bump. */
   nodejsVersion: string;
   nodejsAbiVersion: string;
+  nodejsV8Version: string;
   /** WebKit commit. Default in versions.ts; override to test a WebKit branch. */
   webkitVersion: string;
 }
@@ -334,6 +342,7 @@ export interface PartialConfig {
   tinycc?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
+  socketFaultInjection?: boolean;
   unifiedSources?: boolean;
   archiveDeps?: boolean;
   timeTrace?: boolean;
@@ -368,6 +377,7 @@ export interface PartialConfig {
   // Version pins (defaults in versions.ts).
   nodejsVersion?: string;
   nodejsAbiVersion?: string;
+  nodejsV8Version?: string;
   webkitVersion?: string;
 }
 
@@ -845,7 +855,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const canary = partial.canary ?? true;
   const canaryRevision = canary ? "1" : "0";
 
-  // Static SQLite: off on Apple (uses system), on elsewhere
+  // Whether bun:sqlite and node:sqlite link the bundled sqlite3 directly
+  // (LAZY_LOAD_SQLITE=0) or dlopen the system library at runtime. macOS
+  // defaults to dlopen so both APIs share Apple's libsqlite3 (one library,
+  // one POSIX-lock inode map — howtocorrupt.html §2.2.1); Linux/Windows
+  // link the bundled amalgamation.
   const staticSqlite = partial.staticSqlite ?? !darwin;
 
   // Static libatomic: on by default. Arch/Manjaro don't ship libatomic.a —
@@ -860,6 +874,11 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
+  // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
+  // release-asan, off everywhere else. The fuzz tests are most useful when
+  // memory errors are detectable, and the disarmed-hot-path cost (one acquire
+  // atomic load) is acceptable in asan builds but not in shipped release.
+  const socketFaultInjection = partial.socketFaultInjection ?? asan;
 
   // ─── Paths ───
   const cwd = findRepoRoot();
@@ -1019,6 +1038,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to test a branch before bumping the pinned default.
   const nodejsVersion = partial.nodejsVersion ?? versionDefaults.nodejsVersion;
   const nodejsAbiVersion = partial.nodejsAbiVersion ?? versionDefaults.nodejsAbiVersion;
+  const nodejsV8Version = partial.nodejsV8Version ?? versionDefaults.nodejsV8Version;
   const webkitVersion = partial.webkitVersion ?? versionDefaults.webkitVersion;
 
   // ─── macOS SDK ───
@@ -1121,6 +1141,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     tinycc,
     valgrind,
     fuzzilli,
+    socketFaultInjection,
     unifiedSources: partial.unifiedSources ?? true,
     archiveDeps: partial.archiveDeps ?? false,
     timeTrace: partial.timeTrace ?? false,
@@ -1180,6 +1201,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     version,
     revision,
     nodejsVersion,
+    nodejsV8Version,
     nodejsAbiVersion,
     canaryRevision,
     webkitVersion,
@@ -1444,14 +1466,22 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.socketFaultInjection !== cfg.asan) {
+    features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
+  }
   if (!cfg.canary) features.push("canary:off");
   // Non-default modes — show so you notice when a build is unusual.
   if (cfg.webkit !== "prebuilt") features.push(`webkit:${cfg.webkit}`);
   if (cfg.mode !== "full") features.push(`mode:${cfg.mode}`);
-  // Version pin overrides — show a short hash so you catch "forgot to
-  // revert my WebKit test branch" before the build goes weird.
-  if (cfg.webkitVersion !== versionDefaults.webkitVersion)
-    features.push(`webkit-version:${cfg.webkitVersion.slice(0, 10)}`);
+  // Version pin overrides — show an identifying value so you catch "forgot
+  // to revert my WebKit test branch" before the build goes weird. Strip the
+  // autobuild- prefix so preview tags show their sha instead of the prefix.
+  if (cfg.webkitVersion !== versionDefaults.webkitVersion) {
+    const v = cfg.webkitVersion.startsWith("autobuild-")
+      ? cfg.webkitVersion.slice("autobuild-".length)
+      : cfg.webkitVersion;
+    features.push(`webkit-version:${/^[0-9a-f]{40}$/.test(v) ? v.slice(0, 10) : v}`);
+  }
   if (cfg.nodejsVersion !== versionDefaults.nodejsVersion) features.push(`nodejs:${cfg.nodejsVersion}`);
   lines.push(`  ${label("features")} ${features.length > 0 ? c.cyan(features.join(", ")) : c.dim("(none)")}`);
   return lines.join("\n");

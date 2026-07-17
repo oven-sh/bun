@@ -6,7 +6,7 @@ use core::fmt;
 
 use crate::Loc;
 use bun_alloc::{AllocError, Arena as Bump};
-use bun_collections::{ArrayHashMap, VecExt};
+use bun_collections::VecExt;
 use bun_core::ZStr;
 use bun_core::{self};
 
@@ -115,7 +115,7 @@ impl Expr {
 }
 
 impl Expr {
-    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn clone_in(&self, bump: &Bump) -> Result<Expr, crate::Error> {
         Ok(Expr {
             loc: self.loc,
             data: Data::clone_in(self.data, bump)?,
@@ -134,7 +134,7 @@ impl Expr {
         })
     }
 
-    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
+    pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, crate::Error> {
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(S::Return { value: Some(this) }, this.loc)
         });
@@ -181,26 +181,116 @@ impl Default for Query {
 impl Expr {
     #[inline]
     pub fn is_array(&self) -> bool {
-        matches!(self.data, Data::EArray(_))
+        matches!(self.data, Data::EArray(_) | Data::EArrayJSON(_))
     }
     #[inline]
     pub fn is_object(&self) -> bool {
-        matches!(self.data, Data::EObject(_))
+        matches!(self.data, Data::EObject(_) | Data::EObjectJSON(_))
     }
     #[inline]
     pub fn is_string(&self) -> bool {
         matches!(self.data, Data::EString(_))
     }
 
+    /// Materialize an immutable JSON leaf/container value as an `Expr`.
+    pub fn from_json_value(value: &E::JsonValue, loc: Loc) -> Expr {
+        match value {
+            E::JsonValue::Null => Expr::init(E::Null, loc),
+            E::JsonValue::Boolean(value) => Expr::init(E::Boolean { value: *value }, loc),
+            E::JsonValue::Number(n) => Expr::init(*n, loc),
+            E::JsonValue::String(s) => Expr::init(
+                E::String {
+                    data: *s,
+                    ..Default::default()
+                },
+                loc,
+            ),
+            E::JsonValue::Object(o) => Expr {
+                loc,
+                data: Data::EObjectJSON(*o),
+            },
+            E::JsonValue::Array(a) => Expr {
+                loc,
+                data: Data::EArrayJSON(*a),
+            },
+        }
+    }
+
+    /// Visit every property of an object expression (`E::Object` or `E::ObjectJSON`) in source order.
+    pub fn for_each_property(&self, mut f: impl FnMut(&[u8], Loc, Expr)) {
+        let _: Result<(), core::convert::Infallible> =
+            self.try_for_each_property(|key, loc, value| {
+                f(key, loc, value);
+                Ok(())
+            });
+    }
+
+    /// [`Expr::for_each_property`] with a fallible callback; stops at the first `Err`.
+    pub fn try_for_each_property<Error>(
+        &self,
+        mut f: impl FnMut(&[u8], Loc, Expr) -> Result<(), Error>,
+    ) -> Result<(), Error> {
+        match &self.data {
+            Data::EObject(obj) => {
+                for property in obj.properties.slice() {
+                    let (Some(key_expr), Some(value)) =
+                        (property.key.as_ref(), property.value.as_ref())
+                    else {
+                        continue;
+                    };
+                    let Some(key) = key_expr.as_utf8_string_literal() else {
+                        continue;
+                    };
+                    f(key, key_expr.loc, *value)?;
+                }
+            }
+            Data::EObjectJSON(obj) => {
+                for property in obj.get().properties() {
+                    f(
+                        property.key.slice(),
+                        property.key_loc,
+                        Expr::from_json_value(&property.value, property.key_loc),
+                    )?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// Number of properties of an object expression in either representation; 0 otherwise.
+    pub fn property_count(&self) -> usize {
+        match &self.data {
+            Data::EObject(obj) => obj.properties.len_u32() as usize,
+            Data::EObjectJSON(obj) => obj.get().properties().len(),
+            _ => 0,
+        }
+    }
+
     /// Look up `name` among the properties of an object-literal expression.
     pub fn as_property(&self, name: &[u8]) -> Option<Query> {
-        let Data::EObject(obj) = &self.data else {
-            return None;
-        };
-        if obj.properties.len_u32() == 0 {
-            return None;
+        match &self.data {
+            Data::EObject(obj) => {
+                if obj.properties.len_u32() == 0 {
+                    return None;
+                }
+                obj.as_property(name)
+            }
+            Data::EObjectJSON(obj) => {
+                let (i, prop) = obj
+                    .get()
+                    .properties()
+                    .iter()
+                    .enumerate()
+                    .find(|(_, p)| p.key.slice() == name)?;
+                Some(Query {
+                    expr: Expr::from_json_value(&prop.value, prop.key_loc),
+                    loc: prop.key_loc,
+                    i: i as u32,
+                })
+            }
+            _ => None,
         }
-        obj.as_property(name)
     }
 
     pub fn get(&self, name: &[u8]) -> Option<Expr> {
@@ -218,9 +308,19 @@ impl Expr {
                 if array.items.len_u32() == 0 {
                     return None;
                 }
-                Some(ArrayIterator {
+                Some(ArrayIterator::Full {
                     array: *array,
                     index: 0,
+                })
+            }
+            Data::EArrayJSON(array) => {
+                if array.get().items().is_empty() {
+                    return None;
+                }
+                Some(ArrayIterator::Json {
+                    array: *array,
+                    index: 0,
+                    loc: self.loc,
                 })
             }
             _ => None,
@@ -269,7 +369,7 @@ impl Expr {
 
     pub fn as_number(&self) -> Option<f64> {
         match self.data {
-            Data::ENumber(n) => Some(n.value),
+            Data::ENumber(n) => Some(n.value()),
             _ => None,
         }
     }
@@ -279,6 +379,13 @@ impl Expr {
 
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
+        if let Data::EObjectJSON(obj) = &self.data {
+            return obj
+                .get()
+                .properties()
+                .iter()
+                .any(|p| bun_core::eql_any_comptime(p.key.slice(), names));
+        }
         let Data::EObject(obj) = &self.data else {
             return false;
         };
@@ -315,6 +422,17 @@ impl Expr {
                 }
                 Some(array.items.slice()[index as usize])
             }
+            Data::EArrayJSON(array) => {
+                let items = array.get().items();
+                let item = items.get(index as usize)?;
+                Some(Expr::from_json_value(item, self.loc))
+            }
+            Data::EObjectJSON(object) => object
+                .get()
+                .properties()
+                .iter()
+                .find(|p| p.key.slice() == index_str)
+                .map(|p| Expr::from_json_value(&p.value, p.key_loc)),
             Data::EObject(object) => {
                 for prop in object.properties.slice_const() {
                     let Some(key) = &prop.key else { continue };
@@ -373,10 +491,10 @@ impl Expr {
             return None;
         }
 
-        if let Some(idx) = bun_core::index_of_any(name, b"[.") {
+        if let Some(idx) = bun_core::strings::index_of_any(name, b"[.") {
             match name[idx] {
                 b'[' => {
-                    let end_idx = bun_core::index_of_char(name, b']')? as usize;
+                    let end_idx = bun_core::strings::index_of_char_usize(name, b']')? as usize;
                     let mut base_expr = *self;
                     if idx > 0 {
                         let key = &name[..idx];
@@ -420,9 +538,8 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property, creating it if it doesn't exist.
-    /// `self` must be an object.
     pub fn set(&mut self, _bump: &Bump, name: &[u8], value: Expr) -> Result<(), AllocError> {
-        debug_assert!(self.is_object());
+        debug_assert!(matches!(self.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut self.data else {
             unreachable!()
         };
@@ -458,14 +575,13 @@ impl Expr {
     /// Don't use this if you care about performance.
     ///
     /// Sets the value of a property to a string, creating it if it doesn't exist.
-    /// `expr` must be an object.
     pub fn set_string(
         expr: &mut Expr,
         _bump: &Bump,
         name: &[u8],
         value: &[u8],
     ) -> Result<(), AllocError> {
-        debug_assert!(expr.is_object());
+        debug_assert!(matches!(expr.data, Data::EObject(_)));
         let Data::EObject(obj) = &mut expr.data else {
             unreachable!()
         };
@@ -570,15 +686,7 @@ impl Expr {
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
     pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
         let q = self.as_property(name)?;
-        match q.expr.data {
-            Data::EArray(array) => {
-                if array.items.len_u32() == 0 {
-                    return None;
-                }
-                Some(ArrayIterator { array, index: 0 })
-            }
-            _ => None,
-        }
+        q.expr.as_array()
     }
 
     pub fn get_rope<'a>(&self, rope: &'a E::Rope) -> Option<E::RopeQuery<'a>> {
@@ -617,80 +725,43 @@ impl Expr {
         }
         None
     }
-
-    pub fn as_property_string_map<'b>(
-        expr: &Expr,
-        name: &[u8],
-        bump: &'b Bump,
-    ) -> Option<Box<ArrayHashMap<&'b [u8], &'b [u8]>>> {
-        let Data::EObject(obj_) = &expr.data else {
-            return None;
-        };
-        if obj_.properties.len_u32() == 0 {
-            return None;
-        }
-        let query = obj_.as_property(name)?;
-        let Data::EObject(obj) = &query.expr.data else {
-            return None;
-        };
-
-        let mut count: usize = 0;
-        for prop in obj.properties.slice() {
-            let Some(key) = prop.key.as_ref().and_then(|k| k.as_string(bump)) else {
-                continue;
-            };
-            let Some(value) = prop.value.as_ref().and_then(|v| v.as_string(bump)) else {
-                continue;
-            };
-            count += (key.len() > 0 && value.len() > 0) as usize;
-        }
-
-        if count == 0 {
-            return None;
-        }
-        let mut map = ArrayHashMap::<&'b [u8], &'b [u8]>::default();
-        if map.ensure_total_capacity(count).is_err() {
-            return None;
-        }
-
-        for prop in obj.properties.slice() {
-            let Some(key) = prop.key.as_ref().and_then(|k| k.as_string(bump)) else {
-                continue;
-            };
-            let Some(value) = prop.value.as_ref().and_then(|v| v.as_string(bump)) else {
-                continue;
-            };
-
-            if !(key.len() > 0 && value.len() > 0) {
-                continue;
-            }
-
-            map.insert(key, value);
-        }
-
-        Some(Box::new(map))
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────
 // ArrayIterator
 // ───────────────────────────────────────────────────────────────────────────
 
-pub struct ArrayIterator {
+pub enum ArrayIterator {
     /// Arena-backed handle (`StoreRef` invariant: pointee lives until arena
     /// reset). Stored by value so the iterator carries no borrowed lifetime.
-    pub array: StoreRef<E::Array>,
-    pub index: u32,
+    Full {
+        array: StoreRef<E::Array>,
+        index: u32,
+    },
+    Json {
+        array: StoreRef<E::ArrayJSON>,
+        index: u32,
+        loc: Loc,
+    },
 }
 
 impl ArrayIterator {
     pub fn next(&mut self) -> Option<Expr> {
-        if self.index >= self.array.items.len_u32() {
-            return None;
+        match self {
+            ArrayIterator::Full { array, index } => {
+                if *index >= array.items.len_u32() {
+                    return None;
+                }
+                let result = array.items.slice()[*index as usize];
+                *index += 1;
+                Some(result)
+            }
+            ArrayIterator::Json { array, index, loc } => {
+                let item = array.get().items().get(*index as usize)?;
+                *index += 1;
+                Some(Expr::from_json_value(item, *loc))
+            }
         }
-        let result = self.array.items.slice()[self.index as usize];
-        self.index += 1;
-        Some(result)
     }
 }
 
@@ -1028,6 +1099,8 @@ impl_into_expr_data_boxed! {
     JSXElement => EJsxElement,
     BigInt => EBigInt,
     Object => EObject,
+    ObjectJSON => EObjectJSON,
+    ArrayJSON => EArrayJSON,
     Spread => ESpread,
     Template => ETemplate,
     RegExp => ERegExp,
@@ -1212,6 +1285,8 @@ pub enum Tag {
     EArrow,
     EJsxElement,
     EObject,
+    EObjectJSON,
+    EArrayJSON,
     ESpread,
     ETemplate,
     ERegExp,
@@ -1266,20 +1341,23 @@ impl Tag {
     }
 
     pub fn typeof_(tag: Tag) -> Option<&'static [u8]> {
+        // This must only return `Some` when the operand is guaranteed to have
+        // no side effects. Array/object/class literals are omitted because
+        // their elements, properties, and static initializers can run code.
         Some(match tag {
-            Tag::EArray | Tag::EObject | Tag::ENull | Tag::ERegExp => b"object",
+            Tag::EArrayJSON | Tag::EObjectJSON | Tag::ENull | Tag::ERegExp => b"object",
             Tag::EUndefined => b"undefined",
             Tag::EBoolean | Tag::EBranchBoolean => b"boolean",
             Tag::ENumber => b"number",
             Tag::EBigInt => b"bigint",
             Tag::EString => b"string",
-            Tag::EClass | Tag::EFunction | Tag::EArrow => b"function",
+            Tag::EFunction | Tag::EArrow => b"function",
             _ => return None,
         })
     }
 
     pub fn is_array(self) -> bool {
-        matches!(self, Tag::EArray)
+        matches!(self, Tag::EArray | Tag::EArrayJSON)
     }
     pub fn is_unary(self) -> bool {
         matches!(self, Tag::EUnary)
@@ -1351,7 +1429,7 @@ impl Tag {
         matches!(self, Tag::EBigInt)
     }
     pub fn is_object(self) -> bool {
-        matches!(self, Tag::EObject)
+        matches!(self, Tag::EObject | Tag::EObjectJSON)
     }
     pub fn is_spread(self) -> bool {
         matches!(self, Tag::ESpread)
@@ -1504,7 +1582,7 @@ impl Expr {
             }
             Data::ENumber(n) => {
                 return Some(expr.at(E::Boolean {
-                    value: n.value == 0.0 || n.value.is_nan(),
+                    value: n.value() == 0.0 || n.value().is_nan(),
                 }));
             }
             Data::EBigInt(b) => {
@@ -1693,6 +1771,8 @@ pub enum Data {
 
     EJsxElement(StoreRef<E::JSXElement>),
     EObject(StoreRef<E::Object>),
+    EObjectJSON(StoreRef<E::ObjectJSON>),
+    EArrayJSON(StoreRef<E::ArrayJSON>),
     ESpread(StoreRef<E::Spread>),
     ETemplate(StoreRef<E::Template>),
     ERegExp(StoreRef<E::RegExp>),
@@ -1738,18 +1818,14 @@ pub enum Data {
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
-// The identifier-family flags are packed into `Ref`'s spare bits (see
-// `E::Identifier` doc), so every inline payload is ≤ 8 bytes; with the
-// repr(Rust) discriminant that rounds to 16. `Expr` = `Data` (16, align 8) +
-// `Loc` (i32) → 20 → 24 after tail padding.
-//
-// The `Option<Data>` assert proves Rust's niche optimization fires: the enum
-// has spare discriminant values (47 variants < 256, and every pointer variant
-// contributes a NonNull niche), so `None` packs into an unused bit-pattern
-// rather than adding a word. If a future variant adds `#[repr(C)]`/`#[repr(u32)]`
-// or a nullable `*mut T` payload, this assert catches the size regression.
-const _: () = assert!(core::mem::size_of::<Data>() == 16); // Do not increase the size of Expr
-const _: () = assert!(core::mem::size_of::<Expr>() == 24);
+// Every payload — `StoreRef<T>` and the inline identifier/`Number`/etc.
+// structs — is ≤ 8 bytes at align 4, so `Data` = 1-byte discriminant + 8-byte
+// payload → 12 at align 4. `Expr` = `Data` (12, align 4) + `Loc` (i32) → 16.
+// `Option<Data>`/`Option<Expr>` niche-pack via spare discriminant values
+// (47 variants < 256); a `#[repr(C)]`/`#[repr(u32)]` on `Data` would break it.
+const _: () = assert!(core::mem::size_of::<Data>() == 12); // Do not increase the size of Expr
+const _: () = assert!(core::mem::align_of::<Data>() == 4);
+const _: () = assert!(core::mem::size_of::<Expr>() == 16);
 const _: () = assert!(
     core::mem::size_of::<Option<Data>>() == core::mem::size_of::<Data>(),
     "expr::Data lost its niche — check for #[repr] or nullable-ptr payload"
@@ -1758,16 +1834,23 @@ const _: () = assert!(
     core::mem::size_of::<Option<Expr>>() == core::mem::size_of::<Expr>(),
     "Expr lost its niche — Option<Expr> is used in G::Property/B::Property/etc."
 );
-// Inline-payload ceilings (regress any of these and `Data` grows past 16):
+// Inline-payload ceilings (regress any of these and `Data` grows past 12).
+// `align_of <= 4` is what keeps `Data` (and therefore `Expr`) at align 4.
 const _: () = assert!(core::mem::size_of::<E::Identifier>() == 8);
+const _: () = assert!(core::mem::align_of::<E::Identifier>() == 4);
 const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::PrivateIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::Number>() <= 8);
+const _: () = assert!(core::mem::align_of::<E::Number>() == 4);
 const _: () = assert!(core::mem::size_of::<E::Special>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::RequireString>() <= 8);
 const _: () = assert!(core::mem::size_of::<E::NewTarget>() <= 8);
 const _: () = assert!(core::mem::size_of::<StoreRef<E::Binary>>() == core::mem::size_of::<usize>());
+// Heap-payload shrinks unlocked by the 12-byte StoreSlice<T>:
+const _: () = assert!(core::mem::size_of::<crate::G::FnBody>() == 16);
+const _: () = assert!(core::mem::size_of::<E::Arrow>() <= 32);
+const _: () = assert!(core::mem::size_of::<crate::S::Block>() == 16);
 
 // Field-style accessors (`data.e_string()`, `data.e_object()`). The match arms
 // in this file use these heavily; keeping them as inherent methods avoids
@@ -2247,6 +2330,28 @@ impl Data {
     }
 }
 
+fn json_value_deep_clone(
+    value: &E::JsonValue,
+    loc: Loc,
+    bump: &Bump,
+) -> Result<Expr, bun_alloc::AllocError> {
+    Ok(match value {
+        E::JsonValue::String(s) => {
+            let bytes: &[u8] = bump.alloc_slice_copy(s.slice());
+            Expr::allocate(bump, E::EString::init(bytes), loc)
+        }
+        E::JsonValue::Object(o) => Expr {
+            loc,
+            data: Data::EObjectJSON(*o).deep_clone_no_detach(bump)?,
+        },
+        E::JsonValue::Array(a) => Expr {
+            loc,
+            data: Data::EArrayJSON(*a).deep_clone_no_detach(bump)?,
+        },
+        _ => Expr::from_json_value(value, loc),
+    })
+}
+
 impl Data {
     /// Human-readable variant name for diagnostics (`"string"`, `"object"`, …).
     #[inline]
@@ -2284,7 +2389,7 @@ impl Data {
     /// which is sound because every
     /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
     /// stores a raw pointer + len/cap into the arena).
-    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
+    pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, crate::Error> {
         macro_rules! shallow {
             ($variant:ident, $el:expr) => {{
                 // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
@@ -2307,6 +2412,8 @@ impl Data {
             Data::EArrow(el) => shallow!(EArrow, el),
             Data::EJsxElement(el) => shallow!(EJsxElement, el),
             Data::EObject(el) => shallow!(EObject, el),
+            Data::EObjectJSON(el) => shallow!(EObjectJSON, el),
+            Data::EArrayJSON(el) => shallow!(EArrayJSON, el),
             Data::ESpread(el) => shallow!(ESpread, el),
             Data::ETemplate(el) => shallow!(ETemplate, el),
             Data::ERegExp(el) => shallow!(ERegExp, el),
@@ -2351,6 +2458,53 @@ impl Data {
                     is_single_line: el.is_single_line,
                     is_parenthesized: el.is_parenthesized,
                     close_bracket_loc: el.close_bracket_loc,
+                });
+                Ok(Data::EArray(StoreRef::from_bump(item)))
+            }
+            Data::EObjectJSON(el) => {
+                let el = el.get();
+                let rows = el.properties();
+                let value_locs = el.value_locs();
+                let mut properties: G::PropertyList =
+                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                for (i, row) in rows.iter().enumerate() {
+                    let key_bytes: &[u8] = bump.alloc_slice_copy(row.key.slice());
+                    let value_loc = value_locs.map_or(row.key_loc, |l| l[i]);
+                    properties.push(G::Property {
+                        key: Some(Expr::allocate(
+                            bump,
+                            E::EString::init(key_bytes),
+                            row.key_loc,
+                        )),
+                        value: Some(json_value_deep_clone(&row.value, value_loc, bump)?),
+                        kind: G::PropertyKind::Normal,
+                        initializer: None,
+                        ..Default::default()
+                    });
+                }
+                let item = bump.alloc(E::Object {
+                    properties,
+                    is_single_line: el.is_single_line,
+                    close_brace_loc: el.close_brace_loc,
+                    ..Default::default()
+                });
+                Ok(Data::EObject(StoreRef::from_bump(item)))
+            }
+            Data::EArrayJSON(el) => {
+                let el = el.get();
+                let rows = el.items();
+                let item_locs = el.item_locs();
+                let mut items: crate::ExprNodeList =
+                    Vec::with_capacity_in(rows.len(), bun_alloc::AstAlloc);
+                for (i, value) in rows.iter().enumerate() {
+                    let loc = item_locs.map_or(crate::Loc::EMPTY, |l| l[i]);
+                    items.push(json_value_deep_clone(value, loc, bump)?);
+                }
+                let item = bump.alloc(E::Array {
+                    items,
+                    is_single_line: el.is_single_line,
+                    close_bracket_loc: el.close_bracket_loc,
+                    ..Default::default()
                 });
                 Ok(Data::EArray(StoreRef::from_bump(item)))
             }
@@ -2461,6 +2615,7 @@ impl Data {
                     is_async: el.is_async,
                     has_rest_arg: el.has_rest_arg,
                     prefer_expr: el.prefer_expr,
+                    has_react_hooks_suppression: el.has_react_hooks_suppression,
                 });
                 Ok(Data::EArrow(StoreRef::from_bump(item)))
             }
@@ -2633,6 +2788,23 @@ impl Data {
             Data::EClass(_) => {}
             Data::ENew(_) | Data::ECall(_) => {}
             Data::EFunction(_) => {}
+            Data::EObjectJSON(e) => {
+                let e = e.get();
+                raw(hasher, e.is_single_line);
+                raw(hasher, e.properties().len() as u32);
+                for p in e.properties().iter() {
+                    hasher.update(p.key.slice());
+                    p.value.write_to_hasher(hasher);
+                }
+            }
+            Data::EArrayJSON(e) => {
+                let e = e.get();
+                raw(hasher, e.is_single_line);
+                raw(hasher, e.items().len() as u32);
+                for item in e.items().iter() {
+                    item.write_to_hasher(hasher);
+                }
+            }
             Data::EDot(e) => {
                 // Encode `Option<#[repr(u8)] OptionalChain>` as its niche byte
                 // (Some(Start)=0, Some(Continuation)=1, None=2) — same bytes
@@ -2685,7 +2857,7 @@ impl Data {
                 raw(hasher, e.value);
             }
             Data::ENumber(e) => {
-                raw(hasher, e.value);
+                raw(hasher, e.value());
             }
             Data::EBigInt(e) => {
                 hasher.update(&e.value);
@@ -2990,9 +3162,9 @@ impl Data {
                 Some(string_to_equivalent_number_value(str.slice8()))
             }
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
-            Data::ENumber(n) => Some(n.value),
+            Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
-                Data::ENumber(num) => Some(num.value),
+                Data::ENumber(num) => Some(num.value()),
                 Data::EString(str) => {
                     if str.next.is_some() {
                         return None;
@@ -3013,16 +3185,16 @@ impl Data {
         match self {
             Data::EBoolean(b) | Data::EBranchBoolean(b) => Some(if b.value { 1.0 } else { 0.0 }),
             Data::ENumber(n) => {
-                if n.value.is_finite() {
-                    Some(n.value)
+                if n.value().is_finite() {
+                    Some(n.value())
                 } else {
                     None
                 }
             }
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
                 Data::ENumber(num) => {
-                    if num.value.is_finite() {
-                        Some(num.value)
+                    if num.value().is_finite() {
+                        Some(num.value())
                     } else {
                         None
                     }
@@ -3035,9 +3207,9 @@ impl Data {
 
     pub fn extract_numeric_value(&self) -> Option<f64> {
         match self {
-            Data::ENumber(n) => Some(n.value),
+            Data::ENumber(n) => Some(n.value()),
             Data::EInlinedEnum(inlined) => match &inlined.value.data {
-                Data::ENumber(num) => Some(num.value),
+                Data::ENumber(num) => Some(num.value()),
                 _ => None,
             },
             _ => None,
@@ -3173,9 +3345,9 @@ impl Data {
                     return Equality {
                         ok: true,
                         equal: if l.value {
-                            num.value == 1.0
+                            num.value() == 1.0
                         } else {
-                            num.value == 0.0
+                            num.value() == 0.0
                         },
                         ..Default::default()
                     };
@@ -3189,7 +3361,7 @@ impl Data {
                 Data::ENumber(r) => {
                     return Equality {
                         ok: true,
-                        equal: l.value == r.value,
+                        equal: l.value() == r.value(),
                         ..Default::default()
                     };
                 }
@@ -3197,7 +3369,7 @@ impl Data {
                     if let Data::ENumber(rn) = &r.value.data {
                         return Equality {
                             ok: true,
-                            equal: l.value == rn.value,
+                            equal: l.value() == rn.value(),
                             ..Default::default()
                         };
                     }
@@ -3209,9 +3381,9 @@ impl Data {
                             // "1 == true" is true
                             // "0 == false" is true
                             equal: if r.value {
-                                l.value == 1.0
+                                l.value() == 1.0
                             } else {
-                                l.value == 0.0
+                                l.value() == 0.0
                             },
                             ..Default::default()
                         };
@@ -3228,7 +3400,7 @@ impl Data {
             },
             Data::EBigInt(l) => {
                 if let Data::EBigInt(r) = right {
-                    if bun_core::immutable::eql_long(&l.value, &r.value, true) {
+                    if bun_core::strings::eql_long(&l.value, &r.value, true) {
                         return Equality::TRUE;
                     }
                     // 0x0000n == 0n is true
@@ -3277,10 +3449,10 @@ impl Data {
                     Data::ENumber(r) => {
                         if !K::STRICT {
                             l.resolve_rope_if_needed(p.arena());
-                            if r.value == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
+                            if r.value() == 0.0 && (l.is_blank() || l.eql_comptime(b"0")) {
                                 return Equality::TRUE;
                             }
-                            if r.value == 1.0 && l.eql_comptime(b"1") {
+                            if r.value() == 1.0 && l.eql_comptime(b"1") {
                                 return Equality::TRUE;
                             }
                             // the string could still equal 0 or 1 but it could be hex, binary, octal, ...
@@ -3335,6 +3507,8 @@ crate::new_store!(
         E::JSXElement,
         E::Number,
         E::Object,
+        E::ObjectJSON,
+        E::ArrayJSON,
         E::Spread,
         E::TemplatePart,
         E::Template,

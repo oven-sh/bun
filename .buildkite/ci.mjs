@@ -306,7 +306,17 @@ function getRetry() {
     manual: {
       permit_on_passed: true,
     },
-    automatic: false,
+    // Self-heal infra deaths once instead of leaving the build failed until a
+    // human notices and clicks retry:
+    //   -1  = agent lost / process killed (box died, agent restarted)
+    //   255 = step timeout kill (timeout_in_minutes SIGTERM cascade)
+    // User-canceled jobs are state=canceled, which never triggers automatic
+    // retry, so this cannot resurrect deliberately canceled builds. limit: 1
+    // caps the cost when a suite genuinely crashes with these statuses.
+    automatic: [
+      { exit_status: -1, limit: 1 },
+      { exit_status: 255, limit: 1 },
+    ],
   };
 }
 
@@ -694,6 +704,22 @@ function needsBaselineVerification(platform) {
   return false;
 }
 
+// Ubuntu 20.04's qemu 4.2 mis-emulates concurrent atomics in same-arch user mode; after #34009
+// (mimalloc per-thread heaps) the SIMD baseline test segfaults/deadlocks in `_mi_theap_init`
+// ~10-20% of x64 runs and ~5% of aarch64 runs. qemu 9.1 is 40/40 green. Static-pie binaries.
+const PINNED_QEMU = {
+  x64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-x86_64-9.1.0.tar.xz",
+    sha256: "1ac92f632417d981810fda891e4a1b20f2d71f50f9ec705532afa8162b449c70",
+    binary: "qemu-linux-x86_64-9.1.0/bin/qemu-x86_64",
+  },
+  aarch64: {
+    url: "https://github.com/ziglang/qemu-static/releases/download/9.1.0/qemu-linux-aarch64-9.1.0.tar.xz",
+    sha256: "5a82a96ac74932a802fb5753673beff27359faea8736286477b0bf2c268fd06d",
+    binary: "qemu-linux-aarch64-9.1.0/bin/qemu-aarch64",
+  },
+};
+
 /**
  * Returns the emulator binary name for the given platform.
  * Linux uses QEMU user-mode; Windows uses Intel SDE.
@@ -706,8 +732,8 @@ function getEmulatorBinary(platform) {
   // (Install-IntelSde): downloadmirror.intel.com sits behind a bot challenge
   // that blocks non-browser clients, so it cannot be downloaded at job time.
   if (os === "windows") return "C:\\intel-sde\\sde.exe";
-  if (arch === "aarch64") return "qemu-aarch64-static";
-  return "qemu-x86_64-static";
+  // Fetched into the checkout root by the setup command below (see PINNED_QEMU).
+  return `./${PINNED_QEMU[arch].binary}`;
 }
 
 /**
@@ -726,11 +752,14 @@ function hasWebKitChanges(options) {
  * @returns {Step}
  */
 function getVerifyBaselineStep(platform, options) {
-  const { os } = platform;
+  const { os, abi } = platform;
   const targetKey = getTargetKey(platform);
   const triplet = getTargetTriplet(platform);
   const emulator = getEmulatorBinary(platform);
   const jitStressFlag = hasWebKitChanges(options) ? " --jit-stress" : "";
+  // Android binaries need /system/bin/linker64 + a bionic sysroot, neither of which exist on the
+  // build host, so qemu-user cannot load them; only the static instruction scan is meaningful.
+  const skipEmulationFlag = abi === "android" ? " --skip-emulation" : "";
 
   // Scan bun-profile, not bun. The stripped binary has no .symtab (ELF) and
   // no companion .pdb (PE) — the static scanner would emit <no-symbol@addr>
@@ -754,6 +783,15 @@ function getVerifyBaselineStep(platform, options) {
           `buildkite-agent artifact download '${profileDir}.zip' . --step ${targetKey}-build-bun`,
           `unzip -o '${profileDir}.zip'`,
           `chmod +x ${profileDir}/${profileExe}`,
+          // Linux lanes pin a known-good qemu (see PINNED_QEMU). sha256 check makes a
+          // truncated/hijacked download a hard failure before anything runs under it.
+          ...(abi === "android"
+            ? [] // --skip-emulation: no emulator needed
+            : [
+                `curl -fsSL --retry 5 --connect-timeout 15 --max-time 120 -o ./qemu.tar.xz '${PINNED_QEMU[platform.arch].url}'`,
+                `echo '${PINNED_QEMU[platform.arch].sha256}  ./qemu.tar.xz' | sha256sum -c -`,
+                `tar -xJf ./qemu.tar.xz '${PINNED_QEMU[platform.arch].binary}'`,
+              ]),
         ];
 
   // Windows: the emulator phase runs bun-profile.exe under Intel SDE, so the
@@ -777,7 +815,7 @@ function getVerifyBaselineStep(platform, options) {
     command: [
       ...setupCommands,
       `cargo build --release --manifest-path scripts/verify-baseline-static/Cargo.toml${os === "windows" ? " || exit /b 1" : ""}`,
-      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${jitStressFlag}`,
+      `bun scripts/verify-baseline.ts --binary ${profileDir}/${profileExe} --emulator ${emulator}${skipEmulationFlag}${jitStressFlag}`,
     ],
   };
 }
@@ -824,7 +862,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
     parallelism: os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    timeout_in_minutes: profile === "asan" || os === "windows" ? 45 : os === "darwin" ? 40 : 30,
+    timeout_in_minutes: profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what
@@ -837,7 +875,8 @@ function getTestBunStep(platform, options, testOptions = {}) {
       EXPECTED_PLATFORM_ARCH: platform.arch,
       ...(platform.abi ? { EXPECTED_PLATFORM_ABI: platform.abi } : {}),
       ...(platform.os === "linux" && platform.distro ? { EXPECTED_PLATFORM_DISTRO: platform.distro } : {}),
-      ...(platform.os === "linux" || (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
+      ...(platform.os === "linux" ||
+      (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
         ? { EXPECTED_PLATFORM_RELEASE: platform.release }
         : {}),
     },
@@ -849,6 +888,31 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
+ * CI image lifecycle
+ * ------------------
+ * Build/test agents boot from pre-baked cloud images (AWS AMIs for Linux,
+ * Azure Shared Image Gallery for Windows). The image a job requests is
+ * `${getImageKey(platform)}-v${N}`, where N is the `# Version:` comment at the
+ * top of scripts/bootstrap.sh (Linux) or scripts/bootstrap.ps1 (Windows).
+ *
+ * To change what's installed on a CI machine:
+ *
+ *   1. Edit bootstrap.sh / bootstrap.ps1 and bump its `# Version:` line.
+ *   2. Open a PR whose **commit subject** contains `[build images]` (or
+ *      `[build linux images]` / `[build windows images]` to scope it). This
+ *      bakes throwaway `…-build-<buildNumber>` images and runs the full
+ *      build+test pipeline against them so you can verify the change.
+ *   3. Once green, amend/force-push the subject to `[publish images]` (or the
+ *      scoped variant). This bakes the real `…-vN` images that normal CI will
+ *      pick up. Publishing replaces the live tag in place — for Windows it
+ *      deletes the existing gallery version before the new one finishes — so
+ *      don't cancel a publish run mid-bake.
+ *   4. Merge the PR **after** the publish run is green. By then the `…-vN`
+ *      images already exist, so the post-merge `main` build runs immediately
+ *      instead of everyone waiting 2-3 h on a bake.
+ *
+ * These tags are ignored on `main` — image bakes happen on the PR only.
+ *
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -976,27 +1040,29 @@ function getBinarySizeStep(releasePlatforms, options, { recordOnly = false } = {
 const BINARY_SIZE_THRESHOLD_MB = 0.5;
 
 /**
- * @param {Platform[]} buildPlatforms
+ * @param {Platform[]} releasePlatforms
  * @param {PipelineOptions} options
  * @param {{ signed: boolean }} [extra]
  * @returns {Step}
  */
-function getReleaseStep(buildPlatforms, options, { signed = false } = {}) {
+function getReleaseStep(releasePlatforms, options, { signed = false } = {}) {
   const { canary } = options;
   const revision = typeof canary === "number" ? canary : 1;
 
   // When signing ran, depend on windows-sign instead of the raw Windows builds
   // so we wait for signed artifacts before releasing.
   const depends_on = signed
-    ? [...buildPlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
-    : buildPlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
+    ? [...releasePlatforms.filter(p => p.os !== "windows").map(p => `${getTargetKey(p)}-build-bun`), "windows-sign"]
+    : releasePlatforms.map(platform => `${getTargetKey(platform)}-build-bun`);
 
   return {
     key: "release",
     label: getBuildkiteEmoji("rocket"),
-    agents: {
-      queue: "test-darwin",
-    },
+    agents: getEc2Agent(
+      buildPlatforms.find(p => p.os === "linux" && p.arch === "aarch64" && p.distro === "amazonlinux"),
+      options,
+      { instanceType: "c8g.large" },
+    ),
     depends_on,
     env: {
       CANARY: revision,
@@ -1350,6 +1416,8 @@ async function getPipelineOptions() {
     };
   }
 
+  // BUILDKITE_MESSAGE is the commit subject line only — option tags like
+  // [publish images] must appear in the subject, not the commit body.
   const commitMessage = getCommitMessage();
 
   /**
@@ -1368,6 +1436,23 @@ async function getPipelineOptions() {
   const isCanary =
     !parseBoolean(getEnv("RELEASE", false) || "false") &&
     !/\[(release|build release|release build)\]/i.test(commitMessage);
+
+  let buildImages = parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i);
+  let publishImages = parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i);
+  let imageFilter = (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase();
+
+  // Image bake/publish is meant to happen on the PR; the squash-merge commit
+  // subject often still carries the [publish images] tag, which would re-run
+  // the multi-hour bake on main and (because publish replaces the live image
+  // tag) briefly delete the images CI runs on. Ignore the tag on main and run
+  // a normal build instead.
+  if (isMainBranch() && (buildImages || publishImages)) {
+    console.log(`Ignoring [${publishImages || buildImages}] on main branch — images are built and published from PRs.`);
+    buildImages = false;
+    publishImages = false;
+    imageFilter = undefined;
+  }
+
   return {
     canary: isCanary ? canary : 0,
     skipEverything: parseOption(/\[(skip ci|no ci)\]/i),
@@ -1376,10 +1461,10 @@ async function getPipelineOptions() {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    buildImages: parseOption(/\[(build (?:(?:windows|linux) )?images?)\]/i),
+    buildImages,
     dryRun: parseOption(/\[(dry run)\]/i),
-    publishImages: parseOption(/\[(publish (?:(?:windows|linux) )?images?)\]/i),
-    imageFilter: (commitMessage.match(/\[(?:build|publish) (windows|linux) images?\]/i) || [])[1]?.toLowerCase(),
+    publishImages,
+    imageFilter,
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };

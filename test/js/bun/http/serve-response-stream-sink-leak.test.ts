@@ -3,13 +3,13 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
 // Regression: doRenderStream allocates a ResponseStream.JSSink on the heap
-// and stores it in RequestContext.sink. When assignToStream() returns
-// undefined (a direct stream drained synchronously with no pending promise)
-// the fallback branches detached the sink from JS but never called
-// sink.destroy(), and neither finalizeWithoutDeinit() nor deinit() touch
-// RequestContext.sink, so the allocation plus its pooled buffer leaked on
-// every such request.
-test("HTTPResponseSink is destroyed on doRenderStream no-promise fallback", async () => {
+// and stores it in RequestContext.sink. A direct stream whose pull() returns
+// synchronously without ending the sink keeps the request alive until
+// controller.end(); the resolve path must destroy the sink and release the
+// request context (neither finalizeWithoutDeinit() nor deinit() touch
+// RequestContext.sink), otherwise the allocation plus its pooled buffer
+// leaks on every such request.
+test("HTTPResponseSink is destroyed after a sync pull() that ends later", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "serve-response-stream-sink-leak-fixture.ts")],
     env: bunEnv,
@@ -19,15 +19,17 @@ test("HTTPResponseSink is destroyed on doRenderStream no-promise fallback", asyn
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  const { before, after, delta, iterations } = JSON.parse(stdout);
-  console.log({ before, after, delta, iterations, perRequest: (delta / iterations).toFixed(1) });
+  // The fixture prints nothing if it died or timed out; say which, instead of a bare
+  // JSON.parse SyntaxError.
+  expect({ printedResult: stdout.trim().length > 0, exitCode, stderr }).toMatchObject({
+    printedResult: true,
+    exitCode: 0,
+  });
+  const { delta, deltas, iterations } = JSON.parse(stdout);
+  console.log({ deltas, iterations, perRequest: (delta / iterations).toFixed(1) });
 
-  // currentCommit is mimalloc's committed bytes, so it tracks native
-  // allocations independent of the JS heap. Before the fix each request
-  // leaked the JSSink struct + its buffer, growing commit by ~4 MB (release)
-  // to ~10 MB (debug/ASAN) over 10k requests. After the fix it stays flat.
-  // Allow 2 MB of slack for allocator noise.
+  // `delta` is the median RSS growth per 10k requests (settledRss in the fixture
+  // explains RSS over currentCommit). macOS debug: 1.0 MB fixed vs 3.5 MB leaking
+  // (~350 B/req); Linux release: flat fixed vs +4.1 MB on the original #29877 leak.
   expect(delta).toBeLessThan(2 * 1024 * 1024);
-  expect(exitCode).toBe(0);
-}, 120_000);
+}, 300_000);

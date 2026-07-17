@@ -1679,14 +1679,19 @@ impl QuicEndpoint {
             peer_decoded
         );
         let endpoint_handle = self.this_value.get().get();
-        if let Ok((session, _handle)) = QuicSession::create(
+        let created = QuicSession::create(
             global,
             self.vtable_ptr,
             core::ptr::from_ref(self).cast_mut(),
             endpoint_handle,
             null_mut(),
             true,
-        ) {
+        );
+        if let Err(e) = created {
+            global.report_uncaught_exception_from_error(e);
+            return;
+        }
+        if let Ok((session, _handle)) = created {
             self.apply_server_session_options(global, session);
             self.sessions.with_mut(|v| v.push(session));
             self.pending_new_sessions.with_mut(|v| v.push(session));
@@ -1844,7 +1849,12 @@ impl QuicEndpoint {
                 unsafe { (*session).push_event(session::SessionEvent::HandshakeDone { ok: true }) };
                 session
             }
-            Err(_) => null_mut(),
+            Err(e) => {
+                // As in `on_remote_stream`: never return to lsquic with a
+                // pending exception.
+                global.report_uncaught_exception_from_error(e);
+                null_mut()
+            }
         }
     }
 
@@ -2076,7 +2086,11 @@ impl QuicEndpoint {
             .map(bun_jsc::Strong::get)
         {
             // SAFETY: `session` was just created and is live.
-            let _ = unsafe { (*session).apply_options(global, options) };
+            if let Err(e) = unsafe { (*session).apply_options(global, options) } {
+                // This runs from a lsquic callback; leaving the exception
+                // pending would poison the next `callbacks::get()`.
+                global.report_uncaught_exception_from_error(e);
+            }
         }
     }
 
@@ -2289,6 +2303,13 @@ impl QuicEndpoint {
             Some(b) if !b.is_empty() => (b.as_ptr(), b.len()),
             _ => (null(), 0),
         };
+        // Read before engine_connect: once the conn exists it holds `session`
+        // as its ctx, and unwinding that safely is far more delicate than
+        // simply not creating it.
+        let keepalive_us = read_u64_option(global, options, "keepAlive")?
+            .map_or(0, |ms| ms.saturating_mul(1000));
+        let use_preferred =
+            read_u64_option(global, options, "preferredAddressPolicy")? == Some(PREFERRED_ADDRESS_USE);
         // engine_connect fires on_new_conn synchronously; hold the scope so a
         // schedule_process from inside it cannot re-enter the engine.
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
@@ -2320,30 +2341,13 @@ impl QuicEndpoint {
             unsafe { (*session).teardown(global) };
             return Ok(JSValue::UNDEFINED);
         }
-        // Read the remaining options before the session is reachable: a throw
-        // between here and `sessions.push` would orphan a self-rooted session
-        // and a live lsquic conn that nothing tears down.
-        let keepalive_us = match read_u64_option(global, options, "keepAlive") {
-            Ok(v) => v.map_or(0, |ms| ms.saturating_mul(1000)),
-            Err(e) => {
-                // SAFETY: `session` was created here and is not yet published.
-                unsafe { (*session).teardown(global) };
-                return Err(e);
-            }
-        };
-        let use_preferred = match read_u64_option(global, options, "preferredAddressPolicy") {
-            Ok(v) => v == Some(PREFERRED_ADDRESS_USE),
-            Err(e) => {
-                // SAFETY: as above.
-                unsafe { (*session).teardown(global) };
-                return Err(e);
-            }
-        };
         // SAFETY: `conn` is live; out-params are stack slots.
         unsafe {
             lsquic::lsquic_conn_set_ctx(conn, session.cast());
             (*session).conn.set(conn);
             (*session).cache_sockaddrs(conn);
+            // `conn` is set above, so teardown clears the conn's ctx and the
+            // late callbacks no-op instead of reaching an unrooted session.
             if let Err(e) = (*session).apply_options(global, options) {
                 (*session).teardown(global);
                 return Err(e);

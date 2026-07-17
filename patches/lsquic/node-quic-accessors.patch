@@ -257,8 +257,8 @@
 +lsquic_stream_get_error_code (const lsquic_stream_t *);
 +
 +/**
-+ * Send RESET_STREAM(error_code) regardless of FIN state, then shut the read
-+ * side. lsquic_stream_maybe_reset skips RST when FIN was already sent.
++ * Send RESET_STREAM(error_code) regardless of FIN state; the read side ends
++ * only if the peer FIN'd/RST'd. maybe_reset skips RST when FIN was sent.
 + */
 +void
 +lsquic_stream_force_reset_ext (lsquic_stream_t *, uint64_t error_code);

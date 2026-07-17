@@ -1037,8 +1037,13 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
         if peer_is_client && has_status.is_some() {
             if let Some(s) = qs.ls() {
+                // reset() only ends the read side when the peer already
+                // FIN'd/RST'd, so STOP_SENDING is what stops a malformed
+                // request streaming a body into a stream nothing will answer.
                 s.reset(H3_MESSAGE_ERROR);
+                s.stop_sending(H3_MESSAGE_ERROR);
             }
+            qs.mark_reset(H3_MESSAGE_ERROR);
             return;
         }
         // 1xx interim responses are HINTS (RFC 9114 §4.1).

@@ -765,7 +765,12 @@ impl QuicSession {
                 }
                 qs
             }
-            Err(_) => null_mut(),
+            Err(e) => {
+                // Returning into lsquic with the exception still pending would
+                // poison the next `callbacks::get()` and silently drop events.
+                global.report_uncaught_exception_from_error(e);
+                null_mut()
+            }
         }
     }
 

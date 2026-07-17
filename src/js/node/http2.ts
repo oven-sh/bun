@@ -5270,10 +5270,7 @@ class ClientHttp2Session extends Http2Session {
           // batch, and frames the engine already received but has not dispatched yet
           // must still reach JS. An outstanding settings() ACK or ping gets a bounded
           // grace (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
-          if (
-            self.#pendingSettingsAckCount > 0 ||
-            (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)
-          ) {
+          if (self.#pendingSettingsAckCount > 0 || (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)) {
             scheduleSettingsAckGraceNT(self);
           } else {
             captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);

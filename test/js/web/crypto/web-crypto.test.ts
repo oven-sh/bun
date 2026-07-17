@@ -682,9 +682,15 @@ describe("empty usages on a private or secret key", () => {
 it("X25519 deriveBits with an ECDH public key reports 'key algorithm mismatch'", async () => {
   const x = await crypto.subtle.generateKey("X25519", false, ["deriveBits"]);
   const ec = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
-  const rejection = (p: Promise<unknown>) => p.then(() => "resolved", e => `${e.name}: ${e.message}`);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
   expect({
-    x25519WithEcdhPublic: await rejection(crypto.subtle.deriveBits({ name: "X25519", public: ec.publicKey }, x.privateKey, 256)),
+    x25519WithEcdhPublic: await rejection(
+      crypto.subtle.deriveBits({ name: "X25519", public: ec.publicKey }, x.privateKey, 256),
+    ),
     ecdhWithX25519Public: await rejection(
       crypto.subtle.deriveBits({ name: "ECDH", namedCurve: "P-256", public: x.publicKey }, ec.privateKey, 256),
     ),

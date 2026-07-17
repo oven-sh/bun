@@ -1,4 +1,5 @@
 import { expect } from "bun:test";
+import { isASAN } from "harness";
 import { devTest } from "../bake-harness";
 
 devTest("server-side source maps show correct error lines", {
@@ -200,3 +201,36 @@ devTest("server-side source maps stay correct across repeated reloads", {
   },
   timeoutMultiplier: 2,
 });
+
+// ~DevServerSourceProvider ran after the Zig::GlobalObject cell was swept.
+// BUN_DESTRUCT_VM_ON_EXIT=1 triggers that teardown; Malloc=1 puts JSC cells
+// under system malloc so ASAN poisons the freed cell and the UAF is deterministic.
+if (isASAN) {
+  devTest("DevServerSourceProvider destructor does not touch the swept global object on process exit", {
+    framework: "react",
+    files: {
+      "pages/index.tsx": `
+        export const mode = "ssr";
+        export const streaming = false;
+        export default function IndexPage() {
+          return <div>alive</div>;
+        }
+      `,
+    },
+    env: {
+      Malloc: "1",
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      // The test is about the use-after-free, not LSan; keep it hermetic
+      // against whatever ASAN_OPTIONS the outer runner chose.
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+    },
+    async test(dev) {
+      const response = await dev.fetch("/");
+      const html = await response.text();
+      expect(html).toContain("alive");
+      // The harness calls gracefulExit() after this, which sends the dev
+      // server through server.stop(true) + Bun.gc(true) + process.exit(0).
+      // The teardown that follows is what this test is about.
+    },
+  });
+}

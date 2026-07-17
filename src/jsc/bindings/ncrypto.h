@@ -878,6 +878,9 @@ public:
         DER,
         PEM,
         JWK,
+        RawPublic,
+        RawPrivate,
+        RawSeed,
     };
 
     enum class PKParseError { NOT_RECOGNIZED,
@@ -889,6 +892,7 @@ public:
         bool output_key_object = false;
         PKFormatType format = PKFormatType::DER;
         PKEncodingType type = PKEncodingType::PKCS8;
+        int ec_point_form = POINT_CONVERSION_UNCOMPRESSED;
         AsymmetricKeyEncodingConfig() = default;
         AsymmetricKeyEncodingConfig(bool output_key_object,
             PKFormatType format,
@@ -1228,6 +1232,8 @@ public:
     BIOPointer getValidTo() const;
     int64_t getValidFromTime() const;
     int64_t getValidToTime() const;
+    std::optional<std::string_view> getSignatureAlgorithm() const;
+    std::optional<std::string> getSignatureAlgorithmOID() const;
     DataPointer getSerialNumber() const;
     Result<EVPKeyPointer, int> getPublicKey() const;
     StackOfASN1 getKeyUsage() const;

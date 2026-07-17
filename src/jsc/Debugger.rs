@@ -315,7 +315,8 @@ impl Debugger {
                         }
                     }
 
-                    this.uws_loop_mut().tick_with_timeout(Some(&deadline));
+                    this.uws_loop_mut()
+                        .tick_with_timeout(Some(&deadline), bun_uws::NOW_NS_UNKNOWN);
 
                     if bun_core::Environment::ENABLE_LOGS {
                         bun_core::scoped_log!(
@@ -346,7 +347,7 @@ impl Debugger {
     pub fn create(
         this: *mut VirtualMachine,
         global_object: &JSGlobalObject,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::CrateResult<()> {
         bun_core::scoped_log!(debugger, "create");
         jsc::mark_binding();
         if HAS_CREATED_DEBUGGER.swap(true, Ordering::Relaxed) {
@@ -389,7 +390,7 @@ impl Debugger {
                     let send_vm = send_vm;
                     Debugger::start_js_debugger_thread(send_vm.0);
                 })
-                .map_err(|_| bun_core::err!("ThreadSpawnFailed"))?;
+                .map_err(|_| crate::CrateError::ThreadSpawnFailed)?;
             // The `JoinHandle` is dropped here, detaching the thread.
         }
         this_ref.event_loop_mut().ensure_waker();
@@ -881,19 +882,9 @@ unsafe extern "C" {
         agent: &mut LifecycleHandle,
         exception: &mut ZigException,
     );
-    safe fn Bun__LifecycleAgentPreventExit(agent: &mut LifecycleHandle);
-    safe fn Bun__LifecycleAgentStopPreventingExit(agent: &mut LifecycleHandle);
 }
 
 impl LifecycleHandle {
-    pub fn prevent_exit(&mut self) {
-        Bun__LifecycleAgentPreventExit(self)
-    }
-
-    pub fn stop_preventing_exit(&mut self) {
-        Bun__LifecycleAgentStopPreventingExit(self)
-    }
-
     pub fn report_reload(&mut self) {
         bun_core::scoped_log!(LifecycleAgent, "reportReload");
         Bun__LifecycleAgentReportReload(self)

@@ -3,6 +3,7 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs";
 import {
   BlockList,
@@ -706,6 +707,34 @@ it("socket should keep process alive if unref is not called", async () => {
   expect(await process.exited).toBe(1);
 });
 
+// Node never resumes a socket on the user's behalf: afterConnect only calls
+// read(0) (lib/net.js), so bytes that arrive before a 'data' listener is
+// attached stay buffered instead of being emitted to nobody and lost.
+it("a connected socket is not flowing until the user reads from it", async () => {
+  const { promise: received, resolve: onClose, reject } = Promise.withResolvers<string>();
+  const server = createServer(c => {
+    c.on("error", reject);
+    c.end("early-data");
+  });
+  let client: Socket | undefined;
+  try {
+    // events.once rejects these awaits if 'error' is emitted instead.
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    client = createConnection(server.address().port, "127.0.0.1");
+    await once(client, "connect");
+    client.on("error", reject);
+    expect(client.readableFlowing).toBeNull();
+    client.setEncoding("utf8");
+    let data = "";
+    client.on("data", chunk => (data += chunk));
+    client.on("close", () => onClose(data));
+    expect(await received).toBe("early-data");
+  } finally {
+    client?.destroy();
+    server.close();
+  }
+});
+
 it("should not hang after FIN", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
@@ -786,8 +815,11 @@ it("should trigger error when aborted even if connection failed #13126", async (
   socket.on("connect", reject);
   socket.on("error", resolve);
 
-  const err = (await promise) as Error;
-  expect(err.name).toBe("TimeoutError");
+  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
+  const err = (await promise) as Error & { code?: string; cause?: Error };
+  expect(err.name).toBe("AbortError");
+  expect(err.code).toBe("ABORT_ERR");
+  expect(err.cause?.name).toBe("TimeoutError");
 });
 
 it("should trigger error when aborted even if connection failed, and the signal is already aborted #13126", async () => {
@@ -803,8 +835,11 @@ it("should trigger error when aborted even if connection failed, and the signal 
   socket.on("connect", reject);
   socket.on("error", resolve);
 
-  const err = (await promise) as Error;
-  expect(err.name).toBe("TimeoutError");
+  // Node destroys the socket with an AbortError carrying the signal's reason as `cause`.
+  const err = (await promise) as Error & { code?: string; cause?: Error };
+  expect(err.name).toBe("AbortError");
+  expect(err.code).toBe("ABORT_ERR");
+  expect(err.cause?.name).toBe("TimeoutError");
 });
 
 it.if(isWindows)(
@@ -905,13 +940,15 @@ it.skipIf(isWindows)(
       // TCPSocket struct is ~300-400 bytes; 8k of them fill ~25 pages
       // (release) / ~160 pages (debug+ASAN). Unlike RSS this is the
       // allocator's own bookkeeping, so it's independent of OS page
-      // reclamation and JSC heap oscillation — same result on every
-      // platform, every run.
+      // reclamation.
       function pageCount() {
         return heapStats().mimalloc.page_bins.reduce((a, b) => a + b.current, 0);
       }
 
-      await run(2000);
+      // Warm up with the SAME workload as the measured run: on builds where
+      // JSC shares mimalloc, its heap keeps growing until the first full-size
+      // batch, so equal batches make the delta isolate the per-run leak.
+      await run(8000);
       const before = pageCount();
       await run(8000);
       const after = pageCount();
@@ -998,6 +1035,38 @@ describe("paused socket whose peer sends RST", () => {
     }
     expect(errors.map(e => e.code)).not.toContain("ENOEXEC");
   });
+});
+
+// On Windows the native layer does not report fatal send errors yet (the WSA
+// error translation is a follow-up), so the write error never surfaces there.
+it.skipIf(isWindows)("a write after the peer reset the connection fails with a write error", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers<NodeJS.ErrnoException>();
+  // resetAndDestroy() sends an RST (not a FIN); allowHalfOpen keeps the client's
+  // writable side open like Node, so the failure must surface from the write
+  // path (Node: errnoException(status, "write") via onWriteComplete).
+  const server = createServer(c => {
+    c.on("error", () => {});
+    c.resetAndDestroy();
+  });
+  try {
+    await new Promise<void>(r => server.listen(0, r));
+    const conn = connect({ port: (server.address() as { port: number }).port, host: "127.0.0.1", allowHalfOpen: true });
+    conn.on("error", resolve);
+    conn.on("close", () => reject(new Error("socket closed without emitting 'error'")));
+    const chunk = Buffer.alloc(16384, 97);
+    const pump = () => {
+      if (!conn.destroyed) {
+        conn.write(chunk);
+        setImmediate(pump);
+      }
+    };
+    conn.on("connect", pump);
+    const err = await promise;
+    expect(["EPIPE", "ECONNRESET", "ENOTCONN"]).toContain(err.code);
+    expect(typeof err.errno).toBe("number");
+  } finally {
+    server.close();
+  }
 });
 
 // libuv's uv__tcp_bind always sets SO_REUSEADDR on Unix, so Node can bind a

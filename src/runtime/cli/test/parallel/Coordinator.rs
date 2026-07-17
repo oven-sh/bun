@@ -130,7 +130,8 @@ impl<'a> Coordinator<'a> {
                 };
                 // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
                 unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop()).tick_with_timeout(Some(&ts));
+                    (*(*self.vm.event_loop()).usockets_loop())
+                        .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
                 }
             } else {
                 self.vm.event_loop_ref().auto_tick();

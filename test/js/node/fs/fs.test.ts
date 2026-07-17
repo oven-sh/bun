@@ -88,7 +88,10 @@ function tmpdirTestMkdir(): string {
   if (!res?.includes(now)) {
     expect(res).toInclude("fs.test.ts");
   }
-  expect(res).not.toInclude("1234");
+  // res is the first directory created (the ${now} segment). Check the last
+  // path segment rather than a "1234" substring, which can occur in Date.now().
+  expect(path.basename(res!)).not.toBe("1234");
+  expect(path.basename(res!)).not.toBe("hi");
   expect(existsSync(tempdir)).toBe(true);
   return tempdir;
 }
@@ -1809,6 +1812,117 @@ it("preadv", () => {
   expect(buffers[2]).toEqual(new Uint8Array([10, 11, 12]));
 });
 
+describe.concurrent("writev/readv with more than IOV_MAX buffers", () => {
+  // IOV_MAX is 1024 on Linux and macOS. Node's libuv loops writev in
+  // IOV_MAX-sized batches and caps readv at IOV_MAX; Bun previously passed
+  // the whole array to one syscall and got EINVAL for any count > 1024.
+  const n = 2000;
+  const makeWriteBufs = () => Array.from({ length: n }, (_, i) => Buffer.from([i & 0xff]));
+  const expectedBytes = Buffer.from(Array.from({ length: n }, (_, i) => i & 0xff));
+  // libuv caps readv at IOV_MAX on POSIX; Windows libuv reads every buffer.
+  const readvCap = isWindows ? n : 1024;
+
+  it("writevSync writes every buffer", () => {
+    using dir = tempDir("writev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      expect(writevSync(fd, makeWriteBufs())).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("writevSync with position writes every buffer", () => {
+    using dir = tempDir("pwritev-iovmax-sync", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      writeSync(fd, Buffer.from("head"), 0, 4, 0);
+      expect(writevSync(fd, makeWriteBufs(), 4)).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(file);
+    expect(out.subarray(0, 4).toString()).toBe("head");
+    expect(out.subarray(4).equals(expectedBytes)).toBe(true);
+  });
+
+  it("fs.writev (callback) writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-cb", {});
+    const file = join(String(dir), "out");
+    const fd = openSync(file, "w");
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.writev(fd, makeWriteBufs(), (err, written) => (err ? reject(err) : resolve(written)));
+      expect(await promise).toBe(n);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("FileHandle.writev writes every buffer", async () => {
+    using dir = tempDir("writev-iovmax-fh", {});
+    const file = join(String(dir), "out");
+    const fh = await _promises.open(file, "w");
+    try {
+      const { bytesWritten } = await fh.writev(makeWriteBufs());
+      expect(bytesWritten).toBe(n);
+    } finally {
+      await fh.close();
+    }
+    expect(readFileSync(file).equals(expectedBytes)).toBe(true);
+  });
+
+  it("readvSync caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("readv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("readvSync with position caps at IOV_MAX instead of failing", () => {
+    using dir = tempDir("preadv-iovmax-sync", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.concat([Buffer.from("xxx"), Buffer.alloc(n, 7)]));
+    const fd = openSync(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      expect(readvSync(fd, buffers, 3)).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
+  it("FileHandle.readv caps at IOV_MAX instead of failing", async () => {
+    using dir = tempDir("readv-iovmax-fh", {});
+    const file = join(String(dir), "in");
+    writeFileSync(file, Buffer.alloc(n, 7));
+    const fh = await _promises.open(file, "r");
+    try {
+      const buffers = Array.from({ length: n }, () => Buffer.alloc(1));
+      const { bytesRead } = await fh.readv(buffers, 0);
+      expect(bytesRead).toBe(readvCap);
+      expect(buffers[0][0]).toBe(7);
+      expect(buffers[readvCap - 1][0]).toBe(7);
+    } finally {
+      await fh.close();
+    }
+  });
+});
+
 describe("writeSync", () => {
   it("works with bigint", () => {
     const dest = join(tmpdir(), "writeSync-large-file-bigint.txt");
@@ -2972,6 +3086,41 @@ describe("createReadStream", () => {
     },
     { timeout: 100 },
   );
+
+  // https://github.com/oven-sh/bun/issues/30919
+  it("async iterator rejects with ERR_STREAM_PREMATURE_CLOSE when destroy() is called during iteration", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"));
+
+    let chunks = 0;
+    let caught: any = undefined;
+    try {
+      for await (const _ of stream) {
+        chunks++;
+        stream.destroy();
+      }
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(chunks).toBe(1);
+    expect(caught).toBeDefined();
+    expect(caught?.code).toBe("ERR_STREAM_PREMATURE_CLOSE");
+  });
+
+  // https://github.com/oven-sh/bun/pull/30920
+  it("emits 'close' and releases fd with { start: 0, autoClose: true }", async () => {
+    const stream = createReadStream(join(import.meta.dir, "readFileSync.txt"), { start: 0, autoClose: true });
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+
+    stream.on("data", () => {});
+    stream.on("error", reject);
+    stream.on("close", () => resolve());
+
+    await promise;
+    expect(stream.destroyed).toBe(true);
+    expect(stream.closed).toBe(true);
+    expect(stream.fd).toBeNull();
+  });
 });
 
 describe("fs.WriteStream", () => {

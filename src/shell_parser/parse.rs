@@ -42,14 +42,14 @@ pub enum ParseError {
     Lex,
 }
 
-impl From<ParseError> for bun_core::Error {
+impl From<ParseError> for crate::Error {
     fn from(e: ParseError) -> Self {
         match e {
-            ParseError::Unsupported => bun_core::err!("Unsupported"),
-            ParseError::Expected => bun_core::err!("Expected"),
-            ParseError::Unexpected => bun_core::err!("Unexpected"),
-            ParseError::Unknown => bun_core::err!("Unknown"),
-            ParseError::Lex => bun_core::err!("Lex"),
+            ParseError::Unsupported => crate::Error::Unsupported,
+            ParseError::Expected => crate::Error::Expected,
+            ParseError::Unexpected => crate::Error::Unexpected,
+            ParseError::Unknown => crate::Error::Unknown,
+            ParseError::Lex => crate::Error::Lex,
         }
     }
 }
@@ -961,7 +961,7 @@ pub struct ParserError<'bump> {
     pub msg: &'bump [u8],
 }
 
-type ParseResult<T> = Result<T, bun_core::Error>;
+type ParseResult<T> = crate::Result<T>;
 
 impl<'bump> Parser<'bump> {
     pub fn new(
@@ -4222,13 +4222,20 @@ pub fn escape_bun_str<const ADD_QUOTES: bool>(
         let res = escape_utf16::<ADD_QUOTES>(bunstr.utf16(), outbuf)?;
         return Ok(!res.is_invalid);
     }
-    // otherwise should be utf-8, latin-1, or ascii
-    escape_8bit::<ADD_QUOTES>(bunstr.byte_slice(), outbuf)?;
+    if bunstr.is_utf8() {
+        escape_8bit::<ADD_QUOTES, false>(bunstr.byte_slice(), outbuf)?;
+        return Ok(true);
+    }
+    // Otherwise 8-bit (Latin-1/ASCII). `outbuf` is consumed as UTF-8, so
+    // Latin-1 code units 0x80..=0xFF must be re-encoded, not copied verbatim.
+    escape_8bit::<ADD_QUOTES, true>(bunstr.byte_slice(), outbuf)?;
     Ok(true)
 }
 
-/// works for utf-8, latin-1, and ascii
-pub fn escape_8bit<const ADD_QUOTES: bool>(
+/// Escapes an 8-bit byte string into UTF-8 output. `LATIN1` selects how bytes
+/// >= 0x80 are interpreted: Latin-1 code units (re-encoded as 2-byte UTF-8) or
+/// bytes of an already-UTF-8 string (copied verbatim).
+pub fn escape_8bit<const ADD_QUOTES: bool, const LATIN1: bool>(
     str: &[u8],
     outbuf: &mut Vec<u8>,
 ) -> Result<(), bun_alloc::AllocError> {
@@ -4247,6 +4254,10 @@ pub fn escape_8bit<const ADD_QUOTES: bool>(
         }
         if c == SPECIAL_JS_CHAR {
             outbuf.extend_from_slice(&[SPECIAL_JS_CHAR, b'"', b'"']);
+            continue;
+        }
+        if LATIN1 && c >= 0x80 {
+            outbuf.extend_from_slice(&[0xC0 | (c >> 6), 0x80 | (c & 0x3F)]);
             continue;
         }
         outbuf.push(c);
@@ -4318,6 +4329,9 @@ pub fn needs_escape_bunstr(bunstr: BunString) -> bool {
 }
 
 pub fn needs_escape_utf16(str: &[u16]) -> bool {
+    if str.is_empty() {
+        return true;
+    }
     for &codeunit in str {
         if codeunit < 0xff && SPECIAL_CHARS_TABLE.is_set(codeunit as usize) {
             return true;
@@ -4329,8 +4343,12 @@ pub fn needs_escape_utf16(str: &[u16]) -> bool {
 /// Checks for the presence of any char from `SPECIAL_CHARS` in `str`. This
 /// indicates the *possibility* that the string must be escaped, so it can have
 /// false positives, but it is faster than running the shell lexer through the
-/// input string for a more correct implementation.
+/// input string for a more correct implementation. An empty string always
+/// needs escaping: quoting is the only way it becomes a shell word at all.
 pub fn needs_escape_utf8_ascii_latin1(str: &[u8]) -> bool {
+    if str.is_empty() {
+        return true;
+    }
     for &c in str {
         if SPECIAL_CHARS_TABLE.is_set(c as usize) {
             return true;

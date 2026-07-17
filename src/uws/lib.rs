@@ -358,7 +358,6 @@ pub mod ssl_wrapper {
         OutOfMemory,
         InvalidOptions,
     }
-    bun_core::named_error_set!(InitError);
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum WriteDataError {
@@ -366,7 +365,6 @@ pub mod ssl_wrapper {
         WantRead,
         WantWrite,
     }
-    bun_core::named_error_set!(WriteDataError);
 
     // SAFETY: SSLWrapper is an inline field of the owning socket; handler vtable
     // re-entry may write `flags`/`ssl` but never frees the wrapper (only
@@ -1275,7 +1273,7 @@ pub mod ssl_wrapper {
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
-pub use bun_uws_sys::{InternalLoopData, Loop, PosixLoop, Timespec, WindowsLoop};
+pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN, PosixLoop, Timespec, WindowsLoop};
 
 /// Carrier trait so `set_parent_event_loop` can accept the higher-tier
 /// `EventLoopHandle` without depending on it. The event-loop crate impls this

@@ -47,6 +47,20 @@ pub(crate) fn enobufs_error_code<'s>(
     Ok(scope.number_from_int32(-UV_E::NOBUFS))
 }
 
+/// libuv's ECANCELED code (`uv_udp_send` requests cancelled by close). Not a
+/// JS-side literal (unlike EBADF/EINVAL, ECANCELED's number differs across the
+/// POSIX platforms: Linux 125, Darwin 89, FreeBSD 85; synthetic -4081 on
+/// Windows), and NOT `process.binding("uv")` either: that binding negates the
+/// compiling host's <errno.h> value, which on Windows is the CRT's 105, not
+/// libuv's -4081. `UV_E` is the one table that is libuv-correct everywhere.
+#[bun_jsc::host_fn(scoped)]
+pub(crate) fn ecanceled_error_code<'s>(
+    scope: &mut Scope<'s>,
+    _frame: &CallFrame,
+) -> JsResult<Local<'s>> {
+    Ok(scope.number_from_int32(-UV_E::CANCELED))
+}
+
 /// `extractedSplitNewLines` for ASCII/Latin1 strings. Panics if passed a non-string.
 /// Returns `undefined` if param is utf8 or utf16 and not fully ascii.
 ///

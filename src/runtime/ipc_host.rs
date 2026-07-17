@@ -191,6 +191,25 @@ pub fn emit_handle_ipc_message<'s>(
 ) -> JsResult<Local<'s>> {
     let [target, message, handle] = callframe.scoped_arguments::<3>(scope).ptr;
     if target.is_null() {
+        // Cluster-internal replies that carried a descriptor (shared dgram
+        // sockets) are marked with cmd: "NODE_CLUSTER"; hand them straight to
+        // the cluster's internal-message dispatcher instead of emitting a
+        // process 'message' event, mirroring Node's NODE_-prefix routing.
+        if message.is_object() {
+            if let Some(cmd) = message.get(scope, "cmd")? {
+                if cmd.is_string() {
+                    let cmd_str = bun_core::OwnedString::new(cmd.to_bun_string(scope)?);
+                    if cmd_str.eql_comptime(b"NODE_CLUSTER") {
+                        crate::node::node_cluster_binding::handle_internal_message_child(
+                            scope.unscoped_global(),
+                            message.raw(),
+                            handle.raw(),
+                        )?;
+                        return Ok(scope.undefined());
+                    }
+                }
+            }
+        }
         // mutable); `get_ipc_instance` writes `self.ipc` on first call.
         let vm = scope.unscoped_global().bun_vm().as_mut();
         let Some(ipc) = vm.get_ipc_instance() else {

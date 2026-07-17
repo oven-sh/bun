@@ -338,9 +338,24 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(core::mem::ManuallyDrop::new(
-            crate::webcore::body::HiveAllocator::init(),
-        )),
+        body_value_pool: {
+            // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
+            // ~100 KB pool in a stack temporary before moving it into the box (see
+            // `HiveArray::new_boxed`). Allocate it on the heap and initialize it in
+            // place instead — only the occupancy bitset is written.
+            let pool = crate::webcore::body::HiveAllocator::new_boxed();
+            // SAFETY: `new_boxed` leaks a `Box<HiveAllocator>`; reclaim ownership of
+            // that same allocation. `ManuallyDrop` is `repr(transparent)`, so
+            // `Box<ManuallyDrop<T>>` and `Box<T>` have identical layout — the wrapper
+            // only suppresses the inner drop, which is the behavior documented on the
+            // field.
+            unsafe {
+                Box::from_raw(
+                    pool.as_ptr()
+                        .cast::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>(),
+                )
+            }
+        },
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
@@ -1337,7 +1352,11 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data);
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(
+        global,
+        data,
+        JSValue::UNDEFINED,
+    );
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —

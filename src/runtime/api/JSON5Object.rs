@@ -1,13 +1,8 @@
-use bun_ast::{E, Expr, expr::Data as ExprData};
 use bun_collections::HashMap;
-use bun_collections::VecExt;
 use bun_core::StackCheck;
-use bun_core::{OwnedString, String as BunString, ZigString};
+use bun_core::{OwnedString, String as BunString};
 use bun_js_parser::lexer;
-use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope, StringJsc,
-    wtf,
-};
+use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, Local, Scope, wtf};
 use bun_parsers::json5;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -82,7 +77,7 @@ pub fn parse<'s>(scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>
                 }
             };
 
-            expr_to_js(root, global)
+            super::expr_to_js(root, global)
         },
     )?;
     Ok(scope.local(v))
@@ -431,58 +426,5 @@ impl Stringifier {
                 }
             }
         }
-    }
-}
-
-fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // NOTE: the JSON5 parser never builds ropes, so the simple slice → JS
-    // path is sufficient.
-    if str.is_utf16 {
-        let zig = ZigString::init_utf16(str.slice16());
-        let bun_s = BunString::init(zig);
-        bun_s.to_js(global)
-    } else {
-        jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())
-    }
-}
-
-fn expr_to_js(expr: Expr, global: &JSGlobalObject) -> JsResult<JSValue> {
-    expr_to_js_with_check(expr, global, StackCheck::init())
-}
-
-fn expr_to_js_with_check(
-    expr: Expr,
-    global: &JSGlobalObject,
-    stack_check: StackCheck,
-) -> JsResult<JSValue> {
-    if !stack_check.is_safe_to_recurse() {
-        return Err(global.throw_stack_overflow());
-    }
-    match expr.data {
-        ExprData::ENull(_) => Ok(JSValue::NULL),
-        ExprData::EBoolean(boolean) => Ok(JSValue::from(boolean.value)),
-        ExprData::ENumber(number) => Ok(JSValue::js_number(number.value())),
-        ExprData::EString(str) => estring_to_js(str.get(), global),
-        ExprData::EArray(arr) => {
-            JSValue::create_array_from_iter(global, arr.slice().iter(), |item| {
-                expr_to_js_with_check(*item, global, stack_check)
-            })
-        }
-        ExprData::EObject(obj) => {
-            let js_obj = JSValue::create_empty_object(global, obj.properties.len_u32() as usize);
-            for prop in obj.properties.slice() {
-                let key_expr = prop.key.expect("infallible: prop has key");
-                let value = expr_to_js_with_check(
-                    prop.value.expect("infallible: prop has value"),
-                    global,
-                    stack_check,
-                )?;
-                let key_js = expr_to_js_with_check(key_expr, global, stack_check)?;
-                let key_str = OwnedString::new(key_js.to_bun_string(global)?);
-                js_obj.put_may_be_index(global, &key_str, value)?;
-            }
-            Ok(js_obj)
-        }
-        _ => Ok(JSValue::UNDEFINED),
     }
 }

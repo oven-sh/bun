@@ -166,7 +166,7 @@ impl Body {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: crate::vm::ConsoleFormatter,
+        F: crate::jsc_ext::ConsoleFormatter,
     {
         formatter.write_indent(writer)?;
         write!(
@@ -176,7 +176,7 @@ impl Body {
         )?;
         formatter
             .print_as::<W, ENABLE_ANSI_COLORS>(
-                jsc::FormatAs::Boolean,
+                crate::jsc_ext::FormatAs::Boolean,
                 writer,
                 JSValue::from(matches!(self.value.get(), Value::Used)),
                 jsc::JSType::BooleanObject,
@@ -212,7 +212,7 @@ impl Body {
                     formatter.write_indent(writer)?;
                     formatter
                         .print_as::<W, ENABLE_ANSI_COLORS>(
-                            jsc::FormatAs::Object,
+                            crate::jsc_ext::FormatAs::Object,
                             writer,
                             stream.value,
                             stream.value.js_type(),

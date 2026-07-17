@@ -212,6 +212,20 @@ describe("randomUUIDv7", () => {
   });
 
   // https://github.com/oven-sh/WebKit/pull/304
+  test.skipIf(!isWindows)("Date.now() is never ahead of performance.timeOrigin + performance.now()", () => {
+    // performance.timeOrigin + performance.now() is precise-clock-at-start +
+    // QPC elapsed. With Date.now() on the same precise clock, floor(t1) <= t2
+    // for t1 <= t2; before, Date.now() ran ~0.4ms ahead in ~72% of samples.
+    const origin = performance.timeOrigin;
+    let firstAhead = null;
+    for (let i = 0; i < 50_000; i++) {
+      const d = Date.now();
+      const p = origin + performance.now();
+      if (d > p && firstAhead === null) firstAhead = { i, d, p, diff: +(d - p).toFixed(3) };
+    }
+    expect(firstAhead).toBe(null);
+  });
+
   test("default timestamp is never behind Date.now()", async () => {
     // All three default to js_date_now() (== Date.now()). UUID7::init may bump
     // the embedded ts on 12-bit counter rollover (RFC 9562 §6.2), so only the

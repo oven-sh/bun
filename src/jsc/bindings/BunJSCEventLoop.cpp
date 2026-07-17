@@ -102,13 +102,10 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
     }
 }
 
-// RunLoop::dispatchAfter stores a lambda in DispatchTimer::m_function that
-// captures a Ref to the timer itself; the cycle only breaks when fired()
-// moves it out. WTFTimer__cancel calls this once it has removed the timer
-// from the wtf_timers heap (i.e. fired() is not and will never run), so the
-// m_function storage is not being executed and clearing it is safe. Remove
-// once oven-sh/WebKit makes Waiter::clearTimer (or dispatchAfter itself)
-// break the cycle; see oven-sh/bun#34456.
+// Transitional shim: delete once WEBKIT_VERSION includes oven-sh/WebKit#305,
+// where RunLoopBun's TimerBase::stop() does this via didStopWhileActive().
+// WTFTimer__cancel calls this only after wtf_disarm removed a still-ACTIVE
+// node (fired() cannot be running), so clearing m_function is safe.
 extern "C" void Bun__breakDispatchTimerCycle(WTF::RunLoop::TimerBase* timer)
 {
     if (timer->description() != "DispatchTimer"_s) [[likely]]

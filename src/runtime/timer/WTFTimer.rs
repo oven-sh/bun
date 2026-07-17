@@ -308,23 +308,30 @@ pub(crate) unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
     unsafe { WTFTimer::deinit(this) };
 }
 
+/// Returns whether the timer was still armed in the `wtf_timers` heap, i.e.
+/// `drain_due_wtf_timers` has not popped it (ACTIVE → FIRED is serialised by
+/// the heap lock), so `fired()` is not running and will not run.
+/// `RunLoopBun.cpp`'s `TimerBase::stop()` forwards this to
+/// `didStopWhileActive()` (oven-sh/WebKit#305).
+///
 /// # Safety
 /// `this` must point at a live `WTFTimer` produced by [`WTFTimer__create`].
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
+pub(crate) unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) -> bool {
     // SAFETY: per fn contract.
     let was_armed = unsafe { WTFTimer::cancel(this) };
     // `dispatchAfter` captures a self-`Ref` in `DispatchTimer::m_function` that
     // only `fired()` moves out; stopping a still-armed timer (the
-    // `Atomics.waitAsync` notify/unregister path) would orphan the cycle and
-    // leak both the timer and this box. `was_armed` proves `drain_due_wtf_timers`
-    // has not popped it (ACTIVE → FIRED is set under the same lock), so
-    // `m_function` is not executing and is safe to clear. Not on `deinit`'s
-    // path: `~TimerBase` runs after `~DispatchTimer` already destroyed it.
+    // `Atomics.waitAsync` notify/unregister path) orphans the cycle and leaks
+    // both the timer and this box. Delete this call (and the C++ helper) once
+    // WEBKIT_VERSION includes oven-sh/WebKit#305, where `TimerBase::stop()`
+    // does the same via `didStopWhileActive()`; until then the prebuilt WTF
+    // still declares this function `void` and ignores the return.
     if was_armed {
         // SAFETY: `this` is live (the caller in `TimerBase::stop()` owns it).
         unsafe { Bun__breakDispatchTimerCycle((*this).run_loop_timer) };
     }
+    was_armed
 }
 
 unsafe extern "C" {

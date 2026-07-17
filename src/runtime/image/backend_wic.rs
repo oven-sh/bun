@@ -851,7 +851,7 @@ unsafe extern "system" {
 }
 
 /// `WICConvertBitmapSource` is the one flat export from windowscodecs.dll we
-/// need. Loaded lazily (LoadLibraryA inside `loadFactory`) so the binary
+/// need. Loaded lazily (LoadLibraryExW inside `load_factory`) so the binary
 /// carries no import-table dependency on windowscodecs — nano-server / stripped
 /// containers without the WIC feature still launch and just fall back.
 type WICConvertBitmapSourceFn = unsafe extern "system" fn(
@@ -904,7 +904,7 @@ fn load_factory() {
     // SAFETY: literal NUL-terminated wide string; hFile must be null per MSDN.
     let dll = unsafe {
         windows::kernel32::LoadLibraryExW(
-            bun_core::w!("windowscodecs.dll\0").as_ptr(),
+            bun_core::wstr!("windowscodecs.dll").as_ptr(),
             core::ptr::null_mut(),
             LOAD_LIBRARY_SEARCH_SYSTEM32,
         )

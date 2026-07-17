@@ -1200,7 +1200,6 @@ class Worker extends EventEmitter {
     return internalEventLoopUtilization(this.#worker.eventLoopUtilizationInternal(), utilization1, utilization2);
   }
 
-
   terminate(callback: unknown) {
     if (typeof callback === "function") {
       process.emitWarning(

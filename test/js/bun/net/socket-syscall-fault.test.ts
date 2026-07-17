@@ -1,9 +1,10 @@
 import { socketFaultInjection as fault } from "bun:internal-for-testing";
 import { afterEach, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tls as tlsCert } from "harness";
 import { once } from "node:events";
 import http2 from "node:http2";
 import net from "node:net";
+import nodeTls from "node:tls";
 import { join } from "node:path";
 
 const skip = !fault.available() || isWindows;
@@ -221,5 +222,88 @@ describe.skipIf(skip)("h2 client under injected unclassified send errno (EPROTOT
       new Promise<void>(resolve => h.req.once("close", () => resolve())),
     ]);
     expect(h.client.closed || h.client.destroyed).toBe(true);
+  });
+});
+
+// The TLS write path routes ciphertext through us_socket_raw_write (via
+// ssl_flush_write_batch / ssl_drain_spill), which had no errno classification:
+// any send() -1 set last_write_failed and re-armed the writable poll. A
+// persistent non-EAGAIN errno (macOS content filter, a racy EPROTOTYPE that
+// never resolved, a peer-gone errno on a socket the kernel still reports
+// writable) therefore looped the writable dispatch at full speed - observed as
+// 100% CPU in us_internal_ssl_on_writable -> __sendto on idle long-lived
+// processes holding a TLS keepalive. The tests assert the two halves of the
+// fix: a peer-gone errno closes immediately, and an unclassified errno closes
+// after the bounded retry window instead of burning through the fault budget.
+describe.skipIf(skip)("TLS client under injected fatal send errno (us_socket_raw_write path)", () => {
+  afterEach(() => fault.clear());
+
+  async function tlsPair() {
+    let serverReceived = 0;
+    const server = nodeTls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, s => {
+      s.on("error", () => {});
+      s.on("data", d => (serverReceived += d.length));
+    });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const sock = nodeTls.connect({
+      port: (server.address() as net.AddressInfo).port,
+      host: "127.0.0.1",
+      rejectUnauthorized: false,
+    });
+    sock.on("error", () => {});
+    await once(sock, "secureConnect");
+    const fd = (sock as any)._handle?.fd ?? -1;
+    expect(fd).toBeGreaterThanOrEqual(0);
+
+    return {
+      sock,
+      fd,
+      serverReceived: () => serverReceived,
+      [Symbol.dispose]() {
+        fault.clear();
+        sock.destroy();
+        server.close();
+      },
+    };
+  }
+
+  test("sustained EPIPE closes the TLS socket instead of spinning the writable dispatch", async () => {
+    using pair = await tlsPair();
+    fault.set({ syscall: "send", action: "errno", errno: "EPIPE", repeat: -1, fd: pair.fd });
+
+    let errorCode: string | undefined;
+    pair.sock.on("error", (e: NodeJS.ErrnoException) => (errorCode = e.code ?? e.message));
+    // Not events.once(): that rejects on 'error', and error-before-close is
+    // the expected teardown ordering here.
+    const closed = new Promise<void>(r => pair.sock.once("close", () => r()));
+    pair.sock.write(Buffer.alloc(100, 0x78));
+
+    // On main the socket never closed: the spill path re-armed writable every
+    // tick and the test timed out. With the fix, the first writable dispatch
+    // after the spill latches fatal_send_errno and the socket closes with the
+    // send errno.
+    await closed;
+    expect({
+      closed: (pair.sock as any).destroyed,
+      errorCode,
+      serverReceived: pair.serverReceived(),
+    }).toEqual({ closed: true, errorCode: "EPIPE", serverReceived: 0 });
+  });
+
+  test("unclassified errno is retried through the bounded window then closes", async () => {
+    using pair = await tlsPair();
+    // Budget well above the retry ceiling (32) so a regression to the unbounded
+    // re-arm drains the rule and delivers the bytes instead of closing.
+    fault.set({ syscall: "send", action: "errno", errno: "EINVAL", repeat: 200, fd: pair.fd });
+    const closed = new Promise<void>(r => pair.sock.once("close", () => r()));
+    pair.sock.write(Buffer.alloc(100, 0x78));
+
+    await closed;
+    expect({
+      closed: (pair.sock as any).destroyed,
+      serverReceived: pair.serverReceived(),
+    }).toEqual({ closed: true, serverReceived: 0 });
   });
 });

@@ -411,6 +411,82 @@ static void us_internal_rearm_writable(struct us_socket_t *s) {
                    LIBUS_SOCKET_WRITABLE | (s->flags.is_paused ? 0 : LIBUS_SOCKET_READABLE));
 }
 
+#ifndef _WIN32
+/* send() errnos that mean the peer or the path to it is gone: no retry can
+ * ever succeed, so they are reported to the caller immediately (libuv fails
+ * the write request for these in uv__try_write, unix/stream.c; only the
+ * EAGAIN/ENOBUFS class waits for another writable event). Mirrored by the
+ * blanket `result < -1` fatal handling in h2_frame_parser's
+ * is_transport_fatal_write_result - classification lives here only. */
+static int us_internal_send_errno_is_peer_gone(int e) {
+    switch (e) {
+    case EPIPE:
+    case ECONNRESET:
+    case ECONNABORTED:
+    case ENOTCONN:
+    case ETIMEDOUT:
+    case ENETDOWN:
+    case ENETUNREACH:
+    case EHOSTUNREACH:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+/* One retry runs per writable dispatch (one event-loop iteration), so 32
+ * consecutive failures is far beyond any observed transient race window
+ * (the macOS EPROTOTYPE race resolves within a dispatch or two) while still
+ * surfacing a genuinely wedged transport within microseconds. */
+#define US_UNCLASSIFIED_SEND_RETRY_LIMIT 32
+
+/* Classify a -1 from bsd_send/bsd_writev/bsd_write2/bsd_sendmsg. Returns 0
+ * when the caller should treat it like backpressure (re-arm the writable poll
+ * and wait), or the errno when the transport is dead and re-arming would spin.
+ * Applied by every us_socket_*write* helper so the TLS spill path (which
+ * routes through us_socket_raw_write from ssl_drain_spill) cannot busy-loop
+ * the writable dispatch on a socket whose send() keeps failing. */
+static int us_internal_classify_send_error(struct us_socket_t *s) {
+    if (bsd_would_block() || bsd_send_is_transient_error()) {
+        return 0;
+    }
+    if (!us_internal_send_errno_is_peer_gone(errno) &&
+        s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
+        s->unclassified_send_failures++;
+        return 0;
+    }
+    return errno ? errno : EPIPE;
+}
+#endif
+
+/* Common tail for the us_socket_*write* helpers after a short write. On POSIX
+ * a -1 is routed through errno classification so a fatal errno latches
+ * fatal_send_errno (loop.c closes the socket after the writable dispatch)
+ * instead of re-arming for a retry that can never succeed. A partial write,
+ * would-block, transient exhaustion, or a still-bounded unclassified errno
+ * re-arms for a retry like before. The fatal path still re-arms once: the
+ * write may have been issued outside the writable dispatch, and loop.c's
+ * fatal_send_errno check runs there, so one more writable event is what
+ * delivers the close. It does not spin because the check precedes the retry. */
+static void us_internal_on_short_write(struct us_socket_t *s, int written) {
+#ifndef _WIN32
+    if (written < 0) {
+        int fatal = us_internal_classify_send_error(s);
+        if (fatal) {
+            s->fatal_send_errno = (unsigned char)fatal;
+            us_internal_rearm_writable(s);
+            return;
+        }
+    } else {
+        s->unclassified_send_failures = 0;
+    }
+#else
+    (void)written;
+#endif
+    s->flags.last_write_failed = 1;
+    us_internal_rearm_writable(s);
+}
+
 int us_socket_write2(struct us_socket_t *s, const char *header, int header_length, const char *payload, int payload_length) {
     if (us_socket_is_closed(s) || us_socket_is_shut_down(s)) {
         return 0;
@@ -418,7 +494,7 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
 
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
-        us_internal_rearm_writable(s);
+        us_internal_on_short_write(s, written);
     }
 
     return written < 0 ? 0 : written;
@@ -450,6 +526,7 @@ struct us_socket_t *us_socket_from_fd(struct us_socket_group_t *group, unsigned 
     s->flags.adopted = 0;
     s->flags.last_write_failed = 0;
     s->unclassified_send_failures = 0;
+    s->fatal_send_errno = 0;
     s->connect_state = NULL;
 
     /* We always use nodelay */
@@ -491,42 +568,11 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
-        s->flags.last_write_failed = 1;
-        us_internal_rearm_writable(s);
+        us_internal_on_short_write(s, written);
     }
 
     return written < 0 ? 0 : written;
 }
-
-#ifndef _WIN32
-/* send() errnos that mean the peer or the path to it is gone: no retry can
- * ever succeed, so they are reported to the caller immediately (libuv fails
- * the write request for these in uv__try_write, unix/stream.c; only the
- * EAGAIN/ENOBUFS class waits for another writable event). Mirrored by the
- * blanket `result < -1` fatal handling in h2_frame_parser's
- * is_transport_fatal_write_result - classification lives here only. */
-static int us_internal_send_errno_is_peer_gone(int e) {
-    switch (e) {
-    case EPIPE:
-    case ECONNRESET:
-    case ECONNABORTED:
-    case ENOTCONN:
-    case ETIMEDOUT:
-    case ENETDOWN:
-    case ENETUNREACH:
-    case EHOSTUNREACH:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-/* One retry runs per writable dispatch (one event-loop iteration), so 32
- * consecutive failures is far beyond any observed transient race window
- * (the macOS EPROTOTYPE race resolves within a dispatch or two) while still
- * surfacing a genuinely wedged transport within microseconds. */
-#define US_UNCLASSIFIED_SEND_RETRY_LIMIT 32
-#endif
 
 int us_socket_write_check_error(struct us_socket_t *s, const char *data, int length, int *fatal_write_error) {
     if (fatal_write_error) *fatal_write_error = 0;
@@ -612,8 +658,7 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
 
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
     if (written != (ssize_t)total) {
-        s->flags.last_write_failed = 1;
-        us_internal_rearm_writable(s);
+        us_internal_on_short_write(s, written < 0 ? -1 : 0);
     }
 
     return written < 0 ? 0 : (int)written;
@@ -631,8 +676,7 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
-        s->flags.last_write_failed = 1;
-        us_internal_rearm_writable(s);
+        us_internal_on_short_write(s, written);
     }
 
     return written < 0 ? 0 : written;
@@ -668,8 +712,7 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
     int sent = bsd_sendmsg(us_poll_fd(&s->p), &msg, 0);
 
     if (sent != length) {
-        s->flags.last_write_failed = 1;
-        us_internal_rearm_writable(s);
+        us_internal_on_short_write(s, sent);
     }
 
     return sent < 0 ? 0 : sent;

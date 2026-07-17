@@ -50,6 +50,10 @@ pub struct Expansion {
     /// Exit code of a sole-command-substitution arg — propagated to `Cmd`
     /// so `$(false)` as argv0 fails.
     pub out_exit_code: ExitCode,
+    /// Expand to a single word: suppress field splitting of command
+    /// substitutions. Set for assignment values and `[[ ]]` operands, which
+    /// are exempt from field splitting (redirect targets are still split).
+    pub single: bool,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -80,6 +84,16 @@ pub struct ExpansionOut {
     /// empty, this distinguishes `""` (push one empty arg) from `$unset`
     /// (push no arg). See [`Expansion::has_quoted_empty`].
     pub has_quoted_empty: bool,
+    /// Whether at least one word has been committed to `buf`. Drives boundary
+    /// recording instead of `buf`/`bounds` emptiness, which cannot tell "no
+    /// word yet" from "one empty word committed" (a leading empty field from
+    /// non-whitespace IFS splitting).
+    pub committed: bool,
+    /// Set when IFS field splitting yielded at least one field, so a result
+    /// that splits down to a single empty field (e.g. `$(echo ,)` with
+    /// `IFS=,`) still produces one empty argv word. Distinct from
+    /// `has_quoted_empty` so it does not affect leading-tilde handling.
+    pub has_empty_field: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -95,7 +109,7 @@ impl Expansion {
         node: *const ast::Atom,
         parent: NodeId,
         io: IO,
-        _opts: ExpansionOpts,
+        opts: ExpansionOpts,
     ) -> NodeId {
         interp.alloc_node(Node::Expansion(Expansion {
             base: Base::new(StateKind::Expansion, parent, shell),
@@ -115,6 +129,7 @@ impl Expansion {
             cmd_subst_quoted: false,
             has_quoted_empty: false,
             out_exit_code: 0,
+            single: opts.single,
         }))
     }
 
@@ -266,7 +281,12 @@ impl Expansion {
             if atom.has_glob_expansion() {
                 return Self::transition_to_glob_state(interp, this);
             }
-            Self::push_current_out(me);
+            // Flush the in-progress word. Skip an empty `current_out` once a
+            // word was already committed: a trailing IFS separator already
+            // committed the last field, so there is no final word to add.
+            if !me.current_out.is_empty() || !me.out.committed {
+                Self::push_current_out(me);
+            }
             me.state = ExpansionState::Done;
         }
         let parent = interp.as_expansion(this).base.parent;
@@ -337,13 +357,15 @@ impl Expansion {
         }
         drop(arena);
 
-        // Push each variant as its own word; word boundaries are recorded
-        // via `bounds`.
-        for s in expanded {
-            if !me.out.buf.is_empty() {
+        // Push each non-empty variant as its own word; word boundaries are
+        // recorded via `bounds`. Empty variants are dropped as unquoted null
+        // words (`{,a}` -> `a`, `{,}` -> nothing), matching bash.
+        for s in expanded.iter().filter(|s| !s.is_empty()) {
+            if me.out.committed {
                 me.out.bounds.push(me.out.buf.len() as u32);
             }
-            me.out.buf.extend_from_slice(&s);
+            me.out.buf.extend_from_slice(s);
+            me.out.committed = true;
         }
 
         let node = me.node;
@@ -533,59 +555,142 @@ impl Expansion {
     /// end-offset so the consumer's `[prev..bound]` slicing reconstructs each
     /// word and the trailing `[prev..]` slice yields the final one.
     fn push_current_out(me: &mut Expansion) {
-        if !me.out.buf.is_empty() {
+        // A boundary precedes every word after the first, so record one once a
+        // word has already been committed — even an empty one leaves `buf`
+        // empty, so `committed` (not `buf` emptiness) is the right test.
+        if me.out.committed {
             me.out.bounds.push(me.out.buf.len() as u32);
         }
         me.out.buf.append(&mut me.current_out);
+        me.out.committed = true;
         me.meta_offsets.clear();
     }
 
-    /// Newlines→spaces, trim, then split on whitespace runs into separate
-    /// argv words.
+    /// Reads the script-assigned value of `IFS`. Returns `None` when `IFS` is
+    /// unset so the caller applies the default separators. Only `shell_env` is
+    /// consulted, never `export_env`: like every POSIX shell, Bun Shell must
+    /// not let an inherited environment `IFS` (here, `process.env.IFS`) control
+    /// field splitting, and `export_env` holds the inherited process
+    /// environment. A bare `IFS=...` assignment lands in `shell_env`, so the
+    /// common idiom works. The `export IFS=...` spelling (which writes only
+    /// `export_env`) is not yet honored for splitting; distinguishing
+    /// script-exported vars from inherited ones needs a separate change.
+    fn get_ifs(shell: &ShellExecEnv) -> Option<Vec<u8>> {
+        use crate::shell::env_str::EnvStr;
+        let entry = shell.shell_env.get(EnvStr::init_slice(b"IFS"))?;
+        let bytes = entry.slice().to_vec();
+        entry.deref();
+        Some(bytes)
+    }
+
+    /// POSIX field splitting of a command-substitution result. `ifs` is the
+    /// active separator set (default `" \t\n"`). Leading/trailing IFS
+    /// whitespace is ignored, runs of IFS whitespace collapse to one
+    /// delimiter, and each non-whitespace IFS byte (with adjacent IFS
+    /// whitespace) delimits one field, so consecutive ones yield empty fields.
+    ///
+    /// Also returns whether a separator touched each edge of the input: leading
+    /// IFS whitespace (`.1`) and a trailing delimiter (`.2`). A leading
+    /// non-whitespace delimiter instead surfaces as an empty first field, so it
+    /// is not reported here. The caller uses these to break the word against an
+    /// adjacent literal (`a$(echo " b")` -> `a`, `b`).
+    fn ifs_split_fields<'a>(s: &'a [u8], ifs: &[u8]) -> (Vec<&'a [u8]>, bool, bool) {
+        let is_ifs = |b: u8| ifs.contains(&b);
+        let is_ifs_ws = |b: u8| matches!(b, b' ' | b'\t' | b'\n') && ifs.contains(&b);
+        let n = s.len();
+        let mut fields: Vec<&[u8]> = Vec::new();
+        let mut i = 0usize;
+        let ws_start = i;
+        while i < n && is_ifs_ws(s[i]) {
+            i += 1;
+        }
+        let leading_ws_sep = i > ws_start;
+        let mut trailing_sep = false;
+        while i < n {
+            let start = i;
+            while i < n && !is_ifs(s[i]) {
+                i += 1;
+            }
+            fields.push(&s[start..i]);
+            if i >= n {
+                break;
+            }
+            // Consume one delimiter: IFS whitespace, then at most one
+            // non-whitespace IFS byte, then trailing IFS whitespace.
+            while i < n && is_ifs_ws(s[i]) {
+                i += 1;
+            }
+            if i < n && is_ifs(s[i]) {
+                i += 1;
+                while i < n && is_ifs_ws(s[i]) {
+                    i += 1;
+                }
+            }
+            // A delimiter that consumed the rest of the input is a trailing
+            // separator: no further field follows it.
+            if i >= n {
+                trailing_sep = true;
+            }
+        }
+        (fields, leading_ws_sep, trailing_sep)
+    }
+
+    /// Split an unquoted command-substitution result into argv words using
+    /// POSIX field splitting driven by `IFS`.
     fn post_subshell_expansion(me: &mut Expansion, mut stdout: Vec<u8>) {
-        // Strip a single trailing newline, then convert remaining newlines
-        // to spaces.
-        if stdout.last() == Some(&b'\n') {
+        // Command substitution deletes trailing newlines before field splitting.
+        while stdout.last() == Some(&b'\n') {
             stdout.pop();
         }
-        for b in stdout.iter_mut() {
-            if *b == b'\n' {
-                *b = b' ';
-            }
-        }
-        // Trim leading/trailing whitespace.
-        let s: &[u8] = {
-            let mut lo = 0usize;
-            let mut hi = stdout.len();
-            while lo < hi && matches!(stdout[lo], b' ' | b'\n' | b'\r' | b'\t') {
-                lo += 1;
-            }
-            while hi > lo && matches!(stdout[hi - 1], b' ' | b'\n' | b'\r' | b'\t') {
-                hi -= 1;
-            }
-            &stdout[lo..hi]
-        };
-        if s.is_empty() {
+        if stdout.is_empty() {
             return;
         }
-        // Split on runs of spaces — each run is a word boundary.
-        let mut prev_ws = false;
-        let mut a = 0usize;
-        for (i, &c) in s.iter().enumerate() {
-            if prev_ws {
-                if c != b' ' {
-                    a = i;
-                    prev_ws = false;
-                }
-                continue;
-            }
-            if c == b' ' {
-                prev_ws = true;
-                me.current_out.extend_from_slice(&s[a..i]);
-                Self::push_current_out(me);
-            }
+        // Assignment values and `[[ ]]` operands expand to a single word:
+        // they are exempt from field splitting.
+        if me.single {
+            me.current_out.extend_from_slice(&stdout);
+            return;
         }
-        me.current_out.extend_from_slice(&s[a..]);
+        let ifs = Self::get_ifs(me.base.shell());
+        let ifs_bytes: &[u8] = match &ifs {
+            // `IFS=` (set to empty) disables field splitting entirely.
+            Some(v) if v.is_empty() => {
+                me.current_out.extend_from_slice(&stdout);
+                return;
+            }
+            Some(v) => v,
+            None => b" \t\n",
+        };
+        let (fields, leading_ws_sep, trailing_sep) = Self::ifs_split_fields(&stdout, ifs_bytes);
+        // Leading IFS whitespace separates a preceding literal (the prefix held
+        // in `current_out`) from the first field, so flush the prefix as its
+        // own word before appending. A leading non-whitespace delimiter needs
+        // no special handling: it surfaces as an empty first field below.
+        if leading_ws_sep && !me.current_out.is_empty() {
+            Self::push_current_out(me);
+        }
+        // Commit every field but the last as its own word; the last stays in
+        // `current_out` so following atoms can concatenate onto it (it is
+        // flushed later by `push_current_out`). `push_current_out` tracks word
+        // commits via `out.committed`, so leading empty fields are preserved.
+        let Some((last, rest)) = fields.split_last() else {
+            return;
+        };
+        // At least one field exists, so the expansion yields at least one word
+        // even if it is a single empty field (`$(echo ,)` with `IFS=,`), which
+        // leaves `buf`/`bounds` empty.
+        me.out.has_empty_field = true;
+        for field in rest {
+            me.current_out.extend_from_slice(field);
+            Self::push_current_out(me);
+        }
+        me.current_out.extend_from_slice(last);
+        // A trailing delimiter separates the last field from a following
+        // literal, so commit it now; the walk-end flush skips the now-empty
+        // `current_out` (see `next`).
+        if trailing_sep {
+            Self::push_current_out(me);
+        }
     }
 
     pub fn child_done(
@@ -694,10 +799,11 @@ impl Expansion {
             // Push each match as its own argv word. The
             // walker arena owns the strings, so they were `to_vec`'d already.
             for entry in result {
-                if !me.out.buf.is_empty() {
+                if me.out.committed {
                     me.out.bounds.push(me.out.buf.len() as u32);
                 }
                 me.out.buf.extend_from_slice(&entry);
+                me.out.committed = true;
             }
             me.state = ExpansionState::Done;
         }

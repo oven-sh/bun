@@ -1288,6 +1288,133 @@ describe("deno_task", () => {
     // TODO Sleep tests
   });
 
+  // Field splitting of an unquoted command substitution must follow $IFS.
+  // `process.argv.slice(1)` reports the exact argv the split produced.
+  describe("IFS field splitting", async () => {
+    const ARGV = "console.log(JSON.stringify(process.argv.slice(1)))";
+    const TAB = "\t";
+
+    // Custom IFS splits on its own delimiters.
+    TestBuilder.command`IFS=:; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a:b:c)`
+      .stdout(`["a","b","c"]\n`)
+      .runAsTest("colon IFS splits on colons");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a,b,c)`
+      .stdout(`["a","b","c"]\n`)
+      .runAsTest("comma IFS splits on commas");
+
+    // A non-whitespace IFS char is a hard delimiter: empty fields are kept.
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a,,b)`
+      .stdout(`["a","","b"]\n`)
+      .runAsTest("non-whitespace IFS keeps empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,a)`
+      .stdout(`["","a"]\n`)
+      .runAsTest("non-whitespace IFS keeps single leading empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,a,b)`
+      .stdout(`["","a","b"]\n`)
+      .runAsTest("non-whitespace IFS keeps leading empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,,a)`
+      .stdout(`["","","a"]\n`)
+      .runAsTest("non-whitespace IFS keeps consecutive leading empty fields");
+
+    // A result that splits down to a single empty field still yields one
+    // (empty) argv word, distinct from an unset variable which yields none.
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,)`
+      .stdout(`[""]\n`)
+      .runAsTest("non-whitespace IFS: sole delimiter yields one empty field");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ,,)`
+      .stdout(`["",""]\n`)
+      .runAsTest("non-whitespace IFS: two delimiters yield two empty fields");
+
+    // Empty IFS disables field splitting entirely.
+    TestBuilder.command`IFS=; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${"a b"})`
+      .stdout(`["a b"]\n`)
+      .runAsTest("empty IFS disables splitting");
+
+    // The default IFS includes TAB, which must split even when IFS is untouched.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${`a${TAB}b`})`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("default IFS splits on tab");
+
+    // IFS whitespace runs collapse and do not produce empty fields.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${`a${TAB}${TAB}b  c`})`
+      .stdout(`["a","b","c"]\n`)
+      .runAsTest("default IFS collapses whitespace runs");
+
+    // A separator at the edge of the substitution result breaks the word
+    // against an adjacent literal instead of gluing onto it.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} a$(echo ${" b"})`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("leading IFS whitespace splits from preceding literal");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo ${"a "})b`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("trailing IFS whitespace splits from following literal");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} a$(echo ${"  "})b`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("all-whitespace result splits adjacent literals");
+    TestBuilder.command`IFS=,; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a,)x`
+      .stdout(`["a","x"]\n`)
+      .runAsTest("trailing non-whitespace IFS splits from following literal");
+
+    // A quoted command substitution is never field-split.
+    TestBuilder.command`IFS=:; BUN_TEST_VAR=1 ${BUN} -e ${ARGV} "$(echo a:b:c)"`
+      .stdout(`["a:b:c"]\n`)
+      .runAsTest("quoted command substitution is not split");
+
+    // POSIX exempts assignment values from field splitting even with a custom
+    // IFS; the captured delimiters must survive verbatim.
+    TestBuilder.command`IFS=,; VAR=$(echo a,b,c); BUN_TEST_VAR=1 ${BUN} -e ${ARGV} "$VAR"`
+      .stdout(`["a,b,c"]\n`)
+      .runAsTest("assignment value is not field-split");
+
+    // IFS inherited from the environment (process.env) must not drive
+    // splitting; every POSIX shell ignores it. Only a script-local IFS does.
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} $(echo a/b/c)`
+      .env({ ...bunEnv, IFS: "/" })
+      .stdout(`["a/b/c"]\n`)
+      .runAsTest("IFS from environment does not split");
+
+    // A redirect target is field-split, so surrounding whitespace in the
+    // substitution result is stripped rather than baked into the filename.
+    TestBuilder.command`echo hi > $(echo ${" foo "})`
+      .ensureTempDir()
+      .fileEquals("foo", "hi\n")
+      .doesNotExist(" foo ")
+      .runAsTest("redirect target is field-split");
+
+    // A redirect target that splits into more than one field is an ambiguous
+    // redirect (bash errors), not a glued-together filename.
+    TestBuilder.command`echo hi > $(echo a b)`
+      .ensureTempDir()
+      .stderr("bun: ambiguous redirect: at `echo`\n")
+      .exitCode(1)
+      .doesNotExist("ab")
+      .runAsTest("redirect target splitting to multiple fields is ambiguous");
+    TestBuilder.command`IFS=,; echo hi > $(echo a,b)`
+      .ensureTempDir()
+      .stderr("bun: ambiguous redirect: at `echo`\n")
+      .exitCode(1)
+      .doesNotExist("ab")
+      .runAsTest("redirect target with custom IFS splitting is ambiguous");
+  });
+
+  // Brace expansion drops unquoted-null variants, matching bash:
+  // `{,a}` -> `a`, `{a,}` -> `a`, `{,}` -> nothing.
+  describe("brace empty variants", async () => {
+    const ARGV = "console.log(JSON.stringify(process.argv.slice(1)))";
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} {,a}`
+      .stdout(`["a"]\n`)
+      .runAsTest("leading empty brace variant dropped");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} {a,}`
+      .stdout(`["a"]\n`)
+      .runAsTest("trailing empty brace variant dropped");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} {a,,b}`
+      .stdout(`["a","b"]\n`)
+      .runAsTest("middle empty brace variant dropped");
+    TestBuilder.command`BUN_TEST_VAR=1 ${BUN} -e ${ARGV} a{,b}`
+      .stdout(`["a","ab"]\n`)
+      .runAsTest("non-empty brace variants with prefix preserved");
+  });
+
   describe("shell variables", async () => {
     TestBuilder.command`echo $VAR && VAR=1 && echo $VAR && ${BUN} -e ${"console.log(process.env.VAR)"}`
       .stdout("\n1\nundefined\n")

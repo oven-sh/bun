@@ -346,6 +346,16 @@ public:
 
     void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
     {
+        // Connect before swapping the queue: doConnect recursively calls this
+        // function, so connecting after the swap would dispatch messages that
+        // arrived during connectFrontend (batch B) ahead of the already-swapped
+        // earlier batch A. Connecting first means the inner call drains
+        // everything queued so far in order, and the swap below only sees
+        // strictly-newer messages.
+        if (connectIfNeeded && this->status == ConnectionStatus::Pending) {
+            this->doConnect(context);
+        }
+
         this->jsThreadMessageScheduledCount.store(0);
         WTF::Vector<WTF::String, 12> messages;
 
@@ -359,14 +369,6 @@ public:
             vm.whenIdle([&vm] {
                 protectModuleExecutablesFromClearCode(vm);
             });
-        }
-
-        // Connect before dispatching: a batch that arrives while this
-        // connection is still Pending would otherwise dispatch through the
-        // shared controller without this connection registered as a frontend,
-        // so the reply is routed to nobody.
-        if (connectIfNeeded && this->status == ConnectionStatus::Pending) {
-            this->doConnect(context);
         }
 
         auto& dispatcher = globalObject->inspectorDebuggable();

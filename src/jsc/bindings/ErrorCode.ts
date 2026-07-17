@@ -363,7 +363,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_INSPECTOR_ALREADY_CONNECTED", Error],
   ["ERR_INSPECTOR_NOT_CONNECTED", Error],
   ["ERR_INSPECTOR_NOT_WORKER", Error],
-  ["ERR_INSPECTOR_CLOSED", Error],
   ["ERR_INSPECTOR_COMMAND", Error],
 ];
 export default errors;

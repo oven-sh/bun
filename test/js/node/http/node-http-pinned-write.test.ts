@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
@@ -23,7 +23,11 @@ function sha1(buf: Uint8Array): string {
 }
 
 describe("node:http large Buffer writes are sent zero-copy", () => {
-  test("the buffer backing store is pinned while the write is pending, then released on drain", async () => {
+  // Winsock auto-tunes its send buffer on loopback and will absorb the whole
+  // payload in one nonblocking send(), so the pinned-tail state is never
+  // reached on Windows (the bytes go straight to the kernel instead). The
+  // correctness tests below still cover the write path there.
+  test.skipIf(isWindows)("the buffer backing store is pinned while the write is pending, then released on drain", async () => {
     const payload = makePayload(CHUNK_SIZE);
     const expectedHash = sha1(payload);
 

@@ -1305,9 +1305,7 @@ walkDone:;
     // all content; the `lastClusterCol` arm catches the case where only
     // zero-width clusters (tab/LF/ZWSP) reached the original start.
     if (ellipsisWidth > 0 && (!include || (!needStartEllipsis && !needEndEllipsis))
-        && (sawCutEnd || (cutStartForEllipsis
-                && (position > startBeforeBudget
-                    || (!include && hasPrev && lastClusterCol >= startBeforeBudget)))))
+        && (sawCutEnd || (cutStartForEllipsis && (position > startBeforeBudget || (!include && hasPrev && lastClusterCol >= startBeforeBudget)))))
         return ellipsis.toString();
 
     if (!include) return emptyString();

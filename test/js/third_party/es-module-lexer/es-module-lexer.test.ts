@@ -16,8 +16,8 @@ const expected = {
   exports: [{ s: 36, e: 37, ls: 36, le: 37, n: "c", ln: "c" }],
 };
 
-// Bound each child so a hung `await init` doesn't burn the whole test timeout
-// (10 * 8s fits inside the CI per-test bound).
+// Bound each child so a post-process.exit() stall doesn't burn the whole test
+// timeout (10 * 8s fits inside the CI per-test bound).
 const perChildTimeoutMs = 8_000;
 
 function splitStderr(stderr: string) {

@@ -306,4 +306,29 @@ describe.skipIf(skip)("TLS client under injected fatal send errno (us_socket_raw
       serverReceived: pair.serverReceived(),
     }).toEqual({ closed: true, serverReceived: 0 });
   });
+
+  test("sporadic unclassified errnos that recover do not accumulate into a lifetime close", async () => {
+    using pair = await tlsPair();
+    // 50 rounds of [one EPROTOTYPE, then a real send that drains the spill].
+    // A successful send must reset unclassified_send_failures, so the counter
+    // never reaches the 32-cap and the socket stays open throughout. If the
+    // reset is missing, round 33's errno latches fatal_send_errno and the
+    // socket closes with EPROTOTYPE instead.
+    let sawClose = false;
+    pair.sock.on("close", () => (sawClose = true));
+    for (let i = 0; i < 50; i++) {
+      fault.set({ syscall: "send", action: "errno", errno: "EPROTOTYPE", repeat: 1, fd: pair.fd });
+      pair.sock.write(Buffer.alloc(8, 0x61 + (i % 26)));
+      // wait until the server has received this round's bytes (spill drained
+      // after the one-off errno), so each round is: errno -> full success.
+      while (pair.serverReceived() < 8 * (i + 1) && !sawClose) {
+        await new Promise(r => setImmediate(r));
+      }
+      if (sawClose) break;
+    }
+    expect({ sawClose, serverReceived: pair.serverReceived() }).toEqual({
+      sawClose: false,
+      serverReceived: 400,
+    });
+  });
 });

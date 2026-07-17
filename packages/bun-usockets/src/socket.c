@@ -495,6 +495,8 @@ int us_socket_write2(struct us_socket_t *s, const char *header, int header_lengt
     int written = bsd_write2(us_poll_fd(&s->p), header, header_length, payload, payload_length);
     if (written != header_length + payload_length) {
         us_internal_on_short_write(s, written);
+    } else {
+        s->unclassified_send_failures = 0;
     }
 
     return written < 0 ? 0 : written;
@@ -569,6 +571,8 @@ int us_socket_write(struct us_socket_t *s, const char *data, int length) {
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
         us_internal_on_short_write(s, written);
+    } else {
+        s->unclassified_send_failures = 0;
     }
 
     return written < 0 ? 0 : written;
@@ -586,6 +590,17 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
 
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written < 0) {
+#ifndef _WIN32
+        int fatal = us_internal_classify_send_error(s);
+        if (!fatal) {
+            s->flags.last_write_failed = 1;
+            us_internal_rearm_writable(s);
+            return 0;
+        }
+        /* Fatal send error: report the errno to callers that opt in and stop
+         * polling writable - retrying can never succeed. */
+        if (fatal_write_error) *fatal_write_error = fatal;
+#else
         /* bsd_send already retries EINTR; bsd_would_block() reads errno on
          * POSIX and WSAGetLastError() on Windows. ENOBUFS/ENOMEM are
          * transient kernel resource exhaustion on a healthy connection -
@@ -596,33 +611,6 @@ int us_socket_write_check_error(struct us_socket_t *s, const char *data, int len
             us_internal_rearm_writable(s);
             return 0;
         }
-#ifndef _WIN32
-        /* Anything else that is not a known peer-gone errno gets a BOUNDED
-         * retry through the same rearm/writable machinery as would-block.
-         * Kernels return racy, non-terminal errnos from send() on sockets
-         * that are still perfectly usable - macOS EPROTOTYPE while the
-         * connection is concurrently mutating is the canonical case, and
-         * libuv retries it (RETRY_ON_WRITE_ERROR,
-         * https://github.com/libuv/libuv/blob/v1.x/src/unix/stream.c) -
-         * so failing the write on first sight killed live connections.
-         * But the retry must not be unbounded: an errno that persists across
-         * many consecutive writable dispatches with no successful send in
-         * between means the transport is dead in a way the kernel will not
-         * name on the write side, and silently re-arming forever jams the
-         * connection (buffered bytes never drain and no error ever
-         * surfaces). After the limit, report the errno like the peer-gone
-         * class so the caller can fail the write. */
-        if (!us_internal_send_errno_is_peer_gone(errno) &&
-            s->unclassified_send_failures < US_UNCLASSIFIED_SEND_RETRY_LIMIT) {
-            s->unclassified_send_failures++;
-            s->flags.last_write_failed = 1;
-            us_internal_rearm_writable(s);
-            return 0;
-        }
-        /* Fatal send error: report the errno to callers that opt in and stop
-         * polling writable - retrying can never succeed. */
-        if (fatal_write_error) *fatal_write_error = errno;
-#else
         /* Windows: report the raw (positive) WSA code. The JS layer already
          * traffics in raw negative WSA values on this platform (see
          * SocketEmitEndNT / failWrite, which shape unnameable ones as
@@ -659,6 +647,8 @@ int us_socket_raw_writev(struct us_socket_t *s, const struct us_iovec_t *iov, in
     ssize_t written = bsd_writev(us_poll_fd(&s->p), iov, count);
     if (written != (ssize_t)total) {
         us_internal_on_short_write(s, written < 0 ? -1 : 0);
+    } else {
+        s->unclassified_send_failures = 0;
     }
 
     return written < 0 ? 0 : (int)written;
@@ -677,6 +667,8 @@ int us_socket_raw_write(struct us_socket_t *s, const char *data, int length) {
     int written = bsd_send(us_poll_fd(&s->p), data, length);
     if (written != length) {
         us_internal_on_short_write(s, written);
+    } else {
+        s->unclassified_send_failures = 0;
     }
 
     return written < 0 ? 0 : written;
@@ -713,6 +705,8 @@ int us_socket_ipc_write_fd(struct us_socket_t *s, const char *data, int length, 
 
     if (sent != length) {
         us_internal_on_short_write(s, sent);
+    } else {
+        s->unclassified_send_failures = 0;
     }
 
     return sent < 0 ? 0 : sent;

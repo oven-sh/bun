@@ -702,11 +702,11 @@ where
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
                 );
             } else if !value.is_empty() && !global_this.has_exception() {
-                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+                let mut formatter = crate::vm::ConsoleObject::Formatter::new(global_this);
                 formatter.quote_strings = true;
                 bun_core::err_generic!(
                     "Expected a Response object, but received '{}'",
-                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
+                    crate::vm::console_object::formatter::ZigFormatter::new(&mut formatter, value),
                 );
                 // `formatter` drops here.
             } else {
@@ -715,7 +715,7 @@ where
 
             Output::flush();
             if !global_this.has_exception() {
-                jsc::ConsoleObject::write_trace(writer, global_this);
+                crate::vm::ConsoleObject::write_trace(writer, global_this);
             }
             Output::flush();
         }

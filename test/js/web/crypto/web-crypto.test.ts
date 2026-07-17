@@ -682,14 +682,9 @@ describe("crypto.getRandomValues argument types", () => {
 });
 
 describe("exception scope discipline", () => {
-  // Every SubtleCrypto method must RETURN_IF_EXCEPTION right after the throw-scoped
-  // normalizeCryptoAlgorithmParameters call. On a debug build with
-  // BUN_JSC_validateExceptionChecks=1, JSC aborts the process on the first unchecked
-  // scope, so the fixture (every operation, success and failure) only produces the full
-  // transcript when every call site in SubtleCrypto.cpp is disciplined. Two of the cases
-  // also fail without the option: wrapKey's throwing-getter case trips a release-invisible
-  // ASSERT on debug builds, and the throwing Object.prototype.toJSON case leaves
-  // wrapKey("jwk")'s promise unsettled forever on release builds.
+  // BUN_JSC_validateExceptionChecks=1 aborts on the first unchecked throw scope, so the
+  // fixture (every SubtleCrypto op, success and normalize-failure) only produces the full
+  // transcript when every call site is disciplined. Two cases also fail without the option.
   it("every subtle.* path survives BUN_JSC_validateExceptionChecks", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), import.meta.resolveSync("./exception-scope-fixture.ts")],

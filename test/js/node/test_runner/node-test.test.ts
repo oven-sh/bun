@@ -194,6 +194,47 @@ describe("node:test", () => {
     });
   });
 
+  test("should treat a failing expectFailure test as a pass", async () => {
+    const { exitCode, stderr } = await runTests(["25-expect-failure.js"]);
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
+  test("should fail an expectFailure test that passes", async () => {
+    const { exitCode, stderr } = await runTests(["27-expect-failure-but-passes.js"]);
+    expect(stderr).toContain("test was expected to fail but passed");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should inherit expectFailure into subtests", async () => {
+    // Matches node v26.3.0: the subtest inherits the expectation and passes, so
+    // the parent is the one that fails for not failing.
+    const { exitCode, stderr } = await runTests(["28-expect-failure-inherited.js"]);
+    expect(stderr).toContain("test was expected to fail but passed");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("1 fail"),
+    });
+  });
+
+  test("should not run a skipped suite's callback", async () => {
+    const { exitCode, stdout, stderr } = await runTests(["26-skipped-suite-body.js"]);
+    expect(stdout).not.toContain("SKIPPED SUITE BODY RAN");
+    // { skip: true, todo: true } is a skip in Node, so this body is skipped too.
+    expect(stdout).not.toContain("SKIP+TODO SUITE BODY RAN");
+    // A todo suite's callback does run.
+    expect(stdout).toContain("TODO SUITE BODY RAN");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 0,
+      stderr: expect.stringContaining("0 fail"),
+    });
+  });
+
   test("should reset the module-level mock tracker between --rerun-each iterations", async () => {
     // ESM entry: --rerun-each currently only re-evaluates ESM entry files.
     const { exitCode, stderr } = await runTests(["17-rerun-mock-reset.mjs"], {}, ["--rerun-each=3"]);

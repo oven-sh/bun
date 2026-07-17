@@ -1,5 +1,5 @@
 [toolchain]
-channel = "nightly-2026-05-06"
+channel = "nightly-2026-07-15"
 # rust-src is needed for -Zbuild-std (Tier 3 targets like
 # aarch64-unknown-freebsd have no prebuilt std). miri is for
 # `bun run rust:miri`. targets ensures the

@@ -1214,9 +1214,8 @@ impl ValkeyClient {
         // `self.write_buffer` directly (disjoint field) via `WriteBufWriter`.
         let hello_write_result = {
             let mut hello_args_buf: [&[u8]; 4] = [b"3", b"AUTH", b"", b""];
-            let hello_args: &[&[u8]];
 
-            if !self.username.is_empty() || !self.password.is_empty() {
+            let hello_args: &[&[u8]] = if !self.username.is_empty() || !self.password.is_empty() {
                 hello_args_buf[0] = b"3";
                 hello_args_buf[1] = b"AUTH";
 
@@ -1228,10 +1227,10 @@ impl ValkeyClient {
                     hello_args_buf[3] = &self.password;
                 }
 
-                hello_args = &hello_args_buf[0..4];
+                &hello_args_buf[0..4]
             } else {
-                hello_args = &hello_args_buf[0..1];
-            }
+                &hello_args_buf[0..1]
+            };
 
             // Format and send the HELLO command without adding to command queue
             // We'll handle this response specially in handleResponse

@@ -7923,14 +7923,13 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     // hoisted out of the `minify_identifiers` arm so the
     // `&'r mut MinifyRenamer` borrow stored in `renamer` outlives the branch.
     let mut minify_renamer;
-    let renamer: rename::Renamer<'_, '_>;
     // `Scope` isn't `Copy` here and the only
     // consumer (`compute_reserved_names_for_scope`) walks `members`/`generated`/
     // `children` — never `parent` — so we re-point at the in-place
     // `tree.module_scope` instead (lives for `'a`).
     let module_scope = &tree.module_scope;
     let stable_source_indices = [source.index.0];
-    if opts.minify_identifiers {
+    let renamer: rename::Renamer<'_, '_> = if opts.minify_identifiers {
         let mut reserved_names = rename::compute_initial_reserved_names(opts.module_type)?;
         for child in module_scope.children.slice() {
             // `StoreRef<Scope>` has safe `DerefMut`; copy the handle to a mut
@@ -8008,11 +8007,11 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
         let minifier = tree.char_freq.as_ref().unwrap().compile();
         minify_renamer.assign_names_by_frequency(&minifier)?;
 
-        renamer = rename::Renamer::MinifyRenamer(&mut *minify_renamer);
+        rename::Renamer::MinifyRenamer(&mut *minify_renamer)
     } else {
         no_op_renamer = rename::NoOpRenamer::init(symbols, source);
-        renamer = no_op_renamer.to_renamer();
-    }
+        no_op_renamer.to_renamer()
+    };
 
     // defer: if minify_identifiers { renamer.deinit() } — Drop handles.
 

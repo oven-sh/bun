@@ -161,7 +161,7 @@ impl Version {
             tag: IntegrityTag::SHA256,
             ..Default::default()
         };
-        for (i, pair) in buf[PREFIX.len()..].chunks_exact(2).enumerate() {
+        for (i, pair) in buf[PREFIX.len()..].as_chunks::<2>().0.iter().enumerate() {
             match bun_fmt::hex_pair_value(pair[0], pair[1]) {
                 Some(byte) => digest.value[i] = byte,
                 None => return Integrity::default(),

@@ -297,8 +297,10 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
 
   const rustup = findRustup(cfg);
   if (rustup !== undefined && cfg.rustToolchain !== undefined) {
+    // `-q` + `--no-self-update` silence the five `info:` lines rustup prints
+    // on every no-op reinstall; warnings/errors still show.
     const chain =
-      `${stream} --console $env ${q(rustup)} toolchain install ${cfg.rustToolchain} --force --component rust-src $rust_target_arg && ` +
+      `${stream} --console $env ${q(rustup)} -q toolchain install ${cfg.rustToolchain} --force --no-self-update --component rust-src $rust_target_arg && ` +
       `${stream} --console --cwd=$cwd $env ${q(cfg.cargo)} build $args`;
     n.rule("rust_build_cross", {
       command: hostWin ? `cmd /c "${chain}"` : chain,

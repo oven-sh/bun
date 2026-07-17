@@ -1788,8 +1788,7 @@ pub struct RuntimeHooks {
     /// `transform_options.allow_addons` so the override semantics
     /// ("override the existing even if it was set") match, and applies
     /// `cpu_prof` to the worker VM.
-    pub parse_worker_exec_argv:
-        unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
+    pub parse_worker_exec_argv: unsafe fn(exec_argv: &[bun_core::WTFStringImpl]) -> WorkerExecArgv,
     /// `CronJob.clearAllForVM(vm, .teardown)`. `CronJob` lives in
     /// `bun_runtime::api::cron`.
     pub cron_clear_all_teardown: fn(vm: &mut VirtualMachine),

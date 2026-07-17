@@ -54,7 +54,9 @@ pub fn publish_inherited_config(config: CPUProfilerConfig) {
 
 /// The config a newly-started worker VM should profile with, if any.
 pub fn inherited_config_for_worker(thread_id: u32) -> Option<CPUProfilerConfig> {
-    INHERITED_CONFIG.get().map(|c| CPUProfilerConfig { thread_id, ..*c })
+    INHERITED_CONFIG
+        .get()
+        .map(|c| CPUProfilerConfig { thread_id, ..*c })
 }
 
 // C++ function declarations
@@ -241,7 +243,11 @@ fn generate_default_filename(
     if thread_id == 0 {
         write!(cursor, "CPU.{}.{}{}", epoch_microseconds, pid, extension)
     } else {
-        write!(cursor, "CPU.{}.{}.{}{}", epoch_microseconds, pid, thread_id, extension)
+        write!(
+            cursor,
+            "CPU.{}.{}.{}{}",
+            epoch_microseconds, pid, thread_id, extension
+        )
     }
     .map_err(|_| ProfilerError::FilenameTooLong)?;
     let len = usize::try_from(cursor.position()).expect("int cast");

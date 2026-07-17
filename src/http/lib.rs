@@ -270,7 +270,7 @@ pub fn set_max_http_header_size(v: usize) {
 /// `--insecure-http-parser`: the process-wide default for node:http's
 /// `insecureHTTPParser` option. Set once during single-threaded CLI parsing;
 /// read from JS when node:http builds its parser leniency flags.
-pub static INSECURE_HTTP_PARSER: AtomicBool = AtomicBool::new(false);
+static INSECURE_HTTP_PARSER: AtomicBool = AtomicBool::new(false);
 
 /// Safe accessor for `INSECURE_HTTP_PARSER`.
 #[inline]

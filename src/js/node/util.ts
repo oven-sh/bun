@@ -3,7 +3,13 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
-const { validateString, validateOneOf, validateBoolean, validateObject, validateInteger } = require("internal/validators");
+const {
+  validateString,
+  validateOneOf,
+  validateBoolean,
+  validateObject,
+  validateInteger,
+} = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 const { isNodeStream, isReadableStream, isWritableStream } = require("internal/streams/utils");

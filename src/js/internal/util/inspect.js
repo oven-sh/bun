@@ -957,7 +957,7 @@ function strEscape(str) {
 }
 
 function highlightRegExp(regexpString) {
-  let out = '';
+  let out = "";
   let i = 0;
   let depth = 0;
   let inClass = false;
@@ -967,9 +967,7 @@ function highlightRegExp(regexpString) {
   // let groupType = 0;
 
   // Verify palette and update cache if user changed colors
-  const paletteNames = highlightRegExp.colors?.length > 0 ?
-    highlightRegExp.colors :
-    highlightRegExpColors;
+  const paletteNames = highlightRegExp.colors?.length > 0 ? highlightRegExp.colors : highlightRegExpColors;
 
   const palette = [];
   for (const name of paletteNames) {
@@ -978,7 +976,7 @@ function highlightRegExp(regexpString) {
   }
 
   function writeGroup(start, end, decreaseDepth = 1) {
-    let seq = '';
+    let seq = "";
     i++;
     // Only checking for the closing delimiter is a fast heuristic for regular
     // expressions without the u or v flag. A safer check would verify that the
@@ -1015,7 +1013,7 @@ function highlightRegExp(regexpString) {
   }
 
   // Opening '/'
-  write('/');
+  write("/");
   depth++;
   i = 1;
 
@@ -1024,158 +1022,162 @@ function highlightRegExp(regexpString) {
     const ch = regexpString[i];
 
     if (inClass) {
-      if (ch === '\\') {
-        let seq = '\\';
+      if (ch === "\\") {
+        let seq = "\\";
         i++;
         if (i < regexpString.length) {
           seq += regexpString[i++];
           const next = seq[1];
-          if (next === 'u' && regexpString[i] === '{') {
-            writeGroup(`${seq}{`, '}', 0);
+          if (next === "u" && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
             continue;
-          } else if ((next === 'p' || next === 'P') && regexpString[i] === '{') {
-            writeGroup(`${seq}{`, '}', 0);
+          } else if ((next === "p" || next === "P") && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
             continue;
-          } else if (seq[1] === 'x') {
+          } else if (seq[1] === "x") {
             seq += regexpString.slice(i, i + 2);
             i += 2;
           }
         }
         write(seq);
-      } else if (ch === ']') {
+      } else if (ch === "]") {
         depth--;
-        write(']');
+        write("]");
         i++;
         inClass = false;
-      } else if (ch === '-' && regexpString[i - 1] !== '[' &&
-                 i + 1 < regexpString.length && regexpString[i + 1] !== ']') {
-        writeDepth('-', 1, 1);
+      } else if (
+        ch === "-" &&
+        regexpString[i - 1] !== "[" &&
+        i + 1 < regexpString.length &&
+        regexpString[i + 1] !== "]"
+      ) {
+        writeDepth("-", 1, 1);
       } else {
         write(ch);
         i++;
       }
-    } else if (ch === '[') {
+    } else if (ch === "[") {
       // Enter class
-      write('[');
+      write("[");
       depth++;
       i++;
       inClass = true;
-    } else if (ch === '(') {
-      write('(');
+    } else if (ch === "(") {
+      write("(");
       depth++;
       i++;
-      if (i < regexpString.length && regexpString[i] === '?') {
+      if (i < regexpString.length && regexpString[i] === "?") {
         // Assertions and named groups
         i++;
-        const a = i < regexpString.length ? regexpString[i] : '';
-        if (a === ':' || a === '=' || a === '!') {
+        const a = i < regexpString.length ? regexpString[i] : "";
+        if (a === ":" || a === "=" || a === "!") {
           writeDepth(`?${a}`, -1, 1);
         } else {
-          const b = i + 1 < regexpString.length ? regexpString[i + 1] : '';
-          if (a === '<' && (b === '=' || b === '!')) {
+          const b = i + 1 < regexpString.length ? regexpString[i + 1] : "";
+          if (a === "<" && (b === "=" || b === "!")) {
             writeDepth(`?<${b}`, -1, 2);
-          } else if (a === '<') {
+          } else if (a === "<") {
             // Named capture: write '?<name>' as a single colored token
             i++; // consume '<'
             const start = i;
-            while (i < regexpString.length && regexpString[i] !== '>') {
+            while (i < regexpString.length && regexpString[i] !== ">") {
               i++;
             }
             const name = regexpString.slice(start, i);
-            if (i < regexpString.length && regexpString[i] === '>') {
+            if (i < regexpString.length && regexpString[i] === ">") {
               depth--;
-              write('?<');
+              write("?<");
               writeDepth(name, 1, 0);
-              write('>');
+              write(">");
               depth++;
               i++;
             } else {
-              writeDepth('?<', -1, 0);
+              writeDepth("?<", -1, 0);
               write(name);
             }
           } else {
-            write('?');
+            write("?");
           }
         }
       }
-    } else if (ch === ')') {
+    } else if (ch === ")") {
       depth--;
-      write(')');
+      write(")");
       i++;
-    } else if (ch === '\\') {
-      let seq = '\\';
+    } else if (ch === "\\") {
+      let seq = "\\";
       i++;
       if (i < regexpString.length) {
         seq += regexpString[i++];
         const next = seq[1];
         if (i < regexpString.length) {
-          if (next === 'u' && regexpString[i] === '{') {
-            writeGroup(`${seq}{`, '}', 0);
+          if (next === "u" && regexpString[i] === "{") {
+            writeGroup(`${seq}{`, "}", 0);
             continue;
-          } else if (next === 'x') {
+          } else if (next === "x") {
             seq += regexpString.slice(i, i + 2);
             i += 2;
-          } else if (next >= '0' && next <= '9') {
-            while (i < regexpString.length && regexpString[i] >= '0' && regexpString[i] <= '9') {
+          } else if (next >= "0" && next <= "9") {
+            while (i < regexpString.length && regexpString[i] >= "0" && regexpString[i] <= "9") {
               seq += regexpString[i++];
             }
-          } else if (next === 'k' && regexpString[i] === '<') {
-            writeGroup(`${seq}<`, '>');
+          } else if (next === "k" && regexpString[i] === "<") {
+            writeGroup(`${seq}<`, ">");
             continue;
-          } else if ((next === 'p' || next === 'P') && regexpString[i] === '{') {
+          } else if ((next === "p" || next === "P") && regexpString[i] === "{") {
             // Unicode properties
-            writeGroup(`${seq}{`, '}', 0);
+            writeGroup(`${seq}{`, "}", 0);
             continue;
           }
         }
       }
       writeDepth(seq, 1, 0);
-    } else if (ch === '|' || ch === '+' || ch === '*' || ch === '?' || ch === ',' || ch === '^' || ch === '$') {
+    } else if (ch === "|" || ch === "+" || ch === "*" || ch === "?" || ch === "," || ch === "^" || ch === "$") {
       writeDepth(ch, 3, 1);
-    } else if (ch === '{') {
+    } else if (ch === "{") {
       i++;
-      let digits = '';
-      while (i < regexpString.length && regexpString[i] >= '0' && regexpString[i] <= '9') {
+      let digits = "";
+      while (i < regexpString.length && regexpString[i] >= "0" && regexpString[i] <= "9") {
         digits += regexpString[i++];
       }
       if (digits) {
-        write('{');
+        write("{");
         depth++;
         writeDepth(digits, 1, 0);
       }
       if (i < regexpString.length) {
-        if (regexpString[i] === ',') {
+        if (regexpString[i] === ",") {
           if (!digits) {
-            write('{');
+            write("{");
             depth++;
           }
-          write(',');
+          write(",");
           i++;
         } else if (!digits) {
           depth += 1;
-          write('{');
+          write("{");
           depth -= 1;
           continue;
         }
       }
-      let digits2 = '';
-      while (i < regexpString.length && regexpString[i] >= '0' && regexpString[i] <= '9') {
+      let digits2 = "";
+      while (i < regexpString.length && regexpString[i] >= "0" && regexpString[i] <= "9") {
         digits2 += regexpString[i++];
       }
       if (digits2) {
         writeDepth(digits2, 1, 0);
       }
-      if (i < regexpString.length && regexpString[i] === '}') {
+      if (i < regexpString.length && regexpString[i] === "}") {
         depth--;
-        write('}');
+        write("}");
         i++;
       }
-      if (i < regexpString.length && regexpString[i] === '?') {
-        writeDepth('?', 3, 1);
+      if (i < regexpString.length && regexpString[i] === "?") {
+        writeDepth("?", 3, 1);
       }
-    } else if (ch === '.') {
+    } else if (ch === ".") {
       writeDepth(ch, 2, 1);
-    } else if (ch === '/') {
+    } else if (ch === "/") {
       // Stop at closing delimiter (unescaped, outside of character class)
       break;
     } else {
@@ -1184,7 +1186,7 @@ function highlightRegExp(regexpString) {
   }
 
   // Closing delimiter and flags
-  writeDepth('/', -1, 1);
+  writeDepth("/", -1, 1);
   if (i < regexpString.length) {
     write(regexpString.slice(i));
   }

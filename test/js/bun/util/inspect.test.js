@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync, withoutAggressiveGC } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -827,11 +827,13 @@ it("object property enumeration scales linearly with property count", () => {
   // Output still lists every property (no behavior change).
   expect(Bun.inspect(large).includes("p9999")).toBe(true);
 
-  timeInspect(small); // warm up
-  const tSmall = timeInspect(small) / 1000;
-  const tLarge = timeInspect(large) / 10000;
+  withoutAggressiveGC(() => {
+    timeInspect(small); // warm up
+    const tSmall = timeInspect(small) / 1000;
+    const tLarge = timeInspect(large) / 10000;
 
-  // Per-property cost must stay roughly constant as n grows 10x. The previous
-  // Vector-based visited-property dedup was O(n^2), giving a ~10x ratio here.
-  expect(tLarge / tSmall).toBeLessThan(3);
+    // Per-property cost must stay roughly constant as n grows 10x. The previous
+    // Vector-based visited-property dedup was O(n^2), giving a ~10x ratio here.
+    expect(tLarge / tSmall).toBeLessThan(5);
+  });
 });

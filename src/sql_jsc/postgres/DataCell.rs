@@ -1015,6 +1015,10 @@ fn parse_binary_numeric<'a>(
         dscale
     );
 
+    if ndigits < 0 {
+        return Err(crate::Error::InvalidBuffer);
+    }
+
     // Handle special cases
     match sign {
         0xC000 => return Ok(PGNummericString::Static(b"NaN")),
@@ -1026,9 +1030,6 @@ fn parse_binary_numeric<'a>(
 
     if ndigits == 0 {
         return Ok(PGNummericString::Static(b"0"));
-    }
-    if ndigits < 0 {
-        return Err(crate::Error::InvalidBuffer);
     }
 
     // Add negative sign if needed

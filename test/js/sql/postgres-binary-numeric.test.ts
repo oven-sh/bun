@@ -126,11 +126,15 @@ describe("binary NUMERIC with a zero first digit group (non-normalised, wire-val
     expect(await decodeNumeric(col)).toBe(want);
   });
 
-  test("negative ndigits is rejected", async () => {
-    // Postgres numeric_recv rejects this ("invalid length in external numeric").
+  // Postgres numeric_recv reads ndigits as uint16 and always reads that many
+  // digit words, so 0xFFFF fails the buffer read regardless of sign.
+  test.each([
+    { sign: 0x0000, label: "positive" },
+    { sign: 0xc000, label: "NaN" },
+  ])("negative ndigits is rejected (sign=$label)", async ({ sign }) => {
     let err: any;
     try {
-      await decodeNumeric(numericCell(-1, 0, 0x0000, 0, []));
+      await decodeNumeric(numericCell(-1, 0, sign, 0, []));
     } catch (e) {
       err = e;
     }
@@ -138,5 +142,9 @@ describe("binary NUMERIC with a zero first digit group (non-normalised, wire-val
       code: "ERR_POSTGRES_UNSUPPORTED_NUMERIC_FORMAT",
       name: "PostgresError",
     });
+  });
+
+  test("well-formed NaN (ndigits=0, sign=0xC000) still decodes", async () => {
+    expect(await decodeNumeric(numericCell(0, 0, 0xc000, 0, []))).toBe("NaN");
   });
 });

@@ -12,8 +12,6 @@ const {
 } = require("internal/validators");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
-const { isNodeStream, isReadableStream, isWritableStream } = require("internal/streams/utils");
-const utilColors = require("internal/util/colors");
 
 const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
 const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
@@ -238,6 +236,8 @@ const hexColorRegExp = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
 let styleCache;
 let hexStyleCache;
+let lazyStreamUtils;
+let lazyUtilColors;
 
 function getHexStyleCache() {
   hexStyleCache ??= new SafeMap();
@@ -352,10 +352,13 @@ function styleText(format, text, options) {
   let skipColorize;
   if (validateStream) {
     const stream = options?.stream ?? process.stdout;
+    lazyStreamUtils ??= require("internal/streams/utils");
+    const { isNodeStream, isReadableStream, isWritableStream } = lazyStreamUtils;
     if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
       throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
-    skipColorize = !utilColors.shouldColorize(stream);
+    lazyUtilColors ??= require("internal/util/colors");
+    skipColorize = !lazyUtilColors.shouldColorize(stream);
   }
 
   const formatArray = $isJSArray(format) ? format : [format];

@@ -2421,16 +2421,6 @@ function formatTypedArray(value, length, ctx, ignored, recurseTimes) {
   if (remaining > 0) {
     output[maxLength] = remainingText(remaining);
   }
-  if (ctx.showHidden) {
-    // .buffer goes last, it's not a primitive like the others.
-    // All besides `BYTES_PER_ELEMENT` are actually getters.
-    ctx.indentationLvl += 2;
-    for (const key of ["BYTES_PER_ELEMENT", "length", "byteLength", "byteOffset", "buffer"]) {
-      const str = formatValue(ctx, value[key], recurseTimes, true);
-      ArrayPrototypePush.$call(output, `[${key}]: ${str}`);
-    }
-    ctx.indentationLvl -= 2;
-  }
   return output;
 }
 

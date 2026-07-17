@@ -269,7 +269,6 @@ const cases: Case[] = [
     b: () => Object.defineProperty({}, sym, { value: 1, enumerable: false }),
     strict: false,
     loose: true,
-    looseBug: "reports not equal",
   },
   {
     name: "typed arrays differing only in a symbol property",

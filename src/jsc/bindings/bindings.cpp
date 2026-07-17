@@ -912,14 +912,19 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
                     count++;
 
                     JSValue left = o1->getDirect(entry.offset());
-                    // Only an enumerable property on o2 can match an enumerable property on o1.
-                    // getDirect() alone would also find a non-enumerable one, which the reverse
-                    // loop below skips, so the two objects would compare equal.
-                    unsigned o2Attributes = 0;
-                    PropertyOffset o2Offset = o2Structure->get(vm, JSC::PropertyName(entry.key()), o2Attributes);
                     JSValue right;
-                    if (o2Offset != invalidOffset && !(o2Attributes & PropertyAttribute::DontEnum)) {
-                        right = o2->getDirect(o2Offset);
+                    if constexpr (isStrict) {
+                        // Only an enumerable property on o2 can match an enumerable one on o1.
+                        // getDirect() alone would also find a non-enumerable property, which the
+                        // reverse loop skips, so the two objects would compare equal. Loose
+                        // comparison keeps matching either, as node does.
+                        unsigned o2Attributes = 0;
+                        PropertyOffset o2Offset = o2Structure->get(vm, JSC::PropertyName(entry.key()), o2Attributes);
+                        if (o2Offset != invalidOffset && !(o2Attributes & PropertyAttribute::DontEnum)) {
+                            right = o2->getDirect(o2Offset);
+                        }
+                    } else {
+                        right = o2->getDirect(vm, JSC::PropertyName(entry.key()));
                     }
 
                     if constexpr (!isStrict) {

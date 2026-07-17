@@ -368,6 +368,8 @@ function isURL(value) {
   return typeof value.href === "string" && value instanceof URL;
 }
 
+const SymbolToPrimitive = Symbol.toPrimitive;
+
 const builtInObjects = new SafeSet(
   ArrayPrototypeFilter(
     ObjectGetOwnPropertyNames(globalThis),
@@ -1505,6 +1507,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   let base = "";
   let formatter = getEmptyFormatArray;
   let braces;
+  let extraKeys;
   let noIterator = true;
   let i = 0;
   const filter = ctx.showHidden ? ALL_PROPERTIES : ONLY_ENUMERABLE;
@@ -1562,6 +1565,11 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       // bound function is required to reconstruct missing information.
       formatter = FunctionPrototypeBind(formatTypedArray, null, bound, size);
       extrasType = kArrayExtrasType;
+
+      if (ctx.showHidden) {
+        extraKeys = ["BYTES_PER_ELEMENT", "length", "byteLength", "byteOffset", "buffer"];
+        typedArray = true;
+      }
     } else if (isMapIterator(value)) {
       keys = getKeys(value, ctx.showHidden);
       braces = getIteratorBraces("Map", tag);
@@ -1619,14 +1627,14 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (typedArray === undefined) {
         formatter = formatArrayBuffer;
       } else if (keys.length === 0 && protoProps === undefined) {
-        return prefix + `{ byteLength: ${formatNumber(ctx.stylize, value.byteLength, false)} }`;
+        return prefix + `{ [byteLength]: ${formatNumber(ctx.stylize, value.byteLength, false)} }`;
       }
       braces[0] = `${prefix}{`;
-      ArrayPrototypeUnshift(keys, "byteLength");
+      extraKeys = ["byteLength"];
     } else if (isDataView(value)) {
       braces[0] = `${getPrefix(constructor, tag, "DataView")}{`;
       // .buffer goes last, it's not a primitive like the others.
-      ArrayPrototypeUnshift(keys, "byteLength", "byteOffset", "buffer");
+      extraKeys = ["byteLength", "byteOffset", "buffer"];
     } else if (isPromise(value)) {
       braces[0] = `${getPrefix(constructor, tag, "Promise")}{`;
       formatter = formatPromise;
@@ -1677,6 +1685,18 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
     // JSC stack is too powerful it must be stopped manually
     if (ctx.currentDepth > 1000) throw new RangeError(ERROR_STACK_OVERFLOW_MSG);
     output = formatter(ctx, value, recurseTimes);
+    if (extraKeys !== undefined) {
+      for (i = 0; i < extraKeys.length; i++) {
+        let formatted;
+        try {
+          formatted = formatExtraProperties(ctx, value, recurseTimes, extraKeys[i], typedArray);
+        } catch {
+          const tempValue = { [extraKeys[i]]: value.buffer[extraKeys[i]] };
+          formatted = formatExtraProperties(ctx, tempValue, recurseTimes, extraKeys[i], typedArray);
+        }
+        ArrayPrototypePush.$call(output, formatted);
+      }
+    }
     for (i = 0; i < keys.length; i++) {
       ArrayPrototypePush.$call(output, formatProperty(ctx, value, recurseTimes, keys[i], extrasType));
     }
@@ -2550,6 +2570,16 @@ function formatPromise(ctx, value, recurseTimes) {
   return output;
 }
 
+function formatExtraProperties(ctx, value, recurseTimes, key, typedArray) {
+  ctx.indentationLvl += 2;
+  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
+  ctx.indentationLvl -= 2;
+
+  // These entries are mainly getters. Should they be formatted like getters?
+  const name = ctx.stylize(`[${key}]`, "string");
+  return `${name}: ${str}`;
+}
+
 function formatProperty(ctx, value, recurseTimes, key, type, desc, original = value) {
   let name, str;
   let extra = " ";
@@ -2698,6 +2728,10 @@ function reduceToSingleString(ctx, output, base, braces, extrasType, recurseTime
   return `${braces[0]}${ln}${ArrayPrototypeJoin(output, `,\n${indentation}  `)} ${braces[1]}`;
 }
 
+function returnFalse() {
+  return false;
+}
+
 function hasBuiltInToString(value) {
   // Prevent triggering proxy traps.
   const getFullProxy = false;
@@ -2706,30 +2740,34 @@ function hasBuiltInToString(value) {
     if (proxyTarget === null) {
       return true;
     }
-    value = proxyTarget;
+    return hasBuiltInToString(proxyTarget);
   }
 
-  // Check if value has a custom Symbol.toPrimitive transformation.
-  if (typeof value[Symbol.toPrimitive] === "function") {
-    return false;
-  }
+  let hasOwnToString = ObjectPrototypeHasOwnProperty;
+  let hasOwnToPrimitive = ObjectPrototypeHasOwnProperty;
 
-  // Count objects that have no `toString` function as built-in.
+  // Count objects without `toString` and `Symbol.toPrimitive` function as built-in.
   if (typeof value.toString !== "function") {
-    return true;
-  }
-
-  // The object has a own `toString` property. Thus it's not not a built-in one.
-  if (ObjectPrototypeHasOwnProperty(value, "toString")) {
+    if (typeof value[SymbolToPrimitive] !== "function") {
+      return true;
+    } else if (ObjectPrototypeHasOwnProperty(value, SymbolToPrimitive)) {
+      return false;
+    }
+    hasOwnToString = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty(value, "toString")) {
+    return false;
+  } else if (typeof value[SymbolToPrimitive] !== "function") {
+    hasOwnToPrimitive = returnFalse;
+  } else if (ObjectPrototypeHasOwnProperty(value, SymbolToPrimitive)) {
     return false;
   }
 
-  // Find the object that has the `toString` property as own property in the
-  // prototype chain.
+  // Find the object that has the `toString` property or `Symbol.toPrimitive` property
+  // as own property in the prototype chain.
   let pointer = value;
   do {
     pointer = ObjectGetPrototypeOf(pointer);
-  } while (!ObjectPrototypeHasOwnProperty(pointer, "toString"));
+  } while (!hasOwnToString(pointer, "toString") && !hasOwnToPrimitive(pointer, SymbolToPrimitive));
 
   // Check closer if the object is a built-in.
   const descriptor = ObjectGetOwnPropertyDescriptor(pointer, "constructor");

@@ -759,10 +759,11 @@ async function runTests() {
           BUN_DEBUG_QUIET_LOGS: "1",
         };
         if (title.includes("test-util-styletext")) {
-          // These assert styleText's own color decisions against a TTY, so they
-          // have to see the real environment instead of the forced no-color one.
-          delete env.FORCE_COLOR;
-          delete env.NO_COLOR;
+          // These assert styleText's own color decisions, so neither the forced
+          // no-color settings above nor spawnBun's FORCE_COLOR may reach them.
+          env.FORCE_COLOR = undefined;
+          env.NO_COLOR = undefined;
+          env.NODE_DISABLE_COLORS = undefined;
         }
         if (!isWindows && title.includes("/sequential/")) {
           // Sequential node tests share common.PORT (12346); a cluster worker

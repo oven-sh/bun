@@ -25,6 +25,10 @@ if (ext) {
   // `node -i -e`: an -e error is fatal (uncaught, exit 1), not caught by the
   // REPL. Runs before REPL.start so the shim's process-wide capture callback
   // isn't installed yet; `var`/`function` still land on globalThis.
+  // Diverges from node, which evaluates AFTER createInternalRepl and via
+  // runScriptInContext, so `-e` there also sees require/module/__filename.
+  // Node can order it that way because its REPL installs no capture callback;
+  // ours does, so moving the eval later would let the REPL swallow the error.
   if (evalScript !== undefined) {
     require("node:vm").runInThisContext(evalScript, { filename: "[eval]", displayErrors: true });
   }

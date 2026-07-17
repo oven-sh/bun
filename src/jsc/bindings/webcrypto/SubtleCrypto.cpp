@@ -685,12 +685,12 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
         return;
 
     if (params->identifier != key.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
     if (!key.allows(CryptoKeyUsageEncrypt)) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't support encryption"_s);
+        promise->reject(InvalidAccessError, "Unable to use this key to encrypt"_s);
         return;
     }
 
@@ -730,12 +730,12 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
         return;
 
     if (params->identifier != key.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
     if (!key.allows(CryptoKeyUsageDecrypt)) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't support decryption"_s);
+        promise->reject(InvalidAccessError, "Unable to use this key to decrypt"_s);
         return;
     }
 
@@ -770,12 +770,12 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
         return;
 
     if (params->identifier != key.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
     if (!key.allows(CryptoKeyUsageSign)) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't support signing"_s);
+        promise->reject(InvalidAccessError, "Unable to use this key to sign"_s);
         return;
     }
 
@@ -813,12 +813,12 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
         return;
 
     if (params->identifier != key.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
     if (!key.allows(CryptoKeyUsageVerify)) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't support verification"_s);
+        promise->reject(InvalidAccessError, "Unable to use this key to verify"_s);
         return;
     }
 
@@ -953,13 +953,13 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
 
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
-    if (params->identifier != baseKey.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
+    if (!baseKey.allows(CryptoKeyUsageDeriveKey)) {
+        promise->reject(InvalidAccessError, "baseKey does not have deriveKey usage"_s);
         return;
     }
 
-    if (!baseKey.allows(CryptoKeyUsageDeriveKey)) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't support CryptoKey derivation"_s);
+    if (params->identifier != baseKey.algorithmIdentifier()) {
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
@@ -1017,13 +1017,13 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
     RETURN_IF_EXCEPTION(scope, void());
     auto params = paramsOrException.releaseReturnValue();
 
-    if (params->identifier != baseKey.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't match AlgorithmIdentifier"_s);
+    if (!baseKey.allows(CryptoKeyUsageDeriveBits)) {
+        promise->reject(InvalidAccessError, "baseKey does not have deriveBits usage"_s);
         return;
     }
 
-    if (!baseKey.allows(CryptoKeyUsageDeriveBits)) {
-        promise->reject(InvalidAccessError, "CryptoKey doesn't support bits derivation"_s);
+    if (params->identifier != baseKey.algorithmIdentifier()) {
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
@@ -1098,7 +1098,7 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
     }
 
     if (!key.extractable()) {
-        promise->reject(InvalidAccessError, "The CryptoKey is nonextractable"_s);
+        promise->reject(InvalidAccessError, "key is not extractable"_s);
         return;
     }
 
@@ -1154,12 +1154,12 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     auto wrapParams = wrapParamsOrException.releaseReturnValue();
 
     if (wrapParams->identifier != wrappingKey.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "Wrapping CryptoKey doesn't match AlgorithmIdentifier"_s);
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
     if (!wrappingKey.allows(CryptoKeyUsageWrapKey)) {
-        promise->reject(InvalidAccessError, "Wrapping CryptoKey doesn't support wrapKey operation"_s);
+        promise->reject(InvalidAccessError, "Unable to use this key to wrapKey"_s);
         return;
     }
 
@@ -1169,7 +1169,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
     }
 
     if (!key.extractable()) {
-        promise->reject(InvalidAccessError, "The CryptoKey is nonextractable"_s);
+        promise->reject(InvalidAccessError, "key is not extractable"_s);
         return;
     }
 
@@ -1268,12 +1268,12 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
     auto keyUsagesBitmap = toCryptoKeyUsageBitmap(keyUsages);
 
     if (unwrapParams->identifier != unwrappingKey.algorithmIdentifier()) {
-        promise->reject(InvalidAccessError, "Unwrapping CryptoKey doesn't match unwrap AlgorithmIdentifier"_s);
+        promise->reject(InvalidAccessError, "Key algorithm mismatch"_s);
         return;
     }
 
     if (!unwrappingKey.allows(CryptoKeyUsageUnwrapKey)) {
-        promise->reject(InvalidAccessError, "Unwrapping CryptoKey doesn't support unwrapKey operation"_s);
+        promise->reject(InvalidAccessError, "Unable to use this key to unwrapKey"_s);
         return;
     }
 

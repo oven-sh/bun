@@ -584,3 +584,99 @@ describe("X25519 JWK import", () => {
     }).toEqual({ extFalse: "DataError", extTrue: "imported" });
   });
 });
+
+// CryptoKey.usages and the JWK key_ops it is built from are ordered by the
+// KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
+// alphabetically, and not by the order the caller passed them in.
+describe("CryptoKey.usages ordering", () => {
+  it("normalizes to KeyUsage enum order regardless of input order", async () => {
+    const forward = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "encrypt",
+      "decrypt",
+    ]);
+    const reversed = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "decrypt",
+      "encrypt",
+    ]);
+    expect(forward.usages).toEqual(["encrypt", "decrypt"]);
+    expect(reversed.usages).toEqual(["encrypt", "decrypt"]);
+  });
+
+  it("orders deriveKey before deriveBits", async () => {
+    const { privateKey } = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, [
+      "deriveBits",
+      "deriveKey",
+    ]);
+    expect(privateKey.usages).toEqual(["deriveKey", "deriveBits"]);
+  });
+
+  it("orders sign before verify", async () => {
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "HMAC", hash: "SHA-256" }, true, [
+      "verify",
+      "sign",
+    ]);
+    expect(key.usages).toEqual(["sign", "verify"]);
+  });
+
+  it("applies the same order to JWK key_ops", async () => {
+    const key = await crypto.subtle.importKey("raw", new Uint8Array(32), { name: "AES-CBC" }, true, [
+      "decrypt",
+      "encrypt",
+    ]);
+    const jwk = await crypto.subtle.exportKey("jwk", key);
+    expect(jwk.key_ops).toEqual(["encrypt", "decrypt"]);
+  });
+
+  it("orders wrapKey/unwrapKey after encrypt/decrypt on an RSA-OAEP pair", async () => {
+    const { publicKey, privateKey } = await crypto.subtle.generateKey(
+      { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+      true,
+      ["unwrapKey", "decrypt", "wrapKey", "encrypt"],
+    );
+    expect(publicKey.usages).toEqual(["encrypt", "wrapKey"]);
+    expect(privateKey.usages).toEqual(["decrypt", "unwrapKey"]);
+  });
+});
+
+// getRandomValues takes integer-typed views only; every other ArrayBufferView-ish
+// argument raises TypeMismatchError rather than being filled.
+describe("crypto.getRandomValues argument types", () => {
+  const integerViews = [
+    ["Int8Array", () => new Int8Array(4)],
+    ["Uint8Array", () => new Uint8Array(4)],
+    ["Uint8ClampedArray", () => new Uint8ClampedArray(4)],
+    ["Int16Array", () => new Int16Array(4)],
+    ["Uint16Array", () => new Uint16Array(4)],
+    ["Int32Array", () => new Int32Array(4)],
+    ["Uint32Array", () => new Uint32Array(4)],
+    ["BigInt64Array", () => new BigInt64Array(4)],
+    ["BigUint64Array", () => new BigUint64Array(4)],
+  ] as const;
+
+  for (const [name, make] of integerViews) {
+    it(`accepts ${name}`, () => {
+      const view = make();
+      expect(crypto.getRandomValues(view)).toBe(view);
+    });
+  }
+
+  const rejected = [
+    ["Float32Array", () => new Float32Array(4)],
+    ["Float64Array", () => new Float64Array(4)],
+    ["DataView", () => new DataView(new ArrayBuffer(4))],
+    ["ArrayBuffer", () => new ArrayBuffer(4)],
+    ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["plain object", () => ({})],
+  ] as const;
+
+  for (const [name, make] of rejected) {
+    it(`rejects ${name} with TypeMismatchError`, () => {
+      expect(() => crypto.getRandomValues(make() as any)).toThrow(
+        expect.objectContaining({
+          name: "TypeMismatchError",
+          message: "The data argument must be an integer-type TypedArray",
+        }),
+      );
+    });
+  }
+});

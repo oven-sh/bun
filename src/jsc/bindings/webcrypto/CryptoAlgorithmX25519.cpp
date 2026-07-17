@@ -109,7 +109,7 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
 #endif
         auto result = extractDerivedBits(length, WTF::move(*derivedKey));
         if (!result) {
-            exceptionCallback(ExceptionCode::OperationError, ""_s);
+            exceptionCallback(ExceptionCode::OperationError, "derived bit length is too small"_s);
             return;
         }
         callback(WTF::move(*result));

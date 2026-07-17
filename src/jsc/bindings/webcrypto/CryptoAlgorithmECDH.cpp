@@ -97,7 +97,7 @@ void CryptoAlgorithmECDH::deriveBits(const CryptoAlgorithmParameters& parameters
         }
         auto result = extractDerivedBits(length, WTF::move(*derivedKey));
         if (!result) {
-            exceptionCallback(OperationError, ""_s);
+            exceptionCallback(OperationError, "derived bit length is too small"_s);
             return;
         }
         callback(WTF::move(*result));

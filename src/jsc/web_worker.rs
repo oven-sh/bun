@@ -1550,14 +1550,20 @@ impl WebWorker {
         if vm_log.msgs.is_empty() {
             return;
         }
+        // terminate() raced this error path: the next JS entry re-arms the
+        // TerminationException from the still-set NeedTermination trap bit, so
+        // every call below would bail (reported as `JsError::Thrown`, not
+        // `Terminated`) and there is no point dispatching a late 'error' for a
+        // worker that is shutting down anyway.
+        if self.has_requested_terminate() {
+            return;
+        }
         let global = vm.global();
         // A termination that interrupted earlier JS leaves its
         // TerminationException pending while JSC clears the termination
         // request at VM-entry-scope exit; re-entering JS below in that state
         // trips `ASSERT(vm.hasTerminationRequest())` in
-        // VMTraps::deferTerminationSlow. Clear the stale exception first —
-        // if the worker is still being terminated, the next JS entry re-arms
-        // both from the still-set NeedTermination trap bit.
+        // VMTraps::deferTerminationSlow. Clear the stale exception first.
         global.clear_termination_exception();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
             let err = vm_log.to_js(global, "Error in worker")?;
@@ -1567,12 +1573,13 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            // terminate() raced this error path: the pending
-            // TerminationException makes every JS-entering call bail. The
-            // worker is shutting down anyway — skip dispatching 'error'
-            // (shutdown() clears the termination request).
             Err(JsError::Terminated) => return,
             Err(e @ JsError::Thrown) => {
+                // terminate() can also land mid-call above; re-check so the
+                // termination sentinel is never reported as an error.
+                if self.has_requested_terminate() {
+                    return;
+                }
                 // Converting the log to a JS error itself threw; report that
                 // exception rather than crashing.
                 if let Some(exc) = global

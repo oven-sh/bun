@@ -373,6 +373,7 @@ unsafe extern "C" {
     safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
+    safe fn Bun__JSCTaskScheduler__markShuttingDown(global: &JSGlobalObject);
 }
 
 pub const HOT_RELOAD_HOT: u8 = 1;
@@ -1562,6 +1563,13 @@ impl VirtualMachine {
                 // until each unparks at shutdown().
                 (hooks.terminate_all_workers_and_wait)(10_000);
             }
+
+            // Mirror web_worker.rs::shutdown(): fence DeferredWorkTimer
+            // producers before the drain so a cross-thread scheduleWorkSoon
+            // that raced the shutdown either enqueued (and is caught by the
+            // drain below) or observes the flag under m_lock and drops.
+            // destructOnExit sets it again (idempotently).
+            Bun__JSCTaskScheduler__markShuttingDown(self.global());
 
             // Every worker has now posted its close task to our concurrent
             // queue (OUTSTANDING is decremented after dispatchExit). Drop

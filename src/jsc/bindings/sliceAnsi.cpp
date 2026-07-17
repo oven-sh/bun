@@ -969,6 +969,7 @@ static WTF::String emitSliceStreaming(
     bool needStartEllipsis = false;
     bool needEndEllipsis = false;
     size_t ellipsisEndBudget = 0; // how much we shrank `end` by for end ellipsis
+    const size_t startBeforeBudget = start;
     if (ellipsisWidth > 0) {
         if (cutStartForEllipsis && ellipsisWidth < (endUnbounded ? SIZE_MAX - start : end - start)) {
             needStartEllipsis = true;
@@ -979,9 +980,9 @@ static WTF::String emitSliceStreaming(
             end -= ellipsisWidth;
         } else if (!cutEndKnown && !endUnbounded && ellipsisWidth < (end - start)) {
             // Lazy cutEnd: speculatively budget for end ellipsis. If the walk
-            // reaches EOF without hitting `end` (no cut), we unwind: append
-            // the speculative zone's content (stored separately) instead of
-            // the ellipsis. specZone below handles this.
+            // reaches EOF without exceeding the budget zone (no cut), we
+            // unwind: keep the zone's content instead of the ellipsis. The
+            // spec zone below handles this.
             needEndEllipsis = true; // tentative
             ellipsisEndBudget = ellipsisWidth;
             end -= ellipsisWidth;
@@ -990,11 +991,25 @@ static WTF::String emitSliceStreaming(
             return ellipsis.toString(); // degenerate: range too small
     }
     // Speculative zone: when cutEnd is unknown and we've budgeted for an
-    // ellipsis, content in cols [end, end+ellipsisEndBudget) goes here. If
-    // we later detect cutEnd (more input past the zone) → discard, emit
-    // ellipsis. If EOF reached first (no cut) → flush specZone, no ellipsis.
-    StringBuilder specZone;
+    // ellipsis, content in cols [end, end+ellipsisEndBudget) is written to
+    // `result` as normal (keeping ANSI interleaved in order) and its start
+    // is marked. If a cut is later detected → shrink result back to the
+    // mark, restore the style/hyperlink snapshot, emit the ellipsis. If EOF
+    // is reached first (no cut) → keep the zone, cancel the ellipsis.
     bool inSpecZone = false;
+    unsigned specZoneMark = 0;
+    SgrStyleState specStyles;
+    bool specHyperlink = false;
+    String specHyperlinkClosePrefix, specHyperlinkTerminator;
+    auto enterSpecZone = [&]() {
+        if (inSpecZone) return;
+        inSpecZone = true;
+        specZoneMark = result.length();
+        specStyles = activeStyles;
+        specHyperlink = activeHyperlink;
+        specHyperlinkClosePrefix = activeHyperlinkClosePrefix;
+        specHyperlinkTerminator = activeHyperlinkTerminator;
+    };
     const size_t specEnd = (ellipsisEndBudget > 0) ? end + ellipsisEndBudget : end;
 
     // ------------------------------------------------------------------------
@@ -1016,7 +1031,8 @@ static WTF::String emitSliceStreaming(
     }
 
     const Char* p = data + position;
-    bool sawCutEnd = false; // set true if we break due to position >= specEnd
+    bool sawCutEnd = false; // visible content exists at/past specEnd
+    bool pastSpecEnd = false; // scanning a zero-width tail at position == specEnd
 
     // Visible-codepoint processing, extracted so it can be called from both
     // the SIMD-skipped tight loop and the false-positive fallback. Returns
@@ -1037,9 +1053,23 @@ static WTF::String emitSliceStreaming(
             if (hasPrev) position += gs.width();
 
             if (!endUnbounded && position >= specEnd) {
-                sawCutEnd = true;
-                flushPending(/*filterCloseOnly=*/true);
-                return false; // signal break
+                // A visible cut needs width past specEnd: the prior cluster
+                // overflowed, or this cp is visible. A zero-width cp exactly at
+                // specEnd (LF/CR/ZWSP) is not a cut; keep scanning, don't emit.
+                // Without an ellipsis the distinction is unobservable, so break
+                // immediately and keep the O(slice-length) scan bound.
+                if (ellipsisWidth == 0 || position > specEnd
+                    || Bun__codepointWidth(cp, ambiguousIsWide) > 0) {
+                    sawCutEnd = true;
+                    flushPending(/*filterCloseOnly=*/true);
+                    return false; // signal break
+                }
+                pastSpecEnd = true;
+                gs.reset(cp, ambiguousIsWide);
+                prevVisCp = cp;
+                hasPrev = true;
+                p += charLen;
+                return true;
             }
 
             if (!include && position >= start) {
@@ -1050,12 +1080,9 @@ static WTF::String emitSliceStreaming(
             }
             if (include) {
                 flushPending(/*filterCloseOnly=*/false);
-                if (!endUnbounded && position >= end && ellipsisEndBudget > 0) {
-                    if (!inSpecZone) inSpecZone = true;
-                    specZone.append(std::span { p, charLen });
-                } else {
-                    result.append(std::span { p, charLen });
-                }
+                if (!endUnbounded && position >= end && ellipsisEndBudget > 0)
+                    enterSpecZone();
+                result.append(std::span { p, charLen });
             } else {
                 pending.clear();
                 pendingHl.clear();
@@ -1063,13 +1090,10 @@ static WTF::String emitSliceStreaming(
             gs.reset(cp, ambiguousIsWide);
         } else {
             // JOIN: continuation, position unchanged. Pending is inside cluster.
-            if (include) {
+            if (include && !pastSpecEnd) {
                 flushPending(/*filterCloseOnly=*/false);
-                if (inSpecZone)
-                    specZone.append(std::span { p, charLen });
-                else
-                    result.append(std::span { p, charLen });
-            } else {
+                result.append(std::span { p, charLen });
+            } else if (!include) {
                 pending.clear();
                 pendingHl.clear();
             }
@@ -1169,16 +1193,13 @@ static WTF::String emitSliceStreaming(
                                                 : std::min(static_cast<size_t>(specEnd > position ? specEnd - position : 0), bulkN);
                     if (emitN > 0) {
                         // Split at spec zone boundary [end, specEnd).
-                        if (ellipsisEndBudget > 0 && position < end && !endUnbounded) {
-                            size_t toMain = std::min(end - position, emitN);
-                            result.append(std::span { p, toMain });
+                        if (ellipsisEndBudget > 0) {
+                            size_t toMain = position < end ? std::min(end - position, emitN) : 0;
+                            if (toMain > 0) result.append(std::span { p, toMain });
                             if (emitN > toMain) {
-                                inSpecZone = true;
-                                specZone.append(std::span { p + toMain, emitN - toMain });
+                                enterSpecZone();
+                                result.append(std::span { p + toMain, emitN - toMain });
                             }
-                        } else if (inSpecZone || (!endUnbounded && position >= end)) {
-                            inSpecZone = true;
-                            specZone.append(std::span { p, emitN });
                         } else {
                             result.append(std::span { p, emitN });
                         }
@@ -1265,36 +1286,54 @@ static WTF::String emitSliceStreaming(
     }
 walkDone:;
 
-    // Natural EOF (loop completed without breaking early at past-end).
-    // Finalize the last cluster's width contribution, then flush trailing
-    // pending ANSI. Match old Step 5 semantics: isPastEnd for trailing ANSI
-    // is `position >= end` where position reflects the LAST visible char.
-    // (If we broke early via sawCutEnd, pending was already flushed there
-    // with close-only filtering; we don't re-finalize.)
-    if (!sawCutEnd) {
+    // Finalize the last cluster's width contribution. If we broke early via
+    // sawCutEnd, pending was already flushed close-only at the break.
+    const bool reachedEOF = !sawCutEnd;
+    if (reachedEOF) {
         if (hasPrev) position += gs.width();
-        // Trailing ANSI: if position >= end, it's post-cut → filter. Use the
-        // ORIGINAL end bound (specEnd includes the spec zone; for filtering,
-        // what matters is whether position exceeds the USER'S requested end,
-        // which is `specEnd` when no ellipsis budget, or `end + budget` when
-        // there is one — same thing).
-        bool trailingPastEnd = !endUnbounded && position >= specEnd;
-        if (include) flushPending(/*filterCloseOnly=*/trailingPastEnd);
+        // The last cluster may have overflowed specEnd (wide char straddling
+        // the boundary, or a Prepend-led cluster that started zero-width).
+        if (!endUnbounded && position > specEnd) sawCutEnd = true;
     }
+
+    // Degenerate: something was cut but no ellipsis fit in the range →
+    // bare ellipsis, mirroring the ASCII fast path's !doStart && !doEnd
+    // branch. `!include` covers a start budget that pushed `start` past
+    // all content.
+    if (ellipsisWidth > 0 && (!include || (!needStartEllipsis && !needEndEllipsis))
+        && (sawCutEnd || (cutStartForEllipsis && position > startBeforeBudget)))
+        return ellipsis.toString();
 
     if (!include) return emptyString();
 
-    // Resolve lazy cutEnd: if we budgeted a spec zone and sawCutEnd → cut.
-    // Otherwise (EOF reached without exceeding specEnd) → no cut, flush zone.
+    // Resolve the lazy cutEnd BEFORE trailing pending ANSI so close codes
+    // land after the last spec-zone column, not before it.
+    bool discardedZone = false;
     if (ellipsisEndBudget > 0) {
         if (sawCutEnd) {
-            // Cut confirmed: discard spec zone, keep ellipsis budget (emit ellipsis).
+            // Cut confirmed: discard spec-zone content and restore the style
+            // state from the zone boundary, so the ellipsis and close codes
+            // below reflect only what remains in result.
+            if (inSpecZone) {
+                result.shrink(specZoneMark);
+                activeStyles = std::move(specStyles);
+                activeHyperlink = specHyperlink;
+                activeHyperlinkClosePrefix = std::move(specHyperlinkClosePrefix);
+                activeHyperlinkTerminator = std::move(specHyperlinkTerminator);
+                discardedZone = true;
+            }
         } else {
-            // No cut: append spec zone content, cancel ellipsis.
-            result.append(specZone);
+            // No cut: spec-zone content is already in result. Cancel ellipsis.
             needEndEllipsis = false;
         }
     }
+
+    // Trailing ANSI: close-only when the last column reached the user's
+    // end bound (specEnd), unfiltered when the whole string fit inside.
+    // Pending that follows discarded spec-zone content goes with it;
+    // emitCloseCodes re-closes so the ellipsis inherits the active style.
+    if (reachedEOF && !discardedZone)
+        flushPending(/*filterCloseOnly=*/!endUnbounded && position >= specEnd);
 
     if (activeHyperlink) {
         result.append(activeHyperlinkClosePrefix);

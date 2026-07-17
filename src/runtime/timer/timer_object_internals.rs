@@ -12,9 +12,10 @@ use bun_core::{Timespec, TimespecMockMode};
 
 use crate::jsc::JsCell;
 use crate::jsc::{
-    Debugger, JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
+    JSGlobalObject, JSValue, JsRef, JsResult, ScriptExecutionStatus,
     generated::{JSImmediate, JSTimeout},
 };
+use crate::vm::Debugger;
 use core::cell::Cell;
 // Note: `crate::vm::VirtualMachine` is a *module* alias; the struct lives at
 // `virtual_machine::VirtualMachine`.

@@ -233,6 +233,8 @@ export const exposedInternals = {
   "internal/async_context_frame": require("internal/async_context_frame"),
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/dgram": require("internal/dgram"),
+  "internal/freelist": require("internal/freelist"),
+  "internal/validators": require("internal/validators"),
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
 };

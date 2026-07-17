@@ -171,6 +171,7 @@ const buildPlatforms = [
   // stays non-LTO (no windows-arm64-lto WebKit prebuilt, see config.ts).
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
+  { os: "windows", arch: "x64", profile: "asan", crossCompile: true, distro: "debian", release: "13" },
 ];
 
 /**
@@ -197,6 +198,7 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23", tier: "latest" },
   { os: "windows", arch: "x64", release: "2019", tier: "oldest" },
+  { os: "windows", arch: "x64", release: "2019", profile: "asan", tier: "oldest" },
   { os: "windows", arch: "aarch64", release: "11", tier: "latest" },
 ];
 
@@ -426,8 +428,12 @@ function getTestAgent(platform, options) {
 
   // TODO: delete this block when we upgrade to mimalloc v3
   if (os === "windows") {
+    // ASAN needs ~1:8 shadow memory plus a 256 MB quarantine per process;
+    // the D4ds_v6's 16 GiB is too tight. E-series has 4× the RAM at the
+    // same vCPU (same rationale as the linux r-family asan branch below).
+    const instanceType = profile === "asan" ? "Standard_E4ds_v6" : getAzureVmSize(os, arch, "test");
     return getEc2Agent(platform, options, {
-      instanceType: getAzureVmSize(os, arch, "test"),
+      instanceType,
       cpuCount: 2,
       threadsPerCore: 1,
     });

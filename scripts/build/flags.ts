@@ -774,17 +774,8 @@ export const defines: Flag[] = [
 
   // ─── Config-dependent ───
   {
-    // Not on Windows ASAN: the bun-webkit-windows-amd64-asan prebuilt is
-    // built without ENABLE_ASSERTS (oven-sh/WebKit Dockerfile.windows does
-    // not set it for the sanitizer leg like the Linux/macOS Dockerfiles do),
-    // so ASSERT_ENABLED-gated inline calls in JSC headers
-    // (ObjectInitializationScope, DoesGCCheck::verifyCanGC, StrongRefTracker,
-    // Structure::checkConsistency, ...) have no definition in the .lib and
-    // the link fails. This also matters for ABI: ASSERT_ENABLED gates struct
-    // fields. Drop this gate once the WebKit windows-asan leg builds with
-    // ENABLE_ASSERTS=ON.
     flag: "ASSERT_ENABLED=1",
-    when: c => c.assertions && !(c.windows && c.asan),
+    when: c => c.assertions,
     desc: "Enable runtime assertions",
   },
   {

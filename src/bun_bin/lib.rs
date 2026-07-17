@@ -163,40 +163,6 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
-    // Windows ASAN workaround: the current bun-webkit-windows-amd64-asan
-    // prebuilt was compiled with `/GF` (implied by `/O2`), which emits string
-    // literals as content-sized COMDATs while the ASAN descriptors record
-    // `size_with_redzone`. `__asan_register_globals` (already run by the CRT
-    // before main) therefore poisoned redzones that extend past section
-    // boundaries into adjacent globals, and the first read of such a global
-    // (ICU's `""` during `JSC::VM::VM`) reports a spurious
-    // global-buffer-overflow. Unpoison the whole image's static data once
-    // here so those stale redzones are cleared. This forfeits
-    // global-buffer-overflow detection; heap/stack/UAF are unaffected.
-    // Remove once a WebKit prebuilt with `/GF-` (oven-sh/WebKit#298) is
-    // pinned and the `ASSERT_ENABLED` gate in flags.ts is dropped.
-    #[cfg(all(bun_asan, windows))]
-    {
-        unsafe extern "system" {
-            fn GetModuleHandleW(name: *const u16) -> *mut core::ffi::c_void;
-        }
-        let base = unsafe { GetModuleHandleW(core::ptr::null()) };
-        if !base.is_null() {
-            // DOS header e_lfanew at +0x3c → NT headers; OptionalHeader is at
-            // NT+0x18; SizeOfImage is at OptionalHeader+0x38 (PE32+).
-            // SAFETY: `base` is the exe image mapped by the loader; the PE
-            // header layout is fixed by the Windows ABI.
-            let size = unsafe {
-                let e_lfanew = base.cast::<u8>().add(0x3c).cast::<u32>().read_unaligned() as usize;
-                base.cast::<u8>()
-                    .add(e_lfanew + 0x18 + 0x38)
-                    .cast::<u32>()
-                    .read_unaligned() as usize
-            };
-            bun_core::asan::unpoison(base.cast(), size);
-        }
-    }
-
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives

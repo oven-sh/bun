@@ -408,6 +408,10 @@ export function packageAndUpload(cfg: Config, output: BunOutput): void {
   // Debug symbols / linker map — platform-specific extras.
   if (cfg.windows) {
     files.push(`${exeName}.pdb`);
+    // The ASAN runtime is a DLL even for /MT builds (LLVM 17 removed the
+    // static runtime); bun-asan.exe fails image load without it beside
+    // the exe. emitWindowsAsanRuntime() has already copied it there.
+    if (cfg.asan) files.push("clang_rt.asan_dynamic-x86_64.dll");
   } else if (cfg.darwin) {
     files.push(`${exeName}.dSYM`);
   }

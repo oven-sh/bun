@@ -84,6 +84,7 @@ const {
 } = require("node:_http_outgoing");
 const OutgoingMessagePrototype = OutgoingMessage.prototype;
 const { kIncomingMessage } = require("node:_http_common");
+const { connectionListenerHTTP1 } = require("internal/http1_server_fallback");
 const kConnectionsCheckingInterval = Symbol("http.server.connectionsCheckingInterval");
 const kTrackedConnections = Symbol("http.server.trackedConnections");
 const kHttpAllowHalfOpen = Symbol("http.server.httpAllowHalfOpen");
@@ -296,10 +297,27 @@ function normalizeServerTls(tls) {
   return tls;
 }
 
+// Node registers connectionListener on every http.Server, so a socket the
+// listener never accepted still gets parsed when it arrives as
+// `server.emit("connection", socket)` — a plain Duplex, or a socket handed over
+// from another server. The native listener drives its own sockets end to end, so
+// this only has to pick up the foreign ones; node:http2 runs the same path for
+// its allowHTTP1 ALPN fallback.
+function connectionListener(this: Server, socket) {
+  if (socket instanceof NodeHTTPServerSocket) return;
+  connectionListenerHTTP1(this, socket, {
+    http1Options: {
+      IncomingMessage: this[kIncomingMessage],
+      ServerResponse: this[kServerResponse],
+    },
+  });
+}
+
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
+  this.on("connection", connectionListener);
 
   this.listening = false;
   this._unref = false;

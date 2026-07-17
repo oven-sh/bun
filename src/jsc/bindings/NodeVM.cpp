@@ -173,6 +173,9 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
                 if (exception)
                     (void)throwScope.tryClearException();
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
+                // Node always attaches the arrow header to compile-time SyntaxErrors
+                // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
+                decorateParseErrorStack(globalObject, vm, exception, code, options.filename, error, options.lineOffset);
                 throwException(globalObject, throwScope, exception);
                 return nullptr;
             }
@@ -594,7 +597,7 @@ bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Excepti
 // Compile-time counterpart of handleException: prepends Node's arrow header
 // (`<url>:<line>\n<src>\n^\n\n`) using ParserError since there is no CodeBlock
 // yet. Node applies this unconditionally at compile time (not displayErrors).
-void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& filename, const JSC::ParserError& parseError, OrdinalNumber lineOffset)
+void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset)
 {
     UNUSED_PARAM(globalObject);
     auto* errorInstance = dynamicDowncast<ErrorInstance>(error);
@@ -612,7 +615,9 @@ void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* err
     if (stack.isNull())
         return;
 
-    String url = filename.isEmpty() ? "evalmachine.<anonymous>"_s : filename;
+    // `url` is resolved by the caller: `new Script` substitutes
+    // evalmachine.<anonymous> only when no filename was provided, while
+    // compileFunction has no such default. An explicit "" renders as ":<line>".
 
     // parseError.line() is already lineOffset-adjusted (JSC parses against a
     // SourceCode whose start position carries the offset). Undo it to index

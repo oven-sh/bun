@@ -10,7 +10,7 @@
 use bun_core::{Global, Output};
 use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, StandaloneModuleGraph};
 
-use crate::vm::VirtualMachine;
+use crate::vm::virtual_machine::VirtualMachine;
 
 // Thin re-exports (mirrors `pub const X = @import(...)` at file top).
 pub use crate::api;

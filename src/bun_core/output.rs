@@ -24,7 +24,7 @@ use crate::Fd;
 // MOVE_DOWN: bun_threading::Mutex → bun_core (move-in pass).
 use crate::Mutex;
 // MOVE_DOWN: io::Writer → bun_core (move-in pass) — re-exported as crate::io::Writer.
-use crate::io;
+use crate::util::io;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Output sink (CYCLEBREAK §Debug-hook / §Dispatch cold path)

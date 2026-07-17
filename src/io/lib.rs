@@ -304,17 +304,13 @@ pub mod pipes;
 #[cfg(windows)]
 #[path = "source.rs"]
 pub mod source;
-#[path = "write.rs"]
-pub mod write;
+pub use bun_core::io::*;
 
 // ── re-exports for higher tiers ─────────────────────────────────────────────
 // Byte-level `Write` trait + helpers. Downstream
 // crates name these as `bun_io::Write` / `bun_io::BufWriter` /
 // `bun_io::FmtAdapter` / `bun_io::Result`.
 pub use bun_core::fmt::SliceCursor;
-pub use write::{
-    AsFmt, BufWriter, DiscardingWriter, FixedBufferStream, FmtAdapter, IntBe, IntLe, Result, Write,
-};
 
 pub use max_buf as MaxBuf;
 pub use pipes::{FileType, ReadState};

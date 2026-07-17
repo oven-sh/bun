@@ -29,6 +29,7 @@ pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 // upward dep on this crate. Re-exported here so downstream keeps spelling it
 // `bun_io::Write` / `bun_io::IntLe`.
 // ════════════════════════════════════════════════════════════════════════════
+pub use bun_core::util::io::Writer;
 pub use bun_core::write::{IntBe, IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -14,7 +14,7 @@
 /// `Result<T>` over `core::fmt::Error` so `?` composes everywhere.
 pub type Result<T = ()> = core::result::Result<T, core::fmt::Error>;
 
-pub use crate::io::{IntLe, Write};
+pub use crate::util::io::{IntLe, Write};
 
 // ════════════════════════════════════════════════════════════════════════════
 // IntBe — big-endian (network-order) integer encoding helper

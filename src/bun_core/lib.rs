@@ -13,6 +13,11 @@
 )]
 #![warn(unused_must_use)]
 
+extern crate self as bun_core;
+
+#[path = "../io/write.rs"]
+pub mod io;
+
 pub mod Global;
 pub mod atomic_cell;
 pub mod comptime_string_map;

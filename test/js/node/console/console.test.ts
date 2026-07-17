@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { Console } from "node:console";
+import { bunEnv, bunExe } from "harness";
 
 import { Writable } from "node:stream";
 
@@ -75,6 +76,34 @@ test("console._stdout", () => {
     enumerable: false,
     configurable: true,
   });
+});
+
+test("console.trace goes to stderr via Console constructor", async () => {
+  const [out, outValue] = writable();
+  const [err, errValue] = writable();
+  const c = new Console({ stdout: out, stderr: err, colorMode: false });
+  c.trace("trace message");
+  out.end();
+  err.end();
+  const stderr = await errValue();
+  expect(stderr).toInclude("Trace:");
+  expect(stderr).toInclude("trace message");
+  expect(stderr).toInclude("console.trace goes to stderr");
+  expect(await outValue()).toBe("");
+});
+
+test("console.trace goes to stderr (global console)", async () => {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "-e", 'console.trace("hello from trace");'],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+  expect(await proc.exited).toBe(0);
+  expect(stdout).toBe("");
+  expect(stderr).toInclude("Trace:");
+  expect(stderr).toInclude("hello from trace");
 });
 
 test("console._stderr", () => {

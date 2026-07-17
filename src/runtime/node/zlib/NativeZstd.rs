@@ -225,7 +225,9 @@ mod _impl {
                 Some(dictionary_buf.byte_slice())
             };
 
-            let err = self.stream.with_mut(|s| s.init(pledged_src_size, dictionary));
+            let err = self
+                .stream
+                .with_mut(|s| s.init(pledged_src_size, dictionary));
             if err.is_error() {
                 CompressionStream::<Self>::emit_error(self, global, this_value, err);
                 return Ok(JSValue::FALSE);
@@ -326,7 +328,10 @@ mod _impl {
     impl Context {
         /// zstd copies the dictionary into the context, so `dictionary` does not
         /// need to outlive this call (unlike brotli's attach APIs).
-        fn load_dictionary(dictionary: Option<&[u8]>, load: impl FnOnce(*const c_void, usize) -> usize) -> Error {
+        fn load_dictionary(
+            dictionary: Option<&[u8]>,
+            load: impl FnOnce(*const c_void, usize) -> usize,
+        ) -> Error {
             let Some(dict) = dictionary.filter(|d| !d.is_empty()) else {
                 return Error::OK;
             };

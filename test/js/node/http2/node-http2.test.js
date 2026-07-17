@@ -3507,23 +3507,27 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
   server.on("session", resolveServerSession);
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
 
+  let client;
   try {
-    const client = http2.connect(`http://127.0.0.1:${server.address().port}`, {
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`, {
       settings: { enablePush: false, initialWindowSize: 99999 },
     });
     const { promise: donePromise, resolve: resolveDone, reject: rejectDone } = Promise.withResolvers();
-    client.on("error", rejectDone);
+    const { promise: remotePromise, resolve: resolveRemote, reject: rejectRemote } = Promise.withResolvers();
+    const { promise: localPromise, resolve: resolveLocal, reject: rejectLocal } = Promise.withResolvers();
+    client.on("error", err => {
+      rejectRemote(err);
+      rejectLocal(err);
+      rejectDone(err);
+    });
+    client.once("remoteSettings", resolveRemote);
+    client.once("localSettings", resolveLocal);
 
     // Synchronously after connect(): node returns a fresh {} each read; bun used to return null.
     expect(client.remoteSettings).toEqual({});
     expect(client.localSettings).toEqual({});
     // The documented use (deciding how many requests to pipeline) must not throw.
     expect(client.remoteSettings.maxConcurrentStreams).toBeUndefined();
-
-    const { promise: remotePromise, resolve: resolveRemote } = Promise.withResolvers();
-    const { promise: localPromise, resolve: resolveLocal } = Promise.withResolvers();
-    client.once("remoteSettings", resolveRemote);
-    client.once("localSettings", resolveLocal);
 
     const remote = await remotePromise;
     expect(typeof remote.maxConcurrentStreams).toBe("number");
@@ -3553,6 +3557,7 @@ it("remoteSettings/localSettings are never null before the peer's SETTINGS arriv
     expect(client.remoteSettings).toEqual({});
     expect(client.localSettings).toEqual({});
   } finally {
+    client?.destroy();
     server.close();
   }
 });

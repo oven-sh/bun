@@ -1094,6 +1094,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_loop"
+version = "0.0.0"
+dependencies = [
+ "bitflags",
+ "bstr",
+ "bun_ast",
+ "bun_core",
+ "bun_dotenv",
+ "bun_macros",
+ "bun_opaque",
+ "bun_sys",
+ "bun_uws",
+ "bun_uws_sys",
+ "const_format",
+ "enum-map",
+ "enumset",
+ "libc",
+ "scopeguard",
+ "strum",
+ "thiserror",
+]
+
+[[package]]
 name = "bun_macros"
 version = "0.0.0"
 dependencies = [

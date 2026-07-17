@@ -1725,7 +1725,7 @@ pub fn diff_post_process(
     result: &mut bun_spawn::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
+) -> crate::patch::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let mut stdout: Vec<u8> = Vec::new();
     let mut stderr: Vec<u8> = Vec::new();
 
@@ -1802,7 +1802,7 @@ pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
     loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
+) -> crate::patch::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
@@ -1816,7 +1816,7 @@ pub fn git_diff_internal(
         b"",
         b"git",
     )
-    .ok_or(crate::Error::Sys(bun_core::errno::SystemErrno::ENOENT))?;
+    .ok_or(crate::patch::Error::Sys(bun_core::errno::SystemErrno::ENOENT))?;
 
     const ARGV: &[&[u8]] = &[
         b"-c",
@@ -1932,7 +1932,7 @@ fn git_diff_postprocess(
     stdout: &mut Vec<u8>,
     old_folder: &[u8],
     new_folder: &[u8],
-) -> crate::Result<()> {
+) -> crate::patch::Result<()> {
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 

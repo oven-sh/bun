@@ -1402,7 +1402,7 @@ describe("--interactive", () => {
   // publishes the CJS bindings onto the global before running the body.
   test("-e sees require/module/__filename/__dirname like `node -i -e`", async () => {
     const { stdout, exitCode } = await runInteractive(
-      ["-e", 'console.log(typeof require, typeof module, typeof __filename, typeof __dirname)'],
+      ["-e", "console.log(typeof require, typeof module, typeof __filename, typeof __dirname)"],
       "",
     );
     expect(stdout).toContain("function object string string");
@@ -1425,7 +1425,10 @@ describe("--interactive", () => {
   });
 
   test("-e can require() a builtin", async () => {
-    const { stdout, exitCode } = await runInteractive(["-e", 'console.log("plat:" + typeof require("os").platform)'], "");
+    const { stdout, exitCode } = await runInteractive(
+      ["-e", 'console.log("plat:" + typeof require("os").platform)'],
+      "",
+    );
     expect(stdout).toContain("plat:function");
     expect(exitCode).toBe(0);
   });

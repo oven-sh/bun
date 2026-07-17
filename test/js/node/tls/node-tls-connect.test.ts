@@ -799,8 +799,9 @@ describe("rejectUnauthorized only treats a literal `false` as opting out", () =>
       server.listen(0, "127.0.0.1");
       await once(server, "listening");
       const { promise, resolve, reject } = Promise.withResolvers<Error & { code?: string }>();
-      client = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: value as any }, () =>
-        reject(new Error("secureConnect must not be reached")),
+      client = tlsConnect(
+        { port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: value as any },
+        () => reject(new Error("secureConnect must not be reached")),
       );
       client.on("error", resolve);
       const error = await promise;
@@ -818,7 +819,10 @@ describe("rejectUnauthorized only treats a literal `false` as opting out", () =>
       server.listen(0, "127.0.0.1");
       await once(server, "listening");
       const { promise, resolve, reject } = Promise.withResolvers<void>();
-      client = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false }, resolve);
+      client = tlsConnect(
+        { port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false },
+        resolve,
+      );
       client.on("error", reject);
       await promise;
       expect(client.authorized).toBe(false);
@@ -949,7 +953,10 @@ it("socket.ssl is assignable like Node's plain own property", async () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const connected = Promise.withResolvers<void>();
-    client = tlsConnect({ port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false }, connected.resolve);
+    client = tlsConnect(
+      { port: (server.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false },
+      connected.resolve,
+    );
     client.on("error", connected.reject);
     await connected.promise;
     expect(typeof (client as any).ssl?.verifyError).toBe("function");

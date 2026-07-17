@@ -1556,8 +1556,9 @@ describe("tls.Server secure-context options", () => {
       rawServer.once("error", listening.reject);
       rawServer.listen(0, "127.0.0.1");
       await listening.promise;
-      client = connect({ port: (rawServer.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false }, () =>
-        client!.end(),
+      client = connect(
+        { port: (rawServer.address() as AddressInfo).port, host: "127.0.0.1", rejectUnauthorized: false },
+        () => client!.end(),
       );
       client.on("error", wrapClosed.reject);
       await wrapClosed.promise;

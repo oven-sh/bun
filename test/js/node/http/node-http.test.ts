@@ -3925,3 +3925,68 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   c.outputData.push({ data: "y", encoding: "utf8", callback: null });
   expect(d.outputData.length).toBe(0);
 });
+
+it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
+  // A socket served through server.emit("connection", ...) takes the JS
+  // fallback parser. Its Upgrade/CONNECT dispatch must match Node's
+  // parserOnIncoming: an Upgrade with a listener switches protocols with the
+  // first tunnel bytes as bodyHead; without one it falls through as a normal
+  // request with req.upgrade cleared; CONNECT without a listener destroys.
+  const { duplexPair } = await import("node:stream");
+
+  {
+    const server = createServer(() => {
+      throw new Error("request handler must not run for a handled upgrade");
+    });
+    server.on("upgrade", (req, socket, head) => {
+      socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\nHEAD:" + head.toString());
+      socket.on("data", d => socket.write("TUNNEL:" + d));
+    });
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    const out = await new Promise<string>(resolve => {
+      let buf = "";
+      clientSide.on("data", d => {
+        buf += d;
+        if (buf.includes("HEAD:early")) clientSide.write("more");
+        if (buf.includes("TUNNEL:more")) resolve(buf);
+      });
+      clientSide.write("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\nearly");
+    });
+    expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
+    expect(out).toContain("HEAD:early");
+    expect(out).toContain("TUNNEL:more");
+  }
+
+  {
+    const server = createServer((req, res) => {
+      res.end("normal:" + req.upgrade);
+    });
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    const out = await new Promise<string>(resolve => {
+      let buf = "";
+      clientSide.on("data", d => {
+        buf += d;
+        if (buf.includes("normal:")) resolve(buf);
+      });
+      clientSide.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n");
+    });
+    expect(out).toContain("HTTP/1.1 200");
+    expect(out).toEndWith("normal:false");
+  }
+
+  {
+    const server = createServer(() => {
+      throw new Error("request handler must not run for CONNECT");
+    });
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    // A duplexPair does not propagate destroy() to the other side; watch the
+    // server half directly.
+    const closed = new Promise<void>(resolve => serverSide.on("close", () => resolve()));
+    clientSide.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com\r\n\r\n");
+    await closed;
+    expect(serverSide.destroyed).toBe(true);
+  }
+});

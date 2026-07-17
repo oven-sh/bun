@@ -2281,6 +2281,13 @@ impl QuicEndpoint {
         // still echo the first session's value.
         self.client_local_tp
             .with_mut(|tp| tp.max_idle_timeout = idle_ms);
+        // Read before the session exists: `QuicSession::create` self-roots, and
+        // the conn that follows holds it as its ctx, so a throw after either
+        // point has to unwind state that a plain `?` here avoids creating.
+        let keepalive_us = read_u64_option(global, options, "keepAlive")?
+            .map_or(0, |ms| ms.saturating_mul(1000));
+        let use_preferred =
+            read_u64_option(global, options, "preferredAddressPolicy")? == Some(PREFERRED_ADDRESS_USE);
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
@@ -2303,13 +2310,6 @@ impl QuicEndpoint {
             Some(b) if !b.is_empty() => (b.as_ptr(), b.len()),
             _ => (null(), 0),
         };
-        // Read before engine_connect: once the conn exists it holds `session`
-        // as its ctx, and unwinding that safely is far more delicate than
-        // simply not creating it.
-        let keepalive_us = read_u64_option(global, options, "keepAlive")?
-            .map_or(0, |ms| ms.saturating_mul(1000));
-        let use_preferred =
-            read_u64_option(global, options, "preferredAddressPolicy")? == Some(PREFERRED_ADDRESS_USE);
         // engine_connect fires on_new_conn synchronously; hold the scope so a
         // schedule_process from inside it cannot re-enter the engine.
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);

@@ -753,33 +753,41 @@ describe("should not hang", () => {
   }
 });
 
-it("await exited resolves after unref() when nothing else is ref'd (Windows)", async () => {
+describe("await exited resolves after unref() when nothing else is ref'd (Windows)", () => {
   // On Windows, uv_unref() on the process handle drops it from
   // loop->active_handles. With nothing else ref'd, uv_run() skips its body
   // and never calls uv__poll, so the wait-thread's IOCP exit packet is never
-  // dequeued and on_exit_uv never fires. Before the fix, the child below
-  // would busy-spin forever with `exited` never resolving.
-  await using child = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const p = Bun.spawn({ cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] });
-       p.unref();
-       await p.exited;
-       console.log("resolved");`,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 20_000,
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-  expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
-    stdout: "resolved\n",
-    stderr: "",
-    exitCode: 0,
-    signalCode: null,
-  });
+  // dequeued and on_exit_uv never fires. Before the fix, the children below
+  // would busy-spin forever with `exited` never resolving. Accessing .exited
+  // while the child is still running now re-refs the handle so the exit
+  // callback is delivered, regardless of unref() ordering.
+  for (const [name, body] of [
+    ["unref() then .exited", `p.unref(); await p.exited;`],
+    [".exited then unref()", `const done = p.exited; p.unref(); await done;`],
+  ] as const) {
+    it(name, async () => {
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const p = Bun.spawn({ cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] });
+           ${body}
+           console.log("resolved");`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 20_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({
+        stdout: "resolved\n",
+        stderr: "",
+        exitCode: 0,
+        signalCode: null,
+      });
+    });
+  }
 });
 
 it("#3480", async () => {

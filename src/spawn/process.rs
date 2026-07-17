@@ -949,8 +949,8 @@ impl PollerWindows {
         // uv_unref() drops this handle from loop->active_handles. With nothing
         // else ref'd, uv__loop_alive() is 0 and uv_run() skips its body, so the
         // wait-thread's IOCP exit packet is never dequeued and on_exit_uv never
-        // fires. us_loop_pump() compensates by forcing one non-blocking
-        // iteration so the exit callback is still delivered.
+        // fires. Subprocess::get_exited re-refs the handle when .exited is
+        // observed while still Running, so awaiting it still resolves.
         match self {
             PollerWindows::Uv(p) => {
                 p.unref();

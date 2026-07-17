@@ -256,16 +256,7 @@ void us_internal_poll_set_type(struct us_poll_t *p, int poll_type) {
 LIBUS_SOCKET_DESCRIPTOR us_poll_fd(struct us_poll_t *p) { return p->fd; }
 
 void us_loop_pump(struct us_loop_t *loop) {
-  /* uv_run() skips its body entirely when uv__loop_alive() is 0, which means
-   * an unref'd handle's IOCP completion (e.g. a subprocess exit packet posted
-   * by the wait-thread) is never dequeued and its callback never fires. Bun
-   * calls this from outer loops (wait_for_promise, bun:test) that have their
-   * own "keep going" condition, so force exactly one non-blocking iteration:
-   * uv__poll(0) dequeues ready completions and uv__run_timers runs due
-   * timers. UV_RUN_NOWAIT keeps timeout at 0, so this never blocks. */
-  loop->uv_loop->active_handles++;
   uv_run(loop->uv_loop, UV_RUN_NOWAIT);
-  loop->uv_loop->active_handles--;
 }
 
 struct us_loop_t *us_create_loop(void *hint,

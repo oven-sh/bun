@@ -234,15 +234,22 @@ nativeTests.test_get_all_property_names_accessor = () => {
 };
 
 nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
+  const napi_key_include_prototypes = 0;
   const napi_key_own_only = 1;
   const napi_key_writable = 1;
   const napi_key_enumerable = 1 << 1;
   const napi_key_configurable = 1 << 2;
   const napi_key_keep_numbers = 0;
 
-  const apn = (obj, filter) =>
-    nativeTests.get_all_property_names(obj, napi_key_own_only, filter, napi_key_keep_numbers);
+  const apn = (obj, filter, mode = napi_key_own_only) =>
+    nativeTests.get_all_property_names(obj, mode, filter, napi_key_keep_numbers);
   const show = (label, r) => console.log(label, "status=" + r.status, "keys=" + JSON.stringify(r.keys));
+  const dropBuiltinProto = r => ({
+    status: r.status,
+    keys: r.keys
+      .filter(k => typeof k !== "symbol" && !Object.prototype.hasOwnProperty(k) && !String.prototype.hasOwnProperty(k))
+      .sort(),
+  });
 
   // V8's FilterProxyKeys only applies ONLY_ENUMERABLE; writable/configurable
   // filters pass every proxy key regardless of the reported descriptor.
@@ -280,6 +287,18 @@ nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
   }
   class DerivedString extends String {}
   show("derived string writable:", apn(new DerivedString("xy"), napi_key_writable));
+
+  // include_prototypes: the exemption applies at whatever prototype level owns
+  // the key, matching V8's per-level KeyAccumulator dispatch. Built-in
+  // prototype keys are dropped so engine ordering differences don't leak in.
+  show(
+    "proxy-proto include_prototypes writable:",
+    dropBuiltinProto(apn(Object.create(proxy), napi_key_writable, napi_key_include_prototypes)),
+  );
+  show(
+    "string-proto include_prototypes configurable:",
+    dropBuiltinProto(apn(Object.create(str), napi_key_configurable, napi_key_include_prototypes)),
+  );
 
   // Attribute filtering must still apply to ordinary objects.
   const plain = {};

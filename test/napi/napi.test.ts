@@ -714,6 +714,8 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain(`string own_only writable: status=0 keys=[0,1]`);
       expect(output).toContain(`string own_only configurable: status=0 keys=[0,1]`);
       expect(output).toContain(`derived string writable: status=0 keys=[0,1]`);
+      expect(output).toContain(`proxy-proto include_prototypes writable: status=0 keys=["x","y"]`);
+      expect(output).toContain(`string-proto include_prototypes configurable: status=0 keys=[0,1]`);
       expect(output).toContain(`plain writable: status=0 keys=["w","nc"]`);
       expect(output).toContain(`frozen writable: status=0 keys=[]`);
     });

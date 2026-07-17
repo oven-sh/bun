@@ -98,6 +98,10 @@ void WebWorker__releaseParentPollRef(void* worker);
 // Free the native WebWorker struct. Called from ~Worker.
 void WebWorker__destroy(void* worker);
 
+// Read this worker's loop counters from the parent thread. False if the worker
+// VM is gone. See src/jsc/web_worker.rs.
+bool WebWorker__getELU(void* worker, double* outElapsedMs, double* outIdleMs);
+
 } // extern "C"
 // -------------------------------------------------------------------------------------------------
 
@@ -373,6 +377,13 @@ void Worker::terminate()
     if (m_terminateRequested.exchange(true))
         return;
     WebWorker__notifyNeedTermination(impl_);
+}
+
+bool Worker::eventLoopUtilization(double& elapsedMs, double& idleMs)
+{
+    if (!impl_)
+        return false;
+    return WebWorker__getELU(impl_, &elapsedMs, &idleMs);
 }
 
 void Worker::setKeepAlive(bool keepAlive)

@@ -279,6 +279,10 @@ pub struct VirtualMachine {
     pub argv: Vec<Box<[u8]>>,
 
     pub origin_timer: std::time::Instant,
+    /// When THIS thread's loop started, for performance.eventLoopUtilization().
+    /// Not `origin_timer`, which is the process origin shared by every thread —
+    /// a worker's active time is measured from its own start.
+    pub loop_start: std::time::Instant,
     pub origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -2106,6 +2110,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).pending_internal_promise_reported_at).write(u32::MAX);
             addr_of_mut!((*vm).on_unhandled_rejection)
                 .write(VirtualMachine::default_on_unhandled_rejection);
+            addr_of_mut!((*vm).loop_start).write(std::time::Instant::now());
             let (origin_timer, origin_timestamp) = process_origin();
             addr_of_mut!((*vm).origin_timer).write(origin_timer);
             addr_of_mut!((*vm).origin_timestamp).write(origin_timestamp);

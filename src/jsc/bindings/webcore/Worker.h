@@ -134,6 +134,9 @@ public:
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
     void dispatchErrorWithMessage(WTF::String message, WTF::String code);
+    /// `[elapsedSinceLoopStartMs, idleMs]` for this worker's loop, read live from
+    /// the parent. False once the thread is gone (node reports all-zero then).
+    bool eventLoopUtilization(double& elapsedMs, double& idleMs);
     static WTF::String errorCodeOf(JSC::JSGlobalObject*, JSC::JSValue);
     bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     bool dispatchExit(int32_t exitCode);

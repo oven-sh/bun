@@ -275,9 +275,14 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
     }
 }
 
+// Node derives validity from start/end only (lib/internal/perf/usertiming.js
+// calculateStartDuration), so `measure(name, { detail })` and
+// `measure(name, { duration })` fall through to start = 0, end = now() instead
+// of throwing. User Timing L3 counts `detail` toward a non-empty dictionary;
+// node-compat wins here.
 static bool isNonEmptyDictionary(const PerformanceMeasureOptions& measureOptions)
 {
-    return !measureOptions.detail.isUndefined() || measureOptions.start || measureOptions.duration || measureOptions.end;
+    return measureOptions.start || measureOptions.end;
 }
 
 ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGlobalObject& globalObject, const String& measureName, std::optional<StartOrMeasureOptions>&& startOrMeasureOptions, const String& endMark)
@@ -289,10 +294,18 @@ ExceptionOr<Ref<PerformanceMeasure>> PerformanceUserTiming::measure(JSC::JSGloba
                     if (isNonEmptyDictionary(measureOptions)) {
                         if (!endMark.isNull())
                             return Exception { TypeError };
-                        if (!measureOptions.start && !measureOptions.end)
-                            return Exception { TypeError };
                         if (measureOptions.start && measureOptions.duration && measureOptions.end)
                             return Exception { TypeError };
+                        return measure(globalObject, measureName, measureOptions);
+                    }
+
+                    // A dictionary without start/end does not supply timing, but node
+                    // still measures to endMark while keeping detail.
+                    if (!endMark.isNull()) {
+                        PerformanceMeasureOptions optionsWithEndMark = measureOptions;
+                        optionsWithEndMark.end = endMark;
+                        optionsWithEndMark.duration = std::nullopt;
+                        return measure(globalObject, measureName, optionsWithEndMark);
                     }
 
                     return measure(globalObject, measureName, measureOptions);

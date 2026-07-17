@@ -1107,8 +1107,8 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         ctx.runtime_options.if_present = args.flag(b"--if-present");
         ctx.runtime_options.smol = args.flag(b"--smol");
         // node's `-i` is an alias for --interactive; elsewhere `-i` is --install=fallback.
-        ctx.runtime_options.interactive =
-            args.flag(b"--interactive") || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
+        ctx.runtime_options.interactive = args.flag(b"--interactive")
+            || (cmd == CommandTag::RunAsNodeCommand && args.flag(b"-i"));
         ctx.runtime_options.preconnect = slice_to_owned(args.options(b"--fetch-preconnect"));
         ctx.runtime_options.experimental_http2_fetch = args.flag(b"--experimental-http2-fetch");
         ctx.runtime_options.experimental_http3_fetch = args.flag(b"--experimental-http3-fetch");

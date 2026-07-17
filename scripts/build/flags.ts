@@ -344,14 +344,8 @@ export const globalFlags: Flag[] = [
     // re-tokenization in nested dep configures. -Xclang <arg> pair gets
     // split by cmake's try_compile → "unknown argument". Also more correct:
     // /clang: passes to the driver, -Xclang to cc1.
-    // Not under ASAN: bisected the post-ZGO_create CreateThread crash
-    // (oven-sh/bun#34352) down to "each CreateThread needs a recent thread
-    // exit to succeed"; with this flag thread_local dtors never register
-    // via __cxa_thread_atexit, so thread exit skips the dynamic-TLS dtor
-    // chain. Hypothesis under test: that chain is what primes the next
-    // CreateThread's TLS-callback path under ASAN.
     flag: "/clang:-fno-c++-static-destructors",
-    when: c => c.windows && !c.asan,
+    when: c => c.windows,
     lang: "cxx",
     desc: "Skip static destructors at exit (clang-cl syntax)",
   },

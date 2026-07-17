@@ -181,7 +181,7 @@ const LINUX = def1([
   "HAVE_MSG_NOSIGNAL", "HAVE_PIPE2",
 ]);
 
-// glibc + musl have these; bionic only has the non-_r variants.
+// glibc + musl have these; bionic and OHOS musl only have the non-_r variants.
 // prettier-ignore
 const LINUX_NETDB_R = def1([
   "HAVE_GETSERVBYPORT_R", "HAVE_GETSERVBYNAME_R",
@@ -286,7 +286,7 @@ function configH(cfg: Config): string {
     platform = `${POSIX}\n${FREEBSD}`;
     types = POSIX_SOCKET_TYPES;
   } else {
-    const abiExtra = cfg.abi === "android" ? ANDROID : LINUX_NETDB_R;
+    const abiExtra = cfg.abi === "android" ? ANDROID : cfg.ohos ? "" : LINUX_NETDB_R;
     platform = `${POSIX}\n${LINUX}\n${abiExtra}`;
     types = POSIX_SOCKET_TYPES;
   }

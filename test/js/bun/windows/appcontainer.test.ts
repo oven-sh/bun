@@ -242,7 +242,9 @@ const r = {};
 async function main() {
   r.tempRewritten = /\\\\AC\\\\Temp/i.test(process.env.TEMP || "");
 
-  const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"] });
+  // Explicit stdin: Bun.spawn's default is "ignore", which opens the NUL
+  // device; an AppContainer's default device ACL denies that.
+  const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdin: "pipe" });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
   r.realpath = fs.realpathSync(".") === fs.realpathSync.native(".");

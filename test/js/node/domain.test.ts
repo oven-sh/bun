@@ -291,3 +291,36 @@ test.concurrent("patched timers keep util.promisify working", async () => {
     exitCode: 0,
   });
 });
+
+// Match node: the domain is exited before its 'error' handler runs. A timer
+// scheduled inside the handler must NOT be bound to the failed domain, so a
+// handler that retries throwing work crashes on the retry instead of looping
+// through the domain forever. The error is also tagged as thrown.
+test.concurrent("domain error handler runs outside the domain", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const domain = require("domain").create();
+      domain.on("error", err => {
+        console.log("active in handler:", process.domain === null);
+        console.log("domainThrown:", err.domainThrown);
+        setTimeout(() => { throw new Error("second"); }, 1);
+      });
+      domain.run(() => {
+        setTimeout(() => { throw new Error("first"); }, 1);
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("active in handler: true\ndomainThrown: true\n");
+  expect(stderr).toContain("second");
+  expect(exitCode).not.toBe(0);
+});

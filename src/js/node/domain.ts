@@ -16,7 +16,21 @@ function bindCallbackToDomain(d, cb) {
     try {
       return cb.$apply(this, arguments);
     } catch (err) {
-      d._emitError(err);
+      // Match node: the domain is exited before its 'error' handler runs, so
+      // work scheduled inside the handler is not bound to the failed domain,
+      // and the error is tagged as thrown rather than emitted.
+      d.exit();
+      if (typeof err === "object" && err !== null) {
+        ObjectDefineProperty(err, "domain", {
+          __proto__: null,
+          configurable: true,
+          enumerable: false,
+          value: d,
+          writable: true,
+        });
+        err.domainThrown = true;
+      }
+      d.emit("error", err);
     } finally {
       d.exit();
     }
@@ -73,7 +87,6 @@ domain.createDomain = domain.create = function () {
     }
     d.emit("error", e);
   }
-  d._emitError = emitError;
 
   d.add = function (emitter) {
     emitter.on("error", emitError);

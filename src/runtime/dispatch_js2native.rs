@@ -72,10 +72,12 @@ pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    Ok(match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
-        Some(v) => JSValue::js_boolean(v),
-        None => JSValue::UNDEFINED,
-    })
+    Ok(
+        match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
+            Some(v) => JSValue::js_boolean(v),
+            None => JSValue::UNDEFINED,
+        },
+    )
 }
 
 mod css {

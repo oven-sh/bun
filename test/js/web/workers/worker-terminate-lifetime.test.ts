@@ -125,7 +125,7 @@ test("terminate() while the worker has pending log diagnostics does not abort th
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toBe("done\n");
   expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
-});
+}, timeout);
 
 // Regression: terminating a worker that had just spawned children of its own
 // freed its VirtualMachine in shutdown() while the children were still inside

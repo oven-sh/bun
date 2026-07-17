@@ -4132,8 +4132,15 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
     gcUnprotect(globalObject);
     globalObject = nullptr;
     vm.heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    vm.derefSuppressingSaferCPPChecking();
-    vm.derefSuppressingSaferCPPChecking();
+    // Drop every remaining VM ref so ~VM -> Heap::lastChanceToFinalize()
+    // destroys cells collectNow left conservatively reachable (whose native
+    // m_ctx would otherwise leak). Two refs are the creation pair; any beyond
+    // that are RefPtr<VM> in JSLockHolders still on the stack (e.g.
+    // JSEventListener::handleEvent when process.exit() came from
+    // worker.onmessage). global_exit is noreturn so their dtors never run,
+    // and workers were already joined, so no other thread holds the VM.
+    for (unsigned refs = vm.refCount(); refs > 0; --refs)
+        vm.derefSuppressingSaferCPPChecking();
     runLoop->threadWillExit();
 }
 

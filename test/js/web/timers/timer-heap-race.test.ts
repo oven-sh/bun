@@ -62,3 +62,24 @@ it.skipIf(!isASAN)(
   },
   20_000,
 );
+
+it.skipIf(!isASAN)(
+  "process.exit() from worker.onmessage finalizes the JSC heap",
+  async () => {
+    // handleEvent's JSLockHolder leaves an extra RefPtr<VM> on the stack at
+    // destructOnExit, so dropping only the two creation refs left ~VM (and
+    // lastChanceToFinalize) unreached and conservatively-live m_ctx leaked.
+    const { stdout, stderr, signal, exitCode } = await runFixture("timer-heap-exit-onmessage-fixture.ts", {
+      BUN_DESTRUCT_VM_ON_EXIT: "1",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1",
+      LSAN_OPTIONS: `malloc_context_size=30:print_suppressions=0:suppressions=${path.join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+    });
+    expect({ stdout, stderr, signal, exitCode }).toEqual({
+      stdout: "OK\n",
+      stderr: expect.not.stringContaining("LeakSanitizer"),
+      signal: null,
+      exitCode: 0,
+    });
+  },
+  20_000,
+);

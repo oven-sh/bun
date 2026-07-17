@@ -381,11 +381,14 @@ static void cleanupAsyncHooksData(JSC::VM& vm)
     auto* globalObject = defaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
-    if (!globalObject->m_nextTickQueue) {
-        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
-        checkIfNextTickWasCalledDuringMicrotask(vm);
-    } else {
+    if (auto* queue = globalObject->m_nextTickQueue.get()) {
+        // enterWith(x); process.nextTick(cb) previously left the queue
+        // undrained with the microtask-tick hook cleared, so cb only ran if
+        // some later work re-armed the drain.
         vm.setOnEachMicrotaskTick(nullptr);
+        queue->drain(vm, globalObject);
+    } else {
+        vm.setOnEachMicrotaskTick(&checkIfNextTickWasCalledDuringMicrotask);
     }
 }
 

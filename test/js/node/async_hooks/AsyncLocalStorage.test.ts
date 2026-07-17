@@ -13,6 +13,27 @@ describe("AsyncLocalStorage", () => {
     }).toThrow("error");
   });
 
+  // cleanupAsyncHooksData used to clear the microtask-tick hook without
+  // draining the queue when m_nextTickQueue already existed, so a nextTick
+  // scheduled alongside enterWith() on an otherwise-idle tick never ran.
+  test("process.nextTick scheduled alongside enterWith() still runs", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { AsyncLocalStorage } = require("async_hooks");
+         const als = new AsyncLocalStorage();
+         als.enterWith(1);
+         process.nextTick(() => console.log("nextTick ran"));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "nextTick ran\n", stderr: "", exitCode: 0 });
+  });
+
   // The post-run restoration assert must account for getStore() falling
   // through to defaultValue once the entry is removed (debug builds only).
   test("run() works with a defaultValue and no prior context", () => {

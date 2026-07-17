@@ -125,7 +125,6 @@ pub mod vm {
     pub use super::runtime_transpiler_store::*;
     pub use super::runtime_transpiler_cache::*;
     pub use super::virtual_machine_exports::*;
-    pub use super::btjs::*;
     pub use super::http_server_agent::*;
     pub use super::garbage_collection_controller::*;
     pub use super::node_module_module::*;
@@ -133,11 +132,11 @@ pub mod vm {
     pub use super::posix_signal_handle::*;
     pub use super::process_auto_killer::*;
     pub use super::saved_source_map::*;
-    pub use super::work_task::*;
     pub use super::concurrent_promise_task::*;
     pub use super::cpp_task::*;
     pub use super::jsc_scheduler::*;
     pub use super::task::*;
+    pub use super::task::Task;
     pub use super::event_loop_handle::*;
     pub use super::any_task_job::*;
     pub use super::js_secrets::*;

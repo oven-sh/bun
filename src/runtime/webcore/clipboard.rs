@@ -240,7 +240,11 @@ fn create_items_array(global: &JSGlobalObject, items: &[(Mime, Vec<u8>)]) -> JsR
 
 /// Schedules the clipboard op on the work pool; the job settles `promise` and owns the
 /// only handle to it.
-fn schedule_with_promise(global: &JSGlobalObject, op: Op, promise: JSPromiseStrong) -> JsResult<()> {
+fn schedule_with_promise(
+    global: &JSGlobalObject,
+    op: Op,
+    promise: JSPromiseStrong,
+) -> JsResult<()> {
     AnyTaskJob::create_and_schedule(
         global,
         ClipboardCtx {
@@ -468,12 +472,16 @@ mod platform {
         let mut data: *mut c_void = core::ptr::null_mut();
         let mut len: usize = 0;
         // SAFETY: both are valid out-params and `uti` is a NUL-terminated static.
-        if unsafe { bun_coregraphics_clipboard_read_type(uti, &raw mut data, &raw mut len) } != CG_OK
+        if unsafe { bun_coregraphics_clipboard_read_type(uti, &raw mut data, &raw mut len) }
+            != CG_OK
         {
             return Err(Unavailable::Platform);
         }
         if data.is_null() {
-            debug_assert_eq!(len, 0, "a null handle always reports an empty representation");
+            debug_assert_eq!(
+                len, 0,
+                "a null handle always reports an empty representation"
+            );
             return Ok(None);
         }
         let mut buf = vec![0u8; len];

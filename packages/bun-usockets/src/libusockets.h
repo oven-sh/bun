@@ -16,20 +16,56 @@
  */
 // clang-format off
 #pragma once
+
+/* <stdint.h> pulls in glibc's <features.h>, which locks the feature-test
+ * macros for the rest of the TU. bsd.h needs _GNU_SOURCE for mmsghdr/accept4
+ * but is included after us, so set it here before any system header (including
+ * whatever mimalloc.h transitively pulls in). */
+#if !defined(_WIN32) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
+#if defined(__SANITIZE_ADDRESS__)
+#define LIBUS_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define LIBUS_ASAN 1
+#endif
+#endif
+
+#if !defined(LIBUS_ASAN)
+#include "mimalloc.h"
+#ifndef us_calloc
+#define us_calloc mi_calloc
+#endif
+#ifndef us_malloc
+#define us_malloc mi_malloc
+#endif
+#ifndef us_realloc
+#define us_realloc mi_realloc
+#endif
+#ifndef us_free
+#define us_free mi_free
+#endif
+#ifndef us_strdup
+#define us_strdup mi_strdup
+#endif
+#else
 #ifndef us_calloc
 #define us_calloc calloc
 #endif
-
 #ifndef us_malloc
 #define us_malloc malloc
 #endif
-
 #ifndef us_realloc
 #define us_realloc realloc
 #endif
-
 #ifndef us_free
 #define us_free free
+#endif
+#ifndef us_strdup
+#define us_strdup strdup
+#endif
 #endif
 
 #ifndef LIBUSOCKETS_H
@@ -91,13 +127,6 @@
 #define LIBUS_SOCKET_DESCRIPTOR SOCKET
 #else
 #define LIBUS_SOCKET_DESCRIPTOR int
-#endif
-
-/* <stdint.h> pulls in glibc's <features.h>, which locks the feature-test
- * macros for the rest of the TU. bsd.h needs _GNU_SOURCE for mmsghdr/accept4
- * but is included after us, so set it here before any system header. */
-#if !defined(_WIN32) && !defined(_GNU_SOURCE)
-#define _GNU_SOURCE
 #endif
 
 #include "stddef.h"

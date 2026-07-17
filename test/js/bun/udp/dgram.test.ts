@@ -252,10 +252,9 @@ describe.skipIf(isWindows)("cluster", () => {
   // machine and SharedHandle teardown. A regression removing the double-close
   // guard would EBADF an IPC pipe and hang this fixture.
   //
-  // Skipped on Intel macOS: on macOS 14 x64 the four workers wedge in kernel
-  // exit (?E) with all four in recvmsg_x on the same SCM_RIGHTS-shared
-  // descriptor, which takes loopback down for the whole machine until reboot.
-  // Observed on every macOS 14 x64 CI agent; 13 and 15 not reproduced.
+  // Skipped on Intel macOS: on the macOS 14/15 x64 CI agents the four workers
+  // wedge in kernel exit (?E) with all four in recvmsg_x on the same
+  // SCM_RIGHTS-shared descriptor, and loopback stays dead until reboot.
   test.skipIf(isIntelMacOS)(
     "multi-worker shared socket adopts and tears down cleanly",
     async () => {

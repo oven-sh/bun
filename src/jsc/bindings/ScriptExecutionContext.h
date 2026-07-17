@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include "ActiveDOMObject.h"
+#include "SharedEnvStore.h"
 #include <wtf/CrossThreadTask.h>
 #include <wtf/Function.h>
 #include <wtf/HashSet.h>
@@ -126,6 +127,20 @@ public:
     ScriptExecutionContextIdentifier identifier() const { return m_identifier; }
 
     bool isWorker = false;
+
+    // Set once when the context is permanently shutting down (WebWorker__teardownJSCVM).
+    // Unlike VM::hasTerminationRequest(), never set transiently (node:vm {timeout}).
+    // Takes allScriptExecutionContextsMapLock so it serializes with postTaskTo's
+    // check-then-enqueue; a caller that drains the concurrent queue after this
+    // returns will observe every task enqueued before the flag flipped.
+    void markTerminating();
+    bool isTerminating() const { return m_isTerminating.load(std::memory_order_acquire); }
+
+    // Non-null once this thread joins a `worker_threads` SHARE_ENV tree; every
+    // thread in the tree holds a ref to the same store.
+    Bun::SharedEnvStore* sharedEnvStore() const { return m_sharedEnvStore.get(); }
+    void setSharedEnvStore(Bun::SharedEnvStore& store) { m_sharedEnvStore = &store; }
+
     void setGlobalObject(JSC::JSGlobalObject* globalObject)
     {
         m_globalObject = globalObject;
@@ -135,6 +150,8 @@ public:
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
+    std::atomic<bool> m_isTerminating { false };
+    RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;
     JSC::VM* m_vm = nullptr;
     JSC::JSGlobalObject* m_globalObject = nullptr;
     WTF::URL m_url = WTF::URL();

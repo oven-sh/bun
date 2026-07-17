@@ -9,7 +9,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         self.find_symbol_with_record_usage::<true>(loc, name)
     }
 
@@ -17,7 +17,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         loc: bun_ast::Loc,
         name: &'a [u8],
-    ) -> Result<FindSymbolResult, bun_core::Error> {
+    ) -> Result<FindSymbolResult, crate::Error> {
         // Every `break 'brk` below assigns `declare_loc` first; the one
         // early-`return` builds its own `FindSymbolResult` without reading it.
         let declare_loc: bun_ast::Loc;

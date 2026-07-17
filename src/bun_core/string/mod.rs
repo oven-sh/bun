@@ -905,7 +905,7 @@ impl String {
             // the UTF-8 byte view.
             return w::utf8(self.as_zig().slice());
         }
-        w::latin1(self.latin1())
+        w::latin1(self.latin1(), ambiguous_as_wide)
     }
 
     /// `bun.String.isGlobal` — true iff this is a `ZigString`
@@ -1813,18 +1813,15 @@ impl ZigString {
     /// `ZigString.sliceZBuf` — `Display`-format into `buf`, NUL-terminate, and
     /// return the borrowed `[:0]u8`. Errors if the formatted output (plus NUL)
     /// would not fit.
-    pub fn slice_z_buf<'a>(
-        &self,
-        buf: &'a mut crate::PathBuffer,
-    ) -> Result<&'a ZStr, crate::Error> {
+    pub fn slice_z_buf<'a>(&self, buf: &'a mut crate::PathBuffer) -> crate::CrateResult<&'a ZStr> {
         use std::io::Write as _;
         let buf_slice: &mut [u8] = &mut buf[..];
         let start_len = buf_slice.len();
         let mut cursor: &mut [u8] = buf_slice;
-        write!(cursor, "{}", self).map_err(|_| crate::err!("NoSpaceLeft"))?;
+        write!(cursor, "{}", self).map_err(|_| crate::CrateError::NoSpaceLeft)?;
         let written = start_len - cursor.len();
         if written >= buf.len() {
-            return Err(crate::err!("NoSpaceLeft"));
+            return Err(crate::CrateError::NoSpaceLeft);
         }
         buf[written] = 0;
         Ok(ZStr::from_buf(&buf[..], written))
@@ -2465,7 +2462,7 @@ pub mod printer {
         ascii_only: bool,
         json: bool,
         encoding: StrEncoding,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         debug_assert!(!json || quote_char == b'"');
         // utf16 view over the same bytes (only used when encoding == Utf16).
         // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
@@ -2607,7 +2604,7 @@ pub mod printer {
         text: &[u8],
         bytes: &mut MutableString,
         ascii_only: bool,
-    ) -> Result<(), crate::Error> {
+    ) -> crate::CrateResult<()> {
         // PERF: consider pre-growing via an estimated UTF-8 length — profile if it shows up on a hot path.
         bytes.append_char(b'"')?;
         write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;

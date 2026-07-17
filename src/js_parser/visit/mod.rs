@@ -48,7 +48,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         opts: &mut PrependTempRefsOpts,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."
@@ -1199,7 +1199,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         &mut self,
         stmts: &mut ListManaged<'a, Stmt>,
         kind: StmtsKind,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run this."

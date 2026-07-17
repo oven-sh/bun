@@ -99,8 +99,6 @@ bun_core::impl_tag_error!(ParseError);
 
 bun_core::oom_from_alloc!(ParseError);
 
-bun_core::named_error_set!(ParseError);
-
 #[derive(Clone, Copy)]
 pub enum Error {
     Oom,
@@ -134,11 +132,11 @@ pub enum AddToLogError {
 }
 bun_core::impl_tag_error!(AddToLogError);
 
-impl From<AddToLogError> for bun_core::Error {
+impl From<AddToLogError> for crate::Error {
     fn from(e: AddToLogError) -> Self {
         match e {
-            AddToLogError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            AddToLogError::StackOverflow => bun_core::err!("StackOverflow"),
+            AddToLogError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            AddToLogError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }
@@ -207,12 +205,12 @@ pub enum ExternalError {
 }
 bun_core::impl_tag_error!(ExternalError);
 
-impl From<ExternalError> for bun_core::Error {
+impl From<ExternalError> for crate::Error {
     fn from(e: ExternalError) -> Self {
         match e {
-            ExternalError::OutOfMemory => bun_core::err!("OutOfMemory"),
-            ExternalError::SyntaxError => bun_core::err!("SyntaxError"),
-            ExternalError::StackOverflow => bun_core::err!("StackOverflow"),
+            ExternalError::OutOfMemory => crate::Error::Alloc(bun_alloc::AllocError),
+            ExternalError::SyntaxError => crate::Error::SyntaxError,
+            ExternalError::StackOverflow => crate::Error::StackOverflow,
         }
     }
 }

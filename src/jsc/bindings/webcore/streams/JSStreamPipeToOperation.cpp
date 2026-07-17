@@ -14,6 +14,7 @@
 #include "JSStreamsRuntime.h"
 #include "JSWritableStream.h"
 #include "JSWritableStreamDefaultWriter.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/Error.h>
@@ -78,15 +79,31 @@ void JSStreamPipeToOperation::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSStreamPipeToOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_source);
-    visitor.append(thisObject->m_destination);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_writer);
-    visitor.append(thisObject->m_signal);
-    visitor.append(thisObject->m_promise);
-    visitor.append(thisObject->m_currentWrite);
-    visitor.append(thisObject->m_shutdownActionPromise);
-    visitor.append(thisObject->m_shutdownError);
+    visitor.appendHidden(thisObject->m_source);
+    visitor.appendHidden(thisObject->m_destination);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_writer);
+    visitor.appendHidden(thisObject->m_signal);
+    visitor.appendHidden(thisObject->m_promise);
+    visitor.appendHidden(thisObject->m_currentWrite);
+    visitor.appendHidden(thisObject->m_shutdownActionPromise);
+    visitor.appendHidden(thisObject->m_shutdownError);
+}
+
+void JSStreamPipeToOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSStreamPipeToOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_source, "source"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_destination, "destination"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_writer, "writer"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_signal, "signal"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_promise, "promise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_currentWrite, "currentWrite"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_shutdownActionPromise, "shutdownActionPromise"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_shutdownError, "shutdownError"_s);
 }
 
 static JSValue pipeShutdownError(JSStreamPipeToOperation* op)
@@ -142,7 +159,7 @@ static void pipeToLoopStep(JSGlobalObject* globalObject, JSStreamPipeToOperation
         return;
     auto* runtime = JSStreamsRuntime::from(globalObject);
     if (*desiredSize <= 0) {
-        registerPipeReaction(globalObject, writer->m_readyPromise.get(), runtime->onPipeWriterReadyFulfilled(), nullptr, op);
+        registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op);
         return;
     }
     auto* readRequest = JSReadRequest::create(vm, runtime->readRequestStructure(defaultGlobalObject(globalObject)), ReadRequestKind::PipeTo, op);
@@ -219,7 +236,7 @@ static void performPipeShutdownAction(JSGlobalObject* globalObject, JSStreamPipe
 
 void JSStreamPipeToOperation::checkErrorsMustBePropagatedForward(JSGlobalObject* globalObject)
 {
-    auto* source = m_source.get();
+    const auto* source = m_source.get();
     if (source->m_state != ReadableStreamState::Errored)
         return;
     JSValue storedError = source->m_storedError.get();
@@ -233,7 +250,7 @@ void JSStreamPipeToOperation::checkErrorsMustBePropagatedForward(JSGlobalObject*
 
 void JSStreamPipeToOperation::checkErrorsMustBePropagatedBackward(JSGlobalObject* globalObject)
 {
-    auto* destination = m_destination.get();
+    const auto* destination = m_destination.get();
     if (destination->m_state != WritableStreamState::Errored)
         return;
     JSValue storedError = destination->m_storedError.get();
@@ -587,8 +604,8 @@ void startPipeToOperation(JSGlobalObject* globalObject, JSStreamPipeToOperation*
         op->m_abortAlgorithmId = WebCore::AbortSignal::addAbortAlgorithmToSignal(signal, WebCore::JSAbortAlgorithm::create(vm, boundAlgorithm));
     }
 
-    auto* reader = op->m_reader.get();
-    auto* writer = op->m_writer.get();
+    const auto* reader = op->m_reader.get();
+    const auto* writer = op->m_writer.get();
     WebCore::registerPipeReaction(globalObject, reader->m_closedPromise.get(), runtime->onPipeSourceClosedFulfilled(), runtime->onPipeSourceClosedRejected(), op);
     WebCore::registerPipeReaction(globalObject, writer->m_closedPromise.get(), runtime->onPipeDestClosedFulfilled(), runtime->onPipeDestClosedRejected(), op);
 
@@ -625,7 +642,7 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     // A shutdown that is waiting on m_currentWrite re-checks it when its reaction fires.
     if (op->m_shuttingDown)
         return;
-    RELEASE_AND_RETURN(scope, WebCore::registerPipeReaction(globalObject, writer->m_readyPromise.get(), runtime->onPipeWriterReadyFulfilled(), nullptr, op));
+    RELEASE_AND_RETURN(scope, WebCore::registerPipeReaction(globalObject, writer->readyPromise(globalObject), runtime->onPipeWriterReadyFulfilled(), nullptr, op));
 }
 
 void pipeToReadRequestCloseSteps(JSGlobalObject* globalObject, JSStreamPipeToOperation* op)

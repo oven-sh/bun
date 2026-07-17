@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import fs, { readdirSync } from "fs";
 import { bunEnv, bunExe, isWindows, nodeExe, tempDirWithFiles } from "harness";
 import path from "path";
@@ -9,6 +9,24 @@ import path from "path";
 const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
 (isWindows ? describe : describe.concurrent)("bun init", () => {
+  // Every test's `bun init` runs a real `bun install`. bun dedupes downloads
+  // within a process but not across them, so on a cold CI cache the concurrent
+  // inits each re-fetch the same tarballs. Prime the shared install cache once,
+  // serially: `--react=shadcn`'s lockfile is a superset of the other react
+  // templates', and `-y` covers the blank template (typescript + @types/bun).
+  beforeAll(async () => {
+    for (const flag of ["-y", "--react=shadcn"]) {
+      const temp = tempDirWithFiles("bun-init-cache-prime", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "init", flag],
+        cwd: temp,
+        stdio: ["ignore", "ignore", "ignore"],
+        env: initEnv,
+      });
+      await proc.exited;
+    }
+  }, 240_000);
+
   test("bun init works", async () => {
     const temp = tempDirWithFiles("bun-init-works", {});
 
@@ -340,10 +358,13 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       expect({ tscStdout, tscStderr, tscExited }).toMatchObject({ tscExited: 0 });
 
       // The blank template has no `build` script; the react templates do.
+      // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
+      // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
+      // pass --bun.
       const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
       if (pkg.scripts?.build) {
         await using build = Bun.spawn({
-          cmd: [bunExe(), "run", "build"],
+          cmd: [bunExe(), "--bun", "run", "build"],
           cwd: temp,
           stdio: ["ignore", "pipe", "pipe"],
           env: bunEnv,

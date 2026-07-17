@@ -36,8 +36,21 @@ typedef void* zig_mutex_t;
 struct us_quic_socket_context_s;
 
 struct us_internal_loop_data_t {
+#ifdef LIBUS_USE_LIBUV
     struct us_timer_t *sweep_timer;
+#else
+    /* Absolute monotonic ns of the next sweep, or -1. Folded into the poll
+     * timeout — no timerfd, no EVFILT_TIMER. */
+    long long sweep_next_tick_ns;
+#endif
     int sweep_timer_count;
+#ifdef LIBUS_USE_LIBUV
+    /* Sockets whose peer FIN was deferred behind buffered data while paused
+     * (poll_cb's MSG_PEEK probe): the sweep escalates them via SO_ERROR when
+     * the peer later resets, since the one-shot DISCONNECT report was already
+     * consumed by the FIN. Zero cost while no socket is in that state. */
+    int fin_deferred_count;
+#endif
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from
@@ -52,11 +65,12 @@ struct us_internal_loop_data_t {
      * the gap between loop_post and getTimeout is sub-µs so storing the
      * relative diff is precise enough. */
     long long quic_next_tick_us;
-    /* libuv only: a fallthrough us_timer_t armed to quic_next_tick_us so the
-     * uv loop wakes for lsquic's time-driven state. POSIX folds the deadline
-     * into the epoll_pwait2 timeout via getTimeout() instead, so this stays
-     * NULL there. */
+#ifdef LIBUS_USE_LIBUV
+    /* A fallthrough us_timer_t armed to quic_next_tick_us so the uv loop wakes
+     * for lsquic's time-driven state. POSIX folds the deadline into the
+     * epoll_pwait2 timeout via getTimeout() instead. */
     struct us_timer_t *quic_timer;
+#endif
     struct us_socket_group_t *iterator;
     char *recv_buf;
     char *send_buf;

@@ -69,7 +69,7 @@ pub trait RunTasksCallbacks {
     fn on_package_manifest_error(
         _ctx: &mut Self::Ctx,
         _name: &[u8],
-        _err: bun_core::Error,
+        _err: crate::Error,
         _url: &[u8],
     ) {
         unreachable!()
@@ -85,7 +85,7 @@ pub trait RunTasksCallbacks {
         _task_id: Task::Id,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
-        _err: bun_core::Error,
+        _err: crate::Error,
         _url: &[u8],
     ) {
         unreachable!()
@@ -95,7 +95,7 @@ pub trait RunTasksCallbacks {
         _package_id: PackageID,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
-        _err: bun_core::Error,
+        _err: crate::Error,
         _url: &[u8],
     ) {
         unreachable!()
@@ -139,7 +139,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     extract_ctx: &mut C::Ctx,
     install_peer: bool,
     log_level: Options::LogLevel,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     // `Cell<bool>` so the `scopeguard::defer!` below can read it via `&self`
     // while the loop body sets it — no raw-ptr provenance dance needed.
     let has_updated_this_run = Cell::new(false);
@@ -237,7 +237,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 }
             } else {
                 // Patch application failed - propagate error to cause install failure
-                return Err(bun_core::err!("InstallFailed"));
+                return Err(crate::Error::InstallFailed);
             }
         }
     }
@@ -392,7 +392,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("HTTPError"));
+                        .map(crate::Error::from)
+                        .unwrap_or(crate::Error::HTTPError);
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -420,7 +421,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("HTTPError"));
+                        .map(crate::Error::from)
+                        .unwrap_or(crate::Error::HTTPError);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
@@ -659,7 +661,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
+                        .map(crate::Error::from)
+                        .unwrap_or(crate::Error::TarballFailedToDownload);
 
                     if task.retried < manager.options.max_retry_count {
                         task.retried += 1;
@@ -700,22 +703,19 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let err = task
                         .response
                         .fail
-                        .unwrap_or_else(|| bun_core::err!("TarballFailedToDownload"));
+                        .map(crate::Error::from)
+                        .unwrap_or(crate::Error::TarballFailedToDownload);
 
-                    // The download will not be retried for this task_id, so
-                    // drop the dedupe state before dispatching the error.
-                    // Otherwise a later `enqueuePackageForDownload` for the
-                    // same package sees `found_existing`, never schedules a
-                    // network task, and waits forever for a callback that
-                    // will not arrive. `Store.Installer.onPackageDownloadError`
-                    // drains `task_queue` itself but does not touch
-                    // `network_dedupe_map`, so this must run on the callback
-                    // path too. Capture `is_required` first —
-                    // `isNetworkTaskRequired` reads the map and returns `true`
-                    // when the entry is gone, which would upgrade optional-dep
-                    // warnings to errors on the void-callback fallback below.
+                    // The download will not be retried for this task_id. Mark
+                    // the dedupe entry as failed so a later
+                    // `enqueuePackageForDownload` for the same package observes
+                    // the failure and fails fast instead of either waiting
+                    // forever on a callback that never arrives (entry kept) or
+                    // re-running the entire download+retry cycle (entry removed).
+                    // Runs before the callback branch so `Store.Installer`
+                    // (which `continue`s from the callback) is covered too.
                     let is_required = manager.is_network_task_required(task.task_id);
-                    let _ = manager.network_dedupe_map.remove(&task.task_id);
+                    manager.mark_network_task_failed(task.task_id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         if C::IS_STORE_INSTALLER {
@@ -788,25 +788,23 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    // Non-retryable HTTP error: drop dedupe state so a later
-                    // enqueue for this task_id schedules a fresh network task
-                    // instead of waiting on this failed one. Runs before the
-                    // callback branch so `Store.Installer` (which `continue`s
-                    // from the callback) is covered too. Capture
-                    // `is_required` first — `isNetworkTaskRequired` reads the
-                    // map and returns `true` when the entry is gone.
+                    // Non-retryable HTTP error: mark the dedupe entry as failed
+                    // so a later enqueue for this task_id fails fast instead of
+                    // waiting on this failed one or re-downloading it. Runs
+                    // before the callback branch so `Store.Installer` (which
+                    // `continue`s from the callback) is covered too.
                     let is_required = manager.is_network_task_required(task.task_id);
-                    let _ = manager.network_dedupe_map.remove(&task.task_id);
+                    manager.mark_network_task_failed(task.task_id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         let err = match response.status_code {
-                            400 => bun_core::err!("TarballHTTP400"),
-                            401 => bun_core::err!("TarballHTTP401"),
-                            402 => bun_core::err!("TarballHTTP402"),
-                            403 => bun_core::err!("TarballHTTP403"),
-                            404 => bun_core::err!("TarballHTTP404"),
-                            405..=499 => bun_core::err!("TarballHTTP4xx"),
-                            _ => bun_core::err!("TarballHTTP5xx"),
+                            400 => crate::Error::TarballHTTP400,
+                            401 => crate::Error::TarballHTTP401,
+                            402 => crate::Error::TarballHTTP402,
+                            403 => crate::Error::TarballHTTP403,
+                            404 => crate::Error::TarballHTTP404,
+                            405..=499 => crate::Error::TarballHTTP4xx,
+                            _ => crate::Error::TarballHTTP5xx,
                         };
 
                         if C::IS_STORE_INSTALLER {
@@ -973,7 +971,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if task.status == Task::Status::Fail {
                     let req = task.request_package_manifest();
                     let name = req.name.slice();
-                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
@@ -1073,19 +1071,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let resolution = &tarball.resolution;
 
                 if task.status == Task::Status::Fail {
-                    let err = task
-                        .err
-                        .unwrap_or_else(|| bun_core::err!("TarballFailedToExtract"));
+                    let err = task.err.unwrap_or(crate::Error::TarballFailedToExtract);
 
                     // Extract-task failure (integrity check, libarchive error, etc.)
-                    // is symmetric with the HTTP 4xx/5xx branch above: drop the
-                    // dedupe state so a later `enqueuePackageForDownload` for this
-                    // `task_id` schedules a fresh network task instead of waiting
-                    // on this failed one forever. Runs before the callback branch
-                    // so `Store.Installer` (which `continue`s from the callback)
-                    // is covered too. `network_dedupe_map.remove` is a no-op for
+                    // is symmetric with the HTTP 4xx/5xx branch above: mark the
+                    // dedupe entry as failed so a later `enqueuePackageForDownload`
+                    // for this `task_id` fails fast instead of waiting on this
+                    // failed one forever or re-downloading it. Runs before the
+                    // callback branch so `Store.Installer` (which `continue`s from
+                    // the callback) is covered too. The mark is a no-op for
                     // `local_tarball` tasks (they never populate the map).
-                    let _ = manager.network_dedupe_map.remove(&task.id);
+                    manager.mark_network_task_failed(task.id);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
                         // SAFETY: `task.tag` selects the active `task.request` union arm.
@@ -1264,7 +1260,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.git_repositories.insert(task.id, repo_fd);
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
                         C::on_package_manifest_error(extract_ctx, name, err, url);
@@ -1432,7 +1428,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let mut package_id: PackageID = INVALID_PACKAGE_ID;
 
                 if task.status == Task::Status::Fail {
-                    let err = task.err.unwrap_or_else(|| bun_core::err!("Failed"));
+                    let err = task.err.unwrap_or(crate::Error::Failed);
 
                     if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
@@ -1752,6 +1748,18 @@ pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> boo
     }
 }
 
+pub fn mark_network_task_failed(this: &mut PackageManager, task_id: Task::Id) {
+    if let Some(entry) = this.network_dedupe_map.get_mut(&task_id) {
+        entry.failed = true;
+    }
+}
+
+pub fn network_task_has_failed(this: &PackageManager, task_id: Task::Id) -> bool {
+    this.network_dedupe_map
+        .get(&task_id)
+        .is_some_and(|e| e.failed)
+}
+
 pub fn generate_network_task_for_tarball<'a>(
     this: &'a mut PackageManager,
     task_id: Task::Id,
@@ -1929,6 +1937,14 @@ impl PackageManager {
         is_network_task_required(self, task_id)
     }
     #[inline]
+    pub fn mark_network_task_failed(&mut self, task_id: Task::Id) {
+        mark_network_task_failed(self, task_id)
+    }
+    #[inline]
+    pub fn network_task_has_failed(&self, task_id: Task::Id) -> bool {
+        network_task_has_failed(self, task_id)
+    }
+    #[inline]
     pub fn get_network_task(&mut self) -> *mut NetworkTask {
         get_network_task(self)
     }
@@ -1946,7 +1962,7 @@ fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
     dependency_list: TaskCallbackList,
     extract_ctx: &mut C::Ctx,
     install_peer: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     let ctx_ptr: *mut C::Ctx = extract_ctx;
     manager.process_dependency_list(
         dependency_list,

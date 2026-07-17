@@ -938,7 +938,7 @@ impl QuicStream {
         let bytes = bun_core::String::from_js(header_string, global)?
             .encode(crate::node::types::Encoding::Latin1);
         let is_trailing =
-            kind_arg.coerce_to_i32(global).unwrap_or(0) as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
+            kind_arg.coerce_to_i32(global)? as u32 == QUIC_STREAM_HEADERS_KIND_TRAILING;
         let eos = is_trailing
             || flags.coerce_to_i32(global)? & (QUIC_STREAM_HEADERS_FLAGS_TERMINAL as i32) != 0;
         let Some(s) = self.ls() else {
@@ -1032,12 +1032,25 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     let qs = unsafe { &*ctx.cast::<QuicStream>() };
     if let Some(hset) = stream.take_header_set() {
         let pairs = hset.pairs();
-        // 1xx interim responses are HINTS (RFC 9114 §4.1).
-        let is_interim = pairs
+        /// RFC 9114 §8.1: malformed message (a request carrying :status).
+        const H3_MESSAGE_ERROR: u64 = 0x105;
+        let has_status = pairs
             .chunks_exact(2)
             .find(|kv| kv[0] == b":status")
-            .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1')
-            .unwrap_or(false);
+            .map(|kv| kv[1].len() == 3 && kv[1][0] == b'1');
+        // Only a client can receive a response. A :status in a request is
+        // malformed; node's nghttp3 resets the stream rather than delivering
+        // it (RFC 9114 §4.1.2), and routing it to `oninfo` would leave the
+        // request unanswered until the idle timeout.
+        let peer_is_client = qs.session_ref().is_some_and(|s| s.is_server());
+        if peer_is_client && has_status.is_some() {
+            if let Some(s) = qs.ls() {
+                s.reset(H3_MESSAGE_ERROR);
+            }
+            return;
+        }
+        // 1xx interim responses are HINTS (RFC 9114 §4.1).
+        let is_interim = has_status.unwrap_or(false);
         let kind = if is_interim {
             QUIC_STREAM_HEADERS_KIND_HINTS
         } else if qs.mark_headers_received() {

@@ -9,7 +9,6 @@ use bun_jsc::{
     ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, StringJsc, Strong,
 };
 
-use crate::timer::{EventLoopTimer, EventLoopTimerTag};
 use bun_lsquic_sys as lsquic;
 
 use super::callbacks;
@@ -394,11 +393,9 @@ pub struct QuicSession {
     destroyed: Cell<bool>,
     application_options_js: JsCell<Option<Strong>>,
     this_value: JsCell<JsRef>,
-    pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
     global: Cell<*const JSGlobalObject>,
 }
 
-bun_event_loop::impl_timer_owner!(QuicSession; from_timer_ptr => event_loop_timer);
 
 impl QuicSession {
     fn new(global: &JSGlobalObject, vtable: *const lsquic::NqVtable) -> Self {
@@ -443,14 +440,9 @@ impl QuicSession {
             destroyed: Cell::new(false),
             application_options_js: JsCell::new(None),
             this_value: JsCell::new(JsRef::empty()),
-            event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
-                EventLoopTimerTag::QuicSession,
-            )),
             global: Cell::new(core::ptr::from_ref(global)),
         }
     }
-
-    pub(crate) fn on_timer_fire(_this: *mut Self) {}
 
     pub(super) fn create(
         global: &JSGlobalObject,
@@ -695,10 +687,15 @@ impl QuicSession {
         } else {
             &self.pending_local_bidi
         };
-        match queue.with_mut(VecDeque::pop_front) {
-            Some(p) if !p.is_null() && self.streams.get().contains(&p) => Some(p),
-            _ => None,
+        // Skip the tombstones `remove_stream` leaves: stopping at the first
+        // one would strand the live request behind it until the next
+        // MAX_STREAMS grant.
+        while let Some(p) = queue.with_mut(VecDeque::pop_front) {
+            if !p.is_null() && self.streams.get().contains(&p) {
+                return Some(p);
+            }
         }
+        None
     }
     pub(super) fn remove_stream(&self, stream: *mut super::stream::QuicStream) {
         self.streams.with_mut(|v| v.retain(|&s| s != stream));
@@ -1803,10 +1800,9 @@ impl QuicSession {
             app = options
                 .get(global, "type")?
                 .map(|v| {
-                    bun_core::String::from_js(v, global)
-                        .map(|s| s.to_utf8_bytes() == b"application")
-                        .unwrap_or(false)
+                    bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes() == b"application")
                 })
+                .transpose()?
                 .unwrap_or(false);
             code = super::endpoint::read_u64_option(global, options, "code")?.unwrap_or(0);
             reason = options
@@ -2307,11 +2303,7 @@ impl QuicSession {
         clippy::boxed_local,
         reason = "codegen's host_fn_finalize calls this as `|b| QuicSession::finalize(b)` and requires `self: Box<Self>`"
     )]
-    pub(crate) fn finalize(self: Box<Self>) {
-        if self.event_loop_timer.get().state == crate::timer::EventLoopTimerState::ACTIVE {
-            crate::jsc_hooks::timer_all_mut().remove(self.event_loop_timer.as_ptr());
-        }
-    }
+    pub(crate) fn finalize(self: Box<Self>) {}
 }
 
 lsquic_callback! {

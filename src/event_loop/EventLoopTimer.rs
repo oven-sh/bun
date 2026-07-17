@@ -206,7 +206,6 @@ pub enum Tag {
     GcOneShot,
     GcRepeating,
     QuicEndpoint,
-    QuicSession,
 }
 
 impl Tag {
@@ -218,7 +217,6 @@ impl Tag {
             | Tag::StatWatcherScheduler
             | Tag::GcOneShot | Tag::GcRepeating // internal GC pacing
             | Tag::QuicEndpoint
-            | Tag::QuicSession
             => false,
             _ => true,
         }

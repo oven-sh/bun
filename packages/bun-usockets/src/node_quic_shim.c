@@ -559,7 +559,10 @@ void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d,
 void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d) {
     struct us_nq_driver_s **pp = &loop->data.nq_head;
     while (*pp) {
-        if (*pp == d) { *pp = d->next; d->next = NULL; return; }
+        /* Leave d->next intact: an in-progress walk holds it as its
+         * successor, and clearing it would end that pass early. Nothing else
+         * reads it, and register() overwrites it. */
+        if (*pp == d) { *pp = d->next; return; }
         pp = &(*pp)->next;
     }
 }

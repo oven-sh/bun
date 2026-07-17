@@ -307,7 +307,7 @@
 +        out[2*i]     = hex[(cid->idbuf[i] >> 4) & 0xF];
 +        out[2*i + 1] = hex[ cid->idbuf[i]       & 0xF];
 +    }
-+    out[2 * cid->len] = '\0';
++    out[2 * (cid->len < MAX_CID_LEN ? cid->len : MAX_CID_LEN)] = '\0';
 +}
 +
 +int

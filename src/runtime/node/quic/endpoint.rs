@@ -236,7 +236,7 @@ pub struct QuicEndpoint {
     pending_new_sessions: JsCell<Vec<*mut QuicSession>>,
     /// Server sessions announced at Initial receipt (Node's event order).
     provisional: JsCell<Vec<ProvisionalSession>>,
-    pending_verneg: JsCell<Vec<(*mut QuicSession, [u8; VERNEG_PROBE_CID_LEN])>>,
+    pending_verneg: JsCell<Vec<(*mut QuicSession, [u8; VERNEG_PROBE_CID_LEN], u64)>>,
     dead_provisional_peers: JsCell<Vec<(StoredAddr, u64)>>,
     block_list: Cell<Option<*mut crate::node::net::block_list::BlockList>>,
     early_keylog: JsCell<Vec<(*mut c_void, StoredAddr, Vec<u8>)>>,
@@ -1124,7 +1124,13 @@ impl QuicEndpoint {
             send_scope_depth: Cell::new(0),
             global: Cell::new(core::ptr::from_ref(global)),
         };
-        let raw = bun_core::heap::into_raw(Box::new(this));
+        // Codegen installs the pointer on the JS object only after this
+        // returns Ok, so a throw from any option read below would leak the
+        // endpoint, its vtable and any Strong already stored in it.
+        let mut raw = scopeguard::guard(bun_core::heap::into_raw(Box::new(this)), |r| {
+            // SAFETY: `r` is the box we just created; nothing else owns it yet.
+            unsafe { bun_core::heap::destroy(r) };
+        });
 
         let vt = Box::new(lsquic::NqVtable {
             owner: raw.cast(),
@@ -1155,8 +1161,8 @@ impl QuicEndpoint {
         });
         // SAFETY: `raw` was just created and is uniquely owned by the wrapper.
         unsafe {
-            (*raw).vtable_ptr = &raw const *vt;
-            (*raw).vtable.set(Some(vt));
+            (**raw).vtable_ptr = &raw const *vt;
+            (**raw).vtable.set(Some(vt));
         }
 
         let [options] = frame.arguments_as_array::<1>();
@@ -1188,7 +1194,7 @@ impl QuicEndpoint {
                         host_nul.push(0);
                         // SAFETY: `raw` is uniquely owned here.
                         unsafe {
-                            (*raw).bind_config.set(BindConfig {
+                            (**raw).bind_config.set(BindConfig {
                                 host: host_nul,
                                 port,
                             })
@@ -1202,8 +1208,8 @@ impl QuicEndpoint {
                     // the BlockList wrapper (and thus the native object)
                     // alive for the endpoint's lifetime.
                     unsafe {
-                        (*raw).block_list.set(Some(bl.as_ptr()));
-                        (*raw)
+                        (**raw).block_list.set(Some(bl.as_ptr()));
+                        (**raw)
                             .block_list_js
                             .with_mut(|s| *s = Some(bun_jsc::Strong::create(bl_js, global)));
                     }
@@ -1215,14 +1221,14 @@ impl QuicEndpoint {
             {
                 let policy = bun_core::String::from_js(policy, global)?.to_utf8_bytes();
                 // SAFETY: as above.
-                unsafe { (*raw).block_list_allow.set(policy == b"allow") };
+                unsafe { (**raw).block_list_allow.set(policy == b"allow") };
             }
             if let Some(v) = options
                 .get(global, "disableStatelessReset")?
                 .filter(|v| v.is_boolean())
             {
                 // SAFETY: as above.
-                unsafe { (*raw).disable_stateless_reset.set(v.to_boolean()) };
+                unsafe { (**raw).disable_stateless_reset.set(v.to_boolean()) };
             }
             if let Some(v) = options
                 .get(global, "statelessResetBurst")?
@@ -1230,14 +1236,14 @@ impl QuicEndpoint {
             {
                 let burst = v.as_number().max(0.0).min(u32::MAX as f64) as u32;
                 // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_burst.set(burst) };
+                unsafe { (**raw).stateless_reset_burst.set(burst) };
             }
             if let Some(v) = options
                 .get(global, "statelessResetRate")?
                 .filter(|v| v.is_number())
             {
                 // SAFETY: as above.
-                unsafe { (*raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
+                unsafe { (**raw).stateless_reset_rate.set(v.as_number().max(0.0)) };
             }
         }
 
@@ -1257,12 +1263,12 @@ impl QuicEndpoint {
         this_value.put(global, b"statsByteOffset", JSValue::js_number(0.0));
         // SAFETY: `state`/`stats` are write-once before any other access.
         unsafe {
-            (*raw).state = state_ptr.cast();
-            (*raw).stats = stats_ptr.cast();
-            (*raw).write_stat(IDX_STATS_CREATED_AT, now_ns());
+            (**raw).state = state_ptr.cast();
+            (**raw).stats = stats_ptr.cast();
+            (**raw).write_stat(IDX_STATS_CREATED_AT, now_ns());
         }
 
-        Ok(raw)
+        Ok(scopeguard::ScopeGuard::into_inner(raw))
     }
 
     fn state_mut(&self) -> *mut EndpointState {
@@ -1705,6 +1711,31 @@ impl QuicEndpoint {
                 session.push_event(session::SessionEvent::Closed);
             }
         }
+        // A version-negotiation probe has no lsquic conn, so no handshake or
+        // idle timeout covers it, and RFC 9000 s6.1 makes the server's reply
+        // optional with no retransmit. Without this, a dropped reply hangs
+        // `opened` forever and keeps `endpoint.close()` from ever resolving.
+        let mut verneg_expired: Vec<*mut QuicSession> = Vec::new();
+        self.pending_verneg.with_mut(|v| {
+            v.retain(|(session, _, created_ns)| {
+                if now.saturating_sub(*created_ns) < PROVISIONAL_TIMEOUT_NS {
+                    return true;
+                }
+                verneg_expired.push(*session);
+                false
+            });
+        });
+        for session in verneg_expired {
+            if let Some(session) = self.live_session(session) {
+                session.push_event(session::SessionEvent::PeerClose {
+                    app_error: false,
+                    code: CRYPTO_ERROR_HANDSHAKE_FAILURE,
+                    reason: b"handshake failed".to_vec(),
+                });
+                session.push_event(session::SessionEvent::Closed);
+                n_expired += 1;
+            }
+        }
         if n_expired > 0 {
             // This runs after `process()` already drained the event queues, so
             // ask `rearm_timer` for the follow-up pass that delivers these.
@@ -1855,7 +1886,7 @@ impl QuicEndpoint {
         self.pending_new_sessions
             .with_mut(|v| v.retain(|&s| s != session));
         self.pending_verneg
-            .with_mut(|v| v.retain(|&(s, _)| s != session));
+            .with_mut(|v| v.retain(|&(s, _, _)| s != session));
         let now = now_ns();
         self.provisional.with_mut(|v| {
             v.retain(|p| {
@@ -2284,12 +2315,34 @@ impl QuicEndpoint {
             unsafe { (*session).teardown(global) };
             return Ok(JSValue::UNDEFINED);
         }
+        // Read the remaining options before the session is reachable: a throw
+        // between here and `sessions.push` would orphan a self-rooted session
+        // and a live lsquic conn that nothing tears down.
+        let keepalive_us = match read_u64_option(global, options, "keepAlive") {
+            Ok(v) => v.map_or(0, |ms| ms.saturating_mul(1000)),
+            Err(e) => {
+                // SAFETY: `session` was created here and is not yet published.
+                unsafe { (*session).teardown(global) };
+                return Err(e);
+            }
+        };
+        let use_preferred = match read_u64_option(global, options, "preferredAddressPolicy") {
+            Ok(v) => v == Some(PREFERRED_ADDRESS_USE),
+            Err(e) => {
+                // SAFETY: as above.
+                unsafe { (*session).teardown(global) };
+                return Err(e);
+            }
+        };
         // SAFETY: `conn` is live; out-params are stack slots.
         unsafe {
             lsquic::lsquic_conn_set_ctx(conn, session.cast());
             (*session).conn.set(conn);
             (*session).cache_sockaddrs(conn);
-            (*session).apply_options(global, options)?;
+            if let Err(e) = (*session).apply_options(global, options) {
+                (*session).teardown(global);
+                return Err(e);
+            }
             if resume_len != 0 {
                 (*session).apply_peer_datagram_budget();
             }
@@ -2297,12 +2350,8 @@ impl QuicEndpoint {
         // keepAlive is per-session in Node.
         // SAFETY: `conn` is live (checked above).
         if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
-            let keepalive_us = read_u64_option(global, options, "keepAlive")?
-                .map_or(0, |ms| ms.saturating_mul(1000));
             c.set_ping_period_us(keepalive_us);
-            if read_u64_option(global, options, "preferredAddressPolicy")?
-                == Some(PREFERRED_ADDRESS_USE)
-            {
+            if use_preferred {
                 c.use_preferred_address(true);
             }
         }
@@ -2351,7 +2400,7 @@ impl QuicEndpoint {
             (*session).verneg.set(Some((version, min_version)));
             (*session).remote_addr.set(remote);
         }
-        self.pending_verneg.with_mut(|v| v.push((session, scid)));
+        self.pending_verneg.with_mut(|v| v.push((session, scid, now_ns())));
         self.sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket.get() {
@@ -2387,7 +2436,7 @@ impl QuicEndpoint {
         off += scid_len;
         let session = self.pending_verneg.with_mut(|v| {
             v.iter()
-                .position(|(_, probe_scid)| probe_scid.as_slice() == dcid)
+                .position(|(_, probe_scid, _)| probe_scid.as_slice() == dcid)
                 .map(|i| v.swap_remove(i).0)
         });
         let Some(session) = session else { return false };

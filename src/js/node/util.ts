@@ -459,14 +459,16 @@ function getCallSites(frameCount = 10, options) {
   const target = {};
   const savedPrepareStackTrace = Error.prepareStackTrace;
   const savedStackTraceLimit = Error.stackTraceLimit;
-  Error.prepareStackTrace = prepareCallSites;
-  Error.stackTraceLimit = frameCount;
   try {
+    Error.prepareStackTrace = prepareCallSites;
+    // User code may have made stackTraceLimit non-writable; best-effort so the
+    // capture still runs and prepareStackTrace is always restored.
+    try { Error.stackTraceLimit = frameCount; } catch {}
     Error.captureStackTrace(target, getCallSites);
     return target.stack;
   } finally {
     Error.prepareStackTrace = savedPrepareStackTrace;
-    Error.stackTraceLimit = savedStackTraceLimit;
+    try { Error.stackTraceLimit = savedStackTraceLimit; } catch {}
   }
 }
 

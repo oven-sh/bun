@@ -432,6 +432,36 @@ describe("util", () => {
     assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
   });
 
+  describe("getCallSites", () => {
+    it("restores Error state when stackTraceLimit is non-writable", () => {
+      const desc = Object.getOwnPropertyDescriptor(Error, "stackTraceLimit");
+      const savedPrepare = Error.prepareStackTrace;
+      try {
+        Object.defineProperty(Error, "stackTraceLimit", { value: 10, writable: false, configurable: true });
+        const sites = util.getCallSites(5);
+        expect(Array.isArray(sites)).toBe(true);
+        // Critical invariant: a user-installed prepareStackTrace must not be leaked.
+        expect(Error.prepareStackTrace).toBe(savedPrepare);
+      } finally {
+        Object.defineProperty(Error, "stackTraceLimit", desc);
+        Error.prepareStackTrace = savedPrepare;
+      }
+    });
+
+    it("each frame has the node v26 shape", () => {
+      const sites = util.getCallSites(3);
+      expect(sites.length).toBeGreaterThan(0);
+      expect(sites[0]).toEqual({
+        functionName: expect.any(String),
+        scriptId: expect.any(String),
+        scriptName: expect.stringContaining("util.test.js"),
+        lineNumber: expect.any(Number),
+        columnNumber: expect.any(Number),
+        column: sites[0].columnNumber,
+      });
+    });
+  });
+
   describe("getSystemErrorName", () => {
     for (const item of ["test", {}, []]) {
       it(`throws when passing: ${item}`, () => {

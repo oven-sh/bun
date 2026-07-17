@@ -1379,6 +1379,16 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
+        // Strict mode also compares own non-index properties (e.g. symbols); loose
+        // ignores them. Guarded up front so the early returns below (empty, shared
+        // backing) do not skip it, and so the property walk is reserved for the
+        // rare case where extras exist.
+        if constexpr (isStrict) {
+            if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
+                break;
+            }
+        }
+
         JSC::JSArrayBufferView* left = uncheckedDowncast<JSArrayBufferView>(c1);
         JSC::JSArrayBufferView* right = uncheckedDowncast<JSArrayBufferView>(c2);
         size_t byteLength = left->byteLength();
@@ -1444,15 +1454,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
         if (memcmp(vector, rightVector, byteLength) != 0) {
             return false;
-        }
-
-        // Strict mode also compares own non-index properties (e.g. symbols); loose
-        // ignores them. Guarded because the property walk below enumerates every
-        // index, which would make each comparison O(elements).
-        if constexpr (isStrict) {
-            if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
-                break;
-            }
         }
         return true;
     }

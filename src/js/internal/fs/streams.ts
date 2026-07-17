@@ -471,7 +471,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
   // back to the general path there, which surfaces the failure at write time the
   // way node does, rather than throwing from the constructor.
   let fastWriter;
-  if (fastPath && fd) {
+  if (fastPath && fd != null) {
     try {
       fastWriter = Bun.file(fd).writer();
     } catch {
@@ -481,7 +481,7 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
 
   // Enable fast path
   if (fastPath) {
-    this[kWriteStreamFastPath] = fd ? fastWriter : true;
+    this[kWriteStreamFastPath] = fd != null ? fastWriter : true;
     this._write = underscoreWriteFast;
     this._writev = undefined;
     this.write = writeFast as any;

@@ -23,6 +23,7 @@ interface Case {
 }
 
 const sym = Symbol("shared");
+const sharedArrayBuffer = new ArrayBuffer(4);
 
 class WithPrototypeGetter {
   get a() {
@@ -542,6 +543,22 @@ const cases: Case[] = [
     loose: false,
     looseBug: "reports equal",
   },
+  {
+    name: "an empty typed array with an extra own property",
+    a: () => withExtraProperty(new Uint8Array(0)),
+    b: () => new Uint8Array(0),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
+  {
+    name: "two views over the same ArrayBuffer, one with an extra own property",
+    a: () => withExtraProperty(new Uint8Array(sharedArrayBuffer)),
+    b: () => new Uint8Array(sharedArrayBuffer),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Arrays.
   { name: "[1] and { 0: 1 }", a: () => [1], b: () => ({ 0: 1 }), strict: false, loose: false },
@@ -681,9 +698,15 @@ describe("util.isDeepStrictEqual", () => {
       expect(util.isDeepStrictEqual(new Foo(42), new Bar(99), true)).toBe(false);
     });
 
-    test("applies to nested values", () => {
-      expect(util.isDeepStrictEqual({ inner: new Foo(1) }, { inner: new Bar(1) })).toBe(false);
-      expect(util.isDeepStrictEqual({ inner: new Foo(1) }, { inner: new Bar(1) }, true)).toBe(true);
+    test.each([
+      ["object property", () => ({ inner: new Foo(1) }), () => ({ inner: new Bar(1) })],
+      ["array element", () => [new Foo(1)], () => [new Bar(1)]],
+      ["Map value", () => new Map([["k", new Foo(1)]]), () => new Map([["k", new Bar(1)]])],
+      ["Set element", () => new Set([new Foo(1)]), () => new Set([new Bar(1)])],
+      ["Error cause", () => new Error("e", { cause: new Foo(1) }), () => new Error("e", { cause: new Bar(1) })],
+    ])("propagates through %s", (_name, makeA, makeB) => {
+      expect(util.isDeepStrictEqual(makeA(), makeB())).toBe(false);
+      expect(util.isDeepStrictEqual(makeA(), makeB(), true)).toBe(true);
     });
 
     test("ignores the boxed-primitive subclass distinction", () => {

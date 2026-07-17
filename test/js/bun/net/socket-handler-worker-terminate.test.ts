@@ -154,7 +154,7 @@ describe.skipIf(isWindows)(
       ["Bun.listen close handler (socket Handlers::call_error_handler)", parentSource],
       ["Bun.serve websocket message handler (WebSocketServerContext::run_error_callback)", wsParentSource],
     ] as const) {
-      test(
+      test.concurrent(
         name,
         async () => {
           await using proc = Bun.spawn({

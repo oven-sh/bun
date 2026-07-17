@@ -50,8 +50,20 @@ function craftModule(
   const sb = [0, ...startBody, 0x0b];
   const code = [...u(N + 1), ...codes.flat(), ...u(sb.length), ...sb];
   return new Uint8Array([
-    0, 97, 115, 109, 1, 0, 0, 0, ...sec(1, types), ...sec(2, imports), ...sec(3, funcs), ...sec(5, [1, 0, 1]),
-    ...sec(7, exps), ...sec(10, code),
+    0,
+    97,
+    115,
+    109,
+    1,
+    0,
+    0,
+    0,
+    ...sec(1, types),
+    ...sec(2, imports),
+    ...sec(3, funcs),
+    ...sec(5, [1, 0, 1]),
+    ...sec(7, exps),
+    ...sec(10, code),
   ]);
 }
 
@@ -152,9 +164,7 @@ describe("start()", () => {
 
   test("throws ERR_INVALID_ARG_TYPE when _start is missing", () => {
     const w = new WASI({ version: "preview1" });
-    expect(() => w.start(instantiate(NOSTART, w))).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => w.start(instantiate(NOSTART, w))).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 
   test("throws ERR_INVALID_ARG_TYPE when _initialize is present", () => {
@@ -174,9 +184,7 @@ describe("start()", () => {
 
   test("rejects a reactor module (one that exports _initialize)", () => {
     const w = new WASI({ version: "preview1" });
-    expect(() => w.start(instantiate(REACTOR, w))).toThrow(
-      expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }),
-    );
+    expect(() => w.start(instantiate(REACTOR, w))).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 
   test("validates instance and instance.exports", () => {

@@ -2149,6 +2149,19 @@ impl VirtualMachine {
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
         // ZigGlobalObject.cpp:473/961).
         unsafe { (*vm).regular_event_loop.ensure_waker() };
+        // Windows ASAN: without one full thread create+exit cycle before
+        // `Zig__GlobalObject__create`, the first `CreateThread` issued after it
+        // crashes the new thread before `asan_thread_start` can register it
+        // (STATUS_ACCESS_VIOLATION, no ASAN report). JSC's helper threads
+        // (created inside ZGO_create) are long-lived and do not exit, so they
+        // do not exercise the thread-exit TLS/FLS path that appears to prime
+        // whatever the next CreateThread needs. Bisected empirically; see
+        // oven-sh/bun#34352 for the probe methodology. The `join()` is what
+        // matters: a detached sleeping thread does not help.
+        #[cfg(all(bun_asan, windows))]
+        {
+            let _ = std::thread::spawn(|| {}).join();
+        }
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).

@@ -298,18 +298,18 @@ mod _impl {
                             }
                         }
                     }
-                    // Node's whole-token aliases are not params, so they never
-                    // land above; an alias takes a value iff its target does.
-                    for (from, to) in crate::cli::arguments::NODE_SHORT_ALIASES {
-                        if set.contains(to) {
-                            bun_core::handle_oom(set.insert(from));
-                        }
-                    }
                     set
                 });
 
             if let Some(p) = prev {
-                if MAP.contains(p) {
+                // Node's whole-token aliases only apply on the `bun`/`node`
+                // entry points (Arguments::parse scopes them the same way).
+                let takes_value = MAP.contains(p)
+                    || (!seen_run
+                        && crate::cli::arguments::NODE_SHORT_ALIASES
+                            .iter()
+                            .any(|(from, to)| *from == p && MAP.contains(to)));
+                if takes_value {
                     args.push(BunString::clone_utf8(arg));
                     prev = Some(arg);
                     continue;

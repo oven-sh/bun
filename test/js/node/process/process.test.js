@@ -1178,6 +1178,18 @@ it("process.execArgv", async () => {
   }
 });
 
+it("process.execArgv with node's -pe alias", async () => {
+  // `bun -pe X`: node's whole-token alias, X is -p's value.
+  const auto = await Bun.$`${bunExe()} -pe ${"JSON.stringify(process.execArgv)"}`.text();
+  expect(JSON.parse(auto)).toEqual(["-pe", "JSON.stringify(process.execArgv)"]);
+
+  // `bun run -pe script`: the alias is scoped to the bun/node entry points, so
+  // the script name must not be swallowed into execArgv.
+  const script = join(__dirname, "print-process-execArgv.js");
+  const run = await Bun.$`${bunExe()} run -pe ${script}`.text();
+  expect(JSON.parse(run.split("\n")[0])).toEqual({ execArgv: ["-pe"], argv: [] });
+});
+
 describe("process.exitCode", () => {
   it("normal", async () => {
     await runInlineFixture(

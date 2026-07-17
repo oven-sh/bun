@@ -69,8 +69,19 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
         out += `${name}: ${value}\r\n`;
       }
     }
+    // renderNativeHeaders carries its framing and Connection decisions in the
+    // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
+    // NodeHTTP.cpp) rather than the flat array.
+    const autoBits = head?.autoHeaderBits ?? 0;
+    // Node emits the chunked Transfer-Encoding after the Connection line, so the
+    // bit is rendered further down — but the framing is decided here, and it has
+    // to suppress the Content-Length this block would otherwise invent. Writing
+    // both is a smuggling shape (RFC 9112 6.1), not a cosmetic slip.
+    const chunkedFromAutoBits = (autoBits & 16) !== 0;
     if (!hasContentLength && !hasTransferEncoding && !noBody && !closeDelimited) {
-      if (contentLength === null) {
+      if (chunkedFromAutoBits) {
+        chunked = true;
+      } else if (contentLength === null) {
         chunked = true;
         out += "Transfer-Encoding: chunked\r\n";
       } else {
@@ -88,7 +99,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     // the keep-alive line is suppressed, since the connection ends with the
     // body. When the user removed the Connection header (_removedConnection),
     // renderNativeHeaders sets neither bit, so nothing is written here.
-    const autoBits = head?.autoHeaderBits ?? 0;
     if (!hasConnection) {
       if ((autoBits & 4) !== 0) {
         out += "Connection: close\r\n";
@@ -112,6 +122,10 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
           out += "Connection: close\r\n";
         }
       }
+    }
+    // Last, where Node's _storeHeader puts it — after Connection/Keep-Alive.
+    if (chunkedFromAutoBits && chunked) {
+      out += "Transfer-Encoding: chunked\r\n";
     }
     out += "\r\n";
     socket.write(out);

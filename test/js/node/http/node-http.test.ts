@@ -2882,6 +2882,8 @@ it("standalone ServerResponse discards body writes to a no-body response without
 
 it("flushHeaders on a 204 response carries no chunked framing", async () => {
   // noBodyStatus must suppress the Transfer-Encoding header in flushHeaders()
+  // The /second GET is chunked, not Content-Length: writeHead() freezes the
+  // framing while _contentLength is still null, exactly as Node does.
   // and the terminating chunk in internalEnd(), like the one-shot end() path.
   const server = createServer((req, res) => {
     if (req.url === "/nobody") {
@@ -2908,7 +2910,7 @@ it("flushHeaders on a 204 response carries no chunked framing", async () => {
           sentSecond = true;
           socket.write("GET /second HTTP/1.1\r\nHost: localhost\r\n\r\n");
         }
-        if (sentSecond && data.endsWith("hello")) {
+        if (sentSecond && data.endsWith("0\r\n\r\n")) {
           socket.end();
           resolve(data);
         }
@@ -2923,8 +2925,8 @@ it("flushHeaders on a 204 response carries no chunked framing", async () => {
     expect(first).not.toContain("0\r\n\r\n");
     // The keep-alive connection still serves the next request correctly.
     const second = out.slice(out.indexOf("HTTP/1.1 200"));
-    expect(second).toContain("Content-Length: 5");
-    expect(second).toEndWith("\r\n\r\nhello");
+    expect(second).toContain("Transfer-Encoding: chunked");
+    expect(second).toEndWith("\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
   } finally {
     server.close();
   }
@@ -3216,7 +3218,7 @@ it("HEAD response with explicit writeHead(200) carries no body bytes", async () 
           sentSecond = true;
           socket.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
         }
-        if (sentSecond && data.endsWith("hello")) {
+        if (sentSecond && data.endsWith("0\r\n\r\n")) {
           socket.end();
           resolve(data);
         }
@@ -3229,7 +3231,7 @@ it("HEAD response with explicit writeHead(200) carries no body bytes", async () 
     expect(first).toStartWith("HTTP/1.1 200");
     // No body on the HEAD response; the GET on the same connection has one.
     expect(first).toEndWith("\r\n\r\n");
-    expect(out).toEndWith("\r\n\r\nhello");
+    expect(out).toEndWith("\r\n\r\n5\r\nhello\r\n0\r\n\r\n");
   } finally {
     server.close();
   }

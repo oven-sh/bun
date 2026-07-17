@@ -217,6 +217,8 @@ class InspectorCDPAdapter {
         return;
 
       case "Runtime.evaluate": {
+        // JSC's JSGlobalObjectRuntimeAgent rejects any contextId ("only one
+        // execution context"), so drop it even though CDP clients echo it.
         const jscParams = {
           expression: params.expression,
           objectGroup: params.objectGroup,
@@ -224,7 +226,6 @@ class InspectorCDPAdapter {
           doNotPauseOnExceptionsAndMuteConsole: params.silent,
           returnByValue: params.returnByValue,
           generatePreview: params.generatePreview,
-          contextId: params.contextId,
           emulateUserGesture: params.userGesture,
         };
         // JSC has no `awaitPromise` on Runtime.evaluate; emulate it by

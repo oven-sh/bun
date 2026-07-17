@@ -127,7 +127,9 @@ await new Promise(resolve => (ws.onopen = resolve));
 
 await send("Runtime.enable", {});
 const debuggerEnable = await send("Debugger.enable", {});
-const evaluate = await send("Runtime.evaluate", { expression: "6 * 7" });
+// Chrome DevTools' Console echoes contextId on every evaluation; JSC's
+// JSGlobalObjectRuntimeAgent rejects it, so the adapter must drop it.
+const evaluate = await send("Runtime.evaluate", { expression: "6 * 7", contextId: 1 });
 const awaitedResolve = await send("Runtime.evaluate", {
   expression: "Promise.resolve(42)",
   awaitPromise: true,

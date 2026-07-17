@@ -64,7 +64,7 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 | -------------------- | ----------------------------------------------------------------------- | ------- | ------------------------------------------------------ |
 | `bun_react_compiler` | (unchanged)                                                             | 63,000  | `bun_core`, `bun_ast`                                  |
 | `bun_css`            | (unchanged)                                                             | 72,000  | `bun_core`, `bun_sys`, `bun_ast`, `bun_macros`         |
-| `bun_loop`           | `bun_io` (minus `write.rs`), `bun_event_loop`, `bun_spawn`, `bun_patch` | ~22,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_uws`            |
+| `bun_loop`           | `bun_io` (minus `write.rs`), `bun_event_loop`, `bun_spawn`, `bun_patch` | ~22,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_uws`, `bun_macros` |
 | `bun_sql`            | `bun_sql`                                                               | 6,000   | `bun_core`, `bun_sys`, `bun_crypto`                    |
 | `bun_js`             | `bun_js_parser`, `bun_js_printer`                                       | ~57,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_react_compiler` |
 
@@ -168,7 +168,8 @@ Grows from ~331k to ~392k LOC. Absorbs:
 
 - Group B of `bun_jsc` → `src/runtime/vm/`
 - All 11 `*_jsc` crates → modules (`src/runtime/{sql,http_ws,css_jsc,…}/`); `sql_jsc` is 15k LOC of real driver code, not glue, and becomes `src/runtime/sql/`
-- `SpawnSyncEventLoop` → `src/runtime/vm/spawn_sync.rs` (was only ever called from VM code)
+
+(`SpawnSyncEventLoop` does **not** move here; it stays in `bun_loop` via `event_loop/lib.rs` and reaches its group-B definers through the 8 `JS_LOOP_VTABLE` slots, per §2.5/§3.1/Step 7.3.)
 
 `jsc_hooks.rs` is renamed `src/runtime/vm/init.rs`. The `RuntimeHooks`/`LoaderHooks` structs delete; their ~25+4 slot bodies become `impl VirtualMachine { … }` methods. `RuntimeState` fields (`timer`, `sql_rare`, `ssl_ctx_cache`, `editor_context`, `global_dns_data`, `body_value_pool`) become direct `VirtualMachine` fields.
 
@@ -208,7 +209,7 @@ Every `extern "Rust"` symbol, `link_interface!`, and manual hook vtable, with it
 | `__bun_blob_from_build_artifact`                                                                                                                     | `bun_jsc` (group B) → `runtime`     | Same-crate after split: direct call                                                |
 | `__BUN_SQL_RUNTIME_HOOKS`                                                                                                                            | `sql_jsc` → `runtime`               | Same-crate after split: direct field access                                        |
 
-**Result:** zero `extern "Rust"` blocks remain. The 36 symbols (33 fns + 3 statics, per the source audit in `research-catalogs.md` §A) are replaced by a mix of mechanisms; buckets here are by replacement kind, not a partition: same-crate direct calls/deletions after the split, `OnceLock` registrations, `AtomicUsize` hooks, and `dyn Trait`. Appendix B is the authoritative inventory of all 12 runtime-registered statics introduced across §3.1 and §3.2 combined (10 `OnceLock`/`AtomicUsize` + 2 `AtomicPtr` arrays).
+**Result:** zero `extern "Rust"` blocks remain. The 36 symbols (33 fns + 3 statics, per the source audit in `research-catalogs.md` §A) are replaced by a mix of mechanisms; buckets here are by replacement kind, not a partition: same-crate direct calls/deletions after the split, `OnceLock` registrations, `AtomicUsize` hooks, and `dyn Trait`. Appendix B is the authoritative inventory of all 13 runtime-registered statics this plan introduces (9 `OnceLock` + 2 `AtomicUsize` + 2 `AtomicPtr` arrays).
 
 ### 3.2 `link_interface!` (10 sites) → 2
 
@@ -421,7 +422,6 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 4. Replace `extern "Rust" __bun_crash_handler_*` with `pub static PANIC_HOOK: AtomicUsize = …` / `STACK_TRACE_HOOK: AtomicUsize` (fn-pointer stored via `as usize`; `AtomicPtr<()>` would assume fn-pointer and data-pointer share representation, which Rust does not guarantee). Add `const _: () = assert!(size_of::<fn()->!>() == size_of::<usize>());` next to the statics. `bun_core` ships default bodies (print + abort).
 5. `[features] debug_logs = []`.
 6. Tree-wide `sed` (all `src/**/*.rs` + `src/**/Cargo.toml`): `bun_{alloc,mimalloc_sys,simdutf_sys,wyhash,highway,hash,ptr,safety,output,collections,base64,errno,paths,libuv_sys,url,semver,http_types,analytics,picohttp,valkey}::` → `bun_core::`. Same for `use bun_X` → `use bun_core`.
-7. `scripts/rust-miri.ts:34-47`: `MIRI_CRATES` → `["bun_core", "bun_macros", "bun_ast"]`.
 
 ### Step 4: Merge `bun_sys`
 
@@ -466,6 +466,7 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 10. `hw_exports.rs`: delete `__BUN_SQL_RUNTIME_HOOKS` block; `sql_jsc/jsc.rs` callers use `crate::{timer, socket::SSLConfig, webcore::Blob}` directly.
 11. `event_loop.rs` (group B, now in runtime): delete `extern "Rust" __bun_tick_queue_*` etc.; call `crate::task_dispatch::*` directly. Delete `link_impl_JsEventLoop!`.
 12. In `src/runtime/**`, `src/*_jsc/**`: `use bun_jsc::{VirtualMachine, virtual_machine, EventLoop, event_loop, ConsoleObject, module_loader, rare_data, RareData, Debugger, debugger, ipc, web_worker, hot_reloader, Formatter, CrateError, plugin_runner, webcore_types::{Blob, S3…}}` → `use crate::vm::…`. Add `use crate::jsc_ext::JSGlobalObjectExt as _;` where `.bun_vm()` is called.
+13. Tree-wide `sed` (all `src/**/*.rs` + `src/**/Cargo.toml`): `bun_{io,event_loop,spawn,patch}::` → `bun_loop::`; `use bun_{io,event_loop,spawn,patch}` → `use bun_loop`. Replace `bun_{io,event_loop,spawn,patch}.workspace = true` with `bun_loop.workspace = true` in downstream `Cargo.toml`s (`src/http/`, `src/install/`, `src/bundler/`, `src/resolver/`, `src/runtime/`, plus the `*_jsc` manifests still live until Step 13). Add `bun_loop` to root `[workspace.dependencies]`. Same pattern as Steps 3.6/4.5/5.6/8.5.
 
 ### Step 8: Merge `bun_js`, `bun_resolver`, `bun_bundler`, `bun_install`
 

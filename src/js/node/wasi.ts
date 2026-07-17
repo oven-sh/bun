@@ -17,8 +17,8 @@ const {
   validateString,
   validateUndefined,
 } = require("internal/validators");
+const { kEmptyObject } = require("internal/shared");
 
-const kEmptyObject = Object.freeze({ __proto__: null });
 const kExitCode = Symbol("kExitCode");
 const kStarted = Symbol("kStarted");
 const kInstance = Symbol("kInstance");

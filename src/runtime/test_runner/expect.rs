@@ -401,7 +401,30 @@ impl Expect {
     ) -> JsResult<JSValue> {
         match flags.promise() {
             resolution @ (Promise::Resolves | Promise::Rejects) => {
-                if let Some(promise) = value.as_any_promise() {
+                // Jest's `.resolves` and `.rejects` both accept a function returning a
+                // promise or thenable; call it first and await what it returns. The usage
+                // error below still reports the original `value`.
+                let received = if value.is_callable() {
+                    value.call(global_this, JSValue::UNDEFINED, &[])?
+                } else {
+                    value
+                };
+                // Jest accepts any thenable, not only Promise instances. Wrap one in a
+                // real promise via the spec resolve algorithm so it can be awaited below.
+                // `awaited` stays on the stack to root the promise across `wait_for_promise`.
+                let awaited = if received.as_any_promise().is_none()
+                    && received.is_object()
+                    && received
+                        .get(global_this, b"then")?
+                        .is_some_and(|then| then.is_callable())
+                {
+                    let wrapper = js_promise::JSPromise::create(global_this);
+                    wrapper.resolve(global_this, received)?;
+                    wrapper.to_js()
+                } else {
+                    received
+                };
+                if let Some(promise) = awaited.as_any_promise() {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
@@ -423,7 +446,7 @@ impl Expect {
                                         flags,
                                         format_args!(
                                             "Expected promise that rejects<r>\nReceived promise that resolved: <red>{}<r>\n",
-                                            value.to_fmt(&mut formatter),
+                                            new_value.to_fmt(&mut formatter),
                                         ),
                                     ));
                                 }
@@ -444,7 +467,7 @@ impl Expect {
                                         flags,
                                         format_args!(
                                             "Expected promise that resolves<r>\nReceived promise that rejected: <red>{}<r>\n",
-                                            value.to_fmt(&mut formatter),
+                                            new_value.to_fmt(&mut formatter),
                                         ),
                                     ));
                                 }
@@ -467,7 +490,7 @@ impl Expect {
                             matcher_params,
                             flags,
                             format_args!(
-                                "Expected promise<r>\nReceived: <red>{}<r>\n",
+                                "Expected a promise or a function returning a promise<r>\nReceived: <red>{}<r>\n",
                                 value.to_fmt(&mut formatter),
                             ),
                         ));

@@ -141,6 +141,105 @@ describe("expect()", () => {
     ).resolves.toBe(1);
   });
 
+  // `.resolves` / `.rejects` accept any thenable (duck-typed `.then`), not only
+  // Promise instances. Both also accept a function returning a promise or thenable.
+  test("resolves accepts a thenable and a function returning a promise", async () => {
+    await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(42) }).resolves.toBe(42);
+    await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(42) }).resolves.not.toBe(43);
+
+    // settles on a later microtask
+    await expect({
+      then: (/** @type {any} */ onFulfilled) => void queueMicrotask(() => onFulfilled("later")),
+    }).resolves.toBe("later");
+
+    // thenable that delegates to a real promise (the ORM / query-builder shape)
+    await expect({
+      then: (/** @type {any} */ onFulfilled, /** @type {any} */ onRejected) =>
+        Promise.resolve({ rows: [1, 2] }).then(onFulfilled, onRejected),
+    }).resolves.toEqual({ rows: [1, 2] });
+
+    // a function returning a promise or thenable
+    await expect(() => Promise.resolve(1)).resolves.toBe(1);
+    await expect(async () => "from async fn").resolves.toBe("from async fn");
+    await expect(() => ({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(1) })).resolves.toBe(1);
+
+    if (isBun) {
+      // a thenable that rejects is still a `.resolves` failure
+      await expectFailure(() =>
+        expect({
+          then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected(new Error("nope")),
+        }).resolves.toBe(1),
+      ).toThrow();
+      // a function returning a non-promise is still a usage error
+      await expectFailure(() => expect(ANY(() => 42)).resolves.toBe(42)).toThrow();
+      // a plain object without a callable `.then` is still rejected
+      await expectFailure(() => expect(ANY({ then: 1 })).resolves.toBe(1)).toThrow();
+      // a function that throws synchronously propagates its error (it is not a resolution)
+      await expectFailure(() =>
+        expect(
+          ANY(() => {
+            throw new Error("sync throw");
+          }),
+        ).resolves.toBe(1),
+      ).toThrow("sync throw");
+    }
+  });
+
+  test("rejects accepts a thenable and a function returning a promise", async () => {
+    await expect({
+      then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected(new Error("boom")),
+    }).rejects.toThrow("boom");
+
+    // rejects on a later microtask
+    await expect({
+      then: (/** @type {any} */ _f, /** @type {any} */ onRejected) =>
+        void queueMicrotask(() => onRejected(new Error("later"))),
+    }).rejects.toThrow("later");
+
+    // a function returning a rejected promise
+    await expect(() => Promise.reject(new Error("from fn"))).rejects.toThrow("from fn");
+
+    // an async function that throws
+    await expect(async () => {
+      throw new Error("from async fn");
+    }).rejects.toThrow("from async fn");
+
+    // a function returning a thenable that rejects
+    await expect(() => ({
+      then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected(new Error("fn thenable")),
+    })).rejects.toThrow("fn thenable");
+
+    if (isBun) {
+      // a function returning a non-promise is still a usage error
+      await expectFailure(() => expect(ANY(() => 42)).rejects.toBe(42)).toThrow();
+      // a thenable that fulfills is still a `.rejects` failure
+      await expectFailure(() =>
+        expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled(1) }).rejects.toBe(1),
+      ).toThrow();
+      // a function that throws synchronously propagates its error (it is not a rejection)
+      await expectFailure(() =>
+        expect(
+          ANY(() => {
+            throw new Error("sync throw");
+          }),
+        ).rejects.toThrow("anything"),
+      ).toThrow("sync throw");
+    }
+  });
+
+  // The wrong-settlement error reports the settled value, not the received
+  // function / thenable that produced the promise.
+  test_skipIf(!isBun)("resolves/rejects settlement errors show the settled value", async () => {
+    await expectFailure(() => expect(ANY(() => Promise.resolve("rejectsSettledTo"))).rejects.toBe(1)).toThrow(
+      "rejectsSettledTo",
+    );
+    await expectFailure(() =>
+      expect({
+        then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected("resolvesSettledTo"),
+      }).resolves.toBe(1),
+    ).toThrow("resolvesSettledTo");
+  });
+
   test("can call without an argument", () => {
     expect().toBe(undefined);
   });
@@ -4572,6 +4671,14 @@ describe("expect()", () => {
         await expect({ a: Promise.reject("1") }).toEqual({ a: expect.not.rejectsTo.stringContaining("2") });
         await expect(Promise.reject(new Error("rejectMessage"))).rejects.toMatchObject({ message: "rejectMessage" });
 
+        // a non-Promise thenable should match too
+        await expect({ then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected("1") }).toEqual(
+          expect.rejectsTo.stringContaining("1"),
+        );
+        await expect({
+          a: { then: (/** @type {any} */ _f, /** @type {any} */ onRejected) => void onRejected("1") },
+        }).toEqual({ a: expect.rejectsTo.stringContaining("1") });
+
         // a resolved promise should not match
         await expect(Promise.resolve("a")).not.toEqual(expect.rejectsTo.stringContaining("a"));
 
@@ -4597,6 +4704,14 @@ describe("expect()", () => {
           }),
         ).resolves.toThrow();
 
+        // a non-Promise thenable should match too
+        await expect({ then: (/** @type {any} */ onFulfilled) => void onFulfilled("1") }).toEqual(
+          expect.resolvesTo.stringContaining("1"),
+        );
+        await expect({ a: { then: (/** @type {any} */ onFulfilled) => void onFulfilled("1") } }).toEqual({
+          a: expect.resolvesTo.stringContaining("1"),
+        });
+
         // a rejected promise should not match
         await expect(Promise.reject("a")).not.toEqual(expect.resolvesTo.stringContaining("a"));
 
@@ -4609,6 +4724,16 @@ describe("expect()", () => {
             setTimeout(() => resolve("a"), 0);
           }),
         ).toEqual(expect.resolvesTo.stringContaining("a"));
+      });
+
+      // `rejectsTo` calls a received function like `.rejects` does; a synchronous
+      // throw must propagate as the test error, never be flipped to a pass by `.not`.
+      test("expect.rejectsTo calls a received function and propagates a sync throw", () => {
+        const boom = () => {
+          throw new Error("asymmetric sync boom");
+        };
+        expect(() => expect(boom).toEqual(expect.rejectsTo.anything())).toThrow("asymmetric sync boom");
+        expect(() => expect(boom).toEqual(expect.not.rejectsTo.anything())).toThrow("asymmetric sync boom");
       });
     }
   });

@@ -4767,11 +4767,9 @@ impl<'a> HTTPClient<'a> {
         // done or streaming
         let is_done =
             content_length.is_some() && self.state.total_body_received >= content_length.unwrap();
-        if is_done
-            || self.signals.get(signals::Field::ResponseBodyStreaming)
-            || content_length.is_none()
-            || self.signals.body_receive_mode.is_some()
-        {
+        let is_streaming = self.signals.get(signals::Field::ResponseBodyStreaming)
+            || self.signals.body_receive_mode.is_some();
+        if is_done || is_streaming || content_length.is_none() {
             let is_final_chunk = is_done;
             // Move the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
@@ -4787,7 +4785,10 @@ impl<'a> HTTPClient<'a> {
 
             let total_received = self.state.total_body_received;
             self.report_progress(total_received);
-            return Ok(is_done || processed);
+            // Close-delimited bodies still need per-packet decompression, but
+            // a non-streaming consumer must not see per-packet progress: the
+            // terminal callback (on close) is the first to carry metadata.
+            return Ok(is_done || (processed && is_streaming));
         }
         Ok(false)
     }

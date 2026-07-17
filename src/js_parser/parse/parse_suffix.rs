@@ -449,7 +449,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // condition ? yes : no
         //             ^
-        p.parse_expr_with_flags(Level::Comma, EFlags::AfterQuestionAndBeforeColon, &mut e_if.yes)?;
+        p.parse_expr_with_flags(
+            Level::Comma,
+            EFlags::AfterQuestionAndBeforeColon,
+            &mut e_if.yes,
+        )?;
 
         p.allow_in = old_allow_in;
 

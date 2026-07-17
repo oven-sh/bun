@@ -965,10 +965,6 @@ function highlightRegExp(regexpString) {
   let depth = 0;
   let inClass = false;
 
-  // TODO(BridgeAR): Add group type tracking. That allows to increase the depth
-  // in case the same type is next to each other.
-  // let groupType = 0;
-
   // Verify palette and update cache if user changed colors
   const paletteNames = highlightRegExp.colors?.length > 0 ? highlightRegExp.colors : highlightRegExpColors;
 

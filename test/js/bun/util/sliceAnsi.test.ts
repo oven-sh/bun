@@ -1372,10 +1372,18 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("ab\t", 2, 4, { ellipsis: E })).toBe(E);
       expect(Bun.sliceAnsi("ЖЗ\t", 2, 4, { ellipsis: E })).toBe(E);
       expect(Bun.sliceAnsi("a\t\t", 1, 3, { ellipsis: E })).toBe(E);
+      // Same, but ellipsisWidth >= range so no start budget was applied and
+      // `include` flipped true on the zero-width cluster: still the ellipsis.
+      expect(Bun.sliceAnsi("Ж\t", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\t", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\u200b", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\x1b[31m\t", 1, 3, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\t\t", 1, 2, e)).toBe(">>");
       // Same zero-width range but the plain slice is empty (nothing at the
       // original start): stays empty, no ellipsis.
       expect(Bun.sliceAnsi("Ж", 1, 3, { ellipsis: E })).toBe("");
       expect(Bun.sliceAnsi("Ж\x1b[31m", 1, 3, { ellipsis: E })).toBe("");
+      expect(Bun.sliceAnsi("Ж", 1, 2, e)).toBe("");
       // No cut on either side: content returned, no ellipsis.
       expect(Bun.sliceAnsi("Ж", 0, 1, e)).toBe("Ж");
       expect(Bun.sliceAnsi("Ж\n", 0, 1, e)).toBe("Ж");

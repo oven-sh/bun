@@ -20,7 +20,8 @@ use bun_loop::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
-use crate::server::jsc::{AnyTask, EventLoopHandle, Task, VirtualMachine};
+use crate::server::jsc::VirtualMachine;
+use crate::vm::{AnyTask, EventLoopHandle, Task};
 
 bun_core::declare_scope!(FileResponseStream, hidden);
 

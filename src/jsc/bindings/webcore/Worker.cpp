@@ -33,6 +33,7 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "StructuredSerializeOptions.h"
+#include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/ScriptCallStack.h>
@@ -516,15 +517,43 @@ void Worker::fireEarlyMessages(Zig::GlobalObject* workerGlobalObject)
     }
 }
 
-void Worker::dispatchErrorWithMessage(WTF::String message)
+void Worker::dispatchErrorWithMessage(WTF::String message, WTF::String code)
 {
-    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy()](ScriptExecutionContext&) {
+    postTaskToParent([protectedThis = Ref { *this }, message = message.isolatedCopy(),
+                         code = code.isolatedCopy()](ScriptExecutionContext& context) {
         ErrorEvent::Init init;
         init.message = message;
+        // The worker's value would not clone (Bun's ResolveMessage is not even an
+        // Error), so the parent rebuilds one from the text; hand `code` over on a
+        // carrier object or it is lost, unlike every other coded worker error.
+        if (!code.isNull()) {
+            auto* globalObject = context.globalObject();
+            auto& vm = JSC::getVM(globalObject);
+            if (auto* carrier = JSC::createError(globalObject, message)) {
+                carrier->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), JSC::jsString(vm, code));
+                init.error = carrier;
+            }
+        }
 
         auto event = ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes);
         protectedThis->dispatchEvent(event);
     });
+}
+
+// A string `code` off an error-ish value, or null. Reading it can run JS (a
+// getter/proxy), so it is done under a top scope and any throw drops the code.
+String Worker::errorCodeOf(JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!value.isObject())
+        return {};
+    JSValue codeValue = value.getObject()->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).codePublicName());
+    String code;
+    if (!scope.exception() && codeValue && codeValue.isString())
+        code = codeValue.toWTFString(globalObject);
+    CLEAR_IF_EXCEPTION(scope);
+    return code;
 }
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
@@ -565,13 +594,7 @@ bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSVal
     // vendored node tests assert on it (e.g. ERR_TRACE_EVENTS_UNAVAILABLE).
     // Carry a string `code` across the thread boundary manually. If reading
     // `code` throws (a throwing getter/proxy), drop the code and proceed.
-    String errorCode;
-    if (value.isObject() && !scope.exception()) {
-        JSValue codeValue = value.getObject()->getIfPropertyExists(workerGlobalObject, WebCore::builtinNames(vm).codePublicName());
-        if (!scope.exception() && codeValue && codeValue.isString())
-            errorCode = codeValue.toWTFString(workerGlobalObject);
-        CLEAR_IF_EXCEPTION(scope);
-    }
+    String errorCode = errorCodeOf(workerGlobalObject, value);
 
     return postTaskToParent([protectedThis = Ref { *this }, serialized, errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         auto* globalObject = context.globalObject();
@@ -759,11 +782,12 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
     globalObject->globalEventScope->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     switch (worker->options().kind) {
     case WorkerOptions::Kind::Web:
-        return worker->dispatchErrorWithMessage(WTF::move(messageStr));
+        return worker->dispatchErrorWithMessage(WTF::move(messageStr), {});
     case WorkerOptions::Kind::Node:
         if (!worker->dispatchErrorWithValue(globalObject, error)) {
-            // If serialization threw an error, use the string instead
-            worker->dispatchErrorWithMessage(WTF::move(messageStr));
+            // If serialization threw an error, use the string instead — but keep
+            // `code`, which is all the parent can otherwise recover.
+            worker->dispatchErrorWithMessage(WTF::move(messageStr), Worker::errorCodeOf(globalObject, error));
         }
         return;
     }

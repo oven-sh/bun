@@ -1357,7 +1357,11 @@ class Worker extends EventEmitter {
     // if not the message is the actual error
     const message = event.message;
     if (message !== "") {
+      // The value didn't clone, so rebuild from the text — but keep the `code`
+      // the native side carried over, which is all that survived of it.
+      const code = error?.code;
       error = new Error(message, { cause: event });
+      if (typeof code === "string") error.code = code;
       const stack = event?.stack;
       if (stack) {
         error.stack = stack;

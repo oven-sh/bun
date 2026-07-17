@@ -264,8 +264,7 @@ pub(crate) fn bun_random_uuid_v7(
 
 /// Shared core of `Bun.randomUUIDv7()` and `crypto.randomUUIDv7()`: 10 bytes
 /// of entropy from the VM cache (or fresh BoringSSL bytes when bypassed),
-/// fed to `UUID7::init` at `timestamp`. Only argument validation differs
-/// between the two public functions.
+/// fed to `UUID7::init` at `timestamp`.
 pub(crate) fn uuid_v7_at(
     global: &JSGlobalObject,
     timestamp: u64,

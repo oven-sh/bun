@@ -3588,8 +3588,12 @@ it("delivers the reserved push stream and fails the session when its headers can
 it("PerformanceObserver receives http2 session and stream entries", async () => {
   const { PerformanceObserver } = require("node:perf_hooks");
   const entries = [];
+  // Two streams (client+server) + two sessions (client+server): resolve once
+  // the observer has delivered at least four entries instead of sleeping.
+  const observed = Promise.withResolvers();
   const observer = new PerformanceObserver(list => {
     for (const entry of list.getEntries()) entries.push(entry);
+    if (entries.length >= 4) observed.resolve();
   });
   observer.observe({ type: "http2" });
   const server = http2.createServer();
@@ -3600,14 +3604,19 @@ it("PerformanceObserver receives http2 session and stream entries", async () => 
     });
     const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
     const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", observed.reject);
     const req = client.request({ ":path": "/" });
+    req.on("error", observed.reject);
     req.resume();
-    await new Promise(resolve => req.on("end", resolve));
+    await new Promise((resolve, reject) => {
+      req.on("end", resolve);
+      req.on("error", reject);
+    });
     await new Promise(resolve => {
       client.on("close", resolve);
       client.close();
     });
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await observed.promise;
 
     const sessions = entries.filter(e => e.name === "Http2Session");
     const streams = entries.filter(e => e.name === "Http2Stream");
@@ -3654,8 +3663,9 @@ it("packs END_STREAM onto the DATA frame produced by end(chunk)", async () => {
     observer.observe({ type: "http2" });
 
     const client = http2.connect(`http://localhost:${port}`);
-    client.on("error", () => {});
+    client.on("error", received.reject);
     const req = client.request({ ":path": "/" });
+    req.on("error", received.reject);
     req.resume();
     req.on("end", () => client.close());
     req.end();
@@ -3682,7 +3692,6 @@ it("client connects over a user Duplex that already has a 'data' listener", asyn
 
   clientSide.on("data", () => {});
   const client = http2.connect("http://localhost", { createConnection: () => clientSide });
-  client.on("error", () => {});
 
   const req = client.request({ ":path": "/" });
   let status = 0;
@@ -3692,7 +3701,11 @@ it("client connects over a user Duplex that already has a 'data' listener", asyn
     status = headers[":status"];
   });
   req.on("data", chunk => (body += chunk));
-  await new Promise(resolve => req.on("end", resolve));
+  await new Promise((resolve, reject) => {
+    req.on("end", resolve);
+    req.on("error", reject);
+    client.on("error", reject);
+  });
   expect(status).toBe(200);
   expect(body).toBe("ok");
   client.close();

@@ -3394,7 +3394,7 @@ impl H2FrameParser {
             return;
         }
         // A write that drains the buffer must not cancel the deferred tick a pending session
-        // error is waiting on; on_auto_flush unregisters once it has reported it.
+        // error is waiting on; on_auto_flush releases the registration once it has reported it.
         if self.pending_header_compression_error.get() {
             return;
         }
@@ -3502,6 +3502,16 @@ impl H2FrameParser {
                 JSValue::js_number(self.last_stream_id.get() as f64),
                 JSValue::UNDEFINED,
             );
+            let _ = self.flush();
+            // Terminal: the dispatch's teardown usually corks a GOAWAY, which
+            // flush() -> uncork() -> unregister_auto_flush() releases. If nothing
+            // corked (session already gone), release the registration's flag+ref
+            // here so the task and its retained parser ref do not persist.
+            if self.auto_flusher.get().registered.get() {
+                self.auto_flusher.get().registered.set(false);
+                self.deref();
+            }
+            return false;
         }
         let _ = self.flush();
         // we will unregister ourselves when the buffer is empty

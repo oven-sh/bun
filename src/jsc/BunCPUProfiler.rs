@@ -10,7 +10,7 @@ use bun_core::paths::PathBuffer;
 use bun_sys::{self, Errno, Fd, FdDirExt as _};
 
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub(crate) enum ProfilerError {
+pub enum ProfilerError {
     #[error("WriteFailed")]
     WriteFailed,
     #[error("FilenameTooLong")]

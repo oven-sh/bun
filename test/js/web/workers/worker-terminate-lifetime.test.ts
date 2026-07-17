@@ -119,3 +119,46 @@ test(
   },
   timeout,
 );
+
+// Regression: the per-VM c-ares channel was destroyed in deinit_runtime_state
+// (RuntimeState drop) AFTER JSC teardown and RareData.file_polls drop.
+// ares_destroy() synchronously fires EDESTRUCTION query callbacks and socket-
+// state callbacks, which then dereferenced the freed JSGlobalObject and the
+// freed FilePoll hive. ASAN-only: release builds read freed memory without
+// crashing. Upstream Node test-worker-dns-terminate.js.
+test.skipIf(!isASAN)(
+  "terminate() while dns.lookup() is in flight does not UAF on c-ares channel teardown",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("worker_threads");
+        let done = 0;
+        for (let i = 0; i < 4; i++) {
+          const w = new Worker(
+            'const dns = require("dns");' +
+            'dns.lookup("nonexistent.org", () => {});' +
+            'dns.resolve4("nonexistent.org", () => {});' +
+            'require("worker_threads").parentPort.postMessage(0);',
+            { eval: true },
+          );
+          w.on("message", () => w.terminate().then(() => {
+            if (++done === 4) console.log("ok");
+          }));
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

@@ -2138,6 +2138,27 @@ impl Drop for GlobalData {
     }
 }
 
+impl Resolver {
+    /// Worker-terminate / main-VM-destruct hook: tear down the c-ares channel
+    /// while the JSC VM, `RareData.file_polls`, event loop, and `runtime_state`
+    /// are all still live. `ares_destroy()` synchronously fires every pending
+    /// query callback with `ARES_EDESTRUCTION` and then the socket-state
+    /// callback for each fd it closes; those callback chains dereference
+    /// `DNSLookup::global_this` (to enqueue the rejection task) and the hive
+    /// `FilePoll` (to unregister it from the loop). Running this after either
+    /// is freed is a UAF (Node `test-worker-dns-terminate.js`).
+    pub fn close_channel_for_terminate(&self) {
+        if let Some(channel) = self.channel.take() {
+            // SAFETY: `channel` is the live handle from `ares_init_options`, owned by this resolver.
+            unsafe { c_ares::Channel::destroy(channel) };
+        }
+        // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
+        // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
+        // this resolver plus the uws active-handle bump) can still be linked.
+        self.remove_timer();
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // internal — process-wide DNS cache used by usockets connect path
 // ──────────────────────────────────────────────────────────────────────────

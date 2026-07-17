@@ -29,7 +29,6 @@ members = [
   "src/dns",
   "src/dotenv",
   "src/event_loop",
-  "src/exe_format",
   "src/highway",
   "src/http_jsc",
   "src/http_types",
@@ -44,7 +43,6 @@ members = [
   "src/ast",
   "src/ast_jsc",
   "src/picohttp",
-  "src/s3_signing",
   "src/sql_jsc",
   "src/patch",
   "src/platform",
@@ -69,6 +67,7 @@ members = [
   "src/hash",
   "src/boringssl_sys",
   "src/bun_core",
+  "src/crypto",
   "src/macros",
   "src/bun_output_tags",
   "src/patch_jsc",
@@ -363,7 +362,7 @@ bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
-bun_exe_format = { path = "src/exe_format" }
+bun_exe_format = { path = "src/crypto", package = "bun_crypto" }
 bun_highway = { path = "src/highway" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
@@ -378,7 +377,7 @@ bun_libuv_sys = { path = "src/libuv_sys" }
 bun_ast = { path = "src/ast" }
 bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }
-bun_s3_signing = { path = "src/s3_signing" }
+bun_s3_signing = { path = "src/crypto", package = "bun_crypto" }
 bun_sql_jsc = { path = "src/sql_jsc" }
 bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
@@ -404,6 +403,7 @@ bun_wyhash = { path = "src/wyhash" }
 bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
+bun_crypto = { path = "src/crypto" }
 bun_output_tags = { path = "src/bun_output_tags" }
 bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }

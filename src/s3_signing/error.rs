@@ -1,4 +1,4 @@
-use crate::Error;
+use crate::s3_signing::Error;
 
 pub struct ErrorCodeAndMessage {
     pub code: &'static [u8],

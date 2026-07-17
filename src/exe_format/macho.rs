@@ -473,7 +473,7 @@ impl MachoFile {
         )
     }
 
-    pub fn build(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    pub fn build(&self, writer: &mut impl std::io::Write) -> crate::exe_format::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -497,7 +497,7 @@ impl MachoFile {
         Ok(())
     }
 
-    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> crate::exe_format::Result<()> {
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
@@ -660,7 +660,7 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
-    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> crate::exe_format::Result<()> {
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 

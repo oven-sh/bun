@@ -772,7 +772,7 @@ impl PEFile {
     }
 
     /// Write the modified PE file
-    pub fn write(&self, writer: &mut impl std::io::Write) -> crate::Result<()> {
+    pub fn write(&self, writer: &mut impl std::io::Write) -> crate::exe_format::Result<()> {
         writer.write_all(&self.data)?;
         Ok(())
     }

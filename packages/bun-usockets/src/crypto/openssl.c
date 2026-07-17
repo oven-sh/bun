@@ -1864,6 +1864,9 @@ restart:
      * fully consumed so we do not process further records (e.g. close_notify)
      * the caller asked to defer; bytes already decrypted are delivered. */
     if (s->flags.is_paused && loop_ssl_data->ssl_read_input_length == 0) {
+      ssl_flush_pending_session(s);
+      ssl_flush_pending_keylog(s);
+      if (ssl_gone(s)) return NULL;
       if (read) {
         s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
         if (!s || ssl_gone(s)) return NULL;

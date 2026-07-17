@@ -3930,8 +3930,8 @@ impl<'a> HTTPClient<'a> {
 
         // Parked for the JS `checkServerIdentity` verdict: a TLS peer may
         // transmit as soon as the handshake completes, so buffer early bytes
-        // for `resume_after_cert_check` / `on_close` to replay. Must stay
-        // below the proxy_tunnel dispatch above so a tunneled target's raw
+        // for `resume_after_cert_check` to replay. Must stay below the
+        // proxy_tunnel dispatch above so a tunneled target's raw
         // inner-TLS records still reach the SSLWrapper while parked.
         if self.state.flags.is_waiting_for_cert_check {
             if self.state.response_message_buffer.list.len() + incoming_data.len()

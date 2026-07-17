@@ -116,7 +116,7 @@ use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use crate::ZigStringJsc as _; // to_error_instance / to_type_error_instance
-use crate::call_frame::ArgumentsSlice;
+use crate::vm::ArgumentsSlice;
 use crate::{StringJsc as _, bun_string_jsc};
 
 /// Bindgen-generated option-structs for this module (`BunObject.bind.ts`).

@@ -70,20 +70,20 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 
 ### Tier 5: toolchain
 
-| Crate          | Absorbs                                                 | LOC     | Depends on                                                                                                                            |
-| -------------- | ------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `bun_resolver` | `bun_resolver`, `bun_router`                            | ~20,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_js`, `bun_jsc`                                                                                 |
-| `bun_http`     | `bun_http`                                              | ~18,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`                                                                 |
-| `bun_bundler`  | `bun_bundler`, `bun_transpiler`, `bun_standalone_graph` | ~50,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`, `bun_js`, `bun_css`, `bun_resolver`, `bun_jsc`, `bun_http`     |
-| `bun_install`  | `bun_install`, `bun_bunfig`                             | ~82,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`, `bun_js`, `bun_resolver`, `bun_http`, `bun_bundler`            |
+| Crate          | Absorbs                                                 | LOC     | Depends on                                                                                                                        |
+| -------------- | ------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| `bun_resolver` | `bun_resolver`, `bun_router`                            | ~20,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_js`, `bun_jsc`                                                                             |
+| `bun_http`     | `bun_http`                                              | ~18,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`                                                             |
+| `bun_bundler`  | `bun_bundler`, `bun_transpiler`, `bun_standalone_graph` | ~50,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`, `bun_js`, `bun_css`, `bun_resolver`, `bun_jsc`, `bun_http` |
+| `bun_install`  | `bun_install`, `bun_bunfig`                             | ~82,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`, `bun_js`, `bun_resolver`, `bun_http`, `bun_bundler`        |
 
 ### Tier 6: top
 
-| Crate           | Absorbs                                                                                   | LOC      | Depends on                                           |
-| --------------- | ----------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
-| `bun_runtime`   | `bun_runtime`, group-B of `bun_jsc`, all 11 `*_jsc` crates                                | ~392,000 | (all of the above except `bun_bin`, `bun_shim_impl`) |
-| `bun_bin`       | (unchanged)                                                                               | 260      | `bun_core`, `bun_sys`, `bun_runtime`                 |
-| `bun_shim_impl` | (unchanged, separate binary)                                                              | 400      | `bun_opaque`, `bun_windows_sys`                      |
+| Crate           | Absorbs                                                    | LOC      | Depends on                                           |
+| --------------- | ---------------------------------------------------------- | -------- | ---------------------------------------------------- |
+| `bun_runtime`   | `bun_runtime`, group-B of `bun_jsc`, all 11 `*_jsc` crates | ~392,000 | (all of the above except `bun_bin`, `bun_shim_impl`) |
+| `bun_bin`       | (unchanged)                                                | 260      | `bun_core`, `bun_sys`, `bun_runtime`                 |
+| `bun_shim_impl` | (unchanged, separate binary)                               | 400      | `bun_opaque`, `bun_windows_sys`                      |
 
 **DAG proof:** Every `Depends on` cell references only crates listed earlier in the table (strictly lower tier, or same tier but earlier row). Intra-tier edges: tier 3 `bun_jsc→bun_ast`, `bun_uws→bun_crypto`; tier 4 `bun_js→bun_react_compiler`; tier 5 `bun_bundler→{bun_resolver,bun_http}`, `bun_install→{bun_resolver,bun_http,bun_bundler}`. None has a reverse edge. `cargo metadata` will reject any cycle at step 13 of the migration; the adversarial review in §7 verified every edge against current imports.
 

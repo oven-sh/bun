@@ -30,6 +30,7 @@ const {
   validateNumber,
   validateBoolean,
   validateFunction,
+  validateString,
 } = require("internal/validators");
 
 const types = require("node:util/types");
@@ -38,6 +39,7 @@ let inspect: typeof import("node:util").inspect | undefined;
 const SymbolFor = Symbol.for;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const ArrayPrototypeUnshift = Array.prototype.unshift;
 const ReflectOwnKeys = Reflect.ownKeys;
 
 const kCapture = Symbol("kCapture");
@@ -755,26 +757,80 @@ function addAbortListener(signal, listener) {
   };
 }
 
+let EventEmitterReferencingAsyncResource;
+function lazyLoadAsyncResource() {
+  if (!AsyncResource) {
+    AsyncResource = require("node:async_hooks").AsyncResource;
+    EventEmitterReferencingAsyncResource = class EventEmitterReferencingAsyncResource extends AsyncResource {
+      #eventEmitter;
+
+      constructor(ee, type, options) {
+        super(type, options);
+        this.#eventEmitter = ee;
+      }
+
+      get eventEmitter() {
+        return this.#eventEmitter;
+      }
+    };
+  }
+}
+
 class EventEmitterAsyncResource extends EventEmitter {
-  triggerAsyncId;
-  asyncResource;
+  #asyncResource;
 
   constructor(options) {
-    if (!AsyncResource) {
-      AsyncResource = require("node:async_hooks").AsyncResource;
+    lazyLoadAsyncResource();
+    let name;
+    if (typeof options === "string") {
+      name = options;
+      options = undefined;
+    } else {
+      if (new.target === EventEmitterAsyncResource) {
+        validateString(options?.name, "options.name");
+      }
+      name = options?.name || new.target.name;
     }
-    var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
-    super({ captureRejections });
-    this.triggerAsyncId = triggerAsyncId ?? 0;
-    this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+    super(options);
+    this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
+    // EventEmitter's constructor stamps `this.emit = emitWithRejectionCapture`
+    // as an OWN property when captureRejections is on, which would shadow the
+    // prototype's runInAsyncScope-wrapped emit below. Remove it so listeners
+    // still run in the resource's async scope; the prototype emit re-checks
+    // this[kCapture] on every call, so rejection capture is preserved. delete
+    // is a no-op when the property is absent, so no own-property check needed.
+    delete (this as { emit? }).emit;
   }
 
-  emit(...args) {
-    this.asyncResource.runInAsyncScope(() => super.emit(...args));
+  // No explicit receiver guards: like node v26 (lib/events.js), the private
+  // field access itself brand-checks `this` and throws a TypeError on a wrong
+  // receiver, so an ERR_INVALID_THIS guard before it would be unreachable.
+  get asyncId() {
+    return this.#asyncResource.asyncId();
+  }
+
+  get triggerAsyncId() {
+    return this.#asyncResource.triggerAsyncId();
+  }
+
+  get asyncResource() {
+    return this.#asyncResource;
+  }
+
+  emit(event, ...args) {
+    const asyncResource = this.#asyncResource;
+    // The base EventEmitter picks its emit variant by stamping an own property;
+    // that own property is deleted in the constructor above, so pick per-call
+    // from this[kCapture]. The default branch reads super.emit at call time
+    // (Node routes through super.emit) so a userland monkeypatch of
+    // EventEmitter.prototype.emit is observed like it is for plain emitters.
+    const emit = this[kCapture] ? emitWithRejectionCapture : super.emit;
+    ArrayPrototypeUnshift.$call(args, emit, this, event);
+    return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }
 
   emitDestroy() {
-    this.asyncResource.emitDestroy();
+    this.#asyncResource.emitDestroy();
   }
 }
 

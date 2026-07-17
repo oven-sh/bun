@@ -890,6 +890,5 @@ describe("Should be compatible with node.js", () => {
       env: bunEnv,
     });
     expect(await process.exited).toBe(0);
-  }, // The child bun-debug runs seven subtests; startup alone is ~2s under ASAN.
-  30_000);
+  }, 30_000); // The child bun-debug runs seven subtests; startup alone is ~2s under ASAN.
 });

@@ -222,13 +222,14 @@ describe("new File() lastModified option", () => {
     expect(lm({ lastModified: input })).toBe(expected);
   });
 
-  // The default comes from a native wall-clock read that may differ from JS
-  // Date.now() by a few ms on Windows; assert "current time" within a wide
-  // tolerance rather than an exact bracket.
   test.each([[{ lastModified: undefined }], [{}]])("%p defaults to the current time", opts => {
+    const before = Date.now();
     const value = lm(opts);
-    expect(Number.isFinite(value)).toBe(true);
-    expect(Math.abs(value - Date.now())).toBeLessThan(60_000);
+    const after = Date.now();
+    expect({ finite: Number.isFinite(value), bracketed: before <= value && value <= after }).toEqual({
+      finite: true,
+      bracketed: true,
+    });
   });
 
   test("valueOf throwing propagates", () => {

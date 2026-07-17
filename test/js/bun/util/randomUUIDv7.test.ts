@@ -213,13 +213,9 @@ describe("randomUUIDv7", () => {
 
   // https://github.com/oven-sh/WebKit/pull/304
   test("default timestamp is never behind Date.now()", async () => {
-    // Before oven-sh/WebKit#304, Windows Date.now() (WTF QPC-interpolated) ran
-    // up to ~1ms ahead of the native precise clock the runtime read for default
-    // timestamps, so before > embedded-timestamp in ~80% of samples. All three
-    // now default to js_date_now() which is Date.now() exactly. UUID7::init may
-    // bump the embedded timestamp on 12-bit counter rollover (RFC 9562 §6.2),
-    // so only the lower bound is asserted for the UUID paths; File.lastModified
-    // has no counter and is fully bracketed.
+    // All three default to js_date_now() (== Date.now()). UUID7::init may bump
+    // the embedded ts on 12-bit counter rollover (RFC 9562 §6.2), so only the
+    // lower bound is asserted for UUIDs; File.lastModified has no counter.
     const N = isWindows ? 50_000 : 5_000;
     await using proc = Bun.spawn({
       cmd: [

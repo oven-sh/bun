@@ -77,9 +77,10 @@ unsafe extern "C" {
 }
 
 pub fn set_sampling_interval(interval: u32) {
-    // Reachable from a Worker's execArgv, so an out-of-range value must clamp
-    // rather than panic.
-    Bun__setSamplingInterval(c_int::try_from(interval).unwrap_or(c_int::MAX));
+    // Reachable from a Worker's execArgv: 0 stalls the sampler and the process
+    // never exits, and a value past c_int would panic the cast.
+    let clamped = interval.clamp(1, c_int::MAX as u32);
+    Bun__setSamplingInterval(clamped as c_int);
 }
 
 pub fn start_cpu_profiler(vm: &mut VM) {

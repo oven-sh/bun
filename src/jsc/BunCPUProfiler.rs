@@ -56,9 +56,11 @@ pub fn publish_inherited_config(config: CPUProfilerConfig) {
 /// `name` is cleared so each worker writes a thread-id-suffixed default
 /// filename instead of every thread truncating the one `--cpu-prof-name` path.
 pub fn inherited_config_for_worker(thread_id: u32) -> Option<CPUProfilerConfig> {
-    INHERITED_CONFIG
-        .get()
-        .map(|c| CPUProfilerConfig { thread_id, name: b"", ..*c })
+    INHERITED_CONFIG.get().map(|c| CPUProfilerConfig {
+        thread_id,
+        name: b"",
+        ..*c
+    })
 }
 
 // C++ function declarations

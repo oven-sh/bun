@@ -1610,6 +1610,22 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
+            // Release RareData's and RuntimeState's JSC GC handles (the
+            // default S3 client Strong, SQL context Strongs, per-VM DNS data)
+            // while the HandleSet is still alive — `destroy()` below drops
+            // both after the VM deref inside `destructOnExit`, and a `Strong`
+            // dropped then would unlink a HandleNode from freed memory.
+            if let Some(rare) = self.rare_data.as_deref_mut() {
+                rare.s3_default_client.deinit();
+            }
+            if let Some(hooks) = runtime_hooks() {
+                // SAFETY: live per-thread VM on the JS thread; JSC teardown
+                // is `destructOnExit` below.
+                unsafe {
+                    (hooks.release_runtime_state_js_handles)(core::ptr::from_mut(self));
+                }
+            }
+
             Zig__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
@@ -1825,6 +1841,20 @@ pub struct RuntimeHooks {
     /// `vm` is the live per-thread VM; `runtime_state` must still be installed
     /// and the JSC heap must not have been swept yet.
     pub cancel_all_timers: unsafe fn(vm: *mut VirtualMachine),
+    /// Release the JSC GC handles owned by the high-tier `RuntimeState` (the
+    /// SQL contexts' `Strong` callbacks, the per-VM DNS data with its
+    /// pending-query promises) while the JSC VM is still alive.
+    /// `RuntimeState` itself drops in `deinit_runtime_state`, which runs
+    /// after `~VM` (`WebWorker__teardownJSCVM` /
+    /// `Zig__GlobalObject__destructOnExit`) — a `Strong` dropped there
+    /// unlinks a `HandleNode` from the already-freed `HandleSet`.
+    ///
+    /// # Safety
+    /// `vm` is the live per-thread VM on the JS thread; `runtime_state` must
+    /// still be installed and the JSC VM must not have been torn down yet.
+    /// Call after the last JS that can repopulate these handles
+    /// (socket-group close callbacks).
+    pub release_runtime_state_js_handles: unsafe fn(vm: *mut VirtualMachine),
 }
 
 /// Canonical `EventLoopCtx` vtable for a `*mut VirtualMachine` owner — the JS

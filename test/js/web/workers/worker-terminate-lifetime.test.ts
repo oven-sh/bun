@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -9,6 +9,26 @@ const slow = isDebug || isASAN;
 const rounds = slow ? 4 : 8;
 const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
+
+// Env for the freed-JSC-handle regression tests below. Malloc=1 routes
+// WebKit's fastMalloc through the system allocator (bmalloc DebugHeap) so
+// ASAN builds poison freed HandleSet/HandleBlock memory and report the
+// use-after-free deterministically; with libpas the freed pages stay mapped
+// and the bug only crashes when the pool reuses them. That same routing
+// exposes every deliberately-unreclaimed exit-time WebKit allocation to
+// LeakSanitizer, whose sweep (enabled by ASAN CI lanes via detect_leaks=1)
+// then takes minutes — disable it in the child; the use-after-free detection
+// these tests exist for is AddressSanitizer proper and unaffected.
+//
+// Not on Windows: bmalloc's system-heap fallback is unsupported there, so
+// Malloc=1 aborts the child at startup, and no Windows lane runs ASAN — the
+// tests still cover the plain clean-shutdown contract.
+const debugHeapEnv = {
+  ...bunEnv,
+  // `undefined` also clears a Malloc inherited from the parent environment.
+  Malloc: isWindows ? undefined : "1",
+  ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+};
 
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
@@ -81,6 +101,111 @@ test(
   },
   timeout,
 );
+
+// Regression: worker shutdown tore down the JSC VM (freeing its HandleSet)
+// before dropping the per-VM RareData/RuntimeState, so the SQL contexts'
+// Strong handles — populated at module load by internal/sql/{postgres,mysql}'s
+// top-level init — and the default S3 client Strong were released against
+// freed memory (segfault in Bun__StrongRef__delete →
+// JSC::HandleSet::deallocate → WTF::SentinelLinkedList::remove during
+// WebWorker::shutdown).
+test("worker that loaded Bun.SQL and Bun.s3 exits without touching freed JSC handles", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Touching Bun.SQL requires the bun:sql internal module, whose
+        // top-level init() stores Strong refs in the worker's per-VM SQL
+        // contexts; touching Bun.s3 caches the default S3 client in a
+        // RareData Strong. The worker then drains and exits naturally,
+        // running the full shutdown sequence.
+        const w = new Worker("data:text/javascript," + encodeURIComponent("Bun.SQL; Bun.s3; postMessage('loaded');"));
+        const closed = new Promise(r => w.addEventListener("close", r, { once: true }));
+        const loaded = new Promise((resolve, reject) => {
+          w.onmessage = resolve;
+          w.onerror = reject;
+          // A close before "loaded" means the worker died early; fail fast
+          // instead of hanging on a promise that can never settle.
+          closed.then(() => reject(new Error("worker closed before posting 'loaded'")));
+        });
+        await loaded;
+        await closed;
+        console.log("worker closed");
+      `,
+    ],
+    env: debugHeapEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("worker closed\n");
+  expect(exitCode).toBe(0);
+});
+
+// Terminating a worker with an in-flight dns.resolve* query tears down the
+// per-VM c-ares channel during shutdown: the EDESTRUCTION callbacks must drop
+// their promise Strongs against a live JSC heap, and the resolver's timeout
+// timer must be unlinked from the per-thread timer heap before its memory
+// frees (WTFTimer::update still walks that heap during teardown).
+test("worker terminated with an in-flight DNS query shuts down cleanly", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // Local UDP socket that never replies: the worker's c-ares query
+        // stays in flight until terminate() without touching the network.
+        const udp = await Bun.udpSocket({ socket: { data() {} } });
+        const code =
+          'const dns = require("node:dns");' +
+          'dns.setServers(["127.0.0.1:' + udp.port + '"]);' +
+          'dns.promises.resolve4("inflight.example").catch(() => {});' +
+          'postMessage("inflight");' +
+          'setInterval(() => {}, 1000);'; // keep the worker alive until terminate()
+        const w = new Worker("data:text/javascript," + encodeURIComponent(code));
+        await new Promise((res, rej) => {
+          w.onmessage = res;
+          w.onerror = rej;
+          // A close before "inflight" means the worker died early; fail fast
+          // instead of hanging on a promise that can never settle.
+          w.addEventListener("close", () => rej(new Error("worker closed before posting 'inflight'")), { once: true });
+        });
+        await w.terminate();
+        udp.close();
+        console.log("terminated ok");
+      `,
+    ],
+    env: debugHeapEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("terminated ok\n");
+  expect(exitCode).toBe(0);
+});
+
+// Main-thread variant of the same teardown ordering: with
+// BUN_DESTRUCT_VM_ON_EXIT=1 (set by ASAN CI lanes), global_exit derefs the
+// JSC VM in Zig__GlobalObject__destructOnExit before destroy() drops
+// RuntimeState, hitting the identical freed-HandleSet release.
+test("main thread that loaded Bun.SQL and Bun.s3 destructs on exit without touching freed JSC handles", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", `Bun.SQL; Bun.s3; console.log("loaded");`],
+    env: { ...debugHeapEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("loaded\n");
+  expect(exitCode).toBe(0);
+});
 
 // Regression: WebWorker__dispatchExit deref'd the C++ Worker on the worker
 // thread; if that was the last ref, ~Worker → ~EventTarget ran there and

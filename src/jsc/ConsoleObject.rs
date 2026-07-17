@@ -9,7 +9,8 @@ use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
+use bun_core::ZigString;
 use bun_core::collections::HashMap;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};

@@ -83,6 +83,19 @@ class HTTPClientAsyncResource {
   }
 }
 
+// Node's parser AsyncWrap + _http_agent asyncResetHandle() make every socket
+// callback re-enter the current request's async scope; Bun bridges this in
+// JS by snapshotting the frame at tickOnSocket and running each socket
+// listener (data/end/error/close/drain/timeout) inside it.
+const kClientAsyncContext = Symbol("kClientAsyncContext");
+const runInFrame = require("internal/async_context_frame").run;
+
+function closeRequest(req) {
+  if (req[kClientAsyncContext] !== undefined) req[kClientAsyncContext] = undefined;
+  req._closed = true;
+  req.emit("close");
+}
+
 function isURLInstance(input) {
   return input != null && typeof input === "object" && input instanceof URL;
 }
@@ -515,6 +528,10 @@ function emitAbortNT(req) {
 }
 
 function ondrain() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], ondrainInner, this);
+}
+
+function ondrainInner() {
   const msg = this._httpMessage;
   if (msg && !msg.finished && msg[kNeedDrain]) {
     msg[kNeedDrain] = false;
@@ -523,6 +540,10 @@ function ondrain() {
 }
 
 function socketCloseListener() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketCloseListenerInner, this);
+}
+
+function socketCloseListenerInner() {
   const socket = this;
   const req = socket._httpMessage;
   $debug("HTTP socket close");
@@ -541,8 +562,7 @@ function socketCloseListener() {
     if (!res.complete) {
       res.destroy(new ConnResetException("aborted"));
     }
-    req._closed = true;
-    req.emit("close");
+    closeRequest(req);
     if (!res.aborted && res.readable) {
       res.push(null);
     }
@@ -554,8 +574,7 @@ function socketCloseListener() {
       req.socket._hadError = true;
       emitErrorEvent(req, new ConnResetException("socket hang up"));
     }
-    req._closed = true;
-    req.emit("close");
+    closeRequest(req);
   }
 
   // Too bad.  That output wasn't getting written.
@@ -571,6 +590,10 @@ function socketCloseListener() {
 }
 
 function socketErrorListener(err) {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketErrorListenerInner, this, err);
+}
+
+function socketErrorListenerInner(err) {
   const socket = this;
   const req = socket._httpMessage;
   $debug("SOCKET ERROR:", err);
@@ -595,6 +618,10 @@ function socketErrorListener(err) {
 }
 
 function socketOnEnd() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnEndInner, this);
+}
+
+function socketOnEndInner() {
   const socket = this;
   const req = this._httpMessage;
   const parser = this.parser;
@@ -613,6 +640,10 @@ function socketOnEnd() {
 }
 
 function socketOnData(d) {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], socketOnDataInner, this, d);
+}
+
+function socketOnDataInner(d) {
   const socket = this;
 
   // HTTPParser.execute() is not reentrant. User code can synchronously push
@@ -689,10 +720,12 @@ function processClientData(socket, d, parser) {
         socket._httpMessage = null;
         socket.readableFlowing = null;
 
+        // Clear before the emit: a throwing upgrade/connect handler would skip
+        // closeRequest() and leave the retained request pinning the store.
+        req[kClientAsyncContext] = undefined;
         req.emit(eventName, res, socket, bodyHead);
         req.destroyed = true;
-        req._closed = true;
-        req.emit("close");
+        closeRequest(req);
       } else {
         // Requested Upgrade or used CONNECT method, but have no handler.
         socket.destroy();
@@ -901,6 +934,10 @@ function responseOnEnd() {
 }
 
 function responseOnTimeout() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], responseOnTimeoutInner, this);
+}
+
+function responseOnTimeoutInner() {
   const req = this._httpMessage;
   if (!req) return;
   const res = req.res;
@@ -921,8 +958,7 @@ function requestOnFinish() {
 }
 
 function emitFreeNT(req) {
-  req._closed = true;
-  req.emit("close");
+  closeRequest(req);
   const socket = req.socket;
   if (socket) {
     socket.emit("free");
@@ -932,6 +968,7 @@ function emitFreeNT(req) {
 function tickOnSocket(req, socket) {
   const parser = parsers.alloc();
   req.socket = socket;
+  req[kClientAsyncContext] = $getInternalField($asyncContext, 0);
   const lenientFlags = calculateLenientFlags(req.httpValidation, req.insecureHTTPParser);
   parser.initialize(
     HTTPParser.RESPONSE,
@@ -967,6 +1004,10 @@ function tickOnSocket(req, socket) {
 }
 
 function emitRequestTimeout() {
+  return runInFrame(this._httpMessage?.[kClientAsyncContext], emitRequestTimeoutInner, this);
+}
+
+function emitRequestTimeoutInner() {
   const req = this._httpMessage;
   if (req) {
     req.emit("timeout");
@@ -1000,6 +1041,10 @@ ClientRequest.prototype.onSocket = function onSocket(socket, err) {
   // to be set so we set it here too.
   if (socket && !err) {
     socket._httpMessage = this;
+    // Capture the frame here, not just in tickOnSocket: onSocket runs in the
+    // request's context, and an error in the window before onSocketNT would
+    // otherwise run socketErrorListener with no frame and clear the context.
+    this[kClientAsyncContext] = $getInternalField($asyncContext, 0);
     socket.on("error", socketErrorListener);
   }
   process.nextTick(onSocketNT, this, socket, err);
@@ -1017,8 +1062,7 @@ function destroyRequestOnSocketNT(req, socket, err) {
   // The request is dead with no parser: close the trace span on the paths
   // that skip emitErrorEvent above (proxy tunnel; error already emitted).
   traceClientResponseEnd(req);
-  req._closed = true;
-  req.emit("close");
+  closeRequest(req);
 }
 
 function onSocketNT(req, socket, err) {

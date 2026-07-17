@@ -4,6 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
+use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_event_loop::{
     AnyTask::AnyTask,
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
@@ -19,7 +20,8 @@ use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
+    self as jsc, CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult,
+    StringJsc, StrongOptional,
 };
 use bun_sys::FdExt;
 use bun_threading::Mutex;
@@ -124,8 +126,23 @@ pub struct FetchTasklet {
 
     pub tracker: AsyncTaskTracker,
 
+    /// `fetch({ connectTimeout })`. Armed in `queue()`, unlinked in
+    /// `clear_data()` — the only path that frees the tasklet, so the timer heap
+    /// never holds a dangling node. Never inserted when no connect timeout is set.
+    pub connect_timeout_timer: EventLoopTimer,
+
+    /// `fetch({ timeout })`. Same lifecycle as the connect deadline,
+    /// but fires whatever phase the request is in: it bounds the whole request,
+    /// body included, so byte activity never re-arms it.
+    pub total_timeout_timer: EventLoopTimer,
+
     pub ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
 }
+
+bun_event_loop::impl_timer_owner!(FetchTasklet;
+    from_connect_timeout_timer_ptr => connect_timeout_timer,
+    from_total_timeout_timer_ptr => total_timeout_timer,
+);
 
 // Boxing `AnyBlob` is not viable: the `AnyBlob` arm is constructed/matched in
 // `fetch.rs` (e.g. `HTTPRequestBodyExt::any_blob`) and would require changes
@@ -445,6 +462,9 @@ impl FetchTasklet {
 
     fn clear_data(&mut self) {
         bun_output::scoped_log!(FetchTasklet, "clearData ");
+        // Before anything else: a live heap node pointing into a box we are
+        // about to free is a use-after-free on the next timer sweep.
+        self.cancel_timeouts();
         if !self.url_proxy_buffer.is_empty() {
             self.url_proxy_buffer = Box::default();
         }
@@ -808,6 +828,12 @@ impl FetchTasklet {
         self.mutex.lock();
         self.has_schedule_callback.store(false, Ordering::Relaxed);
         let is_done = !self.result.has_more;
+        if is_done {
+            // The tasklet outlives settlement by an event-loop turn (`deinit` is
+            // re-dispatched to the JS thread); a deadline firing in that window
+            // would abort an already-finished request.
+            self.cancel_timeouts();
+        }
 
         let vm = self.javascript_vm;
         // vm is shutting down we cannot touch JS
@@ -1914,6 +1940,8 @@ impl FetchTasklet {
             // SAFETY: jsc_vm derived from FFI ptr above; AsyncTaskTracker::init only
             // bumps a counter on the VM.
             tracker: AsyncTaskTracker::init(global_this.bun_vm().as_mut()),
+            connect_timeout_timer: EventLoopTimer::init_paused(TimerTag::FetchConnectTimeout),
+            total_timeout_timer: EventLoopTimer::init_paused(TimerTag::FetchTotalTimeout),
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
         });
 
@@ -2112,24 +2140,29 @@ impl FetchTasklet {
     #[bun_uws::uws_callback]
     pub(crate) fn abort_listener(&mut self, reason: JSValue) {
         bun_output::scoped_log!(FetchTasklet, "abortListener");
-        let this = self;
         reason.ensure_still_alive();
-        this.abort_reason.set(&this.global_this, reason);
-        this.abort_task();
-        if let Some(sink) = this.sink_mut() {
+        self.abort_reason.set(&self.global_this, reason);
+        self.abort_task();
+        self.cancel_request_body(reason);
+    }
+
+    /// https://fetch.spec.whatwg.org/#abort-fetch step 5: a still-readable request
+    /// body is cancelled with the abort reason, so the underlying source's
+    /// `cancel(reason)` observes it. Shared by every abort path.
+    fn cancel_request_body(&mut self, reason: JSValue) {
+        if let Some(sink) = self.sink_mut() {
             sink.cancel(reason);
             return;
         }
-        // Abort fired before the HTTP thread asked for the body, so the
-        // ReadableStream was never wired into a sink. Cancel it directly so
-        // the underlying source's cancel(reason) callback still observes the
-        // signal's reason (https://fetch.spec.whatwg.org/#abort-fetch step 5).
-        if this.is_waiting_request_stream_start {
-            if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
-                this.is_waiting_request_stream_start = false;
-                if let Some(stream) = stream_ref.get(&this.global_this) {
-                    stream.cancel_with_reason(&this.global_this, reason);
-                }
+        // The abort beat the HTTP thread to the body, so the ReadableStream was
+        // never wired into a sink. Cancel it directly.
+        if !self.is_waiting_request_stream_start {
+            return;
+        }
+        if let HTTPRequestBody::ReadableStream(stream_ref) = &self.request_body {
+            self.is_waiting_request_stream_start = false;
+            if let Some(stream) = stream_ref.get(&self.global_this) {
+                stream.cancel_with_reason(&self.global_this, reason);
             }
         }
     }
@@ -2298,15 +2331,107 @@ impl FetchTasklet {
         }
     }
 
+    /// Link `timer` into the VM timer heap `ms` from now. `ms` is never 0 here —
+    /// `fetch.rs` maps a 0/`false` deadline to "no deadline" and skips the call.
+    ///
+    /// # Safety
+    /// JS thread; `timer` is one of the tasklet's own `init_paused` nodes, not
+    /// currently linked into the heap.
+    unsafe fn arm_timeout(vm: *mut VirtualMachine, timer: *mut EventLoopTimer, ms: u32) {
+        // SAFETY: per fn contract; `timer_insert` links the node.
+        unsafe {
+            (*timer).next = bun_core::Timespec::ms_from_now(
+                bun_core::TimespecMockMode::AllowMockedTime,
+                i64::from(ms),
+            );
+            VirtualMachine::timer_insert(vm, timer);
+        }
+    }
+
+    /// Unlink `timer` from the VM timer heap. Idempotent.
+    ///
+    /// # Safety
+    /// JS thread; `timer` is one of the tasklet's own nodes and still live.
+    unsafe fn cancel_timeout(vm: *mut VirtualMachine, timer: *mut EventLoopTimer) {
+        // SAFETY: per fn contract; state == ACTIVE ⇒ linked into the per-VM heap.
+        unsafe {
+            if (*timer).state != TimerState::ACTIVE {
+                return;
+            }
+            VirtualMachine::timer_remove(vm, timer);
+            (*timer).state = TimerState::CANCELLED;
+        }
+    }
+
+    /// Drop both deadlines. The only thing standing between a freed `FetchTasklet`
+    /// and a dangling heap node, so `clear_data()` must always reach it.
+    fn cancel_timeouts(&mut self) {
+        let vm = std::ptr::from_ref(self.javascript_vm).cast_mut();
+        // SAFETY: JS thread; both nodes are our own and live while `self` is.
+        unsafe {
+            Self::cancel_timeout(vm, &raw mut self.connect_timeout_timer);
+            Self::cancel_timeout(vm, &raw mut self.total_timeout_timer);
+        }
+    }
+
+    /// Abort only a request still dialling; once the transport is up the socket's
+    /// idle timer owns the deadline. One-shot, and `Signals.connected` is never
+    /// cleared, so a redirect that reopens a connection is not re-bounded.
+    pub(crate) fn on_connect_timeout(&mut self) {
+        self.connect_timeout_timer.state = TimerState::FIRED;
+        if self.signal_store.connected.load(Ordering::Acquire) {
+            return;
+        }
+        self.abort_with_timeout(jsc::CommonAbortReason::ConnectionTimeout);
+    }
+
+    /// The whole-request `timeout` expired. Unlike the other two this fires in
+    /// any phase, including mid-body: it is a wall-clock bound on the whole
+    /// request, so a server trickling bytes forever still gets cut off.
+    pub(crate) fn on_total_timeout(&mut self) {
+        self.total_timeout_timer.state = TimerState::FIRED;
+        self.abort_with_timeout(jsc::CommonAbortReason::Timeout);
+    }
+
+    /// Tear the request down with `reason`, the same way an `AbortSignal` would.
+    fn abort_with_timeout(&mut self, reason: jsc::CommonAbortReason) {
+        if self.signal_store.aborted.load(Ordering::Relaxed) {
+            return;
+        }
+        let reason = reason.to_js(&self.global_this);
+        reason.ensure_still_alive();
+        self.abort_reason.set(&self.global_this, reason);
+        self.abort_task();
+        self.cancel_request_body(reason);
+    }
+
     pub(crate) fn queue(
         global: &JSGlobalObject,
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> crate::Result<*mut FetchTasklet> {
         http::http_thread::init(&http::http_thread::InitOpts::default());
+        let connect_timeout_ms = fetch_options.connect_timeout_ms;
+        let total_timeout_ms = fetch_options.total_timeout_ms;
         let node = Self::get(global, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
+        // Armed before the request reaches the HTTP thread, so time spent queued
+        // behind `BUN_CONFIG_MAX_HTTP_REQUESTS` counts against both.
+        let vm = std::ptr::from_ref(node_ref.javascript_vm).cast_mut();
+        // SAFETY: JS thread; fresh `init_paused` nodes, never linked until now.
+        unsafe {
+            if connect_timeout_ms > 0 {
+                Self::arm_timeout(
+                    vm,
+                    &raw mut node_ref.connect_timeout_timer,
+                    connect_timeout_ms,
+                );
+            }
+            if total_timeout_ms > 0 {
+                Self::arm_timeout(vm, &raw mut node_ref.total_timeout_timer, total_timeout_ms);
+            }
+        }
         let mut batch = bun_threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
         node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
@@ -2553,7 +2678,12 @@ pub struct FetchOptions {
     pub headers: Headers,
     pub body: HTTPRequestBody,
     pub disable_timeout: bool,
-    /// Per-request idle-timeout override, from `fetch(url, { timeout: <ms> })`.
+    /// `connectTimeout` in milliseconds; 0 means no connect deadline.
+    pub connect_timeout_ms: u32,
+    /// The whole-request `timeout` in milliseconds; 0 means no overall deadline.
+    pub total_timeout_ms: u32,
+    /// `socketTimeout` as already-normalised seconds; `None` defers to the
+    /// process-wide `BUN_CONFIG_HTTP_IDLE_TIMEOUT` (300s).
     pub idle_timeout_seconds: Option<core::ffi::c_uint>,
     pub disable_keepalive: bool,
     pub disable_decompression: bool,
@@ -2591,6 +2721,8 @@ impl Default for FetchOptions {
             headers: Headers::default(),
             body: HTTPRequestBody::default(),
             disable_timeout: false,
+            connect_timeout_ms: 0,
+            total_timeout_ms: 0,
             idle_timeout_seconds: None,
             disable_keepalive: false,
             disable_decompression: false,

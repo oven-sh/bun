@@ -176,6 +176,66 @@ impl HTTPRequestBodyExt for HTTPRequestBody {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
+// timeout
+// ──────────────────────────────────────────────────────────────────────────
+
+/// A `fetch({ timeout })` duration in milliseconds. `0` and `false` both mean
+/// "no deadline". `name` is the user-facing option (`timeout`, `connectTimeout`,
+/// ...) so the error echoes back exactly what they wrote.
+fn timeout_ms_arg(global_this: &JSGlobalObject, value: JSValue, name: &str) -> JsResult<u32> {
+    if value.is_boolean() && !value.as_boolean() {
+        return Ok(0);
+    }
+    if value.is_number() {
+        let n = value.as_number();
+        // `Infinity` means "no deadline", same as `false`/`0`.
+        if n == f64::INFINITY {
+            return Ok(0);
+        }
+        if !n.is_nan() && n >= 0.0 && n.fract() == 0.0 {
+            // Above u32::MAX a timeout is indistinguishable from "never", and
+            // `Timespec::ms_from_now` takes an i64 — clamp instead of wrapping.
+            return Ok(n.min(f64::from(u32::MAX)) as u32);
+        }
+    }
+    Err(global_this.throw_invalid_arguments(format_args!(
+        "fetch: '{name}' must be a non-negative integer number of milliseconds, or false"
+    )))
+}
+
+/// Read a `number | false` millisecond option off the first init object that
+/// carries it. `None` means the caller never set it.
+fn optional_timeout_ms(
+    global_this: &JSGlobalObject,
+    objects: &[JSValue],
+    name: &str,
+) -> JsResult<Option<u32>> {
+    for obj in objects {
+        if obj.is_empty() {
+            continue;
+        }
+        let Some(value) = obj.get(global_this, name)? else {
+            continue;
+        };
+        if value.is_undefined_or_null() {
+            continue;
+        }
+        return Ok(Some(timeout_ms_arg(global_this, value, name)?));
+    }
+    Ok(None)
+}
+
+/// uSockets' idle sweep only understands whole seconds. Round up so the armed
+/// timer is never *shorter* than asked; a sub-second value becomes 1 second,
+/// not 0 (which would disarm it entirely).
+fn ms_to_idle_timeout_seconds(ms: u32) -> core::ffi::c_uint {
+    if ms == 0 {
+        return 0;
+    }
+    http::normalize_idle_timeout_seconds(u64::from(ms).div_ceil(1000))
+}
+
+// ──────────────────────────────────────────────────────────────────────────
 // dataURLResponse
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -432,6 +492,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let first_arg = args.next_eat().unwrap();
 
     let mut disable_timeout = false;
+    let mut connect_timeout_ms: u32 = 0;
+    let mut total_timeout_ms: u32 = 0;
     let mut idle_timeout_seconds: Option<core::ffi::c_uint> = None;
     let mut disable_keepalive = false;
     let mut disable_decompression = false;
@@ -859,46 +921,75 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     }
 
-    // timeout: false | number | undefined
-    disable_timeout = 'extract_disable_timeout: {
+    // timeout: boolean | number | undefined — a deadline on the whole request.
+    // `false`/`0` disarm every timeout for the request, which is the escape hatch
+    // long-polling and SSE callers already rely on.
+    'extract_timeout: {
         let objects_to_try = [
             options_object.unwrap_or(JSValue::ZERO),
             request_init_object.unwrap_or(JSValue::ZERO),
         ];
 
         for obj in objects_to_try {
-            if !obj.is_empty() {
-                if let Some(timeout_value) = obj.get(global_this, "timeout")? {
-                    if timeout_value.is_boolean() {
-                        break 'extract_disable_timeout !timeout_value.as_boolean();
-                    } else if timeout_value.is_number() {
-                        // A finite positive `timeout` (in ms) also governs the
-                        // socket idle deadline, overriding the global
-                        // `BUN_CONFIG_HTTP_IDLE_TIMEOUT` default.
-                        let ms = timeout_value.as_number();
-                        if ms.is_finite() && ms > 0.0 {
-                            idle_timeout_seconds =
-                                Some((ms / 1000.0).ceil().min(core::ffi::c_uint::MAX as f64)
-                                    as core::ffi::c_uint);
-                        }
-                        // `to_int32()` saturates ±Infinity (JSC's
-                        // `coerceJSValueDoubleTruncatingT`, not spec ToInt32),
-                        // so gate on `is_finite()` too so `{timeout: Infinity}`
-                        // disables the timer instead of silently falling back
-                        // to the global default.
-                        break 'extract_disable_timeout !ms.is_finite()
-                            || timeout_value.to_int32() == 0;
-                    }
-                }
-
+            if obj.is_empty() {
+                continue;
+            }
+            let Some(timeout_value) = obj.get(global_this, "timeout")? else {
                 if global_this.has_exception() {
                     return Ok(JSValue::ZERO);
                 }
+                continue;
+            };
+
+            if timeout_value.is_boolean() {
+                disable_timeout = !timeout_value.as_boolean();
+                break 'extract_timeout;
+            }
+
+            if timeout_value.is_number() {
+                let ms = timeout_ms_arg(global_this, timeout_value, "timeout")?;
+                if ms == 0 {
+                    disable_timeout = true;
+                } else {
+                    total_timeout_ms = ms;
+                    // #16682: the caller's deadline must not be preempted by the
+                    // default socket-idle timer, so raise it to match. An explicit
+                    // `socketTimeout` still overrides this below.
+                    idle_timeout_seconds = Some(ms_to_idle_timeout_seconds(ms));
+                }
+                break 'extract_timeout;
+            }
+
+            if !timeout_value.is_undefined_or_null() {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "fetch: 'timeout' must be a boolean or a non-negative integer number of milliseconds"
+                )));
             }
         }
+    }
 
-        break 'extract_disable_timeout disable_timeout;
-    };
+    if global_this.has_exception() {
+        return Ok(JSValue::ZERO);
+    }
+
+    {
+        let objects_to_try = [
+            options_object.unwrap_or(JSValue::ZERO),
+            request_init_object.unwrap_or(JSValue::ZERO),
+        ];
+
+        // connectTimeout: number | false | undefined
+        if let Some(ms) = optional_timeout_ms(global_this, &objects_to_try, "connectTimeout")? {
+            connect_timeout_ms = ms;
+        }
+        // socketTimeout: number | false | undefined. An explicit value outranks
+        // `timeout: false`, so `{ timeout: false, socketTimeout: 30_000 }` keeps
+        // the socket timer the caller asked for.
+        if let Some(ms) = optional_timeout_ms(global_this, &objects_to_try, "socketTimeout")? {
+            idle_timeout_seconds = Some(ms_to_idle_timeout_seconds(ms));
+            disable_timeout = false;
+        }
+    }
 
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
@@ -2078,6 +2169,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         body,
         disable_keepalive,
         disable_timeout,
+        connect_timeout_ms,
+        total_timeout_ms,
         idle_timeout_seconds,
         disable_decompression,
         max_redirects,

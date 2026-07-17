@@ -1960,6 +1960,10 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
+        // Reached from `on_open` for plain TCP and from `on_handshake` for TLS,
+        // so `connectTimeout` covers DNS + TCP + the TLS handshake.
+        self.mark_connected();
+
         if FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
             if self.flags.is_preconnect_only {
                 self.on_preconnect::<IS_SSL>(socket);
@@ -4113,6 +4117,15 @@ impl<'a> HTTPClient<'a> {
         // `socket.set_timeout` picks the short-tick timer for values ≤ 240s
         // and the minute-granularity long timer above that.
         socket.set_timeout(self.effective_idle_timeout_seconds());
+    }
+
+    /// Transport usable (TCP connected, TLS handshaken, or pooled): where
+    /// `connectTimeout` stops applying. Must be reached on *every* path that can
+    /// send a request; write-once, so only the first connection is bounded.
+    #[inline]
+    pub fn mark_connected(&self) {
+        self.signals
+            .store(signals::Field::Connected, true, Ordering::Release);
     }
 
     fn maybe_pause_receive<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {

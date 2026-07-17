@@ -135,7 +135,12 @@ impl AbortSignal {
             return Some(AbortReason::Common(match reason {
                 1 => CommonAbortReason::Timeout,
                 2 => CommonAbortReason::UserAbort,
-                _ => CommonAbortReason::ConnectionClosed,
+                3 => CommonAbortReason::ConnectionClosed,
+                4 => CommonAbortReason::ConnectionTimeout,
+                _ => {
+                    debug_assert!(false, "unknown CommonAbortReason discriminant {reason}");
+                    CommonAbortReason::ConnectionClosed
+                }
             }));
         }
         if js_reason.is_empty() {

@@ -114,8 +114,19 @@ impl ClientSession {
         self.ref_();
 
         if self.handshake_done {
+            client.mark_connected();
             // handshake_done implies qsocket is Some and valid.
             self.qsocket_mut().unwrap().make_stream();
+        }
+    }
+
+    /// The QUIC handshake landed: every request parked on this connection is
+    /// past the connect phase, so `connectTimeout` must stop applying to them.
+    pub fn mark_pending_connected(&mut self) {
+        for &stream_ptr in self.pending.iter() {
+            if let Some(client) = stream_mut(stream_ptr).client {
+                client_mut(client).mark_connected();
+            }
         }
     }
 

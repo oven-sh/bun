@@ -1789,6 +1789,9 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
     case CommonAbortReason::ConnectionClosed: {
         return createDOMException(globalObject, ExceptionCode::AbortError, "The connection was closed."_s);
     }
+    case CommonAbortReason::ConnectionTimeout: {
+        return createDOMException(globalObject, ExceptionCode::TimeoutError, "The connection timed out."_s);
+    }
     default: {
         break;
     }

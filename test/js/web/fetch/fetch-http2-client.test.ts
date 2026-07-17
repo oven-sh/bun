@@ -2020,15 +2020,17 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
         `,
       ),
       // Global idle default = 20s. `{timeout:false}` contributes 0 to the
-      // session max and the `{timeout:1000}` sibling contributes 1s; the
-      // session must floor at the 20s global default so the no-timeout
-      // stream is not killed by the sibling's short explicit deadline.
+      // session max and the `{socketTimeout:1000}` sibling contributes 1s; the
+      // session must floor at the 20s global default so the no-timeout stream
+      // is not killed by the sibling's short explicit idle deadline. (Using
+      // `socketTimeout`, not `timeout` — `timeout` arms a per-request wall-clock
+      // deadline that is independent of the shared socket timer under test.)
       run(
         "20",
         /* js */ `
           const [noTimeout, shortTimeout] = await Promise.all([
             get({ timeout: false }),
-            get({ timeout: 1000 }),
+            get({ socketTimeout: 1000 }),
           ]);
           console.log(JSON.stringify({ noTimeout, shortTimeout }));
         `,
@@ -2036,13 +2038,13 @@ test("h2: per-request `timeout` extends the session idle deadline, and {timeout:
       // Global idle default = 0 (disabled). A plain fetch with no `timeout`
       // option inherits effective deadline 0 without setting the
       // `disable_timeout` flag; the session must still disarm rather than
-      // letting the `{timeout:1000}` sibling arm the shared socket.
+      // letting the `{socketTimeout:1000}` sibling arm the shared socket.
       run(
         "0",
         /* js */ `
           const [plain, shortTimeout] = await Promise.all([
             get(undefined),
-            get({ timeout: 1000 }),
+            get({ socketTimeout: 1000 }),
           ]);
           console.log(JSON.stringify({ plain, shortTimeout }));
         `,

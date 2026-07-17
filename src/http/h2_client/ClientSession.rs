@@ -299,6 +299,9 @@ impl ClientSession {
 
     pub fn adopt(&mut self, client: &mut HTTPClient) {
         client.h2_register_abort_tracker(self.socket);
+        // The session's socket is already established, so this request is past
+        // the connect phase even while it waits for SETTINGS in `pending_attach`.
+        client.mark_connected();
         // Park instead of attaching when (a) we're inside onData's deliver
         // loop — attach() mustn't mutate `streams` under iteration — or (b)
         // the server's first SETTINGS hasn't arrived yet, so the real
@@ -332,6 +335,7 @@ impl ClientSession {
     /// is routed via the session socket so `abortByHttpId` can find it.
     pub fn enqueue(&mut self, client: &mut HTTPClient<'_>) {
         client.h2_register_abort_tracker(self.socket);
+        client.mark_connected();
         self.pending_attach.push(client.as_erased_ptr().as_ptr());
         self.rearm_timeout();
     }
@@ -397,6 +401,7 @@ impl ClientSession {
     /// DATA, and flush.
     pub fn attach(&mut self, client: &mut HTTPClient) {
         debug_assert!(self.has_headroom());
+        client.mark_connected();
 
         let send_window = i32::try_from(self.remote_initial_window_size.min(wire::MAX_WINDOW_SIZE))
             .expect("int cast");

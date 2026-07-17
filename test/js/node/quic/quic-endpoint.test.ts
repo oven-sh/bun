@@ -255,7 +255,11 @@ describe("endpoint.close() while a session is live", () => {
       verifyPeer: "manual",
       transportParams: tp,
     });
+    // `closed` rejects with the same CONNECTION_REFUSED transport error, and
+    // does so while `opened` is being awaited -- handle it first.
+    const lateClosed = late.closed.catch(() => "rejected");
     await expect(late.opened).rejects.toThrow();
+    expect(await lateClosed).toBe("rejected");
 
     // Releasing the held session is now the last one, so close finishes.
     held.close();

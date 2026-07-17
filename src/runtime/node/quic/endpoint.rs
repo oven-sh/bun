@@ -421,6 +421,20 @@ extern "C" fn on_data(
     // global outlives every live endpoint.
     let global = unsafe { &*global_ptr };
     let local = this.local_addr.get();
+    // A graceful close stashed by an earlier turn applies before new packets
+    // feed: its data flight has flushed by now, and node's close would already
+    // be on the wire -- a closing peer discards new streams instead of
+    // announcing them (RFC 9000 s10.2.1). ci_close only schedules, so run the
+    // engines once to put the conn into the closing state first.
+    let mut closed_any = false;
+    for session in this.sessions.get().clone() {
+        if let Some(session) = this.live_session(session) {
+            closed_any |= session.flush_pending_graceful();
+        }
+    }
+    if closed_any {
+        this.drive_engines_once();
+    }
     // This callback dispatches JS (provisional announce) before it feeds
     // packets; hold the send scope so that JS cannot flush lsquic underneath us.
     this.send_scope_depth.set(this.send_scope_depth.get() + 1);
@@ -1383,9 +1397,16 @@ impl QuicEndpoint {
         }
         self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         self.followup_due.set(false);
-        for session in self.sessions.get().clone() {
-            if let Some(session) = self.live_session(session) {
-                session.flush_deferred_aborts();
+        // Not from the mid-turn drain pass: a deferred abort is dropped when a
+        // later stream writes first, and node evaluates that over the whole
+        // turn (its send scope spans the C->JS->C unwind). Flushing between
+        // microtask batches would put a ghost stream's RESET on the wire that
+        // node never sends.
+        if !self.defer_closes.get() {
+            for session in self.sessions.get().clone() {
+                if let Some(session) = self.live_session(session) {
+                    session.flush_deferred_aborts();
+                }
             }
         }
         bun_boringssl_sys::ERR_clear_error();
@@ -1723,8 +1744,18 @@ impl QuicEndpoint {
         // session, and this is not a busy refusal either, so serverBusyCount
         // stays put.
         if self.closing.get() {
+            // CONNECTION_REFUSED, as the busy path below: a clean close would
+            // let the client's handshake confirmation win and `opened`
+            // resolve for a session this endpoint will never service.
             // SAFETY: `conn` is the live conn lsquic just created.
-            unsafe { lsquic::lsquic_conn_close(conn) };
+            unsafe {
+                lsquic::lsquic_conn_abort_error(
+                    conn,
+                    0,
+                    QUIC_TRANSPORT_CONNECTION_REFUSED,
+                    core::ptr::null(),
+                );
+            }
             return null_mut();
         }
         let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));

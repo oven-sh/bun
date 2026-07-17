@@ -330,6 +330,14 @@ impl QuicStream {
     pub(super) fn suppress_announce(&self) {
         self.announce_suppressed.set(true);
     }
+    /// Closes the underlying lsquic stream without emitting anything the
+    /// suppressed announce would have implied.
+    pub(super) fn close_raw_silently(&self) {
+        if let Some(s) = self.ls() {
+            s.close();
+        }
+    }
+
     pub(super) fn is_announce_suppressed(&self) -> bool {
         self.announce_suppressed.get()
     }
@@ -415,7 +423,13 @@ impl QuicStream {
         });
         self.with_state(|s| {
             s.reset = 1;
-            s.reset_code = code;
+            // First reset wins: lsquic resets rejected 0-RTT streams with
+            // code 0 after cancel_early_rejected already recorded the
+            // application error node reports; a second, weaker code must not
+            // erase it.
+            if s.reset_code == 0 {
+                s.reset_code = code;
+            }
             s.read_ended = 1;
         });
     }

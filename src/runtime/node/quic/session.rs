@@ -982,6 +982,25 @@ impl QuicSession {
                         stream.suppress_announce();
                         continue;
                     }
+                    // The user already asked this session to close (possibly
+                    // earlier in this very batch): node never surfaces the
+                    // stream, because its per-packet dispatch runs the close
+                    // callback -- and with it the CONNECTION_CLOSE -- before
+                    // the packet that opened this stream is processed, and a
+                    // closing endpoint discards new streams (RFC 9000
+                    // s10.2.1). Raw QUIC only: an h3 close drains via GOAWAY,
+                    // which by design still serves in-flight streams.
+                    if remote
+                        && self.with_state(|st| st.graceful_close == 1)
+                        && !self
+                            .endpoint_ref()
+                            .map(|ep| ep.is_http(self.is_server.get()))
+                            .unwrap_or(false)
+                    {
+                        stream.suppress_announce();
+                        stream.close_raw_silently();
+                        continue;
+                    }
                     if remote && stream.is_announce_suppressed() {
                         continue;
                     }
@@ -1826,11 +1845,15 @@ impl QuicSession {
     }
 
     /// Applies a graceful close stashed while a dispatch was on the stack.
-    pub(super) fn flush_pending_graceful(&self) {
+    /// Returns whether one was applied.
+    pub(super) fn flush_pending_graceful(&self) -> bool {
         if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
             self.apply_graceful_close(app, code, reason);
+            return true;
         }
+        false
     }
+
 
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
         let Some(c) = self.conn() else { return };
@@ -2464,7 +2487,12 @@ lsquic_callback! {
     }
 
     pub(super) fn on_early_data_failed(session: &QuicSession) {
-        session.push_event(SessionEvent::EarlyDataFailed);
+        // Front of the queue: lsquic resets the early streams before this
+        // callback, so their clean StreamClosed events are already queued --
+        // the failure must dispatch first, or `closed` settles cleanly before
+        // the rejection node delivers can land.
+        session.events.with_mut(|e| e.insert(0, SessionEvent::EarlyDataFailed));
+        session.schedule_process();
     }
 
     pub(super) fn on_origin(session: &QuicSession, chunk: *const u8, len: usize, fin: c_int) {

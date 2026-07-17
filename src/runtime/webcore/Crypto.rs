@@ -1,6 +1,8 @@
 use bun_core::String as BunString;
 use bun_jsc::uuid::{self, UUID, UUID5, UUID7};
-use bun_jsc::{CallFrame, JSGlobalObject, JSType, JSUint8Array, JSValue, JsClass, JsResult, StringJsc};
+use bun_jsc::{
+    CallFrame, JSGlobalObject, JSType, JSUint8Array, JSValue, JsClass, JsResult, StringJsc,
+};
 
 use crate::node::Encoding;
 

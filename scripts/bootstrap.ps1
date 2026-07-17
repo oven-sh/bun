@@ -1,4 +1,4 @@
-# Version: 21
+# Version: 22
 # A script that installs the dependencies needed to build and test Bun on Windows.
 # Supports both x64 and ARM64 using Scoop for package management.
 # Used by Azure [build images] pipeline.
@@ -814,7 +814,6 @@ function Prefetch-Build-Deps {
   } finally {
     Pop-Location
   }
-  Remove-Item -Recurse -Force $cloneDir
 
   # Read-only: download.ts only ever copies FROM here, and a writable baked
   # input is something a misbehaving job could corrupt for later jobs on the
@@ -822,6 +821,33 @@ function Prefetch-Build-Deps {
   & attrib +R "$prefetchDir\*" /S /D
 
   Set-Env "BUN_BUILD_PREFETCH_DIR" $prefetchDir
+
+  # Warm a shared `bun install` download cache so every test shard's
+  # `bun install` (root + test/) hits disk instead of npm. Keyed by
+  # name@version, so a test/package.json bump after the bake just misses for
+  # that one package. Left writable: bun install extracts new tarballs into the
+  # cache dir itself, so a read-only cache would fail on the first unseen
+  # package rather than fall through. The agent runs as SYSTEM, which can
+  # write here by default.
+  $installCacheDir = "C:\bun-install-cache"
+  New-Item -ItemType Directory -Force -Path $installCacheDir | Out-Null
+  $env:BUN_INSTALL_CACHE_DIR = $installCacheDir
+  try {
+    foreach ($dir in @($cloneDir, (Join-Path $cloneDir "test"))) {
+      Push-Location $dir
+      & bun install --ignore-scripts
+      Pop-Location
+      if ($LASTEXITCODE -ne 0) { throw "bun install in $dir failed" }
+    }
+    Set-Env "BUN_INSTALL_CACHE_DIR" $installCacheDir
+  } catch {
+    Write-Output "warning: bun install prefetch failed; baking without warm install cache: $_"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $installCacheDir
+  } finally {
+    Remove-Item Env:\BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
+  }
+
+  Remove-Item -Recurse -Force $cloneDir
 }
 
 if ($CI) {

@@ -276,20 +276,20 @@ All four tiers pass a 1M-iteration loop exercising `length`/`charAt`/`charCodeAt
 
 Memory (heap bytes/obj, 1M instances, verified via `$vm.value()` describe):
 
-| Pattern | Baseline | Patched | Delta |
-|---|---:|---:|---:|
-| `slice(3..7)` Latin-1 | 32 | 16 | -50% |
-| `slice(2..3)` UTF-16 | 32 | 16 | -50% |
-| `slice(8+)` | 32 | 32 | 0 |
+| Pattern               | Baseline | Patched | Delta |
+| --------------------- | -------: | ------: | ----: |
+| `slice(3..7)` Latin-1 |       32 |      16 |  -50% |
+| `slice(2..3)` UTF-16  |       32 |      16 |  -50% |
+| `slice(8+)`           |       32 |      32 |     0 |
 
 Performance (2M ops, patched RelWithDebInfo vs baseline release; builds not perfectly comparable):
 
-| Op on 5-char inline | Baseline | Patched | Delta |
-|---|---:|---:|---:|
-| `slice()` create | ~80 ms | ~88 ms | +10% |
-| `.length` | ~8 ms | ~11 ms | +34% |
-| `.charCodeAt(0)` | ~67 ms | ~57 ms | **-15%** |
-| `.length` on 20-char rope (control) | ~12 ms | ~12 ms | +3% |
+| Op on 5-char inline                 | Baseline | Patched |    Delta |
+| ----------------------------------- | -------: | ------: | -------: |
+| `slice()` create                    |   ~80 ms |  ~88 ms |     +10% |
+| `.length`                           |    ~8 ms |  ~11 ms |     +34% |
+| `.charCodeAt(0)`                    |   ~67 ms |  ~57 ms | **-15%** |
+| `.length` on 20-char rope (control) |   ~12 ms |  ~12 ms |      +3% |
 
 The `.length` regression is phase-1 routing (two branches, `& 0x3` then `& 0x1`). Phase-2 fast paths (single shift+mask in every tier; m_fiber-word compare for `===` when both inline) remove the extra branch and are expected to bring `.length` to parity or better. `charCodeAt` is already faster because inline avoids the rope-substring base-pointer indirection.
 

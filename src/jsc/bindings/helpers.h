@@ -393,7 +393,9 @@ static const WTF::String toStringStatic(ZigString str)
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    WTF::String message = toString(*str);
+    // Must copy (like the sibling get*ErrorInstance helpers): `toString` uses
+    // StringImpl::createWithoutCopying, but the Error outlives the caller's bytes.
+    WTF::String message = toStringCopy(*str);
     if (message.isNull() && str->len > 0) [[unlikely]] {
         // pending exception while creating an error.
         return {};

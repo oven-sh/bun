@@ -1814,12 +1814,6 @@ pub(super) fn generate_symbol_for_function(
         ));
     }
 
-    if function.threadsafe && return_type != ABIType::Void {
-        return Ok(Some(
-            ZigString::static_(b"Threadsafe functions must return void").to_error_instance(global),
-        ));
-    }
-
     *function = Function::default();
     function.base_name = None;
     function.arg_types = abi_types;
@@ -2086,10 +2080,25 @@ impl Function {
         is_threadsafe: bool,
     ) -> crate::Result<()> {
         jsc::mark_binding();
+        // FFI_Callback_threadsafe_call is void: it posts a task and returns
+        // before the JS function runs, so there is no return-value channel. A
+        // non-void trampoline would read an uninitialized EncodedJSValue.
+        if is_threadsafe && self.return_type != ABIType::Void {
+            self.fail(b"Threadsafe functions must return void");
+            return Ok(());
+        }
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
         let ffi_wrapper = unsafe { Bun__createFFICallbackFunction(js_context, js_function) };
-        self.print_callback_source_code(Some(js_context), Some(ffi_wrapper), &mut source_code)?;
+        // Heap-allocated wrapper with two JSC::Strong roots. Ownership
+        // transfers to Step::Compiled on success; on every earlier exit
+        // (TCCMissing, Step::Failed) this guard derefs it instead of leaking.
+        let ffi_wrapper = scopeguard::guard(ffi_wrapper, |p| {
+            // SAFETY: p came from Bun__createFFICallbackFunction and was not
+            // stored in Step::Compiled, so we still hold the +1.
+            unsafe { FFICallbackFunctionWrapper_destroy(p) };
+        });
+        self.print_callback_source_code(Some(js_context), Some(*ffi_wrapper), &mut source_code)?;
 
         #[cfg(all(debug_assertions, unix))]
         'debug_write: {
@@ -2216,7 +2225,9 @@ impl Function {
             // dereferenced or written through on the Rust side; stored as
             // NonNull to avoid laundering &T → *mut T provenance.
             js_context: Some(NonNull::from(js_context)),
-            ffi_callback_function_wrapper: NonNull::new(ffi_wrapper),
+            ffi_callback_function_wrapper: NonNull::new(scopeguard::ScopeGuard::into_inner(
+                ffi_wrapper,
+            )),
         });
         Ok(())
     }

@@ -1413,7 +1413,12 @@ impl WebWorker {
         // throughout their `start_vm()`; step 5 frees it. Terminate them and
         // wait for each to unlink (past all parent-VM access) first. The
         // filter skips our own (still-registered) entry: `self.parent` is the
-        // grandparent VM, never `vm_ptr`.
+        // grandparent VM, never `vm_ptr`. The timeout is a should-never-happen
+        // fallback (a segment of start_vm() stalling >10s requires pathological
+        // load; it runs no user JS/FFI); hitting it falls through and
+        // reintroduces the UAF. The structural fix is to snapshot everything
+        // start_vm() needs by value in create() so the worker thread never
+        // dereferences the parent VM (follow-up: farm/81bc4778).
         if !vm_ptr.is_null() {
             terminate_children_and_wait(vm_ptr, 10_000);
         }

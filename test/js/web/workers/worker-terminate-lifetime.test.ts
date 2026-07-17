@@ -158,10 +158,9 @@ test(
       stderr: "pipe",
     });
 
+    // stderr is drained but not asserted: debug/sanitizer lanes may write to it.
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 0, signalCode: null });
   },
   timeout,
 );
@@ -200,10 +199,9 @@ test(
       stderr: "pipe",
     });
 
+    // stderr is drained but not asserted: debug/sanitizer lanes may write to it.
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    expect(stdout).toBe("");
-    expect(exitCode).toBe(0);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 0, signalCode: null });
   },
   timeout,
 );

@@ -2400,7 +2400,8 @@ impl QuicEndpoint {
             (*session).verneg.set(Some((version, min_version)));
             (*session).remote_addr.set(remote);
         }
-        self.pending_verneg.with_mut(|v| v.push((session, scid, now_ns())));
+        self.pending_verneg
+            .with_mut(|v| v.push((session, scid, now_ns())));
         self.sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         if let Some(socket) = self.socket.get() {

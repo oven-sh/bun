@@ -396,7 +396,6 @@ pub struct QuicSession {
     global: Cell<*const JSGlobalObject>,
 }
 
-
 impl QuicSession {
     fn new(global: &JSGlobalObject, vtable: *const lsquic::NqVtable) -> Self {
         Self {
@@ -1800,7 +1799,8 @@ impl QuicSession {
             app = options
                 .get(global, "type")?
                 .map(|v| {
-                    bun_core::String::from_js(v, global).map(|s| s.to_utf8_bytes() == b"application")
+                    bun_core::String::from_js(v, global)
+                        .map(|s| s.to_utf8_bytes() == b"application")
                 })
                 .transpose()?
                 .unwrap_or(false);

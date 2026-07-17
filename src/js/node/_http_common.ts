@@ -47,9 +47,11 @@ const validateHeaderValue = (name, value) => {
   }
 };
 
-// TODO: TODO!
-// const insecureHTTPParser = getOptionValue('--insecure-http-parser');
-const insecureHTTPParser = false;
+// Node reads this as `getOptionValue('--insecure-http-parser')`. Bun parses the
+// flag during CLI startup into a process-wide atomic, so this is a plain read of
+// the same value. Bound directly rather than via `internal/http` to keep
+// `_http_common` free of a require cycle (internal/http pulls in the http stack).
+const insecureHTTPParser = $newRustFunction("node_http_binding.rs", "getInsecureHTTPParser", 0)();
 
 const kIncomingMessage = Symbol("IncomingMessage");
 const kSkipPendingData = Symbol("SkipPendingData");

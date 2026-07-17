@@ -8,6 +8,7 @@ const {
   validateHeaderName,
   validateHeaderValue,
   HTTPParser,
+  isLenient,
 } = require("node:_http_common");
 const {
   validateObject,
@@ -1171,7 +1172,11 @@ function applyServerCustomOptions(server: Server) {
     handle,
     server.requireHostHeader,
     true,
-    !!server.insecureHTTPParser,
+    // Node resolves this through calculateLenientFlags: an explicit
+    // `insecureHTTPParser` wins, `httpValidation: "insecure"` is equivalent to it,
+    // and otherwise the process-wide `--insecure-http-parser` decides. Coercing
+    // `undefined` straight to false here would drop the flag.
+    server.httpValidation === "insecure" || (server.insecureHTTPParser ?? isLenient()),
     typeof server.maxHeaderSize !== "undefined" ? server.maxHeaderSize : getMaxHTTPHeaderSize(),
     onServerClientError.bind(server),
     onServerConnection.bind(server),
@@ -1217,6 +1222,29 @@ function onServerConnection(this: Server, socketHandle) {
   }
   const isTLS = !!this[tlsSymbol];
   const socket = new NodeHTTPServerSocket(this, socketHandle, isTLS);
+
+  // Node's http.Server inherits net.Server's accept path, which refuses a
+  // connection once maxConnections is reached and reports it as 'drop' instead
+  // of 'connection'. Bun's http.Server is served by the native listener and
+  // never goes through that path, so apply the same gate here. The socket is
+  // already tracked by the constructor above, hence `>` rather than Node's `>=`
+  // against a count that excludes the pending connection.
+  const maxConnections = this.maxConnections;
+  if (maxConnections != null && (this[kTrackedConnections]?.size ?? 0) > maxConnections) {
+    this[kTrackedConnections]?.delete(socket);
+    const data = {
+      localAddress: socket.localAddress,
+      localPort: socket.localPort,
+      localFamily: socket.localFamily,
+      remoteAddress: socket.remoteAddress,
+      remotePort: socket.remotePort,
+      remoteFamily: socket.remoteFamily,
+    };
+    socket.destroy();
+    this.emit("drop", data);
+    return;
+  }
+
   // Node's connectionListener attaches the HTTPParser (socket.parser) before
   // emitting 'connection'; expose the shim here so listeners see it populated.
   socket.parser = createServerParserShim(socket);
@@ -2323,6 +2351,8 @@ function renderNativeHeaders(res) {
         closeDelimited = true;
         res[kMustCloseConnection] = true;
       } else if (res._removedContLen) {
+        forceChunked = true;
+      } else if (res[kFramingFrozenChunked]) {
         forceChunked = true;
       }
     }
@@ -3531,6 +3561,9 @@ ServerResponse.prototype._send = function (data, encoding, callback, _byteLength
 
 const kSnapshotStatusCode = Symbol("kSnapshotStatusCode");
 const kSnapshotStatusMessage = Symbol("kSnapshotStatusMessage");
+// Set by writeHead() when it froze the framing with no length/encoding of its
+// own — the state Node's _storeHeader resolves to chunked.
+const kFramingFrozenChunked = Symbol("kFramingFrozenChunked");
 ServerResponse.prototype.writeHead = function (statusCode, statusMessage, headers) {
   if (this.headersSent) {
     throw $ERR_HTTP_HEADERS_SENT("writeHead");
@@ -3542,6 +3575,18 @@ ServerResponse.prototype.writeHead = function (statusCode, statusMessage, header
   // Headers are flushed lazily here, so snapshot the status line now.
   this[kSnapshotStatusCode] = this.statusCode;
   this[kSnapshotStatusMessage] = this.statusMessage;
+
+  // Node's writeHead() also freezes the body framing, not just the status line:
+  // _storeHeader picks chunked while _contentLength is still null, and the later
+  // end(chunk) cannot add a Content-Length once _header exists. Rendering lazily
+  // means end(chunk) still has the body in hand and would derive a length Node
+  // never sends, so record the frozen choice here and honor it at render time.
+  if (
+    this[kOutHeaders] === null ||
+    (this[kOutHeaders]["content-length"] === undefined && this[kOutHeaders]["transfer-encoding"] === undefined)
+  ) {
+    this[kFramingFrozenChunked] = true;
+  }
 
   this[headerStateSymbol] = NodeHTTPHeaderState.assigned;
 

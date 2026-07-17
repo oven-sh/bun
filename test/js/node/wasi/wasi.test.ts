@@ -115,8 +115,16 @@ describe("new WASI() option validation", () => {
 
   test("stdin/stdout/stderr must be non-negative int32", () => {
     for (const k of ["stdin", "stdout", "stderr"] as const) {
-      for (const bad of ["x", -1, 1.5, NaN, Infinity, -Infinity, 2 ** 31]) {
-        expect(() => new WASI({ version: "preview1", [k]: bad } as any)).toThrow();
+      for (const [bad, code] of [
+        ["x", "ERR_INVALID_ARG_TYPE"],
+        [-1, "ERR_OUT_OF_RANGE"],
+        [1.5, "ERR_OUT_OF_RANGE"],
+        [NaN, "ERR_OUT_OF_RANGE"],
+        [Infinity, "ERR_OUT_OF_RANGE"],
+        [-Infinity, "ERR_OUT_OF_RANGE"],
+        [2 ** 31, "ERR_OUT_OF_RANGE"],
+      ] as const) {
+        expect(() => new WASI({ version: "preview1", [k]: bad } as any)).toThrow(expect.objectContaining({ code }));
       }
       expect(() => new WASI({ version: "preview1", [k]: 0 } as any)).not.toThrow();
       expect(() => new WASI({ version: "preview1", [k]: 2 ** 31 - 1 } as any)).not.toThrow();

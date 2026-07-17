@@ -115,9 +115,11 @@ describe("new WASI() option validation", () => {
 
   test("stdin/stdout/stderr must be non-negative int32", () => {
     for (const k of ["stdin", "stdout", "stderr"] as const) {
-      expect(() => new WASI({ version: "preview1", [k]: "x" } as any)).toThrow(TypeError);
-      expect(() => new WASI({ version: "preview1", [k]: -1 } as any)).toThrow();
-      expect(() => new WASI({ version: "preview1", [k]: 1.5 } as any)).toThrow();
+      for (const bad of ["x", -1, 1.5, NaN, Infinity, -Infinity, 2 ** 31]) {
+        expect(() => new WASI({ version: "preview1", [k]: bad } as any)).toThrow();
+      }
+      expect(() => new WASI({ version: "preview1", [k]: 0 } as any)).not.toThrow();
+      expect(() => new WASI({ version: "preview1", [k]: 2 ** 31 - 1 } as any)).not.toThrow();
     }
   });
 
@@ -160,6 +162,22 @@ describe("start()", () => {
     const EXIT7 = craftModule([["proc_exit", "i"]], [0x41, 7, 0x10, 0, 0x1a]);
     const w = new WASI({ version: "preview1" });
     expect(w.start(instantiate(EXIT7, w))).toBe(7);
+  });
+
+  test("proc_exit terminates the host process when returnOnExit is false", async () => {
+    const bytes = Array.from(craftModule([["proc_exit", "i"]], [0x41, 7, 0x10, 0, 0x1a]));
+    const src = `
+      import { WASI } from "node:wasi";
+      const bytes = new Uint8Array(${JSON.stringify(bytes)});
+      const w = new WASI({ version: "preview1", returnOnExit: false });
+      w.start(new WebAssembly.Instance(new WebAssembly.Module(bytes), w.getImportObject()));
+      console.log("UNREACHABLE");
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", src], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).not.toContain("UNREACHABLE");
+    expect(exitCode).toBe(7);
   });
 
   test("throws ERR_INVALID_ARG_TYPE when _start is missing", () => {
@@ -299,5 +317,25 @@ describe("stdin/stdout/stderr fd options", () => {
     } finally {
       fs.closeSync(inFd);
     }
+  });
+
+  test("guest fd 2 writes go to the host fd passed as options.stderr", () => {
+    using dir = tempDir("wasi-stderr-fd", {});
+    const errPath = path.join(String(dir), "err.txt");
+    const errFd = fs.openSync(errPath, "w");
+    try {
+      const w = new WASI({ version: "preview1", stderr: errFd });
+      const memory = new WebAssembly.Memory({ initial: 1 });
+      w.initialize({ exports: { memory } } as any);
+      const view = new DataView(memory.buffer);
+      Buffer.from(memory.buffer).write("err!", 32);
+      view.setUint32(0, 32, true);
+      view.setUint32(4, 4, true);
+      expect(w.wasiImport.fd_write(2, 0, 1, 16)).toBe(0);
+      expect(view.getUint32(16, true)).toBe(4);
+    } finally {
+      fs.closeSync(errFd);
+    }
+    expect(fs.readFileSync(errPath, "utf8")).toBe("err!");
   });
 });

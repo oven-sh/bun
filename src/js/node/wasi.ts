@@ -802,8 +802,19 @@ var require_wasi = __commonJS({
     var WASI = class WASI {
       constructor(wasiConfig = kEmptyObject) {
         validateObject(wasiConfig, "options");
-        validateString(wasiConfig.version, "options.version");
-        switch (wasiConfig.version) {
+        const {
+          version,
+          args: argsOption,
+          env: envOption,
+          preopens: preopensOption,
+          stdin = 0,
+          stdout = 1,
+          stderr = 2,
+          returnOnExit: returnOnExitOption,
+        } = wasiConfig;
+
+        validateString(version, "options.version");
+        switch (version) {
           case "unstable":
             this[kBindingName] = "wasi_unstable";
             break;
@@ -811,24 +822,23 @@ var require_wasi = __commonJS({
             this[kBindingName] = "wasi_snapshot_preview1";
             break;
           default:
-            throw $ERR_INVALID_ARG_VALUE("options.version", wasiConfig.version, "unsupported WASI version");
+            throw $ERR_INVALID_ARG_VALUE("options.version", version, "unsupported WASI version");
         }
 
-        if (wasiConfig.args !== undefined) validateArray(wasiConfig.args, "options.args");
-        const args = $Array.prototype.map.$call(wasiConfig.args || [], String);
+        if (argsOption !== undefined) validateArray(argsOption, "options.args");
+        const args = $Array.prototype.map.$call(argsOption || [], String);
 
-        if (wasiConfig.env !== undefined) validateObject(wasiConfig.env, "options.env");
-        if (wasiConfig.preopens !== undefined) validateObject(wasiConfig.preopens, "options.preopens");
+        if (envOption !== undefined) validateObject(envOption, "options.env");
+        if (preopensOption !== undefined) validateObject(preopensOption, "options.preopens");
 
-        const { stdin = 0, stdout = 1, stderr = 2 } = wasiConfig;
         validateInt32(stdin, "options.stdin", 0);
         validateInt32(stdout, "options.stdout", 0);
         validateInt32(stderr, "options.stderr", 0);
 
         let returnOnExit = true;
-        if (wasiConfig.returnOnExit !== undefined) {
-          validateBoolean(wasiConfig.returnOnExit, "options.returnOnExit");
-          returnOnExit = wasiConfig.returnOnExit;
+        if (returnOnExitOption !== undefined) {
+          validateBoolean(returnOnExitOption, "options.returnOnExit");
+          returnOnExit = returnOnExitOption;
         }
 
         const defaultConfig = getDefaults();
@@ -837,8 +847,8 @@ var require_wasi = __commonJS({
         this.getStdin = wasiConfig.getStdin;
         this.sendStdout = wasiConfig.sendStdout;
         this.sendStderr = wasiConfig.sendStderr;
-        let preopens = wasiConfig.preopens ?? defaultConfig.preopens;
-        this.env = wasiConfig.env ?? defaultConfig.env;
+        let preopens = preopensOption ?? defaultConfig.preopens;
+        this.env = envOption ?? defaultConfig.env;
 
         this.memory = void 0;
         this.view = void 0;

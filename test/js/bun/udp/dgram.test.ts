@@ -256,17 +256,21 @@ describe.skipIf(isWindows)("cluster", () => {
   // exit (?E) with all four in recvmsg_x on the same SCM_RIGHTS-shared
   // descriptor, which takes loopback down for the whole machine until reboot.
   // Observed on every macOS 14 x64 CI agent; 13 and 15 not reproduced.
-  test.skipIf(isIntelMacOS)("multi-worker shared socket adopts and tears down cleanly", async () => {
-    // Assert the success line, not just exit 0: the fixture has bail-out paths
-    // that also exit 0. 25s deadline sits between the fixture's 20s watchdog
-    // and this test's own timeout so the watchdog's diagnostic reaches stderr.
-    const { stdout, stderr, exitCode } = await runClusterFixture("dgram-cluster-shared-fd-fixture.ts", 25_000);
-    expect(stderr).toBe("");
-    // Traffic receipt is best-effort (kernel-arbitrated), teardown is the
-    // contract: the success line carries received/sent for diagnostics.
-    expect(stdout).toStartWith("ok: all 4 workers adopted and released the shared descriptor ");
-    expect(exitCode).toBe(0);
-  }, 40_000);
+  test.skipIf(isIntelMacOS)(
+    "multi-worker shared socket adopts and tears down cleanly",
+    async () => {
+      // Assert the success line, not just exit 0: the fixture has bail-out paths
+      // that also exit 0. 25s deadline sits between the fixture's 20s watchdog
+      // and this test's own timeout so the watchdog's diagnostic reaches stderr.
+      const { stdout, stderr, exitCode } = await runClusterFixture("dgram-cluster-shared-fd-fixture.ts", 25_000);
+      expect(stderr).toBe("");
+      // Traffic receipt is best-effort (kernel-arbitrated), teardown is the
+      // contract: the success line carries received/sent for diagnostics.
+      expect(stdout).toStartWith("ok: all 4 workers adopted and released the shared descriptor ");
+      expect(exitCode).toBe(0);
+    },
+    40_000,
+  );
 });
 
 describe("after close()", () => {

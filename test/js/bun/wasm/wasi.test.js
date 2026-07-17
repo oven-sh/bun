@@ -127,17 +127,17 @@ it("fd_write/fd_read return an errno for out-of-bounds iovecs instead of throwin
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const WASI_EOVERFLOW = 61;
-  // stderr must be empty: no console.warn noise, no truncated guest bytes from
-  // the len-overrun case, and no "LEAKED\n" from the nwritten-oob case.
-  expect(stderr).toBe("");
-  // stdout must be exactly the result lines: no leaked `{ buf, bufLen,
-  // total_memory }` debug object between them.
-  expect(stdout).toBe(
-    ["iovs-ptr-oob", "buf-oob", "len-overrun", "len-overrun-multi", "fd_read-iovs-ptr-oob", "nwritten-oob"]
+  // stderr must be empty (no console.warn noise, no truncated guest bytes from
+  // the len-overrun case, no "LEAKED\n" from the nwritten-oob case) and stdout
+  // must be exactly the result lines with no `{ buf, bufLen, total_memory }`
+  // debug object between them.
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: ["iovs-ptr-oob", "buf-oob", "len-overrun", "len-overrun-multi", "fd_read-iovs-ptr-oob", "nwritten-oob"]
       .map(k => `${k} ${WASI_EOVERFLOW}\n`)
       .join(""),
-  );
-  expect(exitCode).toBe(0);
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 it("path_* syscalls cannot escape the preopened directory", () => {

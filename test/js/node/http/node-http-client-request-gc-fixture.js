@@ -31,7 +31,11 @@ function run() {
   for (let i = 0; i < total; i++) {
     const req = http.get({ hostname: "127.0.0.1", port, agent }, res => {
       res.resume();
-      res.on("end", () => done++);
+      res.on("close", () => done++);
+    });
+    req.on("error", err => {
+      console.error(err);
+      process.exit(1);
     });
     registry.register(req);
   }

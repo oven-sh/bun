@@ -1866,9 +1866,9 @@ fn console_print_runtime_object_inner<const C: bool>(
             // UFCS — `Formatter` has an inherent `print_as` (const-generic
             // `FORMAT`, `&mut dyn bun_loop::Write`); we need the trait's
             // runtime-tag overload that accepts our `core::fmt::Write` adapter.
-            let r = crate::vm::ConsoleFormatter::print_as::<_, C>(
+            let r = crate::jsc_ext::ConsoleFormatter::print_as::<_, C>(
                 formatter,
-                crate::vm::FormatTag::Object,
+                crate::jsc_ext::FormatTag::Object,
                 &mut w,
                 result,
                 bun_jsc::JSType::Object,

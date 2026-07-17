@@ -8,8 +8,9 @@
 //! `Bun__on{Resolve,Reject}EntryPointResult` host fns).
 
 use bun_core::{Global, Output};
-use bun_jsc::virtual_machine::VirtualMachine;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, StandaloneModuleGraph};
+
+use crate::vm::VirtualMachine;
 
 // Thin re-exports (mirrors `pub const X = @import(...)` at file top).
 pub use crate::api;

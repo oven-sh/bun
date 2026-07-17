@@ -745,7 +745,8 @@ class TestPlan {
     const pending = this.#pending;
     if (pending === undefined) return;
     this.#pending = undefined;
-    if (pending.timer !== undefined) realClearTimeout(pending.timer);
+    const { timer } = pending;
+    if (timer !== undefined) realClearTimeout(timer);
   }
 }
 

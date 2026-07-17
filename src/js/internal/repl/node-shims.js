@@ -373,8 +373,11 @@ function addUncaughtExceptionCaptureCallback(cb) {
     captureCallbacks = [];
     try {
       process.setUncaughtExceptionCaptureCallback(err => {
-        for (const fn of captureCallbacks) {
-          if (fn(err)) return;
+        // Indexed, not for..of: user code can delete Array.prototype[Symbol.iterator]
+        // and this runs while reporting that very error, so an unsafe iteration here
+        // replaces the user's exception with "{} is not iterable".
+        for (let i = 0; i < captureCallbacks.length; i++) {
+          if (captureCallbacks[i](err)) return;
         }
         // No callback claimed it: Node's aux API falls through to the
         // regular 'uncaughtException' flow (with the origin arg), then to

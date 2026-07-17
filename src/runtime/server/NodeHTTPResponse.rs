@@ -463,7 +463,10 @@ impl NodeHTTPResponse {
             return Ok(JSValue::UNDEFINED);
         }
         raw.pause();
-        Bun__NodeHTTP__setReadsPausedSignal(any_response_is_ssl(&raw) as core::ffi::c_int, raw.socket().cast());
+        Bun__NodeHTTP__setReadsPausedSignal(
+            any_response_is_ssl(&raw) as core::ffi::c_int,
+            raw.socket().cast(),
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -481,7 +484,10 @@ impl NodeHTTPResponse {
         }
         // Not a bare resume: parked pipelined requests replay first so the
         // stream cannot reorder around them.
-        Bun__NodeHTTP__onReadsResumable(any_response_is_ssl(&raw) as core::ffi::c_int, raw.socket().cast());
+        Bun__NodeHTTP__onReadsResumable(
+            any_response_is_ssl(&raw) as core::ffi::c_int,
+            raw.socket().cast(),
+        );
     }
 
     pub(crate) fn upgrade(

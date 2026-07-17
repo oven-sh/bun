@@ -84,10 +84,9 @@ impl Crypto {
             ));
         };
 
-        // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues — only the
-        // integer-typed views are accepted. This is an allow-list: DataView, plain
-        // ArrayBuffer and SharedArrayBuffer are all ArrayBuffer-ish enough for
-        // `as_array_buffer` above but must raise TypeMismatchError like the float views.
+        // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
+        // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
+        // all pass `as_array_buffer` above but must still raise TypeMismatchError.
         if !matches!(
             arguments[0].js_type(),
             JSType::Int8Array

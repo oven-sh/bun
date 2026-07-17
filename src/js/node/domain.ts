@@ -2,6 +2,8 @@
 let EventEmitter;
 
 const ObjectDefineProperty = Object.defineProperty;
+const ObjectDefineProperties = Object.defineProperties;
+const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 
 // Export Domain
 var domain: any = {};
@@ -30,13 +32,18 @@ function patchTimersOnce() {
   timersPatched = true;
 
   function wrapTimerApi(orig) {
-    return function (callback, ...rest) {
+    const wrapped = function (callback, ...rest) {
       const d = domain.active;
       if (d && $isCallable(callback)) {
         callback = bindCallbackToDomain(d, callback);
       }
       return orig(callback, ...rest);
     };
+    // Preserve own properties of the original, notably
+    // Symbol.for("nodejs.util.promisify.custom") so util.promisify(setTimeout)
+    // keeps returning the timers/promises implementation.
+    ObjectDefineProperties(wrapped, ObjectGetOwnPropertyDescriptors(orig));
+    return wrapped;
   }
 
   globalThis.setTimeout = wrapTimerApi(globalThis.setTimeout);

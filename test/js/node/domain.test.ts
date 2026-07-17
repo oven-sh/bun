@@ -248,3 +248,34 @@ test.concurrent("requiring domain does not suppress unrelated uncaught exception
   expect(stderr).toContain("should crash");
   expect(exitCode).not.toBe(0);
 });
+
+// Patching the global timers must not drop their own properties, notably the
+// nodejs.util.promisify.custom symbol that makes util.promisify(setTimeout)
+// return the timers/promises implementation.
+test.concurrent("patched timers keep util.promisify working", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const util = require("util");
+      require("domain").create();
+      const custom = typeof setTimeout[Symbol.for("nodejs.util.promisify.custom")];
+      const wait = util.promisify(setTimeout);
+      const start = Date.now();
+      await wait(30);
+      console.log("custom:", custom);
+      console.log("waited:", Date.now() - start >= 25);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout).toBe("custom: function\nwaited: true\n");
+  expect(exitCode).toBe(0);
+});

@@ -1043,10 +1043,11 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
 
   // server.stop() called while lsquic_engine_process_conns is on the stack
   // (i.e. from the request handler, or from a microtask the handler resolved)
-  // used to re-enter the engine via lsquic_engine_send_unsent_packets and
-  // trip `assert(!ENPUB_PROC)` in lsquic_engine.c. The shutdown is now
-  // deferred until process_conns returns; graceful stop still lets the
-  // in-flight request finish, which is what this test asserts.
+  // re-entered the engine via lsquic_engine_send_unsent_packets and tripped
+  // lsquic's `assert(!ENPUB_PROC)` re-entrancy guard. The assert is compiled
+  // out in release (NDEBUG) and the nested ENGINE_IN/OUT is benign for a
+  // single conn, so fail-before is debug-only; the positive contract asserted
+  // here (the in-flight request drains after stop()) holds on every build.
   for (const http1 of [false, true]) {
     test(`server.stop() from inside an H3 handler drains the in-flight request (http1: ${http1})`, async () => {
       // Client and server share one process: the handler runs from inside

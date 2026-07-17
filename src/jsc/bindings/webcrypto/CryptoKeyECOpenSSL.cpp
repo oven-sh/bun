@@ -282,16 +282,27 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     if (!algorithm)
         return nullptr;
 
-    if (sk_ASN1_TYPE_num(algorithm.get()) != 2)
+    // A well-formed AlgorithmIdentifier whose shape or OID does not match EC is a key
+    // of another type; gate on the real parser so garbage is not misreported as such.
+    auto reportKeyTypeMismatch = [&] {
+        if (keyTypeMismatch) {
+            const uint8_t* p = keyData.begin();
+            if (EvpPKeyPtr(d2i_PUBKEY(nullptr, &p, keyData.size())))
+                *keyTypeMismatch = true;
+        }
+    };
+
+    if (sk_ASN1_TYPE_num(algorithm.get()) != 2) {
+        reportKeyTypeMismatch();
         return nullptr;
+    }
 
     value = sk_ASN1_TYPE_value(algorithm.get(), 0);
     if (value->type != V_ASN1_OBJECT)
         return nullptr;
 
     if (!supportedAlgorithmIdentifier(identifier, value->value.object)) {
-        if (keyTypeMismatch)
-            *keyTypeMismatch = true;
+        reportKeyTypeMismatch();
         return nullptr;
     }
 

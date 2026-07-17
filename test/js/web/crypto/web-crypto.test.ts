@@ -614,6 +614,62 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
       pkcs8: await rejection(crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", true, ["sign"])),
     }).toEqual({ spki: "DataError: Invalid key type", pkcs8: "DataError: Invalid key type" });
   });
+
+  // OKP keys encode a one-element AlgorithmIdentifier (parameters MUST be absent), so
+  // the EC importer's two-element guard bailed without reaching the OID check and
+  // reported the generic "Invalid keyData" instead of the type mismatch.
+  it("OKP key imported as ECDSA/ECDH reports 'Invalid key type'", async () => {
+    const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);
+    const spki = await crypto.subtle.exportKey("spki", ed.publicKey);
+    const pkcs8 = await crypto.subtle.exportKey("pkcs8", ed.privateKey);
+    expect({
+      ecdsaSpki: await rejection(
+        crypto.subtle.importKey("spki", spki, { name: "ECDSA", namedCurve: "P-256" }, true, ["verify"]),
+      ),
+      ecdhSpki: await rejection(crypto.subtle.importKey("spki", spki, { name: "ECDH", namedCurve: "P-256" }, true, [])),
+      ecdsaPkcs8: await rejection(
+        crypto.subtle.importKey("pkcs8", pkcs8, { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]),
+      ),
+    }).toEqual({
+      ecdsaSpki: "DataError: Invalid key type",
+      ecdhSpki: "DataError: Invalid key type",
+      ecdsaPkcs8: "DataError: Invalid key type",
+    });
+  });
+});
+
+// importKey's empty-usages guard got Node's message; the same predicate in
+// generateKey, deriveKey's inner import and unwrapKey's inner import still
+// carried the empty-message SyntaxError.
+describe("empty usages on a private or secret key", () => {
+  const rejection = (p: Promise<unknown>) => p.then(() => "resolved", e => `${e.name}: ${e.message}`);
+
+  it("generateKey reports 'Usages cannot be empty when creating a key.'", async () => {
+    expect({
+      secret: await rejection(crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [])),
+      pair: await rejection(crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, [])),
+    }).toEqual({
+      secret: "SyntaxError: Usages cannot be empty when creating a key.",
+      pair: "SyntaxError: Usages cannot be empty when creating a key.",
+    });
+  });
+
+  it("deriveKey and unwrapKey report the importKey message", async () => {
+    const pb = await crypto.subtle.importKey("raw", new Uint8Array(16), "PBKDF2", false, ["deriveKey"]);
+    const pbkdf2 = { name: "PBKDF2", salt: new Uint8Array(8), iterations: 1, hash: "SHA-256" };
+    const kw = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+    const hm = await crypto.subtle.generateKey({ name: "HMAC", hash: "SHA-256" }, true, ["sign"]);
+    const wrapped = await crypto.subtle.wrapKey("raw", hm, kw, "AES-KW");
+    expect({
+      deriveKey: await rejection(crypto.subtle.deriveKey(pbkdf2, pb, { name: "AES-GCM", length: 256 }, false, [])),
+      unwrapKey: await rejection(
+        crypto.subtle.unwrapKey("raw", wrapped, kw, "AES-KW", { name: "HMAC", hash: "SHA-256" }, false, []),
+      ),
+    }).toEqual({
+      deriveKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
+      unwrapKey: "SyntaxError: Usages cannot be empty when importing a secret key.",
+    });
+  });
 });
 
 // CryptoKey.usages and the JWK key_ops it is built from are ordered by the

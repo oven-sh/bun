@@ -910,14 +910,14 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
                 WTF::makeVisitor(
                     [&promise](RefPtr<CryptoKey>& key) {
                         if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
+                            rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when creating a key."_s);
                             return;
                         }
                         promise->resolve<IDLInterface<CryptoKey>>(*key);
                     },
                     [&promise](CryptoKeyPair& keyPair) {
                         if (!keyPair.privateKey->usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
+                            rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when creating a key."_s);
                             return;
                         }
                         promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
@@ -997,7 +997,10 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
         auto callback = [index, weakThis](CryptoKey& key) mutable {
             if (auto promise = getPromise(index, weakThis)) {
                 if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
+                    rejectWithException(promise.releaseNonNull(), SyntaxError,
+                        key.type() == CryptoKeyType::Private
+                            ? "Usages cannot be empty when importing a private key."_s
+                            : "Usages cannot be empty when importing a secret key."_s);
                     return;
                 }
                 promise->resolve<IDLInterface<CryptoKey>>(key);
@@ -1376,7 +1379,10 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                 auto callback = [index, weakThis](CryptoKey& key) mutable {
                     if (auto promise = getPromise(index, weakThis)) {
                         if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError, ""_s);
+                            rejectWithException(promise.releaseNonNull(), SyntaxError,
+                                key.type() == CryptoKeyType::Private
+                                    ? "Usages cannot be empty when importing a private key."_s
+                                    : "Usages cannot be empty when importing a secret key."_s);
                             return;
                         }
                         promise->resolve<IDLInterface<CryptoKey>>(key);

@@ -188,19 +188,11 @@ function failWrite(self, negErrno, callback) {
       self.destroy(er);
     }
   } else if (!self.destroyed) {
-    if (self.listenerCount("error") > 0) {
-      // The consumer can detach its listener between now and destroy()'s
-      // deferred 'error' emission - the same last-resort guard
-      // SocketEmitEndNT uses for read errors.
-      self.once("error", () => {});
-      self.destroy(er);
-    } else {
-      // No write callback and no 'error' listener: a failed flush on an
-      // orphaned socket (an h2 teardown racing the peer's reset - routine on
-      // Windows, where the reset completes the send first) is teardown noise.
-      // Same silent-close policy as SocketEmitEndNT's no-listener case.
-      self.destroy();
-    }
+    // No write callback: Node's onWriteComplete delivers the error to the
+    // stream (errorOrDestroy). An unhandled 'error' throws, as with any
+    // EventEmitter - that is how a missing .on("error") surfaces.
+    self._hadError = true;
+    self.destroy(er);
   }
 }
 function endNT(socket, callback, err) {
@@ -517,12 +509,7 @@ function SocketEmitEndNT(self, _err?) {
   // A read error delivered with the close (e.g. a received RST surfacing as
   // ECONNRESET) is not a clean EOF — Node destroys the socket with the error
   // ("read ECONNRESET") instead of emitting a graceful 'end'. Guard on
-  // !destroyed so an already-torn-down socket isn't re-destroyed, and on an
-  // 'error' listener so callers that opted into error handling get Node's
-  // behavior while those that did not keep the previous silent EOF (a server
-  // hard-closing after a clean response would otherwise surface here as an
-  // unhandled error across the proxy/http2/fetch suites under ASAN/baseline
-  // timing).
+  // !destroyed so an already-torn-down socket isn't re-destroyed.
   // A reset that lands after the exchange already finished in BOTH
   // directions (clean EOF delivered and nothing left being written) is
   // teardown noise - a peer hard-closing once the exchange completed - not
@@ -539,13 +526,8 @@ function SocketEmitEndNT(self, _err?) {
   // _hadError: the failure already reached JS through the error dispatch
   // (native on_error / a fatal write); node emits a socket error exactly
   // once, so the close that follows it is delivered plain.
-  if (_err && !self.destroyed && !self._hadError && !teardownNoise && self.listenerCount("error") > 0) {
-    // The consumer can detach its 'error' listener between this close
-    // callback and destroy()'s deferred 'error' emission (a request that
-    // finished just as the reset arrived); a last-resort no-op listener keeps
-    // that race from surfacing as an uncaught exception - the no-listener
-    // case is already a documented silent close.
-    self.once("error", () => {});
+  if (_err && !self.destroyed && !self._hadError && !teardownNoise) {
+    self._hadError = true;
     let errErrno;
     if (_err.code === undefined && typeof (errErrno = _err.errno) === "number" && errErrno !== 0) {
       // A codeless close error that still carries the errno (Windows IOCP
@@ -583,10 +565,9 @@ function SocketEmitEndNT(self, _err?) {
     self[kended] = true;
     self.push(null);
   } else if (_err && !self.destroyed) {
-    // An error excluded from the synthesis above (teardown noise, or no
-    // listener attached): nothing more is coming, but the socket still has to
-    // finish its lifecycle - close it quietly instead of leaving it open with
-    // no further events.
+    // Teardown noise or an already-reported error: nothing more is coming, but
+    // the socket still has to finish its lifecycle - close it quietly instead
+    // of leaving it open with no further events.
     self.destroy();
   }
   // A write that was waiting on the native drain can never complete once the
@@ -1178,11 +1159,15 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     // socket's current handle: connection attempts that lost the
     // family-autoselection race and raw sockets handed off during a TLS
     // upgrade also report errors on close, and those must keep ending
-    // cleanly.
-    if (err && !self.destroyed && socket === self._handle && self.listenerCount("error") > 0) {
-      // Same late-detach guard as SocketEmitEndNT: the listener seen at
-      // close-time can be gone by the deferred 'error' emission.
-      self.once("error", () => {});
+    // cleanly. Same teardownNoise/_hadError guards as SocketEmitEndNT.
+    if (
+      err &&
+      !self.destroyed &&
+      !self._hadError &&
+      socket === self._handle &&
+      !(self[kended] && self.writableFinished)
+    ) {
+      self._hadError = true;
       if (err.code === undefined || err.code === "ECONNRESET") {
         // Shape it like Node's errnoException(UV_ECONNRESET, 'read').
         const er = new ConnResetException("read ECONNRESET") as Error & { errno?: number; syscall?: string };

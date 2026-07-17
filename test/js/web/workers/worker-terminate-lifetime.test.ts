@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -115,6 +115,67 @@ test(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// UAF: a TranspilerJob for a worker's dynamic import() runs on the shared work
+// pool and reads the worker's VirtualMachine allocation throughout; terminate()
+// freed that allocation mid-transpile. VM teardown now joins in-flight
+// transpiler jobs first. Only ASAN reliably turns the stale reads into a crash.
+// https://github.com/oven-sh/bun/issues/33936
+test.skipIf(!isASAN)(
+  "terminate() racing an in-flight dynamic import transpile does not UAF",
+  async () => {
+    // Big enough that the pool-thread transpile (seconds under ASAN) vastly
+    // outlasts the terminated worker's teardown (tens of milliseconds).
+    const big = Array.from(
+      { length: 4000 },
+      (_, i) => `export function f${i}(a,b){ const x = a?.b ?? (b ||= ${i}); return x + ${i}; }`,
+    ).join("\n");
+    using dir = tempDir("worker-terminate-transpile", {
+      "big.ts": big,
+      // "started" is posted after import() has scheduled the transpile on the
+      // work pool, so the parent's terminate() lands while it is in flight.
+      "racer-worker.js": `
+        import("./big.ts").then(() => postMessage("done")).catch(() => {});
+        postMessage("started");
+      `,
+      // Untouched worker transpiling the same module; its completion keeps the
+      // process alive for the whole window in which the racer's orphaned
+      // pool-thread job reads the freed VM on broken builds.
+      "ref-worker.js": `
+        import("./big.ts?ref").then(() => postMessage("done"), err => postMessage("error: " + err));
+      `,
+      "main.js": `
+        const racer = new Worker(new URL("./racer-worker.js", import.meta.url).href);
+        const terminated = new Promise((resolve, reject) => {
+          racer.onmessage = e => { if (e.data === "started") { racer.terminate(); resolve(); } };
+          racer.onerror = e => reject(new Error("racer worker: " + e.message));
+        });
+        const ref = new Worker(new URL("./ref-worker.js", import.meta.url).href);
+        const refDone = new Promise((resolve, reject) => {
+          ref.onmessage = e => { e.data === "done" ? resolve() : reject(new Error("ref worker: " + e.data)); };
+          ref.onerror = e => reject(new Error("ref worker: " + e.message));
+        });
+        await terminated;
+        await refDone;
+        ref.terminate();
+        console.log("ok");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
     expect(exitCode).toBe(0);
   },
   timeout,

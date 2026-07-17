@@ -15,7 +15,7 @@ use bun_bundler::options::ModuleType;
 use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 use bun_io::posix_event_loop::get_vm_ctx;
 use bun_io::{AllocatorType, KeepAlive};
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter};
@@ -26,13 +26,13 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
-use bun_threading::Guarded;
 use bun_threading::unbounded_queue::{self, UnboundedQueue};
 use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_threading::{Futex, Guarded};
 use bun_watcher::Watcher;
 
 use crate::async_module::AsyncModule;
-use crate::event_loop::{ConcurrentTask, EventLoop};
+use crate::event_loop::{ConcurrentTaskItem, EventLoop};
 use crate::hot_reloader::ImportWatcher;
 use crate::resolved_source::OwnedResolvedSource;
 use crate::resolved_source_tag::ResolvedSourceTag;
@@ -200,6 +200,16 @@ pub fn set_break_point_on_first_line() -> bool {
 
 pub struct RuntimeTranspilerStore {
     pub generation_number: AtomicU32,
+    /// Jobs currently on the work pool (incremented in `schedule`, decremented
+    /// after `run()` on the pool thread). `wait_for_inflight_jobs` joins on it
+    /// before VM teardown frees the memory `run()` reads.
+    pub in_flight: AtomicU32,
+    /// Single embedded wakeup node for `dispatch_to_main_thread`, guarded by
+    /// `dispatch_task_enqueued`. Embedded rather than Box'd per dispatch so a
+    /// node still sitting in the concurrent queue at VM teardown dies with
+    /// the VM allocation instead of leaking.
+    pub dispatch_task: ConcurrentTaskItem,
+    pub dispatch_task_enqueued: AtomicBool,
     pub store: TranspilerJobStore,
     pub enabled: bool,
     pub queue: Queue,
@@ -211,6 +221,9 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             generation_number: AtomicU32::new(0),
+            in_flight: AtomicU32::new(0),
+            dispatch_task: ConcurrentTaskItem::default(),
+            dispatch_task_enqueued: AtomicBool::new(false),
             store: TranspilerJobStore::init(),
             enabled: true,
             queue: Queue::new(),
@@ -249,12 +262,38 @@ impl RuntimeTranspilerStore {
         // valid in-bounds field place without forming an intermediate reference.
         unsafe {
             addr_of_mut!((*out).generation_number).write(AtomicU32::new(0));
+            addr_of_mut!((*out).in_flight).write(AtomicU32::new(0));
+            addr_of_mut!((*out).dispatch_task).write(ConcurrentTaskItem::default());
+            addr_of_mut!((*out).dispatch_task_enqueued).write(AtomicBool::new(false));
             // `store.hive.buffer: [MaybeUninit<TranspilerJob>; 64]` —
             // intentionally left untouched (uninit is a valid value).
             addr_of_mut!((*out).store.hive.used)
                 .write(bun_collections::hive_array::HiveBitSet::init_empty());
             addr_of_mut!((*out).enabled).write(true);
             addr_of_mut!((*out).queue).write(Queue::new());
+        }
+    }
+
+    /// Blocks until every `TranspilerJob` scheduled on the work pool for this
+    /// VM has finished `run()` (including its dispatch back to this thread).
+    /// Must run on the VM's own thread before teardown frees anything `run()`
+    /// reads — the `Transpiler`, `source_mappings`, the event loop, and the
+    /// job slots in this store itself. No new jobs can be scheduled while it
+    /// blocks: `schedule()` only runs on this same thread.
+    ///
+    /// Polls instead of a decrement-side `Futex::wake`: the caller frees the
+    /// VM allocation (and this counter) right after this returns, so the pool
+    /// thread's final access to the VM must be the `fetch_sub` itself — a
+    /// wake after the decrement could land on freed memory.
+    pub fn wait_for_inflight_jobs(&self) {
+        // 1 ms recheck; only ever >0 when terminate() races an async transpile.
+        const RECHECK_INTERVAL_NS: u64 = 1_000_000;
+        loop {
+            let n = self.in_flight.load(Ordering::Acquire);
+            if n == 0 {
+                return;
+            }
+            let _ = Futex::wait(&self.in_flight, n, Some(RECHECK_INTERVAL_NS));
         }
     }
 
@@ -267,6 +306,9 @@ impl RuntimeTranspilerStore {
         global: &JSGlobalObject,
         vm: NonNull<VirtualMachine>,
     ) {
+        // Clear before popping so a dispatch racing this drain re-enqueues the
+        // embedded wakeup node (pairs with the swap in `dispatch_to_main_thread`).
+        let _ = self.dispatch_task_enqueued.swap(false, Ordering::AcqRel);
         let batch = self.queue.pop_batch();
         // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
         let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
@@ -522,9 +564,24 @@ impl TranspilerJob {
         // SAFETY: queue is concurrent-safe (UnboundedQueue uses atomics).
         unsafe { (*transpiler_store).queue.push(job) };
         // Another thread may free `self` at any time after .push, so we cannot use it any more.
-        // SAFETY: vm outlives the job; event_loop() returns the live self-pointer.
-        unsafe { &*(*vm).event_loop() }
-            .enqueue_task_concurrent(ConcurrentTask::create_from(transpiler_store));
+
+        // Wake the JS thread through the store-embedded node rather than a Box
+        // per dispatch: a Box'd node still sitting in the concurrent queue at
+        // VM teardown is unreachable once the VM allocation is freed.
+        // SAFETY: the AcqRel swap pairs with the consumer's swap in
+        // `run_from_js_thread`; only the false→true winner touches the node,
+        // and the consumer unlinked it from the queue before clearing the flag.
+        if !unsafe { &(*transpiler_store).dispatch_task_enqueued }.swap(true, Ordering::AcqRel) {
+            // SAFETY: leaf-field writes on the live store (BACKREF — VM
+            // teardown joins `in_flight` before freeing, and this runs before
+            // the job's decrement); `event_loop()` is the live self-pointer.
+            unsafe {
+                (*transpiler_store).dispatch_task.task = Task::init(transpiler_store);
+                (&*(*vm).event_loop()).enqueue_task_concurrent(NonNull::new_unchecked(
+                    ptr::addr_of_mut!((*transpiler_store).dispatch_task),
+                ));
+            }
+        }
     }
 
     pub(crate) fn run_from_js_thread(&mut self) -> JsResult<()> {
@@ -588,6 +645,17 @@ impl TranspilerJob {
         // `EventLoopCtx` vtable; resolve it via the `get_vm_ctx` hook (registered by
         // `bun_runtime::init`).
         self.poll_ref.ref_(get_vm_ctx(AllocatorType::Js));
+        let vm = self.vm;
+        // Paired with the decrement in `run_from_worker_thread`; VM teardown
+        // joins on it via `wait_for_inflight_jobs` before freeing what `run()`
+        // reads. SAFETY: `vm` is the live owning VM (caller is the JS thread);
+        // leaf atomic field only, no `&VirtualMachine` formed.
+        let _ = unsafe {
+            (*vm)
+                .transpiler_store
+                .in_flight
+                .fetch_add(1, Ordering::Relaxed)
+        };
         WorkPool::schedule(&raw mut self.work_task);
     }
 
@@ -597,7 +665,19 @@ impl TranspilerJob {
         // `transpile`; the WorkPool calls back with exactly that field, so
         // `from_field_ptr!` recovers the live heap `TranspilerJob` parent.
         let this = unsafe { &mut *bun_core::from_field_ptr!(TranspilerJob, work_task, work_task) };
+        let vm = this.vm;
         this.run();
+        // `run()`'s defer already dispatched the job back to the JS thread, so
+        // the slot may be recycled at any point now; only `vm` is touched below.
+        // SAFETY: the VM stays alive until `wait_for_inflight_jobs` observes
+        // this decrement (its Acquire load pairs with this Release), and this
+        // `fetch_sub` is the pool thread's final access to the VM allocation.
+        let _ = unsafe {
+            (*vm)
+                .transpiler_store
+                .in_flight
+                .fetch_sub(1, Ordering::Release)
+        };
     }
 
     pub(crate) fn run(&mut self) {

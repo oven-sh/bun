@@ -57,6 +57,10 @@ unsafe extern "C" {
     /// free blocks inside its still-used pages, and hands the arena purge to the scavenger.
     /// Safe on any thread; a no-op on a thread that never allocated. No preconditions.
     pub safe fn mi_on_thread_idle();
+    /// Start the background scavenger thread that purges freed arena memory off-thread.
+    /// mimalloc does not start it on its own; until this is called purging stays
+    /// allocation-driven. Idempotent; no preconditions.
+    pub safe fn mi_scavenger_start();
     /// No preconditions.
     pub safe fn mi_version() -> c_int;
     /// No preconditions.

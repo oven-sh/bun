@@ -787,6 +787,72 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`React.createElement`);
     },
   });
+  itBundled("tsconfig/ExtendsPackageExactFile", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "@scope/configs/tsconfig.base.json"
+        }
+      `,
+      "/Users/user/project/node_modules/@scope/configs/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
+  itBundled("tsconfig/ExtendsPackageDirectory", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "my-configs"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
+  itBundled("tsconfig/ExtendsPackageImplicitJson", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "my-configs/base"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
   return;
   itBundled("tsconfig/PathsTypeOnly", {
     // GENERATED

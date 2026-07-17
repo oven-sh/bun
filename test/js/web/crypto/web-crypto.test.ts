@@ -642,7 +642,11 @@ describe("OKP spki/pkcs8 cross-curve import", () => {
 // generateKey, deriveKey's inner import and unwrapKey's inner import still
 // carried the empty-message SyntaxError.
 describe("empty usages on a private or secret key", () => {
-  const rejection = (p: Promise<unknown>) => p.then(() => "resolved", e => `${e.name}: ${e.message}`);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "resolved",
+      e => `${e.name}: ${e.message}`,
+    );
 
   it("generateKey reports 'Usages cannot be empty when creating a key.'", async () => {
     expect({

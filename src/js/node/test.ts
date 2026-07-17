@@ -18,6 +18,7 @@ const {
   validateArray,
   validateAbortSignal,
   validateUint32,
+  validateOneOf,
 } = require("internal/validators");
 
 const kDefaultName = "<anonymous>";
@@ -34,8 +35,426 @@ const kTimeoutMax = 2 ** 31 - 1;
 const kBunTestDefaultTimeoutMs = 5_000;
 const kJoinSeparator = " > ";
 
-function run() {
-  throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
+// -----------------------------------------------------------------------------
+// run()
+//
+// Port of Node.js lib/internal/test_runner/{runner,tests_stream}.js (v26.3.0).
+// Files run in child processes (node's isolation:'process'); the child is spawned
+// with kRunChildEnv set, which makes this module stream one JSON event per line
+// on stdout. Unmarked stdout/stderr lines become test:stdout/test:stderr, the
+// same split node makes around its V8-serializer framing.
+// -----------------------------------------------------------------------------
+
+// node's own tests branch on NODE_TEST_CONTEXT to tell the parent from the
+// spawned child, so use node's variable and value rather than a bun-specific one.
+const kRunChildEnv = "NODE_TEST_CONTEXT";
+const kRunChildEnvValue = "child-v8";
+const kRunEventPrefix = "\0bun:test:run\0";
+
+class TestsStream extends (require("node:stream").Readable as typeof import("node:stream").Readable) {
+  #buffer: unknown[] = [];
+  #canPush = true;
+
+  constructor() {
+    super({ objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
+  }
+
+  _read() {
+    this.#canPush = true;
+    while (this.#buffer.length > 0) {
+      const obj = this.#buffer.shift();
+      if (!this.#tryPush(obj)) return;
+    }
+  }
+
+  #tryPush(message: unknown) {
+    if (this.#canPush) {
+      this.#canPush = this.push(message);
+    } else {
+      this.#buffer.push(message);
+    }
+    return this.#canPush;
+  }
+
+  emitMessage(type: string, data?: unknown) {
+    this.emit(type, data);
+    this.#tryPush({ __proto__: null, type, data });
+  }
+
+  endStream() {
+    this.#tryPush(null);
+  }
+}
+
+function validateStringArray(value: unknown, name: string) {
+  validateArray(value, name);
+  for (let i = 0; i < (value as unknown[]).length; i++) {
+    validateString((value as unknown[])[i], `${name}[${i}]`);
+  }
+}
+
+// node canonicalizes tag filters to lower case and rejects empty strings
+// (lib/internal/test_runner/tag_filter.js).
+function validateAndCanonicalizeTagFilter(value: unknown, name: string) {
+  validateString(value, name);
+  if ((value as string).length === 0) {
+    throw $ERR_INVALID_ARG_VALUE(name, value, "must not be empty");
+  }
+  return (value as string).toLowerCase();
+}
+
+function toRegExpPatterns(value: unknown, name: string) {
+  const patterns = $isArray(value) ? value : [value];
+  return patterns.map((entry: unknown, i: number) => {
+    if (entry instanceof RegExp) return entry;
+    if (typeof entry === "string") return convertStringToRegExp(entry, `${name}[${i}]`);
+    throw $ERR_INVALID_ARG_TYPE(`${name}[${i}]`, ["string", "RegExp"], entry);
+  });
+}
+
+// node's utils.js convertStringToRegExp: a "/pattern/flags" string becomes that
+// RegExp, anything else is matched literally.
+function convertStringToRegExp(str: string, name: string) {
+  const match = str.match(/^\/(.*)\/([a-z]*)$/);
+  const pattern = match?.[1] ?? str;
+  const flags = match?.[2] ?? "";
+  try {
+    return new RegExp(pattern, flags);
+  } catch (err) {
+    throw $ERR_INVALID_ARG_VALUE(name, str, `is an invalid regular expression: ${(err as Error).message}`);
+  }
+}
+
+// node's emitExperimentalWarning is one-shot per feature process-wide, so
+// test({ tags }) and run({ testTagFilters }) share this flag.
+let tagsExperimentalWarningEmitted = false;
+function emitTagsExperimentalWarning() {
+  if (tagsExperimentalWarningEmitted) return;
+  tagsExperimentalWarningEmitted = true;
+  process.emitWarning("Test tags is an experimental feature and might change at any time", "ExperimentalWarning");
+}
+
+function validateRunOptions(options: Record<string, unknown>) {
+  validateObject(options, "options");
+
+  let { testNamePatterns, testSkipPatterns, testTagFilters, shard } = options as Record<string, any>;
+  const {
+    files,
+    forceExit,
+    isolation = "process",
+    watch,
+    setup,
+    globalSetupPath,
+    only,
+    globPatterns,
+    coverage = false,
+    lineCoverage = 0,
+    branchCoverage = 0,
+    functionCoverage = 0,
+    execArgv = [],
+    argv = [],
+    cwd = process.cwd(),
+    env,
+  } = options as Record<string, any>;
+
+  // Order mirrors node's runner.js:731-909 — the errors are observable.
+  if (files != null) validateArray(files, "options.files");
+  if (watch != null) validateBoolean(watch, "options.watch");
+  if (forceExit != null) {
+    validateBoolean(forceExit, "options.forceExit");
+    if (forceExit && watch) {
+      throw $ERR_INVALID_ARG_VALUE("options.forceExit", watch, "is not supported with watch mode");
+    }
+  }
+  if (only != null) validateBoolean(only, "options.only");
+  if (globPatterns != null) validateArray(globPatterns, "options.globPatterns");
+  validateString(cwd, "options.cwd");
+  if (globPatterns?.length > 0 && files?.length > 0) {
+    throw $ERR_INVALID_ARG_VALUE("options.globPatterns", globPatterns, "is not supported when specifying 'options.files'");
+  }
+  if (shard != null) {
+    validateObject(shard, "options.shard");
+    shard = { __proto__: null, index: shard.index, total: shard.total };
+    validateInteger(shard.total, "options.shard.total", 1);
+    validateInteger(shard.index, "options.shard.index", 1, shard.total);
+    if (watch) {
+      throw $ERR_INVALID_ARG_VALUE("options.shard", watch, "shards not supported with watch mode");
+    }
+  }
+  if (setup != null) validateFunction(setup, "options.setup");
+  if (testNamePatterns != null) testNamePatterns = toRegExpPatterns(testNamePatterns, "options.testNamePatterns");
+  if (testSkipPatterns != null) testSkipPatterns = toRegExpPatterns(testSkipPatterns, "options.testSkipPatterns");
+
+  let testTagFilterExpressions = null;
+  if (testTagFilters != null) {
+    if (!$isArray(testTagFilters)) testTagFilters = [testTagFilters];
+    if (testTagFilters.length === 0) {
+      testTagFilters = null;
+    } else {
+      emitTagsExperimentalWarning();
+      testTagFilters = testTagFilters.map((value: unknown, i: number) =>
+        validateAndCanonicalizeTagFilter(value, `options.testTagFilters[${i}]`),
+      );
+      testTagFilterExpressions = testTagFilters;
+    }
+  }
+
+  validateOneOf(isolation, "options.isolation", ["process", "none"]);
+  validateBoolean(coverage, "options.coverage");
+  validateInteger(lineCoverage, "options.lineCoverage", 0, 100);
+  validateInteger(branchCoverage, "options.branchCoverage", 0, 100);
+  validateInteger(functionCoverage, "options.functionCoverage", 0, 100);
+  validateStringArray(argv, "options.argv");
+  validateStringArray(execArgv, "options.execArgv");
+  if (globalSetupPath != null) validateString(globalSetupPath, "options.globalSetupPath");
+  if (env != null) {
+    validateObject(env, "options.env");
+    if (isolation === "none") {
+      throw $ERR_INVALID_ARG_VALUE("options.env", env, "is not supported with isolation='none'");
+    }
+  }
+
+  return {
+    files,
+    setup,
+    cwd,
+    env,
+    argv,
+    execArgv,
+    isolation,
+    watch,
+    coverage,
+    shard,
+    globPatterns,
+    globalSetupPath,
+    only,
+    testNamePatterns,
+    testTagFilterExpressions,
+    concurrency: (options as any).concurrency,
+    timeout: (options as any).timeout,
+    signal: (options as any).signal,
+  };
+}
+
+function run(options: Record<string, unknown> = kEmptyObject) {
+  const opts = validateRunOptions(options);
+  const reporter = new TestsStream();
+
+  // A test file that calls run() on itself would otherwise fork forever; node
+  // skips the files and returns an empty stream instead.
+  if (runChildReporterEnabled) {
+    process.emitWarning("node:test run() is being called recursively within a test file. skipping running files.");
+    reporter.endStream();
+    return reporter;
+  }
+
+  // Options whose semantics we cannot honor yet must fail loudly rather than be
+  // silently ignored — a silent no-op is worse than an explicit throw.
+  if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
+  if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
+  if (opts.shard) throwNotImplemented("run({ shard })", 5090);
+  if (opts.isolation === "none") throwNotImplemented("run({ isolation: 'none' })", 5090);
+  if (opts.globPatterns?.length > 0) throwNotImplemented("run({ globPatterns })", 5090);
+  if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
+
+  runFiles(opts, reporter);
+  return reporter;
+}
+
+function makeRunCounts() {
+  return {
+    __proto__: null,
+    tests: 0,
+    failed: 0,
+    passed: 0,
+    cancelled: 0,
+    skipped: 0,
+    todo: 0,
+    topLevel: 0,
+    suites: 0,
+  } as unknown as Record<string, number>;
+}
+
+function addRunCounts(into: Record<string, number>, from: Record<string, number>) {
+  for (const key of Object.keys(from)) into[key] += from[key];
+}
+
+function emitRunDiagnostics(reporter: TestsStream, counts: Record<string, number>, durationMs: number) {
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `tests ${counts.tests}` });
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `suites ${counts.suites}` });
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `pass ${counts.passed}` });
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `fail ${counts.failed}` });
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `cancelled ${counts.cancelled}` });
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `skipped ${counts.skipped}` });
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `todo ${counts.todo}` });
+  reporter.emitMessage("test:diagnostic", { __proto__: null, nesting: 0, message: `duration_ms ${durationMs}` });
+}
+
+// Runs each file in its own `bun test` child and republishes the child's events
+// on the parent's stream, then emits the run-level plan/diagnostics/summary.
+async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
+  const started = Date.now();
+  const counts = makeRunCounts();
+
+  try {
+    if (typeof opts.setup === "function") await opts.setup(reporter);
+
+    const files = opts.files ?? [];
+    for (let i = 0; i < files.length; i++) {
+      await runOneFile(files[i], opts, reporter, counts);
+    }
+
+    reporter.emitMessage("test:plan", { __proto__: null, nesting: 0, count: counts.topLevel });
+    const durationMs = Date.now() - started;
+    emitRunDiagnostics(reporter, counts, durationMs);
+    reporter.emitMessage("test:summary", {
+      __proto__: null,
+      success: counts.failed === 0,
+      counts,
+      duration_ms: durationMs,
+      file: undefined,
+    });
+  } catch (err) {
+    reporter.destroy(err as Error);
+    return;
+  }
+  reporter.endStream();
+}
+
+async function runOneFile(
+  file: string,
+  opts: ReturnType<typeof validateRunOptions>,
+  reporter: TestsStream,
+  counts: Record<string, number>,
+) {
+  const path = require("node:path");
+  const absolute = path.resolve(opts.cwd as string, file);
+  const args = [process.execPath, "test", absolute, ...(opts.execArgv as string[]), ...(opts.argv as string[])];
+  const fileStarted = Date.now();
+  const fileCounts = makeRunCounts();
+
+  const proc = Bun.spawn({
+    cmd: args,
+    cwd: opts.cwd as string,
+    env: { ...(opts.env ?? process.env), [kRunChildEnv]: kRunChildEnvValue },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const drainStderr = (async () => {
+    const text = await new Response(proc.stderr).text();
+    for (const line of text.split("\n")) {
+      if (line.length > 0) reporter.emitMessage("test:stderr", { __proto__: null, file: absolute, message: line + "\n" });
+    }
+  })();
+
+  const stdout = await new Response(proc.stdout).text();
+  for (const line of stdout.split("\n")) {
+    if (line.length === 0) continue;
+    if (!line.startsWith(kRunEventPrefix)) {
+      reporter.emitMessage("test:stdout", { __proto__: null, file: absolute, message: line + "\n" });
+      continue;
+    }
+    let event;
+    try {
+      event = JSON.parse(line.slice(kRunEventPrefix.length));
+    } catch {
+      continue;
+    }
+    republishChildEvent(event, absolute, reporter, fileCounts);
+  }
+
+  await drainStderr;
+  await proc.exited;
+
+  // node's child emits a per-file summary before the parent's run-level one.
+  reporter.emitMessage("test:summary", {
+    __proto__: null,
+    success: fileCounts.failed === 0,
+    counts: fileCounts,
+    duration_ms: Date.now() - fileStarted,
+    file: absolute,
+  });
+  addRunCounts(counts, fileCounts);
+}
+
+function republishChildEvent(
+  event: { type: string; data: any },
+  file: string,
+  reporter: TestsStream,
+  counts: Record<string, number>,
+) {
+  const { type, data } = event;
+  data.file = file;
+  if (type === "test:pass" || type === "test:fail") {
+    counts.tests++;
+    if (data.nesting === 0) counts.topLevel++;
+    if (data.skip) counts.skipped++;
+    else if (data.todo) counts.todo++;
+    else if (type === "test:pass") counts.passed++;
+    else counts.failed++;
+    if (data.error !== undefined) {
+      const error = new Error(data.error.message);
+      error.stack = data.error.stack;
+      if (data.error.code !== undefined) (error as any).code = data.error.code;
+      data.details = { __proto__: null, duration_ms: data.duration_ms, error };
+    } else {
+      data.details = { __proto__: null, duration_ms: data.duration_ms };
+    }
+    delete data.error;
+    delete data.duration_ms;
+  }
+  reporter.emitMessage(type, data);
+}
+
+// Child side: with kRunChildEnv set, stream one JSON event per line so the
+// spawning parent can rebuild node's event stream.
+const runChildReporterEnabled = process.env[kRunChildEnv] !== undefined;
+
+function emitRunChildEvent(type: string, data: unknown) {
+  try {
+    process.stdout.write(kRunEventPrefix + JSON.stringify({ type, data }) + "\n");
+  } catch {}
+}
+
+// node's top-level tests are nesting 0, so the root node itself doesn't count.
+function nestingOf(node: TestNode) {
+  let depth = 0;
+  for (let cur = node.parent; cur !== undefined && cur.parent !== undefined; cur = cur.parent) depth++;
+  return depth;
+}
+
+// Errors cross the process boundary as plain JSON; the parent rebuilds an Error.
+function serializeRunError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      __proto__: null,
+      message: error.message,
+      stack: error.stack,
+      code: (error as { code?: string }).code,
+      name: error.name,
+    };
+  }
+  return { __proto__: null, message: String(error), stack: undefined, code: undefined, name: "Error" };
+}
+
+// Called for every test node as its result is finalized, so subtests report
+// with the same shape as top-level tests. No-op outside a run() child.
+function reportNodeToRunParent(node: TestNode, startedAt: number) {
+  if (!runChildReporterEnabled || node.isSuite) return;
+  // node spreads a `directive` into the event: `skip: true` / `todo: true`, with
+  // the other key absent entirely.
+  emitRunChildEvent(node.passed ? "test:pass" : "test:fail", {
+    __proto__: null,
+    name: node.name,
+    nesting: nestingOf(node),
+    testNumber: 0,
+    duration_ms: performance.now() - startedAt,
+    skip: node.skipped ? true : undefined,
+    todo: !node.skipped && node.todoFlag ? true : undefined,
+    tags: node.tags,
+    error: node.passed ? undefined : serializeRunError(node.error),
+  });
 }
 
 // -----------------------------------------------------------------------------
@@ -761,7 +1180,6 @@ function planCount(node: TestNode) {
 // -----------------------------------------------------------------------------
 
 const kEmptyTags: string[] = Object.freeze([]) as string[];
-let tagsExperimentalWarningEmitted = false;
 
 function canonicalizeTags(tags: unknown, name: string): string[] {
   validateArray(tags, name);
@@ -774,10 +1192,7 @@ function canonicalizeTags(tags: unknown, name: string): string[] {
     }
     seen.add((tag as string).toLowerCase());
   }
-  if (seen.size > 0 && !tagsExperimentalWarningEmitted) {
-    tagsExperimentalWarningEmitted = true;
-    process.emitWarning("Test tags is an experimental feature and might change at any time", "ExperimentalWarning");
-  }
+  if (seen.size > 0) emitTagsExperimentalWarning();
   return Array.from(seen);
 }
 
@@ -1482,6 +1897,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
   node.started = true;
+  const started = runChildReporterEnabled ? performance.now() : 0;
   const ctx = node.getCtx();
   const ancestors = ancestorChain(node);
   let failure: unknown;
@@ -1598,6 +2014,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
 
   node.passed = failure === undefined;
   node.error = failure ?? null;
+  reportNodeToRunParent(node, started);
   return failure;
 }
 

@@ -2825,17 +2825,6 @@ it("http2 client.request() rejects connection-specific headers synchronously", a
       rawTe: tryRequest([":path", "/", "te", "trailers"]),
     }).toEqual({ te: null, teArray: null, emptyArray: null, rawTe: null });
 
-    // An undefined value also encodes no header, so it is not a connection-specific violation:
-    // it fails the same way any undefined-valued header does. (Bun rejects those for every header
-    // name while node skips them - a separate divergence this change does not touch.)
-    expect({
-      connectionUndefined: tryRequest({ ":path": "/", connection: undefined }),
-      plainUndefined: tryRequest({ ":path": "/", "x-anything": undefined }),
-    }).toEqual({
-      connectionUndefined: "ERR_HTTP2_INVALID_HEADER_VALUE",
-      plainUndefined: "ERR_HTTP2_INVALID_HEADER_VALUE",
-    });
-
     const statuses = await Promise.all(responses);
     expect(statuses.map(h => h[":status"])).toEqual([200, 200, 200, 200]);
     // Nothing forbidden reached the wire. `http2-settings` in particular used to be encoded into

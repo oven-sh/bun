@@ -1815,21 +1815,18 @@ var require_wasi = __commonJS({
                 return r;
               }
             }
-            if (waitTimeNs > 0) {
-              waitTimeNs -= Bun.nanoseconds() - timeOrigin;
-              if (waitTimeNs >= 1e6) {
-                const sleep = this.sleep;
-                if (sleep == null && !warnedAboutSleep) {
-                  warnedAboutSleep = true;
-                  console.log("(100% cpu burning waiting for stdin: please define a way to sleep!) ");
-                }
-                if (sleep != null) {
-                  const ms = nsToMs(waitTimeNs);
-                  sleep.$call(this, ms);
-                } else {
-                  const end = BigInt(bindings.hrtime()) + waitTimeNs;
-                  while (BigInt(bindings.hrtime()) < end) {}
-                }
+            if (waitTimeNs >= 1e6) {
+              const sleep = this.sleep;
+              if (sleep == null && !warnedAboutSleep) {
+                warnedAboutSleep = true;
+                console.log("(100% cpu burning waiting for stdin: please define a way to sleep!) ");
+              }
+              if (sleep != null) {
+                const ms = nsToMs(waitTimeNs);
+                sleep.$call(this, ms);
+              } else {
+                const end = BigInt(bindings.hrtime()) + waitTimeNs;
+                while (BigInt(bindings.hrtime()) < end) {}
               }
             }
             return constants_1.WASI_ESUCCESS;

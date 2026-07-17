@@ -13,12 +13,14 @@ var domain: any = {};
 function bindCallbackToDomain(d, cb) {
   return function boundDomainCallback() {
     d.enter();
+    let exited = false;
     try {
       return cb.$apply(this, arguments);
     } catch (err) {
       // Match node: the domain is exited before its 'error' handler runs, so
       // work scheduled inside the handler is not bound to the failed domain,
       // and the error is tagged as thrown rather than emitted.
+      exited = true;
       d.exit();
       if (typeof err === "object" && err !== null) {
         // Best-effort: a frozen / non-extensible / proxy-backed thrown value
@@ -36,7 +38,7 @@ function bindCallbackToDomain(d, cb) {
       }
       d.emit("error", err);
     } finally {
-      d.exit();
+      if (!exited) d.exit();
     }
   };
 }

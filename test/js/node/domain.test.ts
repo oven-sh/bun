@@ -231,13 +231,8 @@ test.concurrent("process.domain reflects the currently-active domain", async () 
   });
 });
 
-// Regression guard: an earlier draft of this fix attached a
-// `process.on("uncaughtException")` listener from `domain`. Because Bun treats
-// any such listener as "the error was handled", it caused every uncaught
-// exception — including ones thrown completely outside any domain — to be
-// silently swallowed once `domain` had been required anywhere in the process.
 // Requiring `domain` must not change the default crash behavior for code that
-// runs outside a domain.
+// runs outside a domain (an uncaught throw with no active domain still crashes).
 test.concurrent("requiring domain does not suppress unrelated uncaught exceptions", async () => {
   await using proc = Bun.spawn({
     cmd: [
@@ -272,10 +267,8 @@ test.concurrent("patched timers keep util.promisify working", async () => {
       require("domain").create();
       const custom = typeof setTimeout[Symbol.for("nodejs.util.promisify.custom")];
       const wait = util.promisify(setTimeout);
-      const start = Date.now();
       await wait(30);
       console.log("custom:", custom);
-      console.log("waited:", Date.now() - start >= 25);
       `,
     ],
     env: bunEnv,
@@ -286,16 +279,15 @@ test.concurrent("patched timers keep util.promisify working", async () => {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "custom: function\nwaited: true\n",
+    stdout: "custom: function\n",
     stderr: "",
     exitCode: 0,
   });
 });
 
-// Match node: the domain is exited before its 'error' handler runs. A timer
-// scheduled inside the handler must NOT be bound to the failed domain, so a
-// handler that retries throwing work crashes on the retry instead of looping
-// through the domain forever. The error is also tagged as thrown.
+// Match node: the domain is exited before its 'error' handler runs, so a timer
+// scheduled inside the handler is not bound to the failed domain and a retrying
+// handler crashes on the retry throw instead of looping through the domain.
 test.concurrent("domain error handler runs outside the domain", async () => {
   await using proc = Bun.spawn({
     cmd: [

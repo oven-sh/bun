@@ -379,7 +379,7 @@ public:
         // so resolve waitForDebugger directly when we see the command instead of
         // relying on that JSC path.
         auto resolveWaitIfInitialized = [](const WTF::String& message) {
-            if (waitingForConnection && message.contains("\"Inspector.initialized\""_s)) {
+            if (waitingForConnection && message.contains("\"method\":\"Inspector.initialized\""_s)) {
                 waitingForConnection = false;
                 Debugger__didConnect();
             }

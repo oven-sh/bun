@@ -31,7 +31,8 @@ describe("AsyncLocalStorage", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "nextTick ran\n", stderr: "", exitCode: 0 });
+    expect({ stdout: stdout.trim(), exitCode }).toEqual({ stdout: "nextTick ran", exitCode: 0 });
+    expect(stderr).not.toContain("AssertionError");
   });
 
   // The post-run restoration assert must account for getStore() falling

@@ -1139,7 +1139,6 @@ describe("socket.destroy() is not a graceful EOF", () => {
   it("destroying a client socket emits 'close' but never 'end'", async () => {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     const server = createServer(c => {
-      // Hold the connection open; the peer never finishes its side.
       c.on("error", () => {});
     });
     try {
@@ -1179,7 +1178,6 @@ describe("socket.destroy() is not a graceful EOF", () => {
           reject(e);
         }
       });
-      // Destroy while the readable side is flowing, mid-connection.
       c.on("data", () => c.destroy());
     });
     let client: Socket | undefined;

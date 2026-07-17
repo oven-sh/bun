@@ -27,8 +27,13 @@
  * Modifications were made to the original code.
  */
 const { isTypedArray } = require("node:util/types");
-const { hideFromStack, throwNotImplemented, hasObserver, enqueueNodeEntry, PerformanceNodeEntry } =
-  require("internal/shared");
+const {
+  hideFromStack,
+  throwNotImplemented,
+  hasObserver,
+  enqueueNodeEntry,
+  PerformanceNodeEntry,
+} = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
 const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
@@ -5330,7 +5335,13 @@ class ClientHttp2Session extends Http2Session {
         clearTimeout(self[kSettingsAckGraceTimer]);
         self[kSettingsAckGraceTimer] = undefined;
       }
-      if (self.#closed && self.#connections === 0 && self.#pendingSettingsAckCount === 0 && pingsDrained && !self.destroyed) {
+      if (
+        self.#closed &&
+        self.#connections === 0 &&
+        self.#pendingSettingsAckCount === 0 &&
+        pingsDrained &&
+        !self.destroyed
+      ) {
         captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
         setImmediate(destroyIfNotDestroyedNT, self);
       }

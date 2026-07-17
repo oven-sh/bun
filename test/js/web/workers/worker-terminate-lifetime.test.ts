@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -150,7 +151,11 @@ test.skipIf(!isASAN)(
         }
       `,
       ],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
+      },
       stdout: "pipe",
       stderr: "pipe",
     });

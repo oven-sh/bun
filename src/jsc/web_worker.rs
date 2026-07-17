@@ -1290,7 +1290,11 @@ impl WebWorker {
             // the socket-state callback for each fd it closes, both of which
             // dereference state (`JSGlobalObject`, `RareData.file_polls`,
             // `runtime_state().timer`) that step 3/5 below free. Deferring it
-            // to `destroy()`'s `deinit_runtime_state` is a UAF.
+            // to `destroy()`'s `deinit_runtime_state` is a UAF. Must FOLLOW
+            // `close_all_socket_groups`: its on_close JS can call
+            // `dns.resolve*()`, and `Resolver::get_channel()` lazily re-inits
+            // on `channel == None` — running this earlier lets a re-created
+            // channel survive to `GlobalData::drop` (the original UAF).
             if let Some(hooks) = runtime_hooks() {
                 (hooks.close_dns_for_terminate)();
             }

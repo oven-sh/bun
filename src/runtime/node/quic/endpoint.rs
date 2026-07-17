@@ -1738,11 +1738,10 @@ impl QuicEndpoint {
         }
         // A graceful close() has to stop accepting: a session promoted now
         // keeps `sessions` non-empty, so the `closing && sessions.is_empty()`
-        // finish gate never trips and `endpoint.closed` never resolves. Close
-        // rather than refuse, as bun's own HTTP/3 listener does
-        // (us_quic_on_new_conn): CONNECTION_REFUSED would reject the peer's
-        // session, and this is not a busy refusal either, so serverBusyCount
-        // stays put.
+        // finish gate never trips and `endpoint.closed` never resolves. Send
+        // CONNECTION_REFUSED so the client's close_wins rule rejects `opened`
+        // (a code-0 close reads as accepted-then-closed), matching the busy
+        // path and test-quic-endpoint-busy.mjs. serverBusyCount stays put.
         if self.closing.get() {
             // CONNECTION_REFUSED, as the busy path below: a clean close would
             // let the client's handshake confirmation win and `opened`

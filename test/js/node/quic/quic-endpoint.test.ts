@@ -258,7 +258,9 @@ describe("endpoint.close() while a session is live", () => {
     // `closed` rejects with the same CONNECTION_REFUSED transport error, and
     // does so while `opened` is being awaited -- handle it first.
     const lateClosed = late.closed.catch(() => "rejected");
-    await expect(late.opened).rejects.toThrow();
+    await expect(late.opened).rejects.toThrow(
+      expect.objectContaining({ code: "ERR_QUIC_TRANSPORT_ERROR" }),
+    );
     expect(await lateClosed).toBe("rejected");
 
     // Releasing the held session is now the last one, so close finishes.

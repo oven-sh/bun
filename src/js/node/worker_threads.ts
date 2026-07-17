@@ -205,7 +205,7 @@ function injectFakeEmitter(Class) {
     // a listener that already fired.
     function onceWrapper(ev) {
       registryFor(target, false)?.get(event)?.delete(listener);
-      return wrapper(ev);
+      return wrapper.$call(target, ev);
     }
     register(this, event, listener, onceWrapper, { once: true });
     return this;

@@ -43,24 +43,6 @@ impl Default for CPUProfilerConfig {
     }
 }
 
-/// The main thread's `--cpu-prof` config, published at startup so worker
-/// VMs can inherit it: node profiles every thread when `--cpu-prof` is passed to
-/// the process, and writes one profile per thread.
-static INHERITED_CONFIG: std::sync::OnceLock<CPUProfilerConfig> = std::sync::OnceLock::new();
-
-pub fn publish_inherited_config(config: CPUProfilerConfig) {
-    let _ = INHERITED_CONFIG.set(config);
-}
-
-/// The config a newly-started worker VM should profile with, if any. An explicit
-/// `--cpu-prof-name` is inherited, so every thread writes that one path and the
-/// last wins — node does the same (v26.3.0: named gives 1 file, default 2).
-pub fn inherited_config_for_worker(thread_id: u32) -> Option<CPUProfilerConfig> {
-    INHERITED_CONFIG
-        .get()
-        .map(|c| CPUProfilerConfig { thread_id, ..*c })
-}
-
 // C++ function declarations
 unsafe extern "C" {
     /// `VM` is an opaque `UnsafeCell`-backed ZST handle; `&mut VM` is

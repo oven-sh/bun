@@ -1018,8 +1018,8 @@ impl WebWorker {
             VirtualMachine::set_is_main_thread_vm(false);
             vm_ref.on_unhandled_rejection = on_unhandled_rejection;
 
-            // Node profiles every thread; own execArgv wins, and only a worker
-            // inheriting the parent's picks up the process-wide --cpu-prof.
+            // Node profiles every thread; own execArgv wins, and an inheriting
+            // worker takes the immediate parent's config (not the process's).
             let profile = if exec_argv.cpu_prof {
                 let mut config = crate::bun_cpu_profiler::CPUProfilerConfig {
                     json_format: true,
@@ -1031,7 +1031,12 @@ impl WebWorker {
                 }
                 Some(config)
             } else if own_exec_argv.is_none() {
-                crate::bun_cpu_profiler::inherited_config_for_worker(self.execution_context_id)
+                parent
+                    .cpu_profiler_config
+                    .map(|c| crate::bun_cpu_profiler::CPUProfilerConfig {
+                        thread_id: self.execution_context_id,
+                        ..c
+                    })
             } else {
                 None
             };

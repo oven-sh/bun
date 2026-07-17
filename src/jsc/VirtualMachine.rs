@@ -3712,6 +3712,7 @@ impl VirtualMachine {
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
+            use_system_ca: opts.use_system_ca,
             ..Default::default()
         };
         let vm = Self::init(init_opts)?;
@@ -3789,6 +3790,7 @@ impl VirtualMachine {
             mini_mode: opts.smol,
             eval_mode: false,
             is_main_thread: opts.is_main_thread,
+            use_system_ca: opts.use_system_ca,
             ..Default::default()
         };
         // Note: shares the console / log / event-loop wiring with `init`;

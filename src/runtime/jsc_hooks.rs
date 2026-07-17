@@ -1538,6 +1538,7 @@ unsafe fn parse_worker_exec_argv(
     let mut out = bun_jsc::virtual_machine::WorkerExecArgv::default();
     let mut no_addons = false;
     let mut want_interval = false;
+    let mut skip_next = false;
     for &arg in exec_argv {
         if arg.is_null() {
             continue;
@@ -1545,6 +1546,10 @@ unsafe fn parse_worker_exec_argv(
         // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
         let owned = unsafe { &*arg }.to_owned_slice_z();
         let bytes = owned.as_bytes();
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
         if want_interval {
             want_interval = false;
             out.cpu_prof_interval = std::str::from_utf8(bytes).ok().and_then(|s| s.parse().ok());
@@ -1571,6 +1576,10 @@ unsafe fn parse_worker_exec_argv(
             want_interval = true;
         } else if let Some(v) = bytes.strip_prefix(b"--cpu-prof-interval=") {
             out.cpu_prof_interval = std::str::from_utf8(v).ok().and_then(|s| s.parse().ok());
+        } else if bytes == b"--cpu-prof-dir" || bytes == b"--cpu-prof-name" {
+            // Value is discarded here but must be consumed so it is not misread
+            // as the first positional (which would stop the scan early).
+            skip_next = true;
         }
     }
     // Override `allow_addons` unconditionally.

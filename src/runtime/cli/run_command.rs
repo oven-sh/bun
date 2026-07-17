@@ -1174,6 +1174,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
+            use_system_ca: crate::cli::Arguments::main_use_system_ca(),
             // `Options::dns_result_order` is `u8` until the
             // b2-cycle widens it to `bun_dns::Order`; the enum is
             // `#[repr(u8)]` so `as u8` is exact.
@@ -1380,9 +1381,6 @@ impl Run {
                 thread_id: 0,
             };
             vm.cpu_profiler_config = Some(config);
-            // Node profiles every thread when the process gets --cpu-prof, so
-            // publish for worker VMs to pick up as they start.
-            bun_jsc::bun_cpu_profiler::publish_inherited_config(config);
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
             // SAFETY: `vm.jsc_vm` set in `init`.
             bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });

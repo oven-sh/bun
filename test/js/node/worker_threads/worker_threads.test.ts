@@ -1136,6 +1136,24 @@ test("off() removes only the listener it names, per event and per port", () => {
   }
 });
 
+test("MessagePort listeners receive the port as `this` for on() and once()", async () => {
+  const { port1, port2 } = new MessageChannel();
+  const seen: unknown[] = [];
+  const { promise, resolve } = Promise.withResolvers<void>();
+  port1.on("message", function () {
+    seen.push(this);
+  });
+  port1.once("message", function () {
+    seen.push(this);
+    resolve();
+  });
+  port2.postMessage("x");
+  await promise;
+  expect(seen).toEqual([port1, port1]);
+  port1.close();
+  port2.close();
+});
+
 // bun collects entangled ports; node never does. A worker that drops its transferred
 // port must therefore still notify the peer, or the peer's loop ref is never released
 // and the parent hangs forever. Spawned: the symptom is "the process never exits".

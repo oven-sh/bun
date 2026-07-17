@@ -50,6 +50,8 @@ static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_issuerCertificate);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_publicKey);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_raw);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_serialNumber);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithm);
+static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithmOid);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validFrom);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validTo);
 static JSC_DECLARE_CUSTOM_GETTER(jsX509CertificateGetter_validFromDate);
@@ -72,6 +74,8 @@ static const HashTableValue JSX509CertificatePrototypeTableValues[] = {
     { "publicKey"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_publicKey, 0 } },
     { "raw"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_raw, 0 } },
     { "serialNumber"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_serialNumber, 0 } },
+    { "signatureAlgorithm"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_signatureAlgorithm, 0 } },
+    { "signatureAlgorithmOid"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_signatureAlgorithmOid, 0 } },
     { "subject"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_subject, 0 } },
     { "subjectAltName"_s, static_cast<unsigned>(PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor), NoIntrinsic, { HashTableValue::GetterSetterType, jsX509CertificateGetter_subjectAltName, 0 } },
     { "toJSON"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsX509CertificateProtoFuncToJSON, 0 } },
@@ -520,6 +524,42 @@ JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_fingerprint512, (JSGlobalObject
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(thisObject->fingerprint512()));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithm, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSX509Certificate* thisObject = dynamicDowncast<JSX509Certificate>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "signatureAlgorithm"_s);
+        return {};
+    }
+
+    auto algorithm = thisObject->view().getSignatureAlgorithm();
+    if (!algorithm.has_value())
+        return JSValue::encode(jsUndefined());
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(algorithm.value().data()), algorithm.value().size() }))));
+}
+
+JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_signatureAlgorithmOid, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSX509Certificate* thisObject = dynamicDowncast<JSX509Certificate>(JSValue::decode(thisValue));
+    if (!thisObject) [[unlikely]] {
+        Bun::throwThisTypeError(*globalObject, scope, "X509Certificate"_s, "signatureAlgorithmOid"_s);
+        return {};
+    }
+
+    auto oid = thisObject->view().getSignatureAlgorithmOID();
+    if (!oid.has_value())
+        return JSValue::encode(jsUndefined());
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const uint8_t*>(oid.value().data()), oid.value().size() }))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsX509CertificateGetter_subject, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName))

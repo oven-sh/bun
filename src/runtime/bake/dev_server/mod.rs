@@ -23,6 +23,7 @@ use super::{Graph, Side};
 // ─── submodules ──────────────────────────────────────────────────────────────
 pub(crate) mod error_report_request;
 pub(crate) mod hmr_socket;
+pub(crate) mod js_escape;
 pub(crate) mod memory_cost;
 
 // NOTE: the `DevServer` scoped-log static (`ScopedLogger`) is declared in

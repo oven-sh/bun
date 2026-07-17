@@ -554,8 +554,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
+    /* delay == 0 means "enable SO_KEEPALIVE, keep the kernel-default idle". */
     if (delay == 0)
-        return -1;
+        return 0;
 
 
 #ifdef TCP_KEEPIDLE
@@ -592,14 +593,9 @@ int bsd_socket_keepalive(LIBUS_SOCKET_DESCRIPTOR fd, int on, unsigned int delay)
     if (!on)
         return 0;
 
-    if (delay < 1) {
-        #ifdef LIBUS_USE_LIBUV
-            return -4071; //UV_EINVAL;
-        #else
-            //TODO: revisit this when IOCP loop is implemented without libuv here
-            return 4071;
-        #endif
-    }
+    if (delay == 0)
+        return 0;
+
     if (setsockopt(fd,
                     IPPROTO_TCP,
                     TCP_KEEPALIVE,
@@ -670,6 +666,34 @@ int bsd_socket_get_tos(LIBUS_SOCKET_DESCRIPTOR fd) {
     }
 #endif
     return tos;
+}
+
+int bsd_socket_buffer_size(LIBUS_SOCKET_DESCRIPTOR fd, int is_recv, int size, int *out) {
+    int option = is_recv ? SO_RCVBUF : SO_SNDBUF;
+    if (size != 0) {
+#ifdef _WIN32
+        int err = setsockopt(fd, SOL_SOCKET, option, (const char *) &size, sizeof(size));
+#else
+        int err = setsockopt(fd, SOL_SOCKET, option, &size, sizeof(size));
+#endif
+        if (err) {
+            return err;
+        }
+        *out = size;
+        return 0;
+    }
+    int value = 0;
+    socklen_t len = sizeof(value);
+#ifdef _WIN32
+    int err = getsockopt(fd, SOL_SOCKET, option, (char *) &value, (int *) &len);
+#else
+    int err = getsockopt(fd, SOL_SOCKET, option, &value, &len);
+#endif
+    if (err) {
+        return err;
+    }
+    *out = value;
+    return 0;
 }
 
 void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -1041,7 +1065,9 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
     return result;
 }
 
-static int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
+/* libuv's uv__sock_reuseaddr: SO_REUSEPORT on the BSDs where that is what
+ * actually allows a second bind of the same address, SO_REUSEADDR elsewhere. */
+int bsd_set_reuseaddr(LIBUS_SOCKET_DESCRIPTOR listenFd) {
     const int one = 1;
 #if defined(SO_REUSEPORT) && !defined(__linux__) && !defined(__GNU__)
     return setsockopt(listenFd, SOL_SOCKET, SO_REUSEPORT, &one, sizeof(one));
@@ -1415,6 +1441,130 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket_unix(const char *path, size_t l
     return listenFd;
 }
 
+
+/* Receive-path options every UDP socket needs, whether freshly created or
+ * adopted from an existing fd: destination-address and TOS reporting for
+ * recvmmsg, Windows ICMP-reset suppression, and Linux IP_RECVERR. */
+static void bsd_apply_udp_recv_options(LIBUS_SOCKET_DESCRIPTOR fd, int family) {
+    /* We need destination address for udp packets in both ipv6 and ipv4 */
+
+/* On FreeBSD this option seems to be called like so */
+#ifndef IPV6_RECVPKTINFO
+#define IPV6_RECVPKTINFO IPV6_PKTINFO
+#endif
+
+    int enabled = 1;
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+#if defined(IP_PKTINFO)
+            setsockopt(fd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
+#elif defined(IP_RECVDSTADDR)
+            setsockopt(fd, IPPROTO_IP, IP_RECVDSTADDR, &enabled, sizeof(enabled));
+#endif
+        }
+    }
+
+    /* These are used for getting the ECN */
+    if (setsockopt(fd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
+        if (errno == ENOPROTOOPT || errno == EINVAL) {
+            setsockopt(fd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
+        }
+    }
+
+#if defined(_WIN32)
+    /* By default Winsock reports ICMP "port unreachable" from a previous
+     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
+     * it, but disabling the report at the source means a queued ICMP can't
+     * race ahead of a real packet in WSARecvFrom either. */
+    {
+        DWORD off = 0, br;
+        WSAIoctl(fd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#ifdef SIO_UDP_NETRESET
+        WSAIoctl(fd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
+#endif
+    }
+#endif
+
+#if defined(__linux__)
+    /* IP_RECVERR/IPV6_RECVERR queues ICMP errors on the socket's error queue
+     * for on_recv_error to drain. libuv gates this on UV_UDP_LINUX_RECVERR
+     * (Node's dgram never passes it); Bun opts in for sockets it creates. */
+#ifdef IP_RECVERR
+    setsockopt(fd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
+#endif
+#ifdef IPV6_RECVERR
+    if (family == AF_INET6) {
+        setsockopt(fd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
+    }
+#endif
+#endif
+}
+
+/* Prepares an externally created UDP fd for adoption, matching uv_udp_open:
+ * nonblock + SO_REUSEADDR only. Recv-path options (IP_RECVERR, PKTINFO,
+ * SIO_UDP_CONNRESET) are NOT applied — mutating the caller's fd is observable. */
+int bsd_prepare_adopted_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
+    /* Refuse to adopt anything that isn't a datagram socket. */
+    int sock_type = 0;
+    socklen_t type_len = sizeof(sock_type);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (char *) &sock_type, (socklen_t *) &type_len)) {
+        return -1;
+    }
+    if (sock_type != SOCK_DGRAM) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+    struct sockaddr_storage ss;
+    socklen_t len = sizeof(ss);
+    if (getsockname(fd, (struct sockaddr *) &ss, (socklen_t *) &len)) {
+        return -1;
+    }
+    /* Only INET datagram sockets: address getters and send destinations all
+     * assume AF_INET/AF_INET6. */
+    if (ss.ss_family != AF_INET && ss.ss_family != AF_INET6) {
+#ifdef _WIN32
+        WSASetLastError(WSAEINVAL);
+#endif
+        errno = EINVAL;
+        return -1;
+    }
+    apple_no_sigpipe(fd);
+    if (bsd_set_nonblocking(fd) == LIBUS_SOCKET_ERROR) {
+        return -1;
+    }
+    /* uv_udp_open unconditionally sets SO_REUSEADDR (kept for backwards
+     * compat, libuv#4551); best-effort here so a bound-and-already-set fd
+     * doesn't fail adoption. */
+    (void) bsd_set_reuseaddr(fd);
+    return 0;
+}
+
+/* Binds a raw datagram descriptor. `flags` uses libuv's UV_UDP_* bits (bit 0
+ * IPV6ONLY, bit 2 REUSEADDR). Shared by internal/dgram so it doesn't fork
+ * bsd_set_reuseaddr's platform gate. Returns 0 or -1 with the error in errno. */
+int bsd_bind_udp_fd(LIBUS_SOCKET_DESCRIPTOR fd, const struct sockaddr *addr, int addrlen, int flags) {
+#ifdef IPV6_V6ONLY
+    if ((flags & 1) && addr->sa_family == AF_INET6) {
+        int on = 1;
+        if (setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char *) &on, sizeof(on)) != 0) {
+            return -1;
+        }
+    }
+#endif
+    if (flags & 4) {
+        if (bsd_set_reuseaddr(fd) != 0) {
+            return -1;
+        }
+    }
+    if (bind(fd, addr, (socklen_t) addrlen) != 0) {
+        return -1;
+    }
+    return 0;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int options, int *err) {
     if (err != NULL) {
         *err = 0;
@@ -1481,59 +1631,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
     }
 #endif
 
-    /* We need destination address for udp packets in both ipv6 and ipv4 */
-
-/* On FreeBSD this option seems to be called like so */
-#ifndef IPV6_RECVPKTINFO
-#define IPV6_RECVPKTINFO IPV6_PKTINFO
-#endif
-
-    int enabled = 1;
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVPKTINFO, &enabled, sizeof(enabled)) == -1) {
-        if (errno == ENOPROTOOPT || errno == EINVAL) {
-#if defined(IP_PKTINFO)
-            setsockopt(listenFd, IPPROTO_IP, IP_PKTINFO, &enabled, sizeof(enabled));
-#elif defined(IP_RECVDSTADDR)
-            setsockopt(listenFd, IPPROTO_IP, IP_RECVDSTADDR, &enabled, sizeof(enabled));
-#endif
-        }
-    }
-
-    /* These are used for getting the ECN */
-    if (setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVTCLASS, &enabled, sizeof(enabled)) == -1) {
-        if (errno == ENOPROTOOPT || errno == EINVAL) {
-            setsockopt(listenFd, IPPROTO_IP, IP_RECVTOS, &enabled, sizeof(enabled));
-        }
-    }
-
-#if defined(_WIN32)
-    /* By default Winsock reports ICMP "port unreachable" from a previous
-     * sendto as WSAECONNRESET on the next recv. bsd_recvmmsg already swallows
-     * it, but disabling the report at the source means a queued ICMP can't
-     * race ahead of a real packet in WSARecvFrom either. */
-    {
-        DWORD off = 0, br;
-        WSAIoctl(listenFd, SIO_UDP_CONNRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
-#ifdef SIO_UDP_NETRESET
-        WSAIoctl(listenFd, SIO_UDP_NETRESET, &off, sizeof(off), NULL, 0, &br, NULL, NULL);
-#endif
-    }
-#endif
-
-#if defined(__linux__)
-    /* Linux suppresses ICMP errors (port unreachable, host unreachable, TTL
-     * exceeded, etc.) on unconnected UDP sockets by default. Enabling
-     * IP_RECVERR/IPV6_RECVERR surfaces them as errors on the next send/recv,
-     * rather than silently dropping them. Matches libuv. */
-#ifdef IP_RECVERR
-    setsockopt(listenFd, IPPROTO_IP, IP_RECVERR, &enabled, sizeof(enabled));
-#endif
-#ifdef IPV6_RECVERR
-    if (listenAddr->ai_family == AF_INET6) {
-        setsockopt(listenFd, IPPROTO_IPV6, IPV6_RECVERR, &enabled, sizeof(enabled));
-    }
-#endif
-#endif
+    bsd_apply_udp_recv_options(listenFd, listenAddr->ai_family);
 
     /* We bind here as well */
     if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen)) {

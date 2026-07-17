@@ -44,6 +44,13 @@ struct us_internal_loop_data_t {
     long long sweep_next_tick_ns;
 #endif
     int sweep_timer_count;
+#ifdef LIBUS_USE_LIBUV
+    /* Sockets whose peer FIN was deferred behind buffered data while paused
+     * (poll_cb's MSG_PEEK probe): the sweep escalates them via SO_ERROR when
+     * the peer later resets, since the one-shot DISCONNECT report was already
+     * consumed by the FIN. Zero cost while no socket is in that state. */
+    int fin_deferred_count;
+#endif
     struct us_internal_async *wakeup_async;
     struct us_socket_group_t *head;
     /* QUIC engines on this loop. us_quic_loop_process walks the list from

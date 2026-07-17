@@ -856,14 +856,22 @@ var require_wasi = __commonJS({
             path: v,
           });
         }
-        const getiovs = (iovs, iovsLen) => {
+        const getiovs = (iovs, iovsLen, outPtr) => {
           this.refreshMemory();
 
           const { view, memory } = this;
           const { buffer } = memory;
           const { byteLength } = buffer;
 
-          if (iovs >>> 0 !== iovs || iovsLen >>> 0 !== iovsLen || iovs + iovsLen * 8 > byteLength) {
+          // Validate the iovec array bounds and the u32 output pointer (nread/nwritten)
+          // before any host I/O so an out-of-bounds guest pointer cannot cause a write.
+          if (
+            iovs >>> 0 !== iovs ||
+            iovsLen >>> 0 !== iovsLen ||
+            iovs + iovsLen * 8 > byteLength ||
+            outPtr >>> 0 !== outPtr ||
+            outPtr + 4 > byteLength
+          ) {
             throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
           }
 
@@ -1165,7 +1173,7 @@ var require_wasi = __commonJS({
           fd_pwrite: wrap((fd, iovs, iovsLen, offset, nwritten) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_WRITE | constants_1.WASI_RIGHT_FD_SEEK);
             let written = 0;
-            getiovs(iovs, iovsLen).forEach(iov => {
+            getiovs(iovs, iovsLen, nwritten).forEach(iov => {
               let w = 0;
               while (w < iov.byteLength) {
                 w += fs.writeSync(stats.real, iov, w, iov.byteLength - w, Number(offset) + written + w);
@@ -1180,7 +1188,7 @@ var require_wasi = __commonJS({
             const IS_STDOUT = fd == constants_1.WASI_STDOUT_FILENO;
             const IS_STDERR = fd == constants_1.WASI_STDERR_FILENO;
             let written = 0;
-            getiovs(iovs, iovsLen).forEach(iov => {
+            getiovs(iovs, iovsLen, nwritten).forEach(iov => {
               if (iov.byteLength == 0) return;
               if (IS_STDOUT && this.sendStdout != null) {
                 this.sendStdout(iov);
@@ -1210,7 +1218,7 @@ var require_wasi = __commonJS({
           fd_pread: wrap((fd, iovs, iovsLen, offset, nread) => {
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_READ | constants_1.WASI_RIGHT_FD_SEEK);
             let read = 0;
-            outer: for (const iov of getiovs(iovs, iovsLen)) {
+            outer: for (const iov of getiovs(iovs, iovsLen, nread)) {
               let r = 0;
               while (r < iov.byteLength) {
                 const length = iov.byteLength - r;
@@ -1230,7 +1238,7 @@ var require_wasi = __commonJS({
             const stats = CHECK_FD(fd, constants_1.WASI_RIGHT_FD_READ);
             const IS_STDIN = fd == constants_1.WASI_STDIN_FILENO;
             let read = 0;
-            outer: for (const iov of getiovs(iovs, iovsLen)) {
+            outer: for (const iov of getiovs(iovs, iovsLen, nread)) {
               let r = 0;
               while (r < iov.byteLength) {
                 let length = iov.byteLength - r;

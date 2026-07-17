@@ -95,8 +95,8 @@ it("fd_write/fd_read return an errno for out-of-bounds iovecs instead of throwin
     const wasi = new WASI({ version: "preview1" });
     wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
     const view = new DataView(wasi.memory.buffer);
-    const call = (fn, fd, iovs, iovsLen) => {
-      try { return wasi.wasiImport[fn](fd, iovs, iovsLen, 256); }
+    const call = (fn, fd, iovs, iovsLen, outPtr = 256) => {
+      try { return wasi.wasiImport[fn](fd, iovs, iovsLen, outPtr); }
       catch (e) { return "THREW " + e.constructor.name; }
     };
     // (1) iovec array pointer lies outside linear memory
@@ -113,6 +113,10 @@ it("fd_write/fd_read return an errno for out-of-bounds iovecs instead of throwin
     console.log("len-overrun-multi", call("fd_write", 2, 0, 2));
     // (5) fd_read goes through the same iovec decoder
     console.log("fd_read-iovs-ptr-oob", call("fd_read", 0, 65534, 1));
+    // (6) valid iovec but nwritten pointer lies outside memory: must not write
+    view.setUint32(0, 32, true); view.setUint32(4, 7, true);
+    new Uint8Array(wasi.memory.buffer, 32, 7).set([76, 69, 65, 75, 69, 68, 10]);
+    console.log("nwritten-oob", call("fd_write", 2, 0, 1, 70000));
   `;
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", src],
@@ -123,13 +127,13 @@ it("fd_write/fd_read return an errno for out-of-bounds iovecs instead of throwin
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   const WASI_EOVERFLOW = 61;
-  // stderr must be empty: no console.warn noise, and no truncated guest bytes
-  // written through to fd 2 for the len-overrun case.
+  // stderr must be empty: no console.warn noise, no truncated guest bytes from
+  // the len-overrun case, and no "LEAKED\n" from the nwritten-oob case.
   expect(stderr).toBe("");
-  // stdout must be exactly the five result lines: no leaked `{ buf, bufLen,
+  // stdout must be exactly the result lines: no leaked `{ buf, bufLen,
   // total_memory }` debug object between them.
   expect(stdout).toBe(
-    ["iovs-ptr-oob", "buf-oob", "len-overrun", "len-overrun-multi", "fd_read-iovs-ptr-oob"]
+    ["iovs-ptr-oob", "buf-oob", "len-overrun", "len-overrun-multi", "fd_read-iovs-ptr-oob", "nwritten-oob"]
       .map(k => `${k} ${WASI_EOVERFLOW}\n`)
       .join(""),
   );

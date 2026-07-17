@@ -270,3 +270,13 @@ The branch-widening is mechanically: replace `testPtr(fiber, TrustedImm32(isRope
 
 A unique 5-char Latin-1 string today costs ~48-64 B (16 B `JSString` + 32 B `StringImpl` rounded). Inline: 16 B. For the 1M-unique-short-string microbench, `heap/obj` was 61 B; that would drop to ~16 B (74%). In workloads dominated by short identifiers/tokens, string memory is typically 20-40% of heap, so the overall win scales with that fraction.
 
+## Change Set 5: Deduplicate `JSString` for Atom Strings
+
+`AtomString` interns the `StringImpl*` process-wide, but each `jsString(vm, s)` call still allocates a fresh 16-byte `JSString` wrapper. JSC already has two direct-mapped `JSString*` caches for specific paths (`vm.jsonAtomStringCache` and `vm.keyAtomStringCache`, each a 512-slot `std::array<JSString*, 512>` keyed by `hash % 512`), but the general `jsString(VM&, const String&)` / `jsString(VM&, String&&)` entry points used by host bindings do not consult them.
+
+Measured: `JSON.parse` of `{"m":"GET","s":"ok","t":"json"}` 100 000 times creates 4 `JSString` cells total (the cache works). `URLSearchParams::get()` returning the same value 100 000 times creates 100 000 `JSString` cells (it doesn't).
+
+**Change:** add an `AtomString` fast path to `jsString(VM&, ...)` (`JSString.h:985-1030`) that, when the incoming `StringImpl` is already atomic, indexes a `KeyAtomStringCache`-shaped array by `impl->existingHash() % capacity` and returns the cached `JSString*` on a pointer-equal hit. Atom strings already carry a computed hash, so the lookup is one masked index and one pointer compare; no hashing, no locking. The cache is per-`VM`, holds raw `JSString*`, and is cleared on every GC the same way the existing caches are (`KeyAtomStringCache::clear()` from `Heap::finalize`).
+
+**Effect:** eliminates duplicate `JSString` wrappers for repeated atom values returned from native code (`Request.method`, header lookups, URL component getters, enum-like string returns). 16 B per avoided duplicate; no JIT involvement; no behaviour change (returning an identical `JSString*` is unobservable since strings compare by value).
+

@@ -366,15 +366,18 @@ describe("Bun.wrapAnsi", () => {
   });
 
   describe("carriage return", () => {
-    // Only \n and \r\n break lines; a bare \r is ordinary zero-width content.
-    test.each([undefined, { hard: true }])("bare \\r is not a line break (%p)", options => {
+    // A bare \r breaks a line like \n does (each break is emitted as one \n).
+    // Claude Code's wrap-text maps wrapped output back onto the original
+    // string by relying on every \r becoming a break.
+    test.each([undefined, { hard: true }])("bare \\r is a line break (%p)", options => {
+      expect(Bun.wrapAnsi("AA\rBB\rCC", 100, options)).toBe("AA\nBB\nCC");
       expect(Bun.wrapAnsi("Downloading  40%\rDownloading 100% done, moving on to next step", 24, options)).toBe(
-        "Downloading\n40%\rDownloading 100%\ndone, moving on to next\nstep",
+        "Downloading  40%\nDownloading 100% done,\nmoving on to next step",
       );
     });
 
-    test("trailing bare \\r is kept", () => {
-      expect(Bun.wrapAnsi("abc\r", 10)).toBe("abc\r");
+    test("trailing bare \\r is a break to an empty final line", () => {
+      expect(Bun.wrapAnsi("abc\r", 10)).toBe("abc\n");
     });
 
     test("\\r\\n normalizes to \\n", () => {

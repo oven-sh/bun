@@ -645,9 +645,10 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
         return result.toString();
     }
 
-    // Process each line separately. Only \n breaks a line; a \r immediately
-    // before it is part of a \r\n pair and is dropped, while a bare \r is
-    // ordinary zero-width content (matches npm wrap-ansi).
+    // Process each line separately. \n, a bare \r and a \r\n pair each
+    // break a line and are emitted as one \n — callers (Claude Code's
+    // wrap-text) map wrapped output back to the original text by relying on
+    // every \r becoming a break.
     StringBuilder result;
     result.reserveCapacity(input.size() + input.size() / 10);
 
@@ -657,11 +658,14 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
 
     while (true) {
         auto remaining = std::span<const Char>(lineStart, dataEnd);
-        size_t nlPos = WTF::find(remaining, static_cast<Char>('\n'));
-        const Char* lineEnd = (nlPos == WTF::notFound) ? dataEnd : lineStart + nlPos;
-        const Char* contentEnd = lineEnd;
-        if (lineEnd != dataEnd && contentEnd > lineStart && *(contentEnd - 1) == '\r')
-            --contentEnd;
+        size_t brPos = WTF::notFound;
+        for (size_t k = 0; k < remaining.size(); ++k) {
+            if (remaining[k] == '\n' || remaining[k] == '\r') {
+                brPos = k;
+                break;
+            }
+        }
+        const Char* lineEnd = (brPos == WTF::notFound) ? dataEnd : lineStart + brPos;
 
         // Add newline between input lines
         if (!firstLine)
@@ -670,7 +674,7 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
 
         // Process this input line
         Vector<Row<Char>> lineRows;
-        processLine(lineStart, contentEnd, columns, options, lineRows);
+        processLine(lineStart, lineEnd, columns, options, lineRows);
 
         // Join and append this line's rows with ANSI preservation
         if (!lineRows.isEmpty()) {
@@ -679,7 +683,8 @@ static WTF::String wrapAnsiImpl(std::span<const Char> input, size_t columns, con
 
         if (lineEnd == dataEnd)
             break;
-        lineStart = lineEnd + 1;
+        // A \r\n pair is one break: step over both.
+        lineStart = (*lineEnd == '\r' && lineEnd + 1 != dataEnd && *(lineEnd + 1) == '\n') ? lineEnd + 2 : lineEnd + 1;
     }
 
     return result.toString();

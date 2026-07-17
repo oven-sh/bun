@@ -57,7 +57,7 @@ pub fn report_error_or_terminate(
         .expect("exception value must be an Exception cell");
     // `as_exception` returned a non-null cell pointer rooted on the VM;
     // `Exception` is an opaque ZST handle — safe deref (panics on null).
-    let _ = crate::js_global_object::report_uncaught_exception(
+    let _ = crate::vm::VirtualMachine::report_uncaught_exception(
         global,
         crate::Exception::opaque_ref(exc),
     );

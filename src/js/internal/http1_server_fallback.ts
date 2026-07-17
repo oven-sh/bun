@@ -412,6 +412,7 @@ function connectionListenerHTTP1(server, socket, options) {
       pendingUpgrade = null;
       socket.removeListener("data", onHttp1SocketData);
       socket.removeListener("error", onHttp1SocketErrorListener);
+      socket.removeListener("end", onHttp1SocketEnd);
       connections.delete(socket);
       try {
         parser.close();
@@ -430,13 +431,14 @@ function connectionListenerHTTP1(server, socket, options) {
   function onHttp1SocketErrorListener(err) {
     onHttp1SocketError(err, undefined);
   }
-  socket.on("data", onHttp1SocketData);
-  socket.on("error", onHttp1SocketErrorListener);
-  socket.once("end", function onHttp1SocketEnd() {
-    // Node's socketOnEnd: let llhttp detect a message cut short by EOF.
+  // Node's socketOnEnd: let llhttp detect a message cut short by EOF.
+  function onHttp1SocketEnd() {
     const ret = parser.finish();
     if (ret instanceof Error) onHttp1SocketError(ret, undefined);
-  });
+  }
+  socket.on("data", onHttp1SocketData);
+  socket.on("error", onHttp1SocketErrorListener);
+  socket.once("end", onHttp1SocketEnd);
   socket.once("close", () => {
     connections.delete(socket);
     try {

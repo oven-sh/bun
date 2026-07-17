@@ -3942,7 +3942,7 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     });
     const [clientSide, serverSide] = duplexPair();
     server.emit("connection", serverSide);
-    const out = await new Promise<string>(resolve => {
+    const out = await new Promise<string>((resolve, reject) => {
       let buf = "";
       let sentMore = false;
       clientSide.on("data", d => {
@@ -3953,6 +3953,8 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
         }
         if (buf.includes("TUNNEL:more")) resolve(buf);
       });
+      clientSide.on("error", reject);
+      clientSide.on("close", () => reject(new Error("closed before expected output: " + buf)));
       clientSide.write("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\nearly");
     });
     expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
@@ -3968,12 +3970,14 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     });
     const [clientSide, serverSide] = duplexPair();
     server.emit("connection", serverSide);
-    const out = await new Promise<string>(resolve => {
+    const out = await new Promise<string>((resolve, reject) => {
       let buf = "";
       clientSide.on("data", d => {
         buf += d;
         if (buf.includes("normal:")) resolve(buf);
       });
+      clientSide.on("error", reject);
+      clientSide.on("close", () => reject(new Error("closed before expected output: " + buf)));
       clientSide.write("GET / HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n");
     });
     expect(out).toContain("HTTP/1.1 200");

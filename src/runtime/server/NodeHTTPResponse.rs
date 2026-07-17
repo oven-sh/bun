@@ -2049,7 +2049,10 @@ impl NodeHTTPResponse {
 
     fn clear_on_data_callback(&self, this_value: JSValue, global_object: &JSGlobalObject) {
         scoped_log!(NodeHTTPResponse, "clearOnDataCallback");
-        self.armed_this_value.set(JSValue::ZERO);
+        // Clear on the wrapper that armed ondata (see on_data): the parameter may
+        // be the socket-current wrapper, which is a different pipelined response.
+        let armed = self.armed_this_value.replace(JSValue::ZERO);
+        let this_value = if armed.is_empty() { this_value } else { armed };
         if self.body_read_state.get() != BodyReadState::None {
             if !this_value.is_empty() {
                 js::on_data_set_cached(this_value, global_object, JSValue::UNDEFINED);

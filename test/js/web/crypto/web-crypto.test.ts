@@ -589,7 +589,11 @@ describe("X25519 JWK import", () => {
 // byte, so importing one as the other must report the type mismatch rather than
 // the generic "Invalid keyData" the prefix-only check gave.
 describe("OKP spki/pkcs8 cross-curve import", () => {
-  const rejection = (p: Promise<unknown>) => p.then(() => "imported", e => `${e.name}: ${e.message}`);
+  const rejection = (p: Promise<unknown>) =>
+    p.then(
+      () => "imported",
+      e => `${e.name}: ${e.message}`,
+    );
 
   it("Ed25519 key imported as X25519 reports 'Invalid key type'", async () => {
     const ed = await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"]);

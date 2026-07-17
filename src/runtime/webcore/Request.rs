@@ -588,7 +588,7 @@ impl Request {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: crate::vm::ConsoleFormatter,
+        F: crate::jsc_ext::ConsoleFormatter,
         W: core::fmt::Write,
     {
         // Return type narrowed to `core::fmt::Result` (matches
@@ -612,7 +612,7 @@ impl Request {
         {
             // RAII guard restores indent on every exit incl. `?` error paths.
             // Shadows `formatter` for the block; auto-derefs to `&mut F`.
-            let mut formatter = crate::vm::IndentScope::new(&mut *formatter);
+            let mut formatter = crate::jsc_ext::IndentScope::new(&mut *formatter);
 
             formatter.write_indent(writer)?;
             writer.write_str(
@@ -653,7 +653,7 @@ impl Request {
                 )?;
                 formatter
                     .print_as::<_, ENABLE_ANSI_COLORS>(
-                        crate::vm::FormatTag::Private,
+                        crate::jsc_ext::FormatTag::Private,
                         writer,
                         params_object,
                         bun_jsc::JSType::Object,
@@ -672,7 +672,7 @@ impl Request {
             let headers_js = self.get_headers(formatter.global_this()).map_err(js_err)?;
             formatter
                 .print_as::<_, ENABLE_ANSI_COLORS>(
-                    crate::vm::FormatTag::Private,
+                    crate::jsc_ext::FormatTag::Private,
                     writer,
                     headers_js,
                     bun_jsc::JSType::DOMWrapper,
@@ -706,7 +706,7 @@ impl Request {
                         formatter.write_indent(writer)?;
                         formatter
                             .print_as::<_, ENABLE_ANSI_COLORS>(
-                                crate::vm::FormatTag::Object,
+                                crate::jsc_ext::FormatTag::Object,
                                 writer,
                                 stream.value,
                                 stream.value.js_type(),

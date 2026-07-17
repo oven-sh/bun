@@ -1473,8 +1473,9 @@ describe("bun test", () => {
       stderr: "pipe",
     });
 
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout).toContain("exit handler ran");
+    expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(0);
   });
 
@@ -1494,7 +1495,8 @@ describe("bun test", () => {
       stderr: "pipe",
     });
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
     expect(stderr).toContain("1 pass");
     expect(exitCode).toBe(1);
   });

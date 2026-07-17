@@ -52,16 +52,19 @@ const kRunChildEnvValue = "child-v8";
 const kRunEventPrefix = "\0bun:test:run\0";
 
 class TestsStream extends (require("node:stream").Readable as typeof import("node:stream").Readable) {
-  #buffer: unknown[] = [];
+  #buffer;
   #canPush = true;
 
   constructor() {
     super({ objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
+    // $createFIFO cannot appear in a class-field initializer: the builtin
+    // bundler mis-emits the intrinsic there.
+    this.#buffer = $createFIFO();
   }
 
   _read() {
     this.#canPush = true;
-    while (this.#buffer.length > 0) {
+    while (!this.#buffer.isEmpty()) {
       const obj = this.#buffer.shift();
       if (!this.#tryPush(obj)) return;
     }
@@ -106,7 +109,7 @@ function validateAndCanonicalizeTagFilter(value: unknown, name: string) {
 function toRegExpPatterns(value: unknown, name: string) {
   const patterns = $isArray(value) ? value : [value];
   return patterns.map((entry: unknown, i: number) => {
-    if (entry instanceof RegExp) return entry;
+    if ($isRegExpObject(entry)) return entry;
     if (typeof entry === "string") return convertStringToRegExp(entry, `${name}[${i}]`);
     throw $ERR_INVALID_ARG_TYPE(`${name}[${i}]`, ["string", "RegExp"], entry);
   });
@@ -338,7 +341,10 @@ async function runOneFile(
 ) {
   const path = require("node:path");
   const absolute = path.resolve(opts.cwd as string, file);
-  const args = [process.execPath, "test", absolute, ...(opts.execArgv as string[]), ...(opts.argv as string[])];
+  // Node's getRunArgs builds [...execArgv, path, ...argv] so runtime flags land
+  // in the child's process.execArgv; bun's CLI likewise takes runtime flags
+  // before the `test` keyword and user args after the path.
+  const args = [process.execPath, ...(opts.execArgv as string[]), "test", absolute, ...(opts.argv as string[])];
   const fileStarted = Date.now();
   const fileCounts = makeRunCounts();
 

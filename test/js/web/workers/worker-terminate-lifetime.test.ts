@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -9,6 +9,14 @@ const slow = isDebug || isASAN;
 const rounds = slow ? 4 : 8;
 const perRound = slow ? 12 : 32;
 const timeout = slow ? 60_000 : 20_000;
+
+// The nested-worker tests spawn a full JSC VM per child; keep the counts
+// small so loaded ASAN CI runners stay well inside the timeout. The race
+// window (a child inside start_vm when the parent is terminated) spans the
+// whole child VM startup, so even this many children crashed the unfixed
+// build on every run.
+const nestedRounds = 3;
+const nestedPerRound = 6;
 
 // Regression: `new Worker(url, { ref: false })` was silently ignored — the
 // Zig-side `user_keep_alive` field was set from it but never read, and the
@@ -78,6 +86,126 @@ test(
     expect(stderr).toBe("");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// WebWorker::flush_logs re-enters JS to report any diagnostics left in the
+// worker VM's log, and its error arm was `panic!("unhandled exception")`.
+// worker.terminate() arms a TerminationException on that VM, so every JS entry
+// inside flush_logs (Error#toString) threw, and the panic aborted the whole
+// process. The malformed package.json next to the worker's entry point makes
+// entry-point resolution record a non-fatal diagnostic in vm.log (nothing ever
+// clears it), so the final flush_logs on the way out always hits this.
+test(
+  "terminate() while the worker has pending log diagnostics does not abort the process",
+  async () => {
+    using dir = tempDir("worker-terminate-flush-logs", {
+      "main.ts": `
+      const w = new Worker("./app/w.ts");
+      // entry-point resolution reports the malformed package.json as a
+      // (non-fatal) error event; the worker still loads and runs.
+      w.addEventListener("error", () => {});
+      await new Promise(resolve => w.addEventListener("message", resolve, { once: true }));
+      w.terminate();
+      await new Promise(resolve => w.addEventListener("close", resolve, { once: true }));
+      console.log("done");
+    `,
+      "app/package.json": "{invalid",
+      "app/w.ts": `postMessage("up");\nsetInterval(() => {}, 1000);\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // stderr is drained but not asserted: debug/sanitizer lanes may write to it.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("done\n");
+    expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 0, signalCode: null });
+  },
+  timeout,
+);
+
+// Regression: terminating a worker that had just spawned children of its own
+// freed its VirtualMachine in shutdown() while the children were still inside
+// start_vm() reading it (transform options, env clone, standalone graph) —
+// ASAN heap-use-after-free in VirtualMachine::init_worker. shutdown() now
+// terminates its children and waits for them to get past that access first.
+test(
+  "terminating a worker while its nested children are starting does not UAF",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const middleCode = \`
+          for (let j = 0; j < ${nestedPerRound}; j++) new Worker("data:text/javascript,");
+          postMessage("spawned");
+        \`;
+        for (let i = 0; i < ${nestedRounds}; i++) {
+          const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
+          await new Promise(resolve => (middle.onmessage = resolve));
+          // The children are still starting up on their own threads; this
+          // used to free the middle worker's VM out from under them.
+          await middle.terminate();
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // stderr is drained but not asserted: debug/sanitizer lanes may write to it.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 0, signalCode: null });
+  },
+  timeout,
+);
+
+// Regression: a child whose entry-point resolution fails (revoked blob URL)
+// while its termination is already in flight used to crash on the error
+// path: flush_logs panicked with "unhandled exception" on JsError::Terminated,
+// and the stale TerminationException tripped
+// ASSERT(vm.hasTerminationRequest()) in VMTraps::deferTerminationSlow.
+test(
+  "terminating a worker whose children fail entry resolution does not crash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const middleCode = \`
+          for (let j = 0; j < ${nestedPerRound}; j++) {
+            const blob = new Blob(["postMessage(1);"], { type: "application/javascript" });
+            const url = URL.createObjectURL(blob);
+            new Worker(url);
+            URL.revokeObjectURL(url);
+          }
+          postMessage("spawned");
+        \`;
+        for (let i = 0; i < ${nestedRounds}; i++) {
+          const middle = new Worker("data:text/javascript," + encodeURIComponent(middleCode));
+          await new Promise(resolve => (middle.onmessage = resolve));
+          await middle.terminate();
+        }
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // stderr is drained but not asserted: debug/sanitizer lanes may write to it.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, signalCode: proc.signalCode }).toEqual({ stdout: "", exitCode: 0, signalCode: null });
   },
   timeout,
 );

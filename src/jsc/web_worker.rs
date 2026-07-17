@@ -52,11 +52,13 @@
 //! main-thread analogue of Node's `Environment::stop_sub_worker_contexts()`.
 //!
 //! Known gap vs Node.js: the worker thread is detached, not joined, so
-//! `await worker.terminate()` resolves before the OS thread is fully gone;
-//! nested workers are not stopped when their WORKER parent's context tears
-//! down (only the main thread waits). When a parent context is gone before
-//! the close task posts, the thread-held `Worker` ref is intentionally
-//! leaked (see `Worker::dispatchExit`).
+//! `await worker.terminate()` resolves before the OS thread is fully gone.
+//! Nested workers ARE stopped when their WORKER parent tears down:
+//! `shutdown()` step 3.5 terminates and waits for them (the per-worker
+//! analogue of the main thread's `terminate_all_and_wait`), because children
+//! read the parent's `VirtualMachine` during `start_vm()`. When a parent
+//! context is gone before the close task posts, the thread-held `Worker` ref
+//! is intentionally leaked (see `Worker::dispatchExit`).
 
 use crate::JsCell;
 use core::cell::Cell;
@@ -86,9 +88,10 @@ pub struct WebWorker {
     /// Validity: when the parent is the main thread, `globalExit()` calls
     /// `terminateAllAndWait()` before freeing anything, so this stays valid
     /// through `startVM()` even with `{ref:false}`/`.unref()`. When the parent
-    /// is itself a worker, nothing joins us on its exit — the nested-worker
-    /// "Known gap" in the file header. When `parent_poll_ref` is held (the
-    /// default), the parent's loop stays alive until the close task runs.
+    /// is itself a worker, its `shutdown()` step 3.5 terminates us and waits
+    /// for our `unlink()` before freeing its VM, so this likewise stays valid
+    /// through `startVM()`. When `parent_poll_ref` is held (the default), the
+    /// parent's loop stays alive until the close task runs.
     // `BackRef` (not `&'a VirtualMachine`) because the struct is FFI-owned and
     // crosses threads; the backref invariant (parent outlives child via
     // `parent_poll_ref`) is documented above.
@@ -251,8 +254,16 @@ mod live_workers {
     pub(super) static HEAD: bun_core::AtomicCell<*mut WebWorker> =
         bun_core::AtomicCell::new(core::ptr::null_mut());
     /// Number of workers registered in `list`. Separate atomic so
-    /// `terminateAllAndWait` can futex-wait on it without the mutex.
+    /// `terminate_and_wait` can read it without the mutex.
     pub(super) static OUTSTANDING: AtomicU32 = AtomicU32::new(0);
+    /// Monotonic count of registry events (`register` + `mark_exited`); the
+    /// futex word `terminate_and_wait` sleeps on. Waiting on `OUTSTANDING`
+    /// itself would be ABA-prone: one exit plus one register in the gap
+    /// between a waiter's snapshot and its `Futex::wait` restores the exact
+    /// expected value while both wakes fire with no waiter queued, so the
+    /// wait sleeps through events it needed to re-sweep for. A value that
+    /// only increments cannot alias.
+    pub(super) static WAKE_SEQ: AtomicU32 = AtomicU32::new(0);
 
     pub(super) fn register(worker: *mut WebWorker) {
         MUTEX.lock();
@@ -272,10 +283,15 @@ mod live_workers {
         // OUTSTANDING==0 (A's unregister already ran, B's add hasn't), and
         // return early while B is still starting.
         OUTSTANDING.fetch_add(1, Ordering::Release);
-        // Wake terminateAllAndWait so it re-sweeps and catches this worker
-        // (it may have been created by another worker mid-sweep). No-op if
-        // nothing is waiting.
-        Futex::wake(&OUTSTANDING, 1);
+        // Wake every waiter so each re-sweeps and catches this worker (it may
+        // have been created by another worker mid-sweep). No-op if nothing is
+        // waiting. Wake-all, not wake-one: the main thread and any number of
+        // worker parents (`terminate_children_and_wait`) can wait
+        // concurrently, and a single wake can land on a waiter whose own
+        // condition is unmet, leaving the right one queued on a stale
+        // expected value until its deadline.
+        WAKE_SEQ.fetch_add(1, Ordering::Release);
+        Futex::wake(&WAKE_SEQ, u32::MAX);
         MUTEX.unlock();
     }
 
@@ -303,17 +319,19 @@ mod live_workers {
         MUTEX.unlock();
     }
 
-    /// Decrement `OUTSTANDING` and wake `terminate_all_and_wait`. Split from
-    /// `unlink` so `shutdown()` can defer it until after `dispatchExit` has
-    /// posted the close task — guaranteeing `global_exit` observes that task
-    /// before draining the parent's concurrent queue. Touches no `WebWorker`
-    /// state, so it is safe even if `self` has already been freed.
+    /// Decrement `OUTSTANDING` and wake every `terminate_and_wait` waiter.
+    /// Split from `unlink` so `shutdown()` can defer it until after
+    /// `dispatchExit` has posted the close task — guaranteeing `global_exit`
+    /// observes that task before draining the parent's concurrent queue.
+    /// Touches no `WebWorker` state, so it is safe even if `self` has
+    /// already been freed.
     pub(super) fn mark_exited() {
-        // Wake any waiter in terminateAllAndWait when we hit zero. Waking
-        // unconditionally is fine (spurious wakeups just re-check the
-        // counter) and avoids a compare-before-wake race.
+        // Waking unconditionally is fine (spurious wakeups just re-check the
+        // counter) and avoids a compare-before-wake race. Wake-all, not
+        // wake-one — see the note in `register`.
         OUTSTANDING.fetch_sub(1, Ordering::Release);
-        Futex::wake(&OUTSTANDING, 1);
+        WAKE_SEQ.fetch_add(1, Ordering::Release);
+        Futex::wake(&WAKE_SEQ, u32::MAX);
     }
 
     pub(super) fn unregister(worker: *const WebWorker) {
@@ -330,8 +348,7 @@ mod live_workers {
 /// `dir_cache` / `dirname_store` etc.
 ///
 /// This is the `Environment::stop_sub_worker_contexts()` equivalent for the
-/// main thread; nested workers (a worker's own sub-workers at the worker's
-/// exit) remain the documented gap.
+/// main thread; `terminate_children_and_wait` is the per-worker analogue.
 ///
 /// Termination is cooperative: `requested_terminate` is polled at
 /// checkpoints throughout `startVM()` and `spin()`, and for a running VM
@@ -340,21 +357,49 @@ mod live_workers {
 /// frozen mid-mimalloc-alloc or holding the `dir_cache` mutex would
 /// deadlock/corrupt the very cleanup we're trying to make safe.
 pub fn terminate_all_and_wait(timeout_ms: u64) {
+    terminate_and_wait(None, timeout_ms);
+}
+
+/// Request termination of every live worker whose parent VM is `parent_vm`
+/// and block until each has unlinked from the registry (in its `shutdown()`,
+/// past every read of the parent `VirtualMachine`), or `timeout_ms` elapses.
+///
+/// Called from `shutdown()` on an exiting WORKER thread before step 5 frees
+/// its `VirtualMachine`: children hold a `BackRef` to that VM and read it
+/// throughout `start_vm()` (transform options, env clone, standalone graph),
+/// so freeing it while a child is still starting would UAF. This is the
+/// per-worker analogue of `terminate_all_and_wait`, mirroring Node's
+/// `Environment::stop_sub_worker_contexts()`.
+fn terminate_children_and_wait(parent_vm: *mut VirtualMachine, timeout_ms: u64) {
+    terminate_and_wait(Some(parent_vm), timeout_ms);
+}
+
+fn terminate_and_wait(parent_filter: Option<*mut VirtualMachine>, timeout_ms: u64) {
     if live_workers::OUTSTANDING.load(Ordering::Acquire) == 0 {
         return;
     }
 
-    // Futex-wait on the counter so we sleep rather than burn a core. Each
-    // unregister() wakes us; we re-check and re-wait until zero or deadline.
-    // We re-sweep the list on EVERY iteration: a worker A that was mid-
-    // `WebWorker__create` for a nested worker B when we first swept will
-    // register B after we release the mutex, and B's `requested_terminate`
-    // was never set. Sweeping is O(outstanding) and `requested_terminate`
-    // is a swap, so re-sweeping already-terminated entries is cheap.
+    // Futex-wait on WAKE_SEQ so we sleep rather than burn a core. Each
+    // register()/mark_exited() wakes us; we re-check and re-wait until done
+    // or deadline. We re-sweep the list on EVERY iteration: a worker A that
+    // was mid-`WebWorker__create` for a nested worker B when we first swept
+    // will register B after we release the mutex, and B's
+    // `requested_terminate` was never set. Sweeping is O(outstanding) and
+    // `requested_terminate` is a swap, so re-sweeping already-terminated
+    // entries is cheap.
     let timer = std::time::Instant::now();
     let deadline_ns: u64 = timeout_ms * 1_000_000;
     loop {
+        // Live entries matching `parent_filter` seen in this sweep; the
+        // filtered wait exits when none remain (the caller is itself a
+        // registered worker, so OUTSTANDING never reaches zero for it).
+        let mut matching: usize = 0;
         live_workers::MUTEX.lock();
+        // Snapshot the futex word FIRST, before the condition inputs below
+        // (the sweep and the OUTSTANDING load): any event that invalidates
+        // those inputs bumps WAKE_SEQ afterwards, so Futex::wait sees a
+        // changed value instead of sleeping on a stale snapshot.
+        let seq = live_workers::WAKE_SEQ.load(Ordering::Acquire);
         // MUTEX held while walking the intrusive list; HEAD load is safe.
         let mut it = live_workers::HEAD.load();
         while let Some(nn) = NonNull::new(it) {
@@ -363,6 +408,12 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
             let w = bun_ptr::ParentRef::from(nn);
             // live_workers::MUTEX held; list links written only under it.
             it = w.live_next.get();
+            if let Some(parent_vm) = parent_filter {
+                if !core::ptr::eq(w.parent.as_ptr(), parent_vm) {
+                    continue;
+                }
+                matching += 1;
+            }
             if w.requested_terminate.swap(true, Ordering::Release) {
                 continue;
             }
@@ -383,18 +434,34 @@ pub fn terminate_all_and_wait(timeout_ms: u64) {
             }
             w.vm_lock.unlock();
         }
+        // Loaded under the mutex so an entry counted in `matching` cannot
+        // have unlinked yet; its `mark_exited()` (and WAKE_SEQ bump) is
+        // strictly after our `seq` snapshot.
+        let n = live_workers::OUTSTANDING.load(Ordering::Acquire);
         live_workers::MUTEX.unlock();
 
-        let n = live_workers::OUTSTANDING.load(Ordering::Acquire);
-        if n == 0 {
+        let done = match parent_filter {
+            // A child past `unlink()` no longer reads the parent VM, so
+            // list membership (not OUTSTANDING) is the filtered condition.
+            Some(_) => matching == 0,
+            None => n == 0,
+        };
+        if done {
             return;
         }
         let elapsed = u64::try_from(timer.elapsed().as_nanos()).unwrap_or(u64::MAX);
         if elapsed >= deadline_ns {
-            log!("terminateAllAndWait: timed out with {} outstanding", n);
+            match parent_filter {
+                Some(_) => log!(
+                    "terminateChildrenAndWait: timed out with {} matching ({} outstanding)",
+                    matching,
+                    n
+                ),
+                None => log!("terminateAllAndWait: timed out with {} outstanding", n),
+            }
             return;
         }
-        let _ = Futex::wait(&live_workers::OUTSTANDING, n, Some(deadline_ns - elapsed));
+        let _ = Futex::wait(&live_workers::WAKE_SEQ, seq, Some(deadline_ns - elapsed));
     }
 }
 
@@ -584,8 +651,10 @@ impl WebWorker {
         // Keep the parent's event loop alive until the close task releases this.
         // If the user passed `{ ref: false }` we skip — they've opted out of the
         // worker keeping the process alive. Exception: a nested worker (parent is
-        // itself a worker, not joined on exit) must hold the parent-loop keepalive
-        // regardless, because the child holds a non-owning `BackRef` to the parent VM.
+        // itself a worker) must hold the parent-loop keepalive regardless: the
+        // child holds a non-owning `BackRef` to the parent VM, and keeping the
+        // parent's loop alive avoids the child being terminated by the parent's
+        // natural exit (`shutdown()` step 3.5).
         if !default_unref || parent_ref.worker_ref().is_some() {
             // `worker` is a fresh heap allocation; not yet shared.
             // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
@@ -666,7 +735,8 @@ impl WebWorker {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         // A nested worker (parent is itself a worker) must keep the parent-loop
         // keepalive even on `.unref()`: the child holds a non-owning `BackRef` to
-        // the parent VM and worker parents aren't joined on exit.
+        // the parent VM, and keeping the parent's loop alive avoids the child
+        // being terminated by the parent's natural exit (`shutdown()` step 3.5).
         let parent_is_worker = this.parent.get().worker_ref().is_some();
         this.with_parent_poll_ref(|poll| {
             if value {
@@ -731,9 +801,8 @@ impl WebWorker {
         this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
     }
 
-    /// Non-owning back-reference to the parent VM. See field doc for validity
-    /// (`parent_poll_ref` keeps the parent loop alive until the close task
-    /// runs).
+    /// Non-owning back-reference to the parent VM. See the `parent` field doc
+    /// for validity.
     #[inline]
     pub fn parent_vm(&self) -> bun_ptr::BackRef<VirtualMachine> {
         self.parent
@@ -845,8 +914,10 @@ impl WebWorker {
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
 
-        // `parent` is a `BackRef` and outlives this worker while
-        // `parent_poll_ref` is held (see file header). The parent VM runs
+        // `parent` is a `BackRef` kept valid through `start_vm()`: the main
+        // thread's `globalExit()` and a worker parent's `shutdown()` step 3.5
+        // both terminate-and-wait for us before freeing the parent VM (see
+        // the `parent` field doc). The parent VM runs
         // concurrently on its own thread, so we must NOT materialise a
         // `&mut VirtualMachine` here — a
         // `&mut` would assert uniqueness we don't have. All uses
@@ -1213,6 +1284,12 @@ impl WebWorker {
     ///                                  `RefPtr<VM>`, see the `thread_main`
     ///                                  note); can re-enter via
     ///                                  finalizers, so must precede step 5.
+    ///   3.5 stop nested children     — terminate + wait for workers whose
+    ///                                  parent is OUR vm; they read it during
+    ///                                  `start_vm()`, so this must precede
+    ///                                  step 5 freeing the VM. After step 3 no
+    ///                                  JS runs here, so no new child can
+    ///                                  register and the sweep is complete.
     ///   4. `dispatchExit()`          — posts close task → parent releases
     ///                                  parent_poll_ref + thread-held Worker ref.
     ///                                  After this `this` may be freed at any time.
@@ -1255,8 +1332,12 @@ impl WebWorker {
             let vm = unsafe { &mut *vm_ptr };
             // terminate() set the JSC termination flag to interrupt running JS;
             // clear it so process.on('exit') handlers can run. teardownJSCVM
-            // re-sets it for the JSC VM teardown.
-            vm.jsc_vm().clear_has_termination_request();
+            // re-sets it for the JSC VM teardown. This clears the pending
+            // TerminationException too (not just the request): on_exit()
+            // re-enters JS, and a still-pending termination exception with the
+            // request cleared trips `ASSERT(vm.hasTerminationRequest())` in
+            // VMTraps::deferTerminationSlow.
+            JSGlobalObject::opaque_ref(vm.global).clear_termination_exception();
             vm.is_shutting_down = true;
             vm.on_exit();
             if let Some(hooks) = runtime_hooks() {
@@ -1325,6 +1406,21 @@ impl WebWorker {
         if !vm_ptr.is_null() {
             // SAFETY: `vm_ptr` was unpublished under `vm_lock`; sole owner, `destroy()` is below.
             unsafe { (*vm_ptr).uws_loop_mut().drain_closed_sockets() };
+        }
+
+        // ---- 3.5 Stop nested children ---------------------------------------
+        // Children hold a `BackRef` to OUR VirtualMachine and read it
+        // throughout their `start_vm()`; step 5 frees it. Terminate them and
+        // wait for each to unlink (past all parent-VM access) first. The
+        // filter skips our own (still-registered) entry: `self.parent` is the
+        // grandparent VM, never `vm_ptr`. The timeout is a should-never-happen
+        // fallback (a segment of start_vm() stalling >10s requires pathological
+        // load; it runs no user JS/FFI); hitting it falls through and
+        // reintroduces the UAF. The structural fix is to snapshot everything
+        // start_vm() needs by value in create() so the worker thread never
+        // dereferences the parent VM (follow-up: farm/81bc4778).
+        if !vm_ptr.is_null() {
+            terminate_children_and_wait(vm_ptr, 10_000);
         }
 
         // JSC is down; no more resolver/module-loader access past this point.
@@ -1459,7 +1555,24 @@ impl WebWorker {
         if vm_log.msgs.is_empty() {
             return;
         }
+        // terminate() raced this error path: the next JS entry re-arms the
+        // TerminationException from the still-set NeedTermination trap bit, so
+        // every call below would bail (reported as `JsError::Thrown`, not
+        // `Terminated`) and there is no point dispatching a late 'error' for a
+        // worker that is shutting down anyway. Keyed on the JSC request so the
+        // internal short-circuits that set only the atomic without arming the
+        // trap (start_vm's configure_defines failure, whose comment says
+        // "vm.log carries the error for flushLogs") still dispatch.
+        if self.has_requested_terminate() && vm.jsc_vm().has_termination_request() {
+            return;
+        }
         let global = vm.global();
+        // A termination that interrupted earlier JS leaves its
+        // TerminationException pending while JSC clears the termination
+        // request at VM-entry-scope exit; re-entering JS below in that state
+        // trips `ASSERT(vm.hasTerminationRequest())` in
+        // VMTraps::deferTerminationSlow. Clear the stale exception first.
+        global.clear_termination_exception();
         let result: jsc::JsResult<(JSValue, BunString)> = (|| {
             let err = vm_log.to_js(global, "Error in worker")?;
             let str = err.to_bun_string(global)?;
@@ -1468,7 +1581,26 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown | JsError::Terminated) => panic!("unhandled exception"),
+            Err(JsError::Terminated) => return,
+            Err(e @ JsError::Thrown) => {
+                // terminate() can also land mid-call above; re-check so the
+                // termination sentinel is never reported as an error.
+                if self.has_requested_terminate() {
+                    return;
+                }
+                // Converting the log to a JS error itself threw; report that
+                // exception rather than crashing.
+                if let Some(exc) = global
+                    .take_exception(e)
+                    .as_exception(global.vm().as_mut_ptr())
+                {
+                    let _ = jsc::js_global_object::report_uncaught_exception(
+                        global,
+                        jsc::Exception::opaque_ref(exc),
+                    );
+                }
+                return;
+            }
         };
         let mut str = bun_core::OwnedString::new(str);
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
@@ -1476,6 +1608,11 @@ impl WebWorker {
             WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
         });
         if let Err(e) = dispatch {
+            // terminate() can also land mid-dispatchError above; re-check so
+            // the termination sentinel is never reported as an error.
+            if self.has_requested_terminate() {
+                return;
+            }
             // `take_exception` on a `JsError` always returns an Exception
             // cell; None is unreachable. Do not silently drop the error.
             let exc = global

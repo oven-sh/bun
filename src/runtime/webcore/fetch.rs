@@ -4,6 +4,7 @@
 
 pub(crate) const FETCH_ERROR_NO_ARGS: &str = "fetch() expects a string but received no arguments.";
 pub(crate) const FETCH_ERROR_BLANK_URL: &str = "fetch() URL must not be a blank string.";
+pub(crate) const FETCH_ERROR_NO_HOSTNAME: &str = "fetch() URL must have a hostname.";
 pub(crate) const FETCH_ERROR_UNEXPECTED_BODY: &str =
     "fetch() request with GET/HEAD/OPTIONS method cannot have body.";
 pub(crate) const FETCH_ERROR_PROXY_UNIX: &str = "fetch() cannot use a proxy with a unix socket.";
@@ -293,7 +294,7 @@ pub(crate) fn bun_fetch_preconnect(
         return Err(global_object
             .err(
                 jsc::ErrorCode::INVALID_ARG_TYPE,
-                format_args!("{}", FETCH_ERROR_BLANK_URL),
+                format_args!("{}", FETCH_ERROR_NO_HOSTNAME),
             )
             .throw());
     }

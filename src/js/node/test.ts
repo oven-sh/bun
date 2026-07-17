@@ -487,11 +487,13 @@ function republishChildEvent(
     }
     // node carries the node kind on `details`, not on the event itself.
     const detailType = isSuite ? "suite" : "test";
-    if (data.error !== undefined) {
-      const error = new Error(data.error.message);
-      error.stack = data.error.stack;
-      if (data.error.code !== undefined) (error as any).code = data.error.code;
-      if (data.error.failureType !== undefined) (error as any).failureType = data.error.failureType;
+    const serialized = data.error;
+    if (serialized !== undefined) {
+      const { message, stack, code, failureType } = serialized;
+      const error = new Error(message);
+      error.stack = stack;
+      if (code !== undefined) (error as any).code = code;
+      if (failureType !== undefined) (error as any).failureType = failureType;
       data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType, error };
     } else {
       data.details = { __proto__: null, duration_ms: data.duration_ms, type: detailType };
@@ -560,6 +562,9 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
 // with the same shape as top-level tests. No-op outside a run() child.
 function reportNodeToRunParent(node: TestNode, startedAt: number) {
   if (!runChildReporterEnabled || node.isSuite) return;
+  const { skipped, todoFlag, expectFailure } = node;
+  // node reports the xfail label when there is one, otherwise `true`.
+  const xfail = !skipped && !todoFlag && expectFailure ? (expectFailure.label ?? true) : undefined;
   // node spreads a `directive` into the event: `skip: true` / `todo: true`, with
   // the other key absent entirely.
   emitRunChildEvent(node.passed ? "test:pass" : "test:fail", {
@@ -568,11 +573,9 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
     nesting: nestingOf(node),
     testNumber: 0,
     duration_ms: performance.now() - startedAt,
-    skip: node.skipped ? true : undefined,
-    todo: !node.skipped && node.todoFlag ? true : undefined,
-    // node reports the xfail label when there is one, otherwise `true`.
-    expectFailure:
-      !node.skipped && !node.todoFlag && node.expectFailure ? (node.expectFailure.label ?? true) : undefined,
+    skip: skipped ? true : undefined,
+    todo: !skipped && todoFlag ? true : undefined,
+    expectFailure: xfail,
     tags: node.tags,
     error: node.passed ? undefined : serializeRunError(node.error),
   });

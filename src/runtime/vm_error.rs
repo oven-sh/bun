@@ -15,7 +15,7 @@ pub enum Error {
     #[error(transparent)]
     Patch(#[from] bun_loop::patch::Error),
     #[error(transparent)]
-    Uws(#[from] bun_uws::Error),
+    Uws(#[from] bun_uws_sys::Error),
     #[error(transparent)]
     Watcher(#[from] bun_sys::watcher::Error),
 }

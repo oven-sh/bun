@@ -2278,6 +2278,29 @@ describe("open flag string validation matches node", () => {
     expect(existsSync(file)).toBe(false);
   });
 
+  it("rejects an options object as the flags argument across open, openSync and promises.open", async () => {
+    // Node has no options-object form for open(): the second argument is always
+    // the flags. A populated object must be rejected exactly like an empty one --
+    // bun used to read `.flags` off it and open the file instead. Only the code is
+    // asserted here: a populated object is rendered multi-line by the native error
+    // inspector, where node renders it on one line.
+    using dir = tempDir("fs-flags-object", { "existing.txt": "x" });
+    const file = join(String(dir), "existing.txt");
+    for (const flags of [{}, { flags: "r" }, { flags: "w", mode: 0o666 }]) {
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => openSync(file, flags)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      expect(() => fs.open(file, flags, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_VALUE");
+      // @ts-expect-error intentionally passing a bad flag type
+      await expect(promises.open(file, flags)).rejects.toMatchObject({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+      });
+    }
+    // The file must be untouched: the old behavior silently opened it.
+    expect(readFileSync(file, "utf8")).toBe("x");
+  });
+
   it("readFileSync and writeFileSync reject uppercase flag option", () => {
     using dir = tempDir("fs-flags-invalid-rw", { "f.txt": "x" });
     const file = join(String(dir), "f.txt");

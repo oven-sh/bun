@@ -244,8 +244,80 @@ pub struct QuicEndpoint {
     block_list_allow: Cell<bool>,
     pub(crate) event_loop_timer: JsCell<EventLoopTimer>,
     pending_endpoint_close: Cell<bool>,
+    /// Intrusive node on the loop's node:quic driver list; linked only while
+    /// this endpoint holds a socket. `us_nq_loop_flush_if_pending` runs the
+    /// process pass once per loop turn when `pending` is set.
+    nq_driver: JsCell<UsNqDriver>,
+    nq_registered: Cell<bool>,
+    /// Set while the pass runs from the microtask drain: session Closed events
+    /// are requeued for the next loop point instead of dispatching mid-chain.
+    pub(super) defer_closes: Cell<bool>,
+    /// Native-entry depth, node's Session::SendPendingDataScope. Non-zero means
+    /// a native callback (on_data, the timer) is on the stack and owns the
+    /// flush when it unwinds -- JS it dispatches (onSessionNew and friends) must
+    /// not re-enter lsquic mid-callback, which is why `processing` alone is not
+    /// enough: on_data announces to JS *before* it feeds packets.
+    send_scope_depth: Cell<u32>,
 
     global: Cell<*const JSGlobalObject>,
+}
+
+/// Mirrors `struct us_nq_driver_s` in node_quic_shim.c.
+#[repr(C)]
+pub(crate) struct UsNqDriver {
+    next: *mut UsNqDriver,
+    owner: *mut c_void,
+    pending: c_int,
+}
+
+impl Default for UsNqDriver {
+    fn default() -> Self {
+        Self { next: null_mut(), owner: null_mut(), pending: 0 }
+    }
+}
+
+unsafe extern "C" {
+    fn us_nq_loop_register(loop_: *mut c_void, d: *mut UsNqDriver, owner: *mut c_void);
+    fn us_nq_loop_unregister(loop_: *mut c_void, d: *mut UsNqDriver);
+}
+
+/// One process pass per loop turn (loop_pre/loop_post/microtask drain): the
+/// writes a JS turn queued leave as one engine pass and one sendmmsg batch.
+/// The send scope keeps nested loop ticks from re-entering lsquic mid-call.
+/// The microtask-drain pass: full processing, but session close events hold
+/// until the next loop point so a running microtask chain never observes a
+/// session ending mid-chain (node's loop never interleaves that way).
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
+    // SAFETY: as in Bun__nodeQuic__processEndpoint below.
+    let this = unsafe { &*owner.cast::<QuicEndpoint>() };
+    if this.closed.get() || this.send_scope_depth.get() != 0 {
+        return;
+    }
+    let global_ptr = this.global.get();
+    if global_ptr.is_null() {
+        return;
+    }
+    this.defer_closes.set(true);
+    // SAFETY: as in `on_data`.
+    this.process(unsafe { &*global_ptr });
+    this.defer_closes.set(false);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
+    // SAFETY: registered by `ensure_bound`, unregistered by `release_native`
+    // before the endpoint can be freed.
+    let this = unsafe { &*owner.cast::<QuicEndpoint>() };
+    if this.closed.get() || this.send_scope_depth.get() != 0 {
+        return;
+    }
+    let global_ptr = this.global.get();
+    if global_ptr.is_null() {
+        return;
+    }
+    // SAFETY: as in `on_data`.
+    this.process(unsafe { &*global_ptr });
 }
 
 bun_event_loop::impl_timer_owner!(QuicEndpoint; from_timer_ptr => event_loop_timer);
@@ -331,6 +403,9 @@ extern "C" fn on_data(
     // global outlives every live endpoint.
     let global = unsafe { &*global_ptr };
     let local = this.local_addr.get();
+    // This callback dispatches JS (provisional announce) before it feeds
+    // packets; hold the send scope so that JS cannot flush lsquic underneath us.
+    this.send_scope_depth.set(this.send_scope_depth.get() + 1);
     bun_boringssl_sys::ERR_clear_error();
     for i in 0..packets {
         let payload = uws::udp::PacketBuffer::opaque_mut(buf).get_payload(i);
@@ -488,7 +563,11 @@ extern "C" fn on_data(
             }
         }
     }
+    // Keep the scope through the tail pass: a graceful close a handler queued
+    // during this dispatch must not join the same flight as the data the
+    // handlers wrote (sessions stash it; the next depth-0 pass applies it).
     this.process(global);
+    this.send_scope_depth.set(this.send_scope_depth.get() - 1);
 }
 
 lsquic_callback! {
@@ -505,13 +584,39 @@ lsquic_callback! {
             let idx = v.iter().position(|p| p.peer.decode() == peer_decoded);
             idx.map(|i| v.remove(i).session)
         });
+        /// Bit 63 marks "the peer sent its own CONNECTION_CLOSE" (QUIC codes
+        /// fit in 62 bits); the low bits carry the peer's code. See the
+        /// connection-close-pns lsquic patch.
+        const PEER_CLOSE_BIT: u64 = 1 << 63;
         if let Some(session) = failed {
             if let Some(session) = this.live_session(session) {
-                let code = if error_code == 0 {
-                    CRYPTO_ERROR_HANDSHAKE_FAILURE
-                } else {
-                    error_code
-                };
+                if error_code & PEER_CLOSE_BIT != 0 {
+                    // Not a failure: the client closed during the handshake
+                    // (connect() then immediate close()). Report the peer's
+                    // own code so `closed` settles the way node's does.
+                    session.push_event(session::SessionEvent::PeerClose {
+                        app_error: false,
+                        code: error_code & !PEER_CLOSE_BIT,
+                        reason: Vec::new(),
+                    });
+                    session.push_event(session::SessionEvent::Closed);
+                    session.schedule_process();
+                    return;
+                }
+                if error_code == 0 {
+                    // The peer went away without a frame (destroyed client,
+                    // dropped packets): node's server surfaces the idle death
+                    // of a handshaking session as a clean close, not an error.
+                    session.push_event(session::SessionEvent::PeerClose {
+                        app_error: false,
+                        code: 0,
+                        reason: Vec::new(),
+                    });
+                    session.push_event(session::SessionEvent::Closed);
+                    session.schedule_process();
+                    return;
+                }
+                let code = error_code;
                 let reason: &[u8] = if code == CRYPTO_ERROR_NO_APPLICATION_PROTOCOL {
                     b"no application protocol"
                 } else {
@@ -981,6 +1086,10 @@ impl QuicEndpoint {
                 EventLoopTimerTag::QuicEndpoint,
             )),
             pending_endpoint_close: Cell::new(false),
+            nq_driver: JsCell::new(UsNqDriver::default()),
+            nq_registered: Cell::new(false),
+            defer_closes: Cell::new(false),
+            send_scope_depth: Cell::new(0),
             global: Cell::new(core::ptr::from_ref(global)),
         };
         let raw = bun_core::heap::into_raw(Box::new(this));
@@ -1176,6 +1285,19 @@ impl QuicEndpoint {
             Some(&mut err),
             core::ptr::from_ref(self).cast_mut().cast::<c_void>(),
         );
+        if !socket.is_null() && !self.nq_registered.replace(true) {
+            // Linked only while we hold a socket, so an idle endpoint costs
+            // the loop nothing.
+            // SAFETY: the node lives in `self`; `release_native` unlinks it
+            // before anything can free the endpoint.
+            unsafe {
+                us_nq_loop_register(
+                    uws::Loop::get().cast(),
+                    self.nq_driver.as_ptr(),
+                    core::ptr::from_ref(self).cast_mut().cast(),
+                )
+            };
+        }
         if socket.is_null() {
             self.this_value
                 .with_mut(|r| r.set_strong(this_value, global));
@@ -1232,6 +1354,16 @@ impl QuicEndpoint {
         if self.processing.replace(true) {
             return;
         }
+        // A depth-0 pass runs after the previous flight left the socket: safe
+        // point for graceful closes stashed during a dispatch.
+        if self.send_scope_depth.get() == 0 {
+            for session in self.sessions.get().clone() {
+                if let Some(session) = self.live_session(session) {
+                    session.flush_pending_graceful();
+                }
+            }
+        }
+        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         self.followup_due.set(false);
         for session in self.sessions.get().clone() {
             if let Some(session) = self.live_session(session) {
@@ -1312,6 +1444,7 @@ impl QuicEndpoint {
         {
             self.finish_close();
         }
+        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
     }
 
     fn engine_conn_count(&self) -> u32 {
@@ -1325,11 +1458,29 @@ impl QuicEndpoint {
         n
     }
 
+    /// Whether a native dispatch (on_data, process) is on the stack.
+    pub(super) fn scope_held(&self) -> bool {
+        self.send_scope_depth.get() != 0
+    }
+
     pub(super) fn schedule_process(&self) {
         if self.closed.get() {
             return;
         }
         self.followup_due.set(true);
+        // Flush at the outermost native exit, node's SendPendingDataScope:
+        // wire timing is contract -- a response written in a handler must
+        // leave before the close a later handler queues, or the peer sees
+        // GOAWAY/CONNECTION_CLOSE coalesced ahead of data (lsquic gives the
+        // control stream priority within a flight).
+        if self.send_scope_depth.get() == 0 {
+            self.drive_engines_once();
+        }
+        // The loop driver dispatches the events the flush queued at the next
+        // loop point (no 1ms timer wait); the timer below stays as backstop
+        // for lsquic's time-driven state (RTO, ACK delay, idle) and the
+        // deferred endpoint close.
+        self.nq_driver.with_mut(|d| d.pending = 1);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
         timer_all().update(self.event_loop_timer.as_ptr(), &next);
     }
@@ -1622,6 +1773,7 @@ impl QuicEndpoint {
         if self.processing.replace(true) {
             return;
         }
+        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         bun_boringssl_sys::ERR_clear_error();
         for engine in [self.server_engine.get(), self.client_engine.get()] {
             if !engine.is_null() {
@@ -1634,6 +1786,7 @@ impl QuicEndpoint {
                 }
             }
         }
+        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
         self.processing.set(false);
     }
 
@@ -1759,6 +1912,11 @@ impl QuicEndpoint {
     fn release_native(&self) -> bool {
         if self.closed.replace(true) {
             return false;
+        }
+        if self.nq_registered.replace(false) {
+            // Unlink first: the driver walk must never reach a freed endpoint.
+            // SAFETY: registered by `ensure_bound` on this same loop.
+            unsafe { us_nq_loop_unregister(uws::Loop::get().cast(), self.nq_driver.as_ptr()) };
         }
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
@@ -2033,6 +2191,9 @@ impl QuicEndpoint {
             Some(b) if !b.is_empty() => (b.as_ptr(), b.len()),
             _ => (null(), 0),
         };
+        // engine_connect fires on_new_conn synchronously; hold the scope so a
+        // schedule_process from inside it cannot re-enter the engine.
+        self.send_scope_depth.set(self.send_scope_depth.get() + 1);
         // SAFETY: engine is live; local/remote/sni/resume are valid for this
         // call (lsquic copies the resume blob); `session` is the
         // heap-allocated conn-ctx.
@@ -2057,6 +2218,7 @@ impl QuicEndpoint {
                 0,
             )
         };
+        self.send_scope_depth.set(self.send_scope_depth.get() - 1);
         if conn.is_null() {
             // SAFETY: `session` was just created and nothing else owns it.
             unsafe { (*session).teardown(global) };

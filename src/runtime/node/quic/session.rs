@@ -362,6 +362,11 @@ pub struct QuicSession {
     origin_buf: JsCell<Vec<u8>>,
     deferred_aborts: JsCell<Vec<DeferredAbort>>,
     write_marker: Cell<u64>,
+    /// A graceful close requested while a dispatch was on the stack: applied
+    /// on the next depth-0 pass so its GOAWAY/CONNECTION_CLOSE does not share
+    /// a flight with data written by the same dispatch (node's close lands an
+    /// RTT after the data because its stream close is ack-gated).
+    pending_graceful: JsCell<Option<(bool, u64, Vec<u8>)>>,
     pub(super) verneg: Cell<Option<(u32, u32)>>,
     peer_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
     self_close: JsCell<Option<(bool, u64, Vec<u8>)>>,
@@ -411,6 +416,7 @@ impl QuicSession {
             origin_buf: JsCell::new(Vec::new()),
             deferred_aborts: JsCell::new(Vec::new()),
             write_marker: Cell::new(0),
+            pending_graceful: JsCell::new(None),
             verneg: Cell::new(None),
             peer_close: JsCell::new(None),
             self_close: JsCell::new(None),
@@ -869,6 +875,12 @@ impl QuicSession {
         // and then touches `self` again to re-arm the timer.
         let _keep_alive = Strong::create(self.handle(), global);
         self.deliver_pending_tickets(global);
+        // Whether this pass already ran user-visible JS. node guarantees at
+        // least one microtask window between a session's lifecycle events and
+        // its close (its packet processing dispatches them separately); the
+        // loop driver can batch a whole exchange into one pass, so a Closed
+        // that follows other dispatch in the same batch is deferred one turn.
+        let mut dispatched_js = false;
         loop {
             let Some(event) = self.events.with_mut(|e| {
                 if e.is_empty() {
@@ -879,6 +891,25 @@ impl QuicSession {
             }) else {
                 break;
             };
+            let endpoint = self.endpoint.get();
+            // SAFETY: teardown clears `endpoint` before the endpoint can die.
+            let defer_closes = !endpoint.is_null() && unsafe { (*endpoint).defer_closes.get() };
+            if (dispatched_js || defer_closes)
+                && matches!(
+                    event,
+                    SessionEvent::Closed | SessionEvent::GoawayReceived
+                )
+            {
+                self.events.with_mut(|e| e.insert(0, event));
+                self.schedule_process();
+                break;
+            }
+            if !matches!(
+                event,
+                SessionEvent::PeerClose { .. } | SessionEvent::Closed
+            ) {
+                dispatched_js = true;
+            }
             if self.destroyed.get() {
                 break;
             }
@@ -909,9 +940,20 @@ impl QuicSession {
                                     match ev {
                                         SessionEvent::StreamReady { .. }
                                         | SessionEvent::Datagram { .. } => return false,
-                                        SessionEvent::PeerClose { .. } | SessionEvent::Closed => {
-                                            return true;
+                                        // A refusal (transport error) in the same
+                                        // batch means the server never accepted
+                                        // this connection, so `opened` must not
+                                        // settle. A clean or application-level
+                                        // close is a server that accepted and
+                                        // then closed: report the handshake
+                                        // first, as node does -- the loop driver
+                                        // batches more events per pass than the
+                                        // old timer did, so both closes now land
+                                        // in the same batch as the confirmation.
+                                        SessionEvent::PeerClose { app_error, code, .. } => {
+                                            return !*app_error && *code != 0;
                                         }
+                                        SessionEvent::Closed => return true,
                                         _ => {}
                                     }
                                 }
@@ -1766,6 +1808,34 @@ impl QuicSession {
         Ok((app, code, reason))
     }
 
+    pub(super) fn apply_graceful_close(&self, app: bool, code: u64, reason: Vec<u8>) {
+        let is_http = self
+            .endpoint_ref()
+            .map(|ep| ep.is_http(self.is_server.get()))
+            .unwrap_or(false);
+        if is_http && !app && code == 0 && !self.streams.get().is_empty() {
+            // RFC 9114 §5.2.
+            if let Some(c) = self.conn() {
+                c.going_away();
+            }
+            self.close_after_streams.set(true);
+            self.deferred_close
+                .with_mut(|d| *d = Some((app, code, reason)));
+        } else if self.any_stream_undelivered() {
+            self.deferred_close
+                .with_mut(|d| *d = Some((app, code, reason)));
+        } else {
+            self.apply_close(app, code, &reason);
+        }
+    }
+
+    /// Applies a graceful close stashed while a dispatch was on the stack.
+    pub(super) fn flush_pending_graceful(&self) {
+        if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
+            self.apply_graceful_close(app, code, reason);
+        }
+    }
+
     fn apply_close(&self, app: bool, code: u64, reason: &[u8]) {
         let Some(c) = self.conn() else { return };
         if app || code != 0 || reason.len() > 1 {
@@ -1822,23 +1892,14 @@ impl QuicSession {
             } else {
                 let (app, code, reason) =
                     self.parse_close_options(global, frame.arguments_as_array::<1>()[0])?;
-                let is_http = self
+                let scope_held = self
                     .endpoint_ref()
-                    .map(|ep| ep.is_http(self.is_server.get()))
-                    .unwrap_or(false);
-                if is_http && !app && code == 0 && !self.streams.get().is_empty() {
-                    // RFC 9114 §5.2.
-                    if let Some(c) = self.conn() {
-                        c.going_away();
-                    }
-                    self.close_after_streams.set(true);
-                    self.deferred_close
-                        .with_mut(|d| *d = Some((app, code, reason)));
-                } else if self.any_stream_undelivered() {
-                    self.deferred_close
-                        .with_mut(|d| *d = Some((app, code, reason)));
+                    .is_some_and(|ep| ep.scope_held());
+                if scope_held {
+                    self.pending_graceful
+                        .with_mut(|p| *p = Some((app, code, reason)));
                 } else {
-                    self.apply_close(app, code, &reason);
+                    self.apply_graceful_close(app, code, reason);
                 }
                 self.schedule_process();
             }

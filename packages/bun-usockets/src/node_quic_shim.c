@@ -1,3 +1,4 @@
+#include "internal/internal.h"
 #include "lsquic.h"
 #include "lsxpack_header.h"
 #include <openssl/ssl.h>
@@ -529,3 +530,70 @@ void us_nq_stream_reset(lsquic_stream_t *s, uint64_t code) {
     /* RFC 9000 §3.1 allows RST in Data Sent state. */
     lsquic_stream_force_reset_ext(s, code);
 }
+
+/* ───── node:quic loop driver ─────
+ *
+ * The corking model quic.c uses for Bun.serve's HTTP/3 listener: JS calls mark
+ * the endpoint pending, and one process pass runs per loop turn from
+ * loop_pre/loop_post (and the microtask drain), so a burst of writes becomes
+ * one engine pass and one sendmmsg batch instead of one per call.
+ */
+
+struct us_nq_driver_s {
+    struct us_nq_driver_s *next;
+    void *owner;
+    int pending;
+};
+
+/* endpoint.rs: the full process pass (engines + event dispatch). */
+extern void Bun__nodeQuic__processEndpoint(void *owner);
+
+void us_nq_loop_register(struct us_loop_t *loop, struct us_nq_driver_s *d,
+                         void *owner) {
+    d->owner = owner;
+    d->pending = 0;
+    d->next = loop->data.nq_head;
+    loop->data.nq_head = d;
+}
+
+void us_nq_loop_unregister(struct us_loop_t *loop, struct us_nq_driver_s *d) {
+    struct us_nq_driver_s **pp = &loop->data.nq_head;
+    while (*pp) {
+        if (*pp == d) { *pp = d->next; d->next = NULL; return; }
+        pp = &(*pp)->next;
+    }
+}
+
+/* endpoint.rs: full pass, but session close events are held for the next
+ * loop point -- dispatching a close in the middle of a running microtask
+ * chain is an interleaving node never produces. */
+extern void Bun__nodeQuic__drainEndpoint(void *owner);
+
+/* Runs from the microtask drain: keeps the chain's packets and non-close
+ * events moving without ending sessions mid-chain. */
+void us_nq_loop_drain(struct us_loop_t *loop) {
+    struct us_nq_driver_s *d = loop->data.nq_head;
+    while (d) {
+        struct us_nq_driver_s *next = d->next;
+        if (d->pending) {
+            d->pending = 0;
+            if (d->owner) Bun__nodeQuic__drainEndpoint(d->owner);
+        }
+        d = next;
+    }
+}
+
+void us_nq_loop_flush_if_pending(struct us_loop_t *loop) {
+    struct us_nq_driver_s *d = loop->data.nq_head;
+    while (d) {
+        /* The pass runs JS, which can destroy the endpoint and unlink `d`;
+         * take the successor first. */
+        struct us_nq_driver_s *next = d->next;
+        if (d->pending) {
+            d->pending = 0;
+            if (d->owner) Bun__nodeQuic__processEndpoint(d->owner);
+        }
+        d = next;
+    }
+}
+

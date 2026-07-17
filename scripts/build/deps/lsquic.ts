@@ -122,6 +122,11 @@ export const lsquic: Dependency = {
     // send_packets_out() leaked every packet already coalesced into the
     // current out_spec when encrypting a later one failed.
     "patches/lsquic/coalesce-batch-drop.patch",
+    // generate_connection_close_packet always used PNS_APP (upstream FIXME);
+    // pre-handshake there are no 1-RTT keys, so the CONNECTION_CLOSE could
+    // never be encrypted and the peer idled out instead of learning of the
+    // close. Select the PNS by handshake progress, as ngtcp2 does.
+    "patches/lsquic/connection-close-pns.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

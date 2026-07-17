@@ -2279,11 +2279,8 @@ describe("open flag string validation matches node", () => {
   });
 
   it("rejects an options object as the flags argument across open, openSync and promises.open", async () => {
-    // Node has no options-object form for open(): the second argument is always
-    // the flags. A populated object must be rejected exactly like an empty one --
-    // bun used to read `.flags` off it and open the file instead. Only the code is
-    // asserted here: a populated object is rendered multi-line by the native error
-    // inspector, where node renders it on one line.
+    // Only the code is asserted: a populated object is rendered multi-line by the
+    // native error inspector, where node renders it on one line.
     using dir = tempDir("fs-flags-object", { "existing.txt": "x" });
     const file = join(String(dir), "existing.txt");
     for (const flags of [{}, { flags: "r" }, { flags: "w", mode: 0o666 }]) {

@@ -507,6 +507,25 @@ async function runTests() {
   // don't run docker tests. Lifetime is tied to this process via the stdin
   // pipe.
   if (isCI && isLinux && spawnSync("docker", ["compose", "version"], { stdio: "ignore" }).status === 0) {
+    // On openrc hosts (alpine) the buildkite-agent service historically did
+    // not depend on docker, so on a cold boot the agent can accept a job
+    // before dockerd is listening: the `--- Docker` section above routinely
+    // prints "failed to connect to /var/run/docker.sock" on every alpine
+    // shard, and the coordinator's one-shot `docker version` then races it by
+    // a handful of seconds. Poll for the daemon briefly so the coordinator's
+    // prestart does not fire before the socket exists. If the daemon never
+    // comes up (bad VM boot) we fall through after the budget and
+    // container-backed tests fail loudly, which is the intended signal from
+    // isDockerEnabled().
+    const dockerDaemonUp = () => spawnSync("docker", ["version"], { stdio: "ignore" }).status === 0;
+    if (!dockerDaemonUp()) {
+      console.log("Docker daemon not reachable yet; waiting up to 30s for it...");
+      for (let i = 0; i < 30 && !dockerDaemonUp(); i++) {
+        await setTimeoutPromise(1000);
+      }
+      console.log("Docker daemon:", dockerDaemonUp() ? "ready" : "still unreachable after 30s");
+    }
+
     const coordinatorSocket = join(tmpdir(), `bun-docker-${process.pid}.sock`);
     const coordinator = spawn(execPath, [join(cwd, "test", "docker", "coordinator.ts"), ...tests], {
       stdio: ["pipe", "pipe", "inherit"],

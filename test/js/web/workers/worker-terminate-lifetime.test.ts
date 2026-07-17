@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux } from "harness";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
 // tests spawn many workers, so scale iteration counts and timeouts down.
@@ -116,6 +116,68 @@ test(
     expect(stderr).toBe("");
     expect(stdout).toBe("");
     expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// Regression: ErrorCodeCache::createError caught an exception thrown during
+// ErrorInstance::create and returned uncheckedDowncast<JSObject>(value). A
+// TerminationException's value is the JSString "JavaScript execution
+// terminated.", so the cast tripped reportZappedCellAndCrash in debug
+// builds. Triggered by a worker running the completion of a thread-pool job
+// (Bun.secrets rejection → Secrets::Error::toJS → createError) after the
+// parent called terminate() and the VM termination trap was armed.
+//
+// Debug-only: reportZappedCellAndCrash is gated on ASSERT_ENABLED, and on
+// release builds worker shutdown outruns the fast-failing secrets jobs so
+// the separate work-pool → freed-VM race tracked in #32071 fires instead.
+// Linux-only: on macOS and Windows Bun.secrets.get for a missing item
+// resolves with null (NotFound) and never reaches createError; on Linux
+// without libsecret it rejects with ERR_SECRETS_PLATFORM_ERROR.
+test.skipIf(!isLinux || !isDebug)(
+  "creating a coded error while a TerminationException is pending does not crash",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Bun.secrets.get rejects on the worker thread with a coded error
+        // built via ErrorCodeCache::createError. Queue enough jobs that
+        // some completions land after the termination trap is set.
+        const body = \`
+          for (let i = 0; i < 200; i++) {
+            Bun.secrets.get({ service: "bun-test-worker-termination-" + i, name: "x" }).catch(() => {});
+          }
+          self.postMessage(0);
+        \`;
+        for (let round = 0; round < ${slow ? 3 : 6}; round++) {
+          const w = new Worker("data:application/javascript," + encodeURIComponent(body));
+          await new Promise((resolve, reject) => {
+            w.onmessage = () => resolve();
+            w.onerror = e => reject(e.error ?? e.message ?? e);
+          });
+          w.terminate();
+          await new Promise(r => w.addEventListener("close", r, { once: true }));
+        }
+        console.log("OK");
+      `,
+      ],
+      // Leak detection disabled for this subprocess: work-pool completions
+      // that re-queue onto the worker's concurrent queue after its last
+      // tick leak their ConcurrentTask / AnyTaskJob boxes until #32071
+      // lands. The regression under test is a crash, not a leak, so ASAN's
+      // UAF detection stays on.
+      env: {
+        ...bunEnv,
+        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "OK\n", stderr: "", exitCode: 0 });
   },
   timeout,
 );

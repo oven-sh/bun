@@ -208,11 +208,17 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     auto* structure = uncheckedDowncast<Structure>(cache->internalField(static_cast<unsigned>(code)).get());
     auto* created_error = JSC::ErrorInstance::create(globalObject, structure, message, options, nullptr, JSC::RuntimeType::TypeNothing, data.type, true);
     if (auto* thrown_exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        // TODO investigate what can throw here and whether it will throw non-objects
-        // (this is better than before where we would have returned nullptr from createError if any
-        // exception were thrown by ErrorInstance::create)
-        return uncheckedDowncast<JSObject>(thrown_exception->value());
+        // ErrorInstance::create can re-enter JS (message.toWTFString,
+        // options.cause getter, stack capture). If that threw an object,
+        // clear it and hand the object back as the error to throw.
+        // Otherwise (TerminationException, whose value is a JSString, or a
+        // primitive thrown from coercion) leave the exception pending so
+        // the caller's RETURN_IF_EXCEPTION observes it; `created_error` is
+        // nullptr when the throw happened before the instance allocated.
+        JSValue value = thrown_exception->value();
+        if (value.isObject() && scope.tryClearException())
+            return asObject(value);
+        return nullptr;
     }
     return created_error;
 }
@@ -1903,6 +1909,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         RETURN_IF_EXCEPTION(scope, {});
         auto message = makeString("Invalid address family: "_s, str0, " "_s, str1, ":"_s, str2);
         auto err = createError(globalObject, ErrorCode::ERR_INVALID_ADDRESS_FAMILY, message);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, builtinNames(vm).hostPublicName(), arg1, 0);
         err->putDirect(vm, builtinNames(vm).portPublicName(), arg2, 0);
         return JSC::JSValue::encode(err);
@@ -2260,6 +2267,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto arg2 = callFrame->argument(3);
         auto message = makeString("Hostname/IP does not match certificate's altnames: "_s, str0);
         auto err = createError(globalObject, ErrorCode::ERR_TLS_CERT_ALTNAME_INVALID, message);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, Identifier::fromString(vm, "reason"_s), arg0);
         err->putDirect(vm, Identifier::fromString(vm, "host"_s), arg1);
         err->putDirect(vm, Identifier::fromString(vm, "cert"_s), arg2);
@@ -2349,6 +2357,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         auto arg1 = callFrame->argument(2);
         // Don't include URL in message. (See https://github.com/nodejs/node/pull/38614)
         auto err = createError(globalObject, ErrorCode::ERR_INVALID_URL, "Invalid URL"_s);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, vm.propertyNames->input, arg0);
         if (!arg1.isUndefinedOrNull()) err->putDirect(vm, Identifier::fromString(vm, "base"_s), arg1);
         return JSC::JSValue::encode(err);
@@ -2529,6 +2538,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     case ErrorCode::ERR_SSL_NO_CIPHER_MATCH: {
         auto err = createError(globalObject, ErrorCode::ERR_SSL_NO_CIPHER_MATCH, "No cipher match"_s);
+        RETURN_IF_EXCEPTION(scope, {});
         err->putDirect(vm, Identifier::fromString(vm, "reason"_s), jsString(vm, WTF::String("no cipher match"_s)));
         err->putDirect(vm, Identifier::fromString(vm, "library"_s), jsString(vm, WTF::String("SSL routines"_s)));
         return JSC::JSValue::encode(err);

@@ -1872,7 +1872,8 @@ export class VerdaccioRegistry {
 
   stop() {
     rmSync(join(dirname(this.configPath), "htpasswd"), { force: true });
-    this.process?.kill(0);
+    // kill(0) is an existence probe, not a terminate — it leaked the child.
+    this.process?.kill("SIGKILL");
   }
 
   /**

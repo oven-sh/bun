@@ -15,7 +15,10 @@ test("fd_pread reports nread equal to bytes read", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  const lines = stdout.trim().split("\n").map(l => JSON.parse(l));
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .map(l => JSON.parse(l));
   expect(lines).toEqual([
     { case: "single-iovec", errno: 0, nread: 6, data: "abcdef" },
     { case: "two-iovecs", errno: 0, nread: 6, data: "abcdef" },

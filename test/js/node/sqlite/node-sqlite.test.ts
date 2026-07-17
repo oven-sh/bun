@@ -337,6 +337,44 @@ describe("DatabaseSync", () => {
     );
   });
 
+  test("explicit undefined options argument is rejected where Node validates on arity", () => {
+    // Node's constructor/createSession/function/backup gate on args.Length(),
+    // so an explicitly-passed `undefined` is rejected even though an omitted
+    // argument is accepted. prepare/applyChangeset/etc gate on IsUndefined()
+    // and accept explicit undefined; this test pins the arity-gated set.
+    const invalidOptions = expect.objectContaining({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: 'The "options" argument must be an object.',
+    });
+
+    expect(() => new DatabaseSync(":memory:", undefined)).toThrow(invalidOptions);
+    expect(() => new DatabaseSync(":memory:", null)).toThrow(invalidOptions);
+    new DatabaseSync(":memory:").close();
+
+    const db = new DatabaseSync(":memory:");
+    try {
+      expect(() => db.function("f", undefined, () => 1)).toThrow(invalidOptions);
+      expect(() => db.function("f", null, () => 1)).toThrow(invalidOptions);
+      db.function("f", () => 1);
+
+      if (sqliteHasSession) {
+        expect(() => db.createSession(undefined)).toThrow(invalidOptions);
+        expect(() => db.createSession(null)).toThrow(invalidOptions);
+        db.createSession();
+      }
+
+      expect(() => backup(db, ":memory:", undefined)).toThrow(invalidOptions);
+      expect(() => backup(db, ":memory:", null)).toThrow(invalidOptions);
+
+      // Controls: these are value-gated in Node (explicit undefined is the
+      // same as omission) and must NOT throw.
+      db.prepare("SELECT 1", undefined);
+      expect(db.location(undefined)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test("file: URL objects pass query parameters to SQLite", () => {
     // Node hands the raw href (including ?query) to sqlite3_open_v2
     // with SQLITE_OPEN_URI set, so ?mode=ro / ?cache=shared are

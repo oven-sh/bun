@@ -695,12 +695,12 @@ describe("HTTP server CONNECT", () => {
           endCount++;
           // Enough to overrun the kernel send buffer so the short-write path
           // re-arms the poll.
-          socket.write(Buffer.alloc(4 * 1024 * 1024, "x"));
+          const backpressured = !socket.write(Buffer.alloc(4 * 1024 * 1024, "x"));
           let ticks = 0;
           const i = setInterval(() => {
             if (++ticks === 20) {
               clearInterval(i);
-              console.log(JSON.stringify({ endCount }));
+              console.log(JSON.stringify({ endCount, backpressured }));
               socket.destroy();
               server.close();
             }
@@ -725,7 +725,8 @@ describe("HTTP server CONNECT", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const line = stdout.trim().split("\n").pop() ?? "";
-    const { endCount } = JSON.parse(line);
+    const { endCount, backpressured } = JSON.parse(line);
+    expect(backpressured).toBe(true);
     expect(endCount).toBe(1);
     expect(exitCode).toBe(0);
   });

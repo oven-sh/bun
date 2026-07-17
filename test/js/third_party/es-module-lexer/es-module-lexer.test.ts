@@ -29,11 +29,7 @@ async function runOnce() {
     timeout: perChildTimeoutMs,
   });
 
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   if (proc.signalCode !== null) {
     const markers = stderr
@@ -53,9 +49,7 @@ test("es-module-lexer consistently loads", async () => {
   for (let i = 0; i < 10; i++) {
     const result = await runOnce();
     if (result.hung) {
-      console.error(
-        `iteration ${i}: child hung >${perChildTimeoutMs}ms; reached: ${result.markers || "<none>"}`,
-      );
+      console.error(`iteration ${i}: child hung >${perChildTimeoutMs}ms; reached: ${result.markers || "<none>"}`);
       hangs.push({ i, markers: result.markers });
     }
   }
@@ -70,9 +64,7 @@ test("es-module-lexer consistently loads", async () => {
   // stalled at the await-init phase so the suite doesn't flake while that is
   // investigated; anything else (non-Windows, a different stall point, or a
   // majority) is a real regression and must fail.
-  const stalledAtInit = hangs.every(
-    h => h.markers.includes("await init") && !h.markers.includes("init resolved"),
-  );
+  const stalledAtInit = hangs.every(h => h.markers.includes("await init") && !h.markers.includes("init resolved"));
   if (isWindows && stalledAtInit && hangs.length < 5) {
     console.error(`es-module-lexer: ${hangs.length}/10 iterations hung on Windows: ${summary}`);
     return;

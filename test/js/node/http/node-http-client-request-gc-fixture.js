@@ -12,6 +12,7 @@ const server = http
 
 const heldWrappers = [];
 const total = 4;
+let done = 0;
 let collected = 0;
 const registry = new FinalizationRegistry(() => {
   collected++;
@@ -28,12 +29,16 @@ function run() {
   };
 
   for (let i = 0; i < total; i++) {
-    const req = http.get({ hostname: "127.0.0.1", port, agent }, res => res.resume());
+    const req = http.get({ hostname: "127.0.0.1", port, agent }, res => {
+      res.resume();
+      res.on("end", () => done++);
+    });
     registry.register(req);
   }
 
   let iters = 0;
   setImmediate(function status() {
+    if (done < total) return setImmediate(status);
     global.gc();
     iters++;
     if (collected === total) {

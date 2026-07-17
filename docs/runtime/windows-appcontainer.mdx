@@ -79,14 +79,11 @@ shipped apps cannot rely on.
   works.
 - **The `NUL` device is unreachable inside AppContainers by default.** Its
   ACL predates AppContainers and is re-derived at every boot; it admits the
-  container only when the device ACL carries the container SIDs (some hosts
-  apply this per boot from an elevated context) or when a session-level `NUL`
-  symlink points at an accessible object. When reachable, `"ignore"` stdio
-  uses the real device; otherwise Bun substitutes a discarding pipe per spawn
-  — child writes succeed and are discarded, though a detached child that
-  outlives Bun loses the sink and its writes then fail. User code opening
-  `"NUL"` directly is subject to the device ACL and fails with `EACCES` when
-  denied.
+  container only when the device ACL carries the container SIDs (grant them per
+  boot from an elevated context) or when a session-level `NUL` symlink points at
+  an accessible object. `"ignore"` stdio and user code opening `"NUL"` both
+  fail with `EACCES` when the device is denied; grant the device ACL or use
+  `"pipe"`/`"inherit"` stdio instead.
 - A package cache created **outside** the container is currently
   re-validated as a miss inside it; prefer letting the sandboxed process
   populate its own `BUN_INSTALL_CACHE_DIR`.

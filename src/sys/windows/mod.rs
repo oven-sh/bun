@@ -3873,16 +3873,13 @@ fn learn_nt_device(map: &mut Vec<(Vec<u16>, u16)>, dos: &[u16]) {
 /// `VOLUME_NAME_DOS` was denied (AppContainer token). Answer with
 /// `<drive>:<VOLUME_NAME_NT path minus its device prefix>` via the learned
 /// device map — identity-verified against the queried handle before being
-/// returned; degrade to the original error otherwise.
+/// returned; degrade to the original error otherwise. Callers gate on
+/// `is_app_container()`.
 fn lowbox_dos_name_fallback(
     hFile: HANDLE,
     out_buffer: &mut [u16],
 ) -> Result<&mut [u16], GetFinalPathNameByHandleError> {
-    // The DOS-name denial is only worked around inside an AppContainer; any
-    // other token keeps the raw API's exact failure observables.
-    if !is_app_container() {
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
-    }
+    debug_assert!(is_app_container());
     // Query the NT name before taking the lock so the per-handle syscall never
     // runs under it.
     let mut nt_buf = bun_paths::w_path_buffer_pool::get();
@@ -3979,6 +3976,12 @@ pub unsafe fn GetFinalPathNameByHandleW(
     {
         return n;
     }
+    if !is_app_container() {
+        // The token probe can clobber last-error; callers of this raw shape
+        // read it after a 0 return.
+        kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
+        return 0;
+    }
     // SAFETY: caller contract.
     let out = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
     const PFX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
@@ -3988,8 +3991,7 @@ pub unsafe fn GetFinalPathNameByHandleW(
     let rest_len = match lowbox_dos_name_fallback(hFile, &mut out[PFX.len()..]) {
         Ok(rest) => rest.len(),
         Err(_) => {
-            // The fallback's queries (or the container probe) clobbered the
-            // thread error; callers of this raw shape read it after a 0 return.
+            // The fallback's queries clobbered the thread error.
             kernel32::SetLastError(u32::from(Win32Error::ACCESS_DENIED.0));
             return 0;
         }
@@ -4026,6 +4028,7 @@ pub fn GetFinalPathNameByHandle(
         // works; rebuild `X:\…` from the NT name and the learned device map.
         if fmt.volume_name == win32::VolumeName::Dos
             && err == u32::from(Win32Error::ACCESS_DENIED.0)
+            && is_app_container()
         {
             return lowbox_dos_name_fallback(hFile, out_buffer);
         }

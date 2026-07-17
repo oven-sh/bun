@@ -131,24 +131,6 @@ pub struct Process {
     pub exit_handler: ProcessExitHandler,
     pub sync: bool,
     pub event_loop: EventLoopHandle,
-    /// Substituted-`Ignore` stdout/stderr discard pipes still open for this
-    /// spawn (null = closed/absent). The EOF path and the exit path each null
-    /// a slot before closing it — single-threaded loop, plain pointer handoff.
-    #[cfg(windows)]
-    pub(crate) discard_pipes: [*mut uv::Pipe; 2],
-}
-
-/// Close callback for substituted-ignore discard pipes: reclaims the pipe Box
-/// and drops the Process ref that kept the owner alive for the EOF path.
-#[cfg(windows)]
-unsafe extern "C" fn discard_pipe_on_close(pipe: *mut uv::Pipe) {
-    // SAFETY: `data` was set to the owning `*mut Process` (+1 ref) when the
-    // reader was registered; `pipe` is the Box allocated in the Ignore arm.
-    unsafe {
-        let proc: *mut Process = (*pipe).data.cast();
-        drop(Box::from_raw(pipe));
-        Process::deref(proc);
-    }
 }
 
 impl Drop for Process {
@@ -253,20 +235,6 @@ impl Process {
         }
     }
 
-    /// Close any still-open substituted-ignore discard readers (see
-    /// `discard_pipes`); each close callback frees the pipe and drops the
-    /// Process ref taken at registration. Idempotent (slots null out).
-    #[cfg(windows)]
-    fn close_discard_pipes(&mut self) {
-        for slot in self.discard_pipes.iter_mut() {
-            let pipe = core::mem::replace(slot, core::ptr::null_mut());
-            if !pipe.is_null() {
-                // SAFETY: live substitute handle owned by this spawn.
-                unsafe { (*pipe).close(discard_pipe_on_close) };
-            }
-        }
-    }
-
     #[cfg(unix)]
     pub fn init_posix(
         posix: &PosixSpawnResult,
@@ -300,11 +268,6 @@ impl Process {
     // has_exited / has_killed / signal_code live in the always-on impl above.
 
     pub fn on_exit(&mut self, status: Status, rusage: &Rusage) {
-        // Nothing legitimate writes after exit (an fd-inheriting grandchild
-        // deliberately loses the sink); closing here bounds readers to the
-        // spawn, so SpawnSyncEventLoop's drop-time NOWAIT run finds them closed.
-        #[cfg(windows)]
-        self.close_discard_pipes();
         // ProcessExitHandler is Copy (owner ptr + &'static vtable), so mirror
         let exit_handler = self.exit_handler;
         self.status = status.clone();
@@ -633,11 +596,6 @@ impl Process {
         }
         #[cfg(windows)]
         {
-            // After uv_close(uv_process_t), libuv's exit path checks
-            // UV_HANDLE_CLOSING and skips exit_cb, so on_exit() (the only
-            // other close_discard_pipes caller) is unreachable from here.
-            // Idempotent: on_exit()'s call becomes a no-op if close() ran first.
-            self.close_discard_pipes();
             // Hoist the libuv handle state into locals so the `&self.poller`
             // borrow ends before we need `&mut self` for `ref_()` /
             // `self.poller = …`. No raw-pointer round-trip needed.
@@ -1943,21 +1901,6 @@ mod spawn_process_body {
         let mut dup_src: Option<u32> = None;
         let mut dup_tgt: Option<u32> = None;
 
-        // Substituted-`Ignore` discard pipes: bun-internal (never surfaced in
-        // `WindowsStdioResult`). The guard owns them until `uv_spawn` succeeds;
-        // the decision is resolved once so all ignore slots act uniformly.
-        let mut ignore_substitute: Option<bool> = None;
-        let mut substitute_pipes =
-            scopeguard::guard([core::ptr::null_mut::<uv::Pipe>(); 3], |pipes| {
-                for pipe in pipes {
-                    if !pipe.is_null() {
-                        // SAFETY: Box-allocated in the Ignore arm;
-                        // close_and_destroy handles init'd and never-init'd states.
-                        unsafe { uv::Pipe::close_and_destroy(pipe) };
-                    }
-                }
-            });
-
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
             let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[fd_i];
@@ -1985,32 +1928,14 @@ mod spawn_process_body {
                         stdio.flags = uv::UV_INHERIT_FD;
                         stdio.data.fd = uv::uv_file::try_from(fd_i).expect("int cast");
                     }
-                    // Ipc inside fds 0-2 is unsupported: downgrade to ignore
-                    // (the caller keeps ownership of its pipe) and take the
-                    // same NUL-substitution decision as `Ignore`.
-                    WindowsStdio::Ipc(_) | WindowsStdio::Ignore => {
-                        // libuv opens NUL for UV_IGNORE on fds 0-2; an
-                        // AppContainer's device ACL can deny that and fail the
-                        // spawn — substitute discard pipes (probed per spawn).
-                        if *ignore_substitute.get_or_insert_with(ignore_needs_pipe_substitute) {
-                            let my_pipe = bun_core::heap::into_raw(Box::new(
-                                bun_core::ffi::zeroed::<uv::Pipe>(),
-                            ));
-                            // SAFETY: freshly allocated above, non-null.
-                            if let Some(err) = unsafe { (*my_pipe).init(loop_, false) }
-                                .to_error(bun_sys::Tag::uv_pipe)
-                            {
-                                // SAFETY: allocated above; not yet in the guard.
-                                unsafe { uv::Pipe::close_and_destroy(my_pipe) };
-                                cleanup_uv_files(&uv_files_to_close, loop_);
-                                return Ok(Err(err));
-                            }
-                            substitute_pipes[fd_i] = my_pipe;
-                            stdio.flags = pipe_flags;
-                            stdio.data.stream = my_pipe.cast::<uv::uv_stream_t>();
-                        } else {
-                            stdio.flags = uv::UV_IGNORE;
-                        }
+                    WindowsStdio::Ipc(_) => {
+                        // ipc option inside stdin, stderr or stdout is not supported.
+                        // Don't free the pipe here — the caller owns it and will
+                        // clean it up via WindowsSpawnOptions Drop.
+                        stdio.flags = uv::UV_IGNORE;
+                    }
+                    WindowsStdio::Ignore => {
+                        stdio.flags = uv::UV_IGNORE;
                     }
                     WindowsStdio::Path(path) => {
                         let mut req = uv::fs_t::uninitialized();
@@ -2177,7 +2102,6 @@ mod spawn_process_body {
             poller: Poller::Detached,
             exit_handler: ProcessExitHandler::default(),
             sync: false,
-            discard_pipes: [core::ptr::null_mut(); 2],
         }));
 
         // defer if failed: process.close(); process.deref(); — handled at error sites
@@ -2245,30 +2169,6 @@ mod spawn_process_body {
                         as usize,
                 ),
             );
-        }
-
-        // Substituted-ignore pipes, post-spawn: our stdin end closes now (child
-        // reads EOF); stdout/stderr readers register on `process` so EOF or
-        // process exit — whichever comes first — closes them (see `on_exit`).
-        let substitute_pipes = scopeguard::ScopeGuard::into_inner(substitute_pipes);
-        for (fd_i, my_pipe) in substitute_pipes.into_iter().enumerate() {
-            if my_pipe.is_null() {
-                continue;
-            }
-            if fd_i == 0 {
-                // SAFETY: uv_spawn duplicated the child's end; ours closes
-                // independently. Reclaimed via Box::from_raw in the close cb.
-                unsafe { uv::Pipe::close_and_destroy(my_pipe) };
-            } else {
-                // SAFETY: `process` is live; the +1 ref keeps it so until the
-                // pipe's close callback releases it (discard_pipe_on_close).
-                unsafe {
-                    (*my_pipe).data = process.cast::<c_void>();
-                    (*process).ref_();
-                    (*process).discard_pipes[fd_i - 1] = my_pipe;
-                }
-                start_discard_reader(my_pipe);
-            }
         }
 
         // No FRU `..Default::default()` here: `WindowsSpawnResult` impls `Drop`,
@@ -2343,126 +2243,6 @@ mod spawn_process_body {
     fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
         for &fd in files {
             bun_io::Closer::close(Fd::from_uv(fd), loop_);
-        }
-    }
-
-    /// True when `"ignore"` stdio slots must use bun-owned discard pipes
-    /// instead of libuv opening `NUL` (fds 0-2): the device ACL can deny an
-    /// AppContainer. Probed fresh per spawn — reachability can change.
-    #[cfg(windows)]
-    fn ignore_needs_pipe_substitute() -> bool {
-        // Test knob first: forces substitution outside a container too.
-        if bun_core::env_var::feature_flag::BUN_INTERNAL_NUL_UNAVAILABLE
-            .get()
-            .unwrap_or(false)
-        {
-            return true;
-        }
-        use bun_sys::windows as w;
-        if !w::is_app_container() {
-            return false;
-        }
-        // L"NUL"
-        const NUL: [u16; 4] = [b'N' as u16, b'U' as u16, b'L' as u16, 0];
-        // Requests the GENERIC_READ|GENERIC_WRITE union — a strict superset of
-        // libuv's two per-fd opens, so a denial can only over-substitute
-        // (the safe direction).
-        // SAFETY: `NUL` is NUL-terminated; the probe handle is closed below.
-        let h = unsafe {
-            w::CreateFileW(
-                NUL.as_ptr(),
-                w::GENERIC_READ | w::GENERIC_WRITE,
-                w::FILE_SHARE_READ | w::FILE_SHARE_WRITE,
-                core::ptr::null_mut(),
-                w::OPEN_EXISTING,
-                0,
-                core::ptr::null_mut(),
-            )
-        };
-        if h == w::INVALID_HANDLE_VALUE {
-            return true;
-        }
-        // SAFETY: `h` is the live handle opened above.
-        unsafe {
-            let _ = w::CloseHandle(h);
-        }
-        false
-    }
-
-    #[cfg(windows)]
-    const DISCARD_SCRATCH_LEN: usize = 64 * 1024;
-
-    // One process-global scratch for all discard reads: contents are garbage by
-    // design and never read back (discard pipes are never IPC pipes — the one
-    // libuv mode that parses read buffers); concurrent kernel writers are fine.
-    #[cfg(windows)]
-    static DISCARD_SCRATCH: bun_core::RacyCell<[u8; DISCARD_SCRATCH_LEN]> =
-        bun_core::RacyCell::new([0; DISCARD_SCRATCH_LEN]);
-
-    /// Null `pipe`'s slot on its owning Process (the exit path reads it) and
-    /// close it; the close callback frees the Box and drops the Process ref.
-    /// Shared by the EOF and read_start-failure paths.
-    ///
-    /// # Safety
-    /// `pipe.data` must hold the owning `*mut Process`, kept live by the ref
-    /// taken when the reader was registered.
-    #[cfg(windows)]
-    unsafe fn detach_and_close_discard_pipe(pipe: *mut uv::Pipe) {
-        // SAFETY: caller contract.
-        unsafe {
-            let proc = (*pipe).data.cast::<Process>();
-            for slot in (*proc).discard_pipes.iter_mut() {
-                if *slot == pipe {
-                    *slot = core::ptr::null_mut();
-                }
-            }
-            (*pipe).close(discard_pipe_on_close);
-        }
-    }
-
-    /// Reader for a substituted-`Ignore` stdout/stderr pipe: bytes discarded;
-    /// EOF/error or process exit closes it. Must never keep the loop alive —
-    /// an ignored sink adds zero liveness (as real NUL); parent exit severs it.
-    #[cfg(windows)]
-    fn start_discard_reader(pipe: *mut uv::Pipe) {
-        unsafe extern "C" fn on_alloc(
-            _handle: *mut uv::uv_handle_t,
-            _suggested_size: usize,
-            buffer: *mut uv::uv_buf_t,
-        ) {
-            let base = DISCARD_SCRATCH.get().cast::<u8>();
-            // SAFETY: `buffer` is libuv's out-param; the scratch is a
-            // process-lifetime static, so it outlives every read.
-            unsafe {
-                *buffer = uv::uv_buf_t {
-                    len: DISCARD_SCRATCH_LEN as uv::ULONG,
-                    base,
-                };
-            }
-        }
-        unsafe extern "C" fn on_read(
-            stream: *mut uv::uv_stream_t,
-            nread: uv::ReturnCodeI64,
-            _buffer: *const uv::uv_buf_t,
-        ) {
-            // nread > 0: discarded. nread == 0: EAGAIN. nread < 0: EOF/error —
-            // a discard sink treats both the same: detach and close.
-            if nread.int() < 0 {
-                // SAFETY: `stream` is the substitute pipe this reader was
-                // started on; its Process ref is still held.
-                unsafe { detach_and_close_discard_pipe(stream.cast::<uv::Pipe>()) };
-            }
-        }
-        // SAFETY: `pipe` is the live, `init`'d substitute handle, registered on
-        // its owning Process by the caller.
-        unsafe {
-            // Born UV_HANDLE_REF'd; drop that so the reader never pins the loop.
-            (*pipe).unref();
-            if (*pipe).read_start(Some(on_alloc), Some(on_read)).is_err() {
-                // Cannot drain: close our end. The child's writes then fail
-                // (broken pipe) instead of blocking.
-                detach_and_close_discard_pipe(pipe);
-            }
         }
     }
 

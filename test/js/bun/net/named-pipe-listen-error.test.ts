@@ -26,6 +26,27 @@ describe.skipIf(!isWindows)("Bun.listen named-pipe error path", () => {
         });
       } catch (e) {
         threw = true;
+        // The collision must surface as a Node-shaped system error, not a
+        // generic TypeError: code/errno/syscall identify EADDRINUSE so
+        // callers can react (retry another name) - and distinguish it from
+        // EACCES (pipe namespace denied, e.g. sandboxed processes binding
+        // outside \.\pipe\LOCAL\, where renaming never helps).
+        if (e.code !== "EADDRINUSE") {
+          console.error("expected code EADDRINUSE, got", e.code);
+          process.exit(1);
+        }
+        if (e.errno !== -98) {
+          console.error("expected errno -98, got", e.errno);
+          process.exit(1);
+        }
+        if (e.syscall !== "listen") {
+          console.error("expected syscall listen, got", e.syscall);
+          process.exit(1);
+        }
+        if (e.path !== pipe) {
+          console.error("expected path", pipe, "got", e.path);
+          process.exit(1);
+        }
       }
 
       first.stop(true);

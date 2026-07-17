@@ -245,11 +245,6 @@ async function main() {
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
-  // All-ignore stdio: works via the real NUL device on prepped hosts and via
-  // bun's discard-pipe substitution on unprepped ones.
-  const si = Bun.spawnSync({ cmd: ["cmd", "/c", "echo", "x"], stdio: ["ignore", "ignore", "ignore"] });
-  r.spawnIgnored = si.exitCode;
-
   r.realpath = fs.realpathSync(".") === fs.realpathSync.native(".");
 
   r.pipeNonLocal = await new Promise(resolve => {
@@ -286,7 +281,7 @@ async function main() {
     fs.writeFileSync("fork-child.js", 'process.send("ping"); process.on("message", () => process.exit(0));');
     const cp = require("child_process");
     return await new Promise(resolve => {
-      const child = cp.fork("fork-child.js", [], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+      const child = cp.fork("fork-child.js", [], { stdio: ["pipe", "pipe", "pipe", "ipc"] });
       const timer = setTimeout(() => {
         try { child.kill(); } catch {}
         resolve("timeout waiting for ipc");
@@ -343,7 +338,6 @@ main().then(
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
-      expect(r.spawnIgnored).toBe(0);
       expect(r.realpath).toBe(true);
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
       // stock uv_pipe_bind2 maps that to EADDRINUSE. Tighten to EACCES once

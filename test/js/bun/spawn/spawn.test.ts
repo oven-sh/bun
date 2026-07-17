@@ -11,11 +11,10 @@ import {
   isPosix,
   isWindows,
   shellExe,
-  tempDir,
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, fstatSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "path";
 
 let tmp: string;
@@ -1319,129 +1318,5 @@ describe("uid/gid", () => {
       thrown = e;
     }
     expect(thrown?.code).toBe("EPERM");
-  });
-});
-
-// Windows: when NUL is unreachable (AppContainer device ACL), "ignore" slots
-// get bun-owned discard pipes instead of failing the spawn.
-// BUN_INTERNAL_NUL_UNAVAILABLE forces the substitution on any host.
-describe.skipIf(!isWindows)("ignore stdio NUL substitution", () => {
-  const knobEnv = { ...bunEnv, BUN_INTERNAL_NUL_UNAVAILABLE: "1" };
-
-  // The knob is read by the process PERFORMING the spawn, so each test runs an
-  // intermediate bunExe() with knobEnv and the intermediate does the
-  // ignore-stdio spawn; the outer test only relays and asserts.
-  it("all-ignore slots become discard pipes and a 1MB write succeeds", async () => {
-    using dir = tempDir("spawn-nul-substitute", {
-      "probe.js": `
-        const fs = require("fs");
-        // Discriminator: the substitute pipe reports isFIFO; real NUL is a char device.
-        const s = fs.fstatSync(1);
-        const isFIFO = s.isFIFO();
-        const isChar = s.isCharacterDevice();
-        const chunk = Buffer.alloc(64 * 1024, "x");
-        let wrote = 0;
-        for (let i = 0; i < 16; i++) wrote += fs.writeSync(1, chunk);
-        fs.writeFileSync(process.argv[2], JSON.stringify({ isFIFO, isChar, wrote }));
-      `,
-      "mid.js": `
-        const child = Bun.spawn({
-          cmd: [process.execPath, process.argv[2], process.argv[3]],
-          stdio: ["ignore", "ignore", "ignore"],
-        });
-        const grandExit = await child.exited;
-        console.log(JSON.stringify({ grandExit }));
-      `,
-    });
-    const results = join(String(dir), "results.json");
-    await using proc = spawn({
-      cmd: [bunExe(), join(String(dir), "mid.js"), join(String(dir), "probe.js"), results],
-      env: knobEnv,
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    const r = existsSync(results) ? JSON.parse(readFileSync(results, "utf8")) : {};
-    expect({ ...r, stdout: stdout.trim() }).toEqual({
-      isFIFO: true,
-      isChar: false,
-      wrote: 16 * 64 * 1024,
-      stdout: JSON.stringify({ grandExit: 0 }),
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  it("substituted ignore stdin delivers immediate EOF", async () => {
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const child = Bun.spawn({
-          cmd: [process.execPath, "-e", 'let n = 0; for await (const c of process.stdin) n += c.length; console.log("COUNT:" + n);'],
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-        const [out, code] = await Promise.all([child.stdout.text(), child.exited]);
-        process.stdout.write(out);
-        process.exit(code);`,
-      ],
-      env: knobEnv,
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe("COUNT:0");
-    expect(exitCode).toBe(0);
-  });
-
-  it("mixed slots: the pipe delivers while ignore slots discard", async () => {
-    const payload = "PAYLOAD_" + "y".repeat(1024);
-    await using proc = spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const child = Bun.spawn({
-          cmd: [process.execPath, "-e", 'process.stderr.write("discarded" + "z".repeat(128 * 1024)); process.stdout.write(${JSON.stringify(payload)});'],
-          stdio: ["ignore", "pipe", "ignore"],
-        });
-        const [out, code] = await Promise.all([child.stdout.text(), child.exited]);
-        process.stdout.write(out);
-        process.exit(code);`,
-      ],
-      env: knobEnv,
-      stdio: ["ignore", "pipe", "inherit"],
-    });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(payload);
-    expect(exitCode).toBe(0);
-  });
-
-  // Passes on system bun by design (real NUL); the type-3 test is the discriminator.
-  it("unref'd all-ignore child does not keep the parent alive", async () => {
-    let pid = 0;
-    try {
-      await using proc = spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const cp = require("child_process");
-          const child = cp.spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
-            stdio: ["ignore", "ignore", "ignore"],
-            detached: true,
-          });
-          child.unref();
-          console.log(child.pid);`,
-        ],
-        env: knobEnv,
-        stdio: ["ignore", "pipe", "inherit"],
-      });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-      pid = parseInt(stdout.trim(), 10);
-      expect(pid).toBeGreaterThan(0);
-      expect(exitCode).toBe(0);
-    } finally {
-      if (pid > 0) {
-        try {
-          process.kill(pid);
-        } catch {}
-      }
-    }
   });
 });

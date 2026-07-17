@@ -1831,9 +1831,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExecve, (JSGlobalObject * lexicalGlobal
 
     // Node declares execve(execPath, args = [], env = process.env), so an
     // omitted args parameter is valid and means "no extra argv entries".
-    if (!argsValue.isUndefined() && !JSC::isArray(globalObject, argsValue))
-        return Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "args"_s, "Array"_s, argsValue);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (!argsValue.isUndefined()) {
+        bool isArr = JSC::isArray(globalObject, argsValue);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isArr)
+            return Bun::ERR::INVALID_ARG_TYPE_INSTANCE(scope, globalObject, "args"_s, "Array"_s, argsValue);
+    }
 
     WTF::String execPath = execPathValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});

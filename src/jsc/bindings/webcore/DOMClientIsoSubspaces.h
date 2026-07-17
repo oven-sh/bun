@@ -147,6 +147,7 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForApplePayValidateMerchantEvent;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboard;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardItem;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForClipboardWriteState;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMCache;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMCacheStorage;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForContactsManager;

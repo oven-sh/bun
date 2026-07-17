@@ -93,6 +93,7 @@
 #include "JSClipboard.h"
 #include "JSClipboardEvent.h"
 #include "JSClipboardItem.h"
+#include "JSClipboardWriteState.h"
 #include "JSCloseEvent.h"
 #include "JSCommonJSExtensions.h"
 #include "streams/JSCountQueuingStrategy.h"
@@ -2256,6 +2257,29 @@ void GlobalObject::finishCreation(VM& vm)
     m_JSClipboardItemClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
             Bun::setupClipboardItemClassStructure(init);
+        });
+
+    m_clipboardWriteStateStructure.initLater(
+        [](const Initializer<Structure>& init) {
+            init.set(WebCore::JSClipboardWriteState::createStructure(init.vm, init.owner, jsNull()));
+        });
+
+    // The clipboard's three promise-reaction handlers. Each is invoked as
+    // `handler(value, contextCell)` by `performPromiseThenWithContext`; all their state
+    // arrives in the context cell, so one shared function per realm serves every operation.
+    m_clipboardOnGetTypeSettled.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, Bun::jsClipboardHandler_onGetTypeSettled, ImplementationVisibility::Private));
+        });
+
+    m_clipboardOnWriteBlobMaterialized.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteBlobMaterialized, ImplementationVisibility::Private));
+        });
+
+    m_clipboardOnWriteBlobFailed.initLater(
+        [](const Initializer<JSFunction>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 2, ""_s, WebCore::jsClipboardHandler_onWriteBlobFailed, ImplementationVisibility::Private));
         });
 
     m_navigatorObject.initLater(

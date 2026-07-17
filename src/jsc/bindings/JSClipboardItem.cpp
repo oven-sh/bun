@@ -11,10 +11,10 @@
 #include "ZigGlobalObject.h"
 #include "webcore/JSClipboard.h"
 #include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/LazyClassStructureInlines.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
@@ -338,60 +338,78 @@ JSC::JSValue JSClipboardItem::getTypePromise(JSC::JSGlobalObject* globalObject, 
     RELEASE_AND_RETURN(scope, getTypePromiseAtIndex(globalObject, static_cast<unsigned>(index)));
 }
 
+JSC::JSValue clipboardDataToBlob(JSC::JSGlobalObject* globalObject, JSC::JSValue value, const WTF::String& type)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool isBlob = !!dynamicDowncast<WebCore::JSBlob>(value);
+    if (isBlob) {
+        // A Blob already declaring the requested type (with or without a
+        // charset parameter, which Blob appends to text types) passes.
+        JSC::JSValue blobType = value.get(globalObject, vm.propertyNames->type);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto blobTypeString = blobType.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        bool parameterized = blobTypeString.length() > type.length() && blobTypeString[type.length()] == ';';
+        if (blobTypeString == type || (parameterized && blobTypeString.startsWith(type)))
+            return value;
+    }
+    if (!isBlob && !value.isString()) [[unlikely]]
+        return throwTypeError(globalObject, scope, makeString("The data for \""_s, type, "\" is not a string or a Blob"_s));
+    // new Blob([value], { type })
+    auto* zigGlobal = defaultGlobalObject(globalObject);
+    JSC::JSObject* blobConstructor = zigGlobal->JSBlobConstructor();
+    JSC::MarkedArgumentBuffer partArgs;
+    partArgs.append(value);
+    JSC::JSArray* parts = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), partArgs);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSObject* options = JSC::constructEmptyObject(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    options->putDirect(vm, vm.propertyNames->type, JSC::jsString(vm, type));
+    JSC::MarkedArgumentBuffer constructArgs;
+    constructArgs.append(parts);
+    constructArgs.append(options);
+    auto constructData = JSC::getConstructData(blobConstructor);
+    JSC::JSObject* blob = JSC::construct(globalObject, blobConstructor, constructData, constructArgs);
+    RETURN_IF_EXCEPTION(scope, {});
+    return blob;
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onGetTypeSettled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* context = uncheckedDowncast<JSC::InternalFieldTuple>(callFrame->argument(1));
+    auto* item = uncheckedDowncast<JSClipboardItem>(context->getInternalField(0));
+    unsigned index = context->getInternalField(1).asUInt32();
+    // Returning the Blob resolves, and throwing rejects, the promise `getType()` returned.
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(clipboardDataToBlob(globalObject, callFrame->argument(0), item->types()[index])));
+}
+
 JSC::JSValue JSClipboardItem::getTypePromiseAtIndex(JSC::JSGlobalObject* globalObject, unsigned index)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    const WTF::String& type = m_types[index];
-
-    // Await the stored ClipboardItemData (it may be a promise), then
-    // normalize the settled value to a Blob carrying the requested type.
     JSC::JSValue stored = m_values[index].get();
-    auto* resolved = JSC::JSPromise::resolvedPromise(globalObject, stored);
-    RETURN_IF_EXCEPTION(scope, {});
-    auto* normalize = JSC::JSNativeStdFunction::create(vm, globalObject, 1, WTF::String(), [type](JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame) -> JSC::EncodedJSValue {
-        auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        JSC::JSValue value = callFrame->argument(0);
-        bool isBlob = !!dynamicDowncast<WebCore::JSBlob>(value);
-        if (isBlob) {
-            // A Blob already declaring the requested type (with or without a
-            // charset parameter, which Blob appends to text types) passes.
-            JSC::JSValue blobType = value.get(globalObject, vm.propertyNames->type);
-            RETURN_IF_EXCEPTION(scope, {});
-            auto blobTypeString = blobType.toWTFString(globalObject);
-            RETURN_IF_EXCEPTION(scope, {});
-            bool parameterized = blobTypeString.length() > type.length() && blobTypeString[type.length()] == ';';
-            if (blobTypeString == type || (parameterized && blobTypeString.startsWith(type)))
-                return JSC::JSValue::encode(value);
-        }
-        if (!isBlob && !value.isString()) [[unlikely]]
-            return JSC::JSValue::encode(throwTypeError(globalObject, scope, makeString("The data for \""_s, type, "\" is not a string or a Blob"_s)));
-        // new Blob([value], { type })
-        auto* zigGlobal = defaultGlobalObject(globalObject);
-        JSC::JSObject* blobConstructor = zigGlobal->JSBlobConstructor();
-        JSC::MarkedArgumentBuffer partArgs;
-        partArgs.append(value);
-        JSC::JSArray* parts = JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), partArgs);
-        RETURN_IF_EXCEPTION(scope, {});
-        JSC::JSObject* options = JSC::constructEmptyObject(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        options->putDirect(vm, vm.propertyNames->type, JSC::jsString(vm, type));
-        JSC::MarkedArgumentBuffer constructArgs;
-        constructArgs.append(parts);
-        constructArgs.append(options);
-        auto constructData = JSC::getConstructData(blobConstructor);
-        JSC::JSObject* blob = JSC::construct(globalObject, blobConstructor, constructData, constructArgs);
-        RETURN_IF_EXCEPTION(scope, {});
-        return JSC::JSValue::encode(blob);
-    });
-    RETURN_IF_EXCEPTION(scope, {});
 
-    // `then` here is the engine's internal reaction machinery, not the
-    // user-reachable `Promise.prototype.then`.
-    JSC::JSObject* derived = resolved->then(globalObject, normalize, JSC::jsUndefined());
+    // Only an object can be a promise (or a thenable `Promise.resolve` would adopt), so
+    // anything else normalizes now and needs no reaction at all.
+    if (!stored.isObject()) {
+        JSC::JSValue blob = clipboardDataToBlob(globalObject, stored, m_types[index]);
+        if (scope.exception()) [[unlikely]]
+            RELEASE_AND_RETURN(scope, JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope));
+        RELEASE_AND_RETURN(scope, JSC::JSPromise::resolvedPromise(globalObject, blob));
+    }
+
+    // Await the stored ClipboardItemData, then normalize what it settles to. `settled`'s
+    // own rejection forwards to `result` because no onRejected handler is installed.
+    auto* settled = JSC::JSPromise::resolvedPromise(globalObject, stored);
     RETURN_IF_EXCEPTION(scope, {});
-    return derived;
+    auto* result = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    auto* context = JSC::InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), this, JSC::jsNumber(index));
+    settled->performPromiseThenWithContext(vm, globalObject, defaultGlobalObject(globalObject)->m_clipboardOnGetTypeSettled.get(globalObject), JSC::jsUndefined(), result, context);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 // ─── prototype members ──────────────────────────────────────────────────────

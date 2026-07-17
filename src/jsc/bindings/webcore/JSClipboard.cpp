@@ -24,6 +24,7 @@
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include "JSClipboardItem.h"
+#include "JSClipboardWriteState.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConstructorNotConstructable.h"
 #include "JSDOMConvertStrings.h"
@@ -38,10 +39,7 @@
 #include <JavaScriptCore/IteratorOperations.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
-#include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/Strong.h>
-#include <JavaScriptCore/StrongInlines.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
@@ -55,7 +53,9 @@ using namespace JSC;
 extern "C" JSC::EncodedJSValue Bun__Clipboard__readText(JSC::JSGlobalObject*);
 extern "C" JSC::EncodedJSValue Bun__Clipboard__writeText(JSC::JSGlobalObject*, const BunString*);
 extern "C" JSC::EncodedJSValue Bun__Clipboard__read(JSC::JSGlobalObject*);
-extern "C" JSC::EncodedJSValue Bun__Clipboard__writeBlobs(JSC::JSGlobalObject*, JSC::EncodedJSValue mimesArray, JSC::EncodedJSValue blobsArray);
+// Takes the promise `write()` already returned; the job owns it from that point and
+// settles it when the platform write finishes.
+extern "C" void Bun__Clipboard__writeBlobs(JSC::JSGlobalObject*, JSC::EncodedJSValue promise, JSC::EncodedJSValue mimesArray, JSC::EncodedJSValue blobsArray);
 extern "C" bool Bun__Clipboard__supportsType(const BunString*);
 extern "C" bool Bun__Clipboard__writesSingleRepresentation();
 extern "C" bool Bun__Clipboard__blobNeedsToReadFile(JSC::EncodedJSValue blob);
@@ -235,6 +235,127 @@ static JSC::EncodedJSValue rejectedWithNotAllowed(JSC::JSGlobalObject* globalObj
     return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, createDOMException(globalObject, WebCore::ExceptionCode::NotAllowedError, message)));
 }
 
+// The last step of a write: every representation is a Blob now, so hand the whole item to
+// the Rust job, which snapshots the bytes, performs one platform clipboard transaction and
+// settles `state->m_promise`.
+static void clipboardWriteFinish(JSC::JSGlobalObject* globalObject, JSClipboardWriteState* state)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* blobs = state->m_blobs.get();
+    auto* promise = state->m_promise.get();
+
+    // The Rust job can only snapshot in-memory Blob bytes; writing a file-backed Blob's
+    // "empty" view would be silent data loss.
+    uint32_t length = blobs->length();
+    for (uint32_t i = 0; i < length; i++) {
+        JSValue blob = blobs->getDirectIndex(globalObject, i);
+        if (scope.exception()) [[unlikely]] {
+            promise->rejectWithCaughtException(vm, scope);
+            return;
+        }
+        if (Bun__Clipboard__blobNeedsToReadFile(JSValue::encode(blob))) [[unlikely]] {
+            throwTypeError(globalObject, scope, "Cannot write a file-backed Blob to the clipboard. Read it into memory first (`await blob.bytes()`)."_s);
+            promise->rejectWithCaughtException(vm, scope);
+            return;
+        }
+    }
+
+    // `types` is the item's own frozen FrozenArray, index-aligned with `blobs`; the job
+    // only reads it, so there is no second copy to keep in sync.
+    auto* item = uncheckedDowncast<Bun::JSClipboardItem>(state->m_item.get());
+    JSC::JSObject* mimesArray = item->frozenTypes(globalObject);
+    if (scope.exception()) [[unlikely]] {
+        promise->rejectWithCaughtException(vm, scope);
+        return;
+    }
+    // The job owns the promise from here: it rejects rather than throws, so the only
+    // exception this can leave pending is a termination, which has to keep unwinding.
+    scope.release();
+    Bun__Clipboard__writeBlobs(globalObject, JSValue::encode(promise), JSValue::encode(mimesArray), JSValue::encode(blobs));
+}
+
+// Materializes the item's representations to Blobs, left to right, and finishes the write
+// once they all are. Values that cannot be thenables are normalized inline; the first one
+// that can be suspends the loop on a reaction that resumes here. Re-entered once per
+// awaited value, picking up at `state->m_index`.
+static void clipboardWriteStep(JSC::JSGlobalObject* globalObject, JSClipboardWriteState* state)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* item = uncheckedDowncast<Bun::JSClipboardItem>(state->m_item.get());
+    const auto& types = item->types();
+
+    while (state->m_index < types.size()) {
+        JSValue stored = item->valueAt(state->m_index);
+        if (stored.isObject()) {
+            // A Blob, a promise, or a thenable `Promise.resolve` would adopt: let the
+            // engine settle it, then resume in jsClipboardHandler_onWriteBlobMaterialized.
+            auto* settled = JSC::JSPromise::resolvedPromise(globalObject, stored);
+            if (scope.exception()) [[unlikely]] {
+                state->m_promise->rejectWithCaughtException(vm, scope);
+                return;
+            }
+            auto* zigGlobal = defaultGlobalObject(globalObject);
+            settled->performPromiseThenWithContext(vm, globalObject,
+                zigGlobal->m_clipboardOnWriteBlobMaterialized.get(globalObject),
+                zigGlobal->m_clipboardOnWriteBlobFailed.get(globalObject),
+                jsUndefined(), state);
+            scope.assertNoException();
+            return;
+        }
+        JSValue blob = Bun::clipboardDataToBlob(globalObject, stored, types[state->m_index]);
+        if (scope.exception()) [[unlikely]] {
+            state->m_promise->rejectWithCaughtException(vm, scope);
+            return;
+        }
+        state->m_blobs->putDirectIndex(globalObject, state->m_index, blob);
+        if (scope.exception()) [[unlikely]] {
+            state->m_promise->rejectWithCaughtException(vm, scope);
+            return;
+        }
+        state->m_index++;
+    }
+    scope.release();
+    clipboardWriteFinish(globalObject, state);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteBlobMaterialized, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* state = uncheckedDowncast<JSClipboardWriteState>(callFrame->argument(1));
+    auto* item = uncheckedDowncast<Bun::JSClipboardItem>(state->m_item.get());
+
+    JSValue blob = Bun::clipboardDataToBlob(globalObject, callFrame->argument(0), item->types()[state->m_index]);
+    if (scope.exception()) [[unlikely]] {
+        state->m_promise->rejectWithCaughtException(vm, scope);
+        return JSValue::encode(jsUndefined());
+    }
+    state->m_blobs->putDirectIndex(globalObject, state->m_index, blob);
+    if (scope.exception()) [[unlikely]] {
+        state->m_promise->rejectWithCaughtException(vm, scope);
+        return JSValue::encode(jsUndefined());
+    }
+    state->m_index++;
+    clipboardWriteStep(globalObject, state);
+    // Everything below rejects rather than throws, so only a termination reaches here;
+    // it has to keep unwinding rather than be reported as a normal return.
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsClipboardHandler_onWriteBlobFailed, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* state = uncheckedDowncast<JSClipboardWriteState>(callFrame->argument(1));
+    // A representation that never arrived rejects the write with the same reason.
+    state->m_promise->reject(vm, callFrame->argument(0));
+    scope.assertNoException();
+    return JSValue::encode(jsUndefined());
+}
+
 static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperationReturningPromise<JSClipboard>::ClassParameter)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -277,78 +398,13 @@ static inline JSC::EncodedJSValue jsClipboardPrototypeFunction_writeBody(JSC::JS
     if (Bun__Clipboard__writesSingleRepresentation() && types.size() > 1)
         RELEASE_AND_RETURN(throwScope, rejectedWithNotAllowed(lexicalGlobalObject, "Writing more than one representation per item is not supported on this platform."_s));
 
-    // Materialize every representation to a Blob (via `getType`) before the
-    // one platform write, chaining native steps through the engine-internal
-    // `JSPromise::then`; `Strong` roots the state a lambda captures.
-    JSC::JSArray* mimesArray = nullptr;
-    {
-        JSC::MarkedArgumentBuffer mimeValues;
-        for (const auto& type : types)
-            mimeValues.append(JSC::jsString(vm, type));
-        mimesArray = JSC::constructArray(lexicalGlobalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), mimeValues);
-        if (throwScope.exception()) [[unlikely]]
-            return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
     JSC::JSArray* blobsArray = JSC::constructEmptyArray(lexicalGlobalObject, nullptr, types.size());
     if (throwScope.exception()) [[unlikely]]
         return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-
-    JSC::JSPromise* chain = JSC::JSPromise::resolvedPromise(lexicalGlobalObject, jsUndefined());
-    if (throwScope.exception()) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    auto chainTo = [&](JSC::JSPromise* promise, JSC::JSNativeStdFunction* step) -> JSC::JSPromise* {
-        JSC::JSObject* next = promise->then(lexicalGlobalObject, step, jsUndefined());
-        RETURN_IF_EXCEPTION(throwScope, nullptr);
-        // `then` only returns a foreign object when `Promise[Symbol.species]`
-        // is overridden; the chain cannot continue on one.
-        auto* nextPromise = dynamicDowncast<JSC::JSPromise>(next);
-        if (!nextPromise) [[unlikely]]
-            throwTypeError(lexicalGlobalObject, throwScope, "Promise[Symbol.species] must produce a Promise"_s);
-        return nextPromise;
-    };
-    for (size_t i = 0; i < types.size(); i++) {
-        auto* materialize = JSC::JSNativeStdFunction::create(vm, lexicalGlobalObject, 0, WTF::String(),
-            [itemHandle = JSC::Strong<JSC::JSObject>(vm, item), index = static_cast<unsigned>(i)](JSGlobalObject* globalObject, CallFrame*) -> JSC::EncodedJSValue {
-                auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-                auto* item = uncheckedDowncast<Bun::JSClipboardItem>(itemHandle.get());
-                RELEASE_AND_RETURN(scope, JSValue::encode(item->getTypePromiseAtIndex(globalObject, index)));
-            });
-        chain = chainTo(chain, materialize);
-        if (!chain) [[unlikely]]
-            return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-        auto* store = JSC::JSNativeStdFunction::create(vm, lexicalGlobalObject, 1, WTF::String(),
-            [blobsHandle = JSC::Strong<JSC::JSObject>(vm, blobsArray), index = static_cast<unsigned>(i)](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
-                auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-                blobsHandle.get()->putDirectIndex(globalObject, index, callFrame->argument(0));
-                RETURN_IF_EXCEPTION(scope, {});
-                return JSValue::encode(jsUndefined());
-            });
-        chain = chainTo(chain, store);
-        if (!chain) [[unlikely]]
-            return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    }
-    // Once every Blob is materialized, the Rust job snapshots their bytes and
-    // performs one multi-representation clipboard transaction. Returning its
-    // promise from the reaction makes the outer promise adopt it.
-    auto* writeBlobs = JSC::JSNativeStdFunction::create(vm, lexicalGlobalObject, 0, WTF::String(),
-        [mimesHandle = JSC::Strong<JSC::JSObject>(vm, mimesArray), blobsHandle = JSC::Strong<JSC::JSObject>(vm, blobsArray)](JSGlobalObject* globalObject, CallFrame*) -> JSC::EncodedJSValue {
-            auto& vm = JSC::getVM(globalObject);
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            // The Rust job can only snapshot in-memory Blob bytes; writing a
-            // file-backed Blob's "empty" view would be silent data loss.
-            uint32_t length = uncheckedDowncast<JSC::JSArray>(blobsHandle.get())->length();
-            for (uint32_t i = 0; i < length; i++) {
-                JSC::JSValue blob = blobsHandle.get()->getDirectIndex(globalObject, i);
-                RETURN_IF_EXCEPTION(scope, {});
-                if (Bun__Clipboard__blobNeedsToReadFile(JSValue::encode(blob))) [[unlikely]]
-                    return throwVMTypeError(globalObject, scope, "Cannot write a file-backed Blob to the clipboard. Read it into memory first (`await blob.bytes()`)."_s);
-            }
-            RELEASE_AND_RETURN(scope, Bun__Clipboard__writeBlobs(globalObject, JSValue::encode(mimesHandle.get()), JSValue::encode(blobsHandle.get())));
-        });
-    chain = chainTo(chain, writeBlobs);
-    if (!chain) [[unlikely]]
-        return JSValue::encode(JSPromise::rejectedPromiseWithCaughtException(lexicalGlobalObject, throwScope));
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(chain));
+    auto* promise = JSC::JSPromise::create(vm, lexicalGlobalObject->promiseStructure());
+    auto* state = JSClipboardWriteState::create(vm, defaultGlobalObject(lexicalGlobalObject)->m_clipboardWriteStateStructure.get(lexicalGlobalObject), item, blobsArray, promise);
+    clipboardWriteStep(lexicalGlobalObject, state);
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(promise));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsClipboardPrototypeFunction_write, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -357,6 +413,57 @@ JSC_DEFINE_HOST_FUNCTION(jsClipboardPrototypeFunction_write, (JSGlobalObject * l
 }
 
 // ─── plumbing ───────────────────────────────────────────────────────────────
+
+const ClassInfo JSClipboardWriteState::s_info = { "ClipboardWriteState"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClipboardWriteState) };
+
+JSClipboardWriteState::JSClipboardWriteState(VM& vm, Structure* structure)
+    : Base(vm, structure)
+{
+}
+
+void JSClipboardWriteState::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+JSClipboardWriteState* JSClipboardWriteState::create(VM& vm, Structure* structure, Bun::JSClipboardItem* item, JSC::JSArray* blobs, JSC::JSPromise* promise)
+{
+    auto* cell = new (NotNull, allocateCell<JSClipboardWriteState>(vm)) JSClipboardWriteState(vm, structure);
+    cell->finishCreation(vm);
+    cell->m_item.set(vm, cell, item);
+    cell->m_blobs.set(vm, cell, blobs);
+    cell->m_promise.set(vm, cell, promise);
+    return cell;
+}
+
+Structure* JSClipboardWriteState::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+}
+
+JSC::GCClient::IsoSubspace* JSClipboardWriteState::subspaceForImpl(JSC::VM& vm)
+{
+    return WebCore::subspaceForImpl<JSClipboardWriteState, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForClipboardWriteState.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForClipboardWriteState = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForClipboardWriteState.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForClipboardWriteState = std::forward<decltype(space)>(space); });
+}
+
+template<typename Visitor>
+void JSClipboardWriteState::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSClipboardWriteState>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_item);
+    visitor.append(thisObject->m_blobs);
+    visitor.append(thisObject->m_promise);
+}
+
+DEFINE_VISIT_CHILDREN(JSClipboardWriteState);
 
 JSC::GCClient::IsoSubspace* JSClipboard::subspaceForImpl(JSC::VM& vm)
 {

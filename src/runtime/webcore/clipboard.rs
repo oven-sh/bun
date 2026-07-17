@@ -7,7 +7,8 @@ use core::ffi::c_char;
 
 use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSPromiseStrong, JSValue, JsResult, StringJsc as _,
+    AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSPromiseStrong, JSValue, JsError, JsResult,
+    StringJsc as _,
 };
 
 // Implemented by the C++ classes: firing the copy/paste events at the
@@ -237,10 +238,9 @@ fn create_items_array(global: &JSGlobalObject, items: &[(Mime, Vec<u8>)]) -> JsR
     JSValue::create_array_from_slice(global, &[item])
 }
 
-/// Schedules the clipboard op on the work pool and returns the pending promise.
-fn schedule(global: &JSGlobalObject, op: Op) -> JsResult<JSValue> {
-    let promise = JSPromiseStrong::init(global);
-    let promise_value = promise.value();
+/// Schedules the clipboard op on the work pool; the job settles `promise` and owns the
+/// only handle to it.
+fn schedule_with_promise(global: &JSGlobalObject, op: Op, promise: JSPromiseStrong) -> JsResult<()> {
     AnyTaskJob::create_and_schedule(
         global,
         ClipboardCtx {
@@ -248,7 +248,14 @@ fn schedule(global: &JSGlobalObject, op: Op) -> JsResult<JSValue> {
             outcome: None,
             promise,
         },
-    )?;
+    )
+}
+
+/// Schedules the clipboard op on the work pool and returns the pending promise.
+fn schedule(global: &JSGlobalObject, op: Op) -> JsResult<JSValue> {
+    let promise = JSPromiseStrong::init(global);
+    let promise_value = promise.value();
+    schedule_with_promise(global, op, promise)?;
     Ok(promise_value)
 }
 
@@ -309,17 +316,43 @@ pub extern "C" fn Bun__Clipboard__read(global: &JSGlobalObject) -> JSValue {
 
 /// `Clipboard.prototype.write`, after the C++ layer validated the item and
 /// materialized every representation: `mimes` and `blobs` are index-aligned
-/// JS arrays of MIME strings and in-memory `Blob`s.
+/// JS arrays of MIME strings and in-memory `Blob`s. `promise` is the promise
+/// `write()` already returned; the scheduled job takes ownership of it and is
+/// what settles it.
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__Clipboard__writeBlobs(
     global: &JSGlobalObject,
+    promise: JSValue,
     mimes: JSValue,
     blobs: JSValue,
-) -> JSValue {
-    bun_jsc::to_js_host_fn_result(global, write_blobs(global, mimes, blobs))
+) {
+    let Err(err) = write_blobs(global, promise, mimes, blobs) else {
+        return;
+    };
+    match err {
+        // The VM is tearing down. Leave the termination pending so it keeps unwinding
+        // instead of being turned into a rejection nobody can observe.
+        JsError::Terminated => return,
+        // `OutOfMemory` leaves nothing pending — throwing it is what creates the exception.
+        JsError::OutOfMemory => {
+            global.throw_out_of_memory_value();
+        }
+        JsError::Thrown => {}
+    }
+    // Nothing was scheduled, so settling `promise` is still this call's job. The caller's
+    // `JSClipboardWriteState` roots the cell, so re-taking a handle is safe even if the
+    // job's own handle was already created and dropped.
+    if let Some(exception) = global.try_take_exception() {
+        JSPromiseStrong::from_value(promise, global).reject_without_swap(global, Ok(exception));
+    }
 }
 
-fn write_blobs(global: &JSGlobalObject, mimes: JSValue, blobs: JSValue) -> JsResult<JSValue> {
+fn write_blobs(
+    global: &JSGlobalObject,
+    promise: JSValue,
+    mimes: JSValue,
+    blobs: JSValue,
+) -> JsResult<()> {
     // The C++ layer validated the item, so every entry is a supported MIME
     // string paired with an in-memory Blob from `ClipboardItem.getType`.
     let mut items: Vec<(Mime, Vec<u8>)> = Vec::new();
@@ -347,7 +380,11 @@ fn write_blobs(global: &JSGlobalObject, mimes: JSValue, blobs: JSValue) -> JsRes
         };
         items.push((mime, bytes));
     }
-    schedule(global, Op::WriteItems(items))
+    schedule_with_promise(
+        global,
+        Op::WriteItems(items),
+        JSPromiseStrong::from_value(promise, global),
+    )
 }
 
 /// Why the platform clipboard is unreachable; each variant carries the
@@ -390,10 +427,12 @@ impl Unavailable {
 
 // ─── macOS ──────────────────────────────────────────────────────────────────
 // `image_coregraphics_shim.cpp` owns the objc / NSPasteboard plumbing, so the
-// clipboard entry points live beside its image reader (same two-phase probe).
+// clipboard entry points live beside its image reader. Reading is two calls: one
+// reports the size and hands back a retained NSData, the second copies it out and
+// releases it.
 #[cfg(target_os = "macos")]
 mod platform {
-    use core::ffi::{CStr, c_char};
+    use core::ffi::{CStr, c_char, c_void};
 
     use super::{Mime, Unavailable};
 
@@ -402,9 +441,10 @@ mod platform {
     unsafe extern "C" {
         fn bun_coregraphics_clipboard_read_type(
             uti: *const c_char,
-            out: *mut u8,
+            out_data: *mut *mut c_void,
             out_len: *mut usize,
         ) -> i32;
+        fn bun_coregraphics_clipboard_take_data(data: *mut c_void, out: *mut u8) -> i32;
         fn bun_coregraphics_clipboard_write_types(
             utis: *const *const c_char,
             datas: *const *const u8,
@@ -425,26 +465,23 @@ mod platform {
 
     pub(super) fn read_type(mime: Mime) -> Result<Option<Vec<u8>>, Unavailable> {
         let uti = uti(mime).as_ptr();
+        let mut data: *mut c_void = core::ptr::null_mut();
         let mut len: usize = 0;
-        // SAFETY: `out = null` is the documented probe phase; `len` is a
-        // valid out-param and `uti` is a NUL-terminated static.
-        if unsafe { bun_coregraphics_clipboard_read_type(uti, core::ptr::null_mut(), &raw mut len) }
-            != CG_OK
+        // SAFETY: both are valid out-params and `uti` is a NUL-terminated static.
+        if unsafe { bun_coregraphics_clipboard_read_type(uti, &raw mut data, &raw mut len) } != CG_OK
         {
             return Err(Unavailable::Platform);
         }
-        if len == 0 {
+        if data.is_null() {
+            debug_assert_eq!(len, 0, "a null handle always reports an empty representation");
             return Ok(None);
         }
         let mut buf = vec![0u8; len];
-        // SAFETY: the probe stashed a retained, exactly-`len`-byte NSData for
-        // this thread; this call copies it out and releases the stash.
-        if unsafe { bun_coregraphics_clipboard_read_type(uti, buf.as_mut_ptr(), &raw mut len) }
-            != CG_OK
-        {
+        // SAFETY: `data` is the retained, exactly-`len`-byte NSData the call above handed
+        // over; this consumes the handle, copying into a buffer of that exact length.
+        if unsafe { bun_coregraphics_clipboard_take_data(data, buf.as_mut_ptr()) } != CG_OK {
             return Err(Unavailable::Platform);
         }
-        buf.truncate(len);
         Ok(Some(buf))
     }
 

@@ -551,34 +551,21 @@ int64_t bun_coregraphics_clipboard_change_count()
 }
 
 // ── NSPasteboard reader / writer for `navigator.clipboard` ─────────────────
-// Same two-phase out=nullptr probe as the image reader above, parameterised
-// over the UTI; the pasteboard server promotes legacy flavours and converts
-// images to `public.png` on demand, so one `dataForType:` per UTI suffices.
-int32_t bun_coregraphics_clipboard_read_type(const char* uti, uint8_t* out, size_t* out_len)
+// A two-phase read: this call reports the representation's size and hands back
+// a retained NSData in `*out_data`, then the caller sizes its buffer and copies
+// with `bun_coregraphics_clipboard_take_data`, which releases the retain. The
+// handle is explicit rather than thread-local state so the two phases cannot be
+// mismatched (a stale stash, a UTI that disagrees with the one probed) and the
+// retain has exactly one owner. `*out_data` is null ⇔ `*out_len` is 0.
+// The pasteboard server promotes legacy flavours and converts images to
+// `public.png` on demand, so one `dataForType:` per UTI suffices.
+int32_t bun_coregraphics_clipboard_read_type(const char* uti, void** out_data, size_t* out_len)
 {
+    *out_data = nullptr;
+    *out_len = 0;
     auto s = load();
     if (!s) return CG_UNAVAILABLE;
     Pool pool(s);
-    thread_local CFRef pending = nullptr;
-
-    if (out && pending) {
-        long n = s->CFDataGetLength(pending);
-        std::memcpy(out, s->CFDataGetBytePtr(pending), static_cast<size_t>(n));
-        *out_len = static_cast<size_t>(n);
-        s->CFRelease(pending);
-        pending = nullptr;
-        return CG_OK;
-    }
-    if (pending) {
-        s->CFRelease(pending);
-        pending = nullptr;
-    }
-    // A copy phase with nothing stashed means the caller broke the
-    // probe-then-copy protocol; never report success over an unwritten buffer.
-    if (out) {
-        *out_len = 0;
-        return CG_DECODE_FAILED;
-    }
 
     CFRef pb = generalPasteboard(s);
     if (!pb) return CG_UNAVAILABLE;
@@ -587,14 +574,26 @@ int32_t bun_coregraphics_clipboard_read_type(const char* uti, uint8_t* out, size
     CFRef nsdata = msg<CFRef>(s, pb, s->sel_registerName("dataForType:"), ustr);
     s->CFRelease(ustr);
     long n = nsdata ? s->CFDataGetLength(nsdata) : 0;
-    if (n <= 0) {
-        *out_len = 0;
+    if (n <= 0)
         return CG_OK; // that representation is absent — not an error
-    }
-    *out_len = static_cast<size_t>(n);
     // dataForType: returns autoreleased; retain so it survives the pool drain
-    // between the two calls.
-    pending = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
+    // before the caller copies it out.
+    *out_data = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
+    if (!*out_data) return CG_UNAVAILABLE;
+    *out_len = static_cast<size_t>(n);
+    return CG_OK;
+}
+
+// Copies the bytes of a `bun_coregraphics_clipboard_read_type` handle into `out`
+// (which must have room for the length that call reported) and releases it.
+int32_t bun_coregraphics_clipboard_take_data(void* data, uint8_t* out)
+{
+    auto s = load();
+    // Never report success over an unwritten buffer: the caller would hand a run
+    // of zeroes to JS as the clipboard's contents.
+    if (!s) return CG_UNAVAILABLE;
+    std::memcpy(out, s->CFDataGetBytePtr(data), static_cast<size_t>(s->CFDataGetLength(data)));
+    s->CFRelease(data);
     return CG_OK;
 }
 
@@ -655,6 +654,7 @@ extern "C" int bun_coregraphics_rotate90(const void*, unsigned, unsigned, void*,
 extern "C" int bun_coregraphics_reflect(const void*, unsigned, unsigned, void*, int) { return 1; }
 extern "C" int bun_coregraphics_clipboard(void*, void*, int) { return 1; }
 extern "C" long long bun_coregraphics_clipboard_change_count() { return -1; }
-extern "C" int bun_coregraphics_clipboard_read_type(const char*, void*, void*) { return 1; }
+extern "C" int bun_coregraphics_clipboard_read_type(const char*, void**, unsigned long*) { return 1; }
+extern "C" int bun_coregraphics_clipboard_take_data(void*, unsigned char*) { return 1; }
 extern "C" int bun_coregraphics_clipboard_write_types(const char* const*, const void* const*, const unsigned long*, unsigned long) { return 1; }
 #endif

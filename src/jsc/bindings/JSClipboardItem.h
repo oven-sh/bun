@@ -38,16 +38,18 @@ public:
 
     const WTF::Vector<WTF::String>& types() const { return m_types; }
     const WTF::String& presentationStyle() const { return m_presentationStyle; }
+    // The ClipboardItemData the constructor stored for `types()[index]`: a string, a Blob,
+    // or a promise of either. `Clipboard.prototype.write` materializes these itself.
+    JSC::JSValue valueAt(unsigned index) const { return m_values[index].get(); }
 
     // The `types` FrozenArray (the same JSArray on every get, per WebIDL).
     JSC::JSObject* frozenTypes(JSC::JSGlobalObject*);
     // The promise `getType()` returns: the stored value, awaited and
-    // normalized to a Blob of the requested type. Also used by
-    // `Clipboard.prototype.write` to materialize every representation.
+    // normalized to a Blob of the requested type.
     JSC::JSValue getTypePromise(JSC::JSGlobalObject*, const WTF::String& type);
-    JSC::JSValue getTypePromiseAtIndex(JSC::JSGlobalObject*, unsigned index);
 
 private:
+    JSC::JSValue getTypePromiseAtIndex(JSC::JSGlobalObject*, unsigned index);
     JSClipboardItem(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, WTF::Vector<WTF::String>&& types, const JSC::MarkedArgumentBuffer& values, WTF::String&& presentationStyle);
 
@@ -56,6 +58,16 @@ private:
     WTF::Vector<JSC::WriteBarrier<JSC::Unknown>> m_values;
     JSC::LazyProperty<JSClipboardItem, JSC::JSObject> m_frozenTypes;
 };
+
+// Normalizes one settled ClipboardItemData to a Blob carrying `type`: a Blob already
+// declaring that type passes through, a string becomes `new Blob([value], { type })`, and
+// anything else throws. Synchronous — the caller has already awaited what needed awaiting.
+JSC::JSValue clipboardDataToBlob(JSC::JSGlobalObject*, JSC::JSValue data, const WTF::String& type);
+
+// `getType()`'s reaction: normalizes the settled value. Its context cell at argument(1) is
+// an InternalFieldTuple{JSClipboardItem, index}, and its return value settles the promise
+// `getType()` handed back.
+JSC_DECLARE_HOST_FUNCTION(jsClipboardHandler_onGetTypeSettled);
 
 void setupClipboardItemClassStructure(JSC::LazyClassStructure::Initializer&);
 

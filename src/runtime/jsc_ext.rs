@@ -94,24 +94,20 @@ impl ScriptExecutionContextIdentifierExt for ScriptExecutionContextIdentifier {
 
 // ─── JSValueExt ─────────────────────────────────────────────────────────────
 pub trait JSValueExt {
-    fn to_fmt<'a>(
+    fn to_fmt<'a, 'b>(
         self,
-        global: &'a JSGlobalObject,
-        formatter: &'a mut crate::vm::console_object::Formatter<'a>,
-    ) -> crate::vm::console_object::formatter::JSPrinter<'a>;
+        formatter: &'a mut crate::vm::console_object::Formatter<'b>,
+    ) -> crate::vm::console_object::formatter::ZigFormatter<'a, 'b>;
 }
 
 impl JSValueExt for JSValue {
-    fn to_fmt<'a>(
+    fn to_fmt<'a, 'b>(
         self,
-        global: &'a JSGlobalObject,
-        formatter: &'a mut crate::vm::console_object::Formatter<'a>,
-    ) -> crate::vm::console_object::formatter::JSPrinter<'a> {
-        crate::vm::console_object::formatter::JSPrinter {
-            value: self,
-            global,
-            formatter,
-        }
+        formatter: &'a mut crate::vm::console_object::Formatter<'b>,
+    ) -> crate::vm::console_object::formatter::ZigFormatter<'a, 'b> {
+        formatter.remaining_values = bun_core::ptr::RawSlice::EMPTY;
+        formatter.stack_check.update();
+        crate::vm::console_object::formatter::ZigFormatter::new(formatter, self)
     }
 }
 
@@ -263,7 +259,16 @@ pub fn verify_error_to_js(
     err: &bun_uws::us_bun_verify_error_t,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    bun_jsc::system_error::us_bun_verify_error_to_system_error(err).to_error_instance_js(global)
+    let code: &[u8] = err.code_bytes();
+    let reason: &[u8] = err.reason_bytes();
+
+    let fallback = bun_jsc::SystemError {
+        code: bun_core::String::clone_utf8(code),
+        message: bun_core::String::clone_utf8(reason),
+        ..Default::default()
+    };
+
+    Ok(fallback.to_error_instance(global))
 }
 
 // ─── create_counters_object (errata: moved from `bun_jsc::counters`) ────────

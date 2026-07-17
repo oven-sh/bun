@@ -85,6 +85,11 @@ impl Handler {
         global_object: &JSGlobalObject,
         error_value: JSValue,
     ) {
+        // Termination raised inside the preceding callback.call() cannot be
+        // cleared; entering JS again trips executeCallImpl's assertNoException.
+        if global_object.has_exception() {
+            return;
+        }
         if !on_error.is_empty_or_undefined_or_null() {
             let _ = on_error
                 .call(global_object, JSValue::UNDEFINED, &[error_value])

@@ -4,7 +4,7 @@
 // termination cannot be cleared: entering JS again trips Interpreter::
 // executeCallImpl's `assertNoException`. Repro for the
 // test/js/node/test/parallel/test-http2-reset-flood.js SIGABRT.
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
 const workerSource = `
@@ -81,27 +81,100 @@ const net = require("net");
 })();
 `;
 
+const wsWorkerSource = `
+const { parentPort } = require("worker_threads");
+const shared = new Int32Array(require("worker_threads").workerData);
+
+const server = Bun.serve({
+  port: 0,
+  fetch(req, server) {
+    if (server.upgrade(req)) return;
+    return new Response("no upgrade", { status: 400 });
+  },
+  websocket: {
+    open(ws) { ws.send("hello"); },
+    // Bun.serve's websocket message handler is the dispatch point
+    // ServerWebSocket.rs drives; a termination raised here returns Err to the
+    // native caller, which then invokes WebSocketServerContext::
+    // run_error_callback.
+    message() {
+      Atomics.store(shared, 0, 1);
+      Atomics.notify(shared, 0);
+      let sink = [];
+      for (let i = 0; i < 50_000; i++) {
+        sink.push(i & 0xff);
+        if (sink.length > 64) sink.length = 0;
+      }
+      Atomics.store(shared, 0, 2);
+    },
+    close() {},
+    error() {},
+  },
+});
+parentPort.postMessage(server.port);
+`;
+
+const wsParentSource = `
+const { Worker } = require("worker_threads");
+
+(async () => {
+  let hits = 0;
+  for (let i = 0; i < 8; i++) {
+    const sab = new SharedArrayBuffer(4);
+    const shared = new Int32Array(sab);
+    const worker = new Worker(${JSON.stringify(wsWorkerSource)}, { eval: true, workerData: sab });
+    const port = await new Promise(resolve => worker.once("message", resolve));
+
+    const ws = new WebSocket("ws://127.0.0.1:" + port);
+    await new Promise((resolve, reject) => {
+      ws.onopen = resolve;
+      ws.onerror = reject;
+    });
+    ws.send("go");
+    const waited = Atomics.wait(shared, 0, 0, 2000);
+    if (waited === "timed-out") throw new Error("message() never fired");
+    await worker.terminate();
+    ws.close();
+    if (Atomics.load(shared, 0) === 1) hits++;
+  }
+  if (hits === 0) {
+    throw new Error("terminate() never landed inside the message handler (0/8)");
+  }
+  console.log("ok", hits);
+})();
+`;
+
 // On Windows the usockets close path and Atomics.wait scheduling differ enough
 // that the window does not open; the bug is platform-agnostic and is exercised
 // on the POSIX lanes.
-test.skipIf(isWindows)(
-  "worker.terminate() during a Bun.listen socket handler does not re-enter JS with a pending termination exception",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", parentSource],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // The unpatched build aborts inside an iteration (exit 134, "ASSERTION
-    // FAILED: !exception()" on stderr, no stdout). Assert on stdout/exitCode
-    // so benign debug-build stderr noise cannot cause a false positive; the
-    // crash's stderr is included in the failure diff either way.
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
-      stdout: expect.stringMatching(/^ok [1-8]$/),
-      exitCode: 0,
-    });
+describe.skipIf(isWindows)(
+  "worker.terminate() mid-handler does not re-enter JS with a pending termination exception",
+  () => {
+    for (const [name, src] of [
+      ["Bun.listen close handler (socket Handlers::call_error_handler)", parentSource],
+      ["Bun.serve websocket message handler (WebSocketServerContext::run_error_callback)", wsParentSource],
+    ] as const) {
+      test(
+        name,
+        async () => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", src],
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          // The unpatched build aborts inside an iteration (exit 134,
+          // "ASSERTION FAILED: !exception()" on stderr, no stdout). Assert on
+          // stdout/exitCode so benign debug-build stderr noise cannot cause a
+          // false positive; the crash's stderr is in the diff either way.
+          expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+            stdout: expect.stringMatching(/^ok [1-8]$/),
+            exitCode: 0,
+          });
+        },
+        60_000,
+      );
+    }
   },
-  60_000,
 );

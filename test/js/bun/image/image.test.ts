@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import fs from "node:fs";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -1526,4 +1527,73 @@ describe("Bun.Image.backend", () => {
       expect(out.length).toBeGreaterThan(0);
     }
   });
+
+  test.skipIf(!isWindows)("WIC backend loads from System32 when a same-named DLL sits next to bun.exe", async () => {
+    // windowscodecs.dll is not a KnownDLL. A bare-name LoadLibrary walks the
+    // application directory before System32, so a planted DLL next to the
+    // executable would be tried first; with LOAD_LIBRARY_SEARCH_SYSTEM32 it
+    // is ignored and the real System32 copy loads. TIFF routes exclusively
+    // through WIC (jpeg/png/webp use static codecs; bmp/gif fall back to
+    // static), so a disabled backend surfaces as "format not supported".
+    using dir = tempDir("wic-dll-plant", {
+      "windowscodecs.dll": "not a PE file",
+    });
+    fs.writeFileSync(join(String(dir), "in.tif"), makeTiff1x1Gray());
+    const exe = join(String(dir), "bun.exe");
+    fs.copyFileSync(bunExe(), exe);
+    await using proc = Bun.spawn({
+      cmd: [
+        exe,
+        "-e",
+        `
+          Bun.Image.backend = "system";
+          const tiff = await Bun.file("in.tif").bytes();
+          const out = await new Bun.Image(tiff).png().bytes();
+          console.log(JSON.stringify({ ok: out.length > 0 && out[0] === 0x89 && out[1] === 0x50 }));
+        `,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ out: JSON.parse(stdout || "null"), stderr, exitCode }).toEqual({
+      out: { ok: true },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
+
+// Minimal little-endian 1x1 8-bit grayscale uncompressed TIFF.
+function makeTiff1x1Gray(): Uint8Array {
+  const entries: [number, number, number, number][] = [
+    [0x0100, 3, 1, 1], // ImageWidth
+    [0x0101, 3, 1, 1], // ImageLength
+    [0x0102, 3, 1, 8], // BitsPerSample
+    [0x0103, 3, 1, 1], // Compression = none
+    [0x0106, 3, 1, 1], // PhotometricInterpretation = BlackIsZero
+    [0x0111, 4, 1, 0], // StripOffsets (patched below)
+    [0x0116, 3, 1, 1], // RowsPerStrip
+    [0x0117, 4, 1, 1], // StripByteCounts
+  ];
+  const stripOfs = 8 + 2 + entries.length * 12 + 4;
+  entries[5][3] = stripOfs;
+  const buf = Buffer.alloc(stripOfs + 1);
+  buf.write("II", 0, "ascii");
+  buf.writeUInt16LE(42, 2);
+  buf.writeUInt32LE(8, 4);
+  let p = 8;
+  buf.writeUInt16LE(entries.length, p);
+  p += 2;
+  for (const [tag, type, count, val] of entries) {
+    buf.writeUInt16LE(tag, p);
+    buf.writeUInt16LE(type, p + 2);
+    buf.writeUInt32LE(count, p + 4);
+    buf.writeUInt32LE(val, p + 8);
+    p += 12;
+  }
+  buf.writeUInt32LE(0, p);
+  buf[stripOfs] = 0xff;
+  return buf;
+}

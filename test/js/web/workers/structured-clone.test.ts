@@ -3,6 +3,7 @@ import { openSync } from "fs";
 import { bunEnv, bunExe, tls } from "harness";
 import { createPrivateKey, createPublicKey, createSecretKey, KeyObject, X509Certificate } from "node:crypto";
 import { BlockList } from "node:net";
+import { deflate } from "node:zlib";
 import { join } from "path";
 
 // Terminal object types that were never entered into the structured clone object
@@ -456,20 +457,22 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
         // so a future WebKit sync that re-adds upstream's !isDetachable() gate
         // in SerializedScriptValue::create fails CI.
         test("A Bun-pinned ArrayBuffer copies on transfer instead of detaching", async () => {
-          const zlib = require("zlib");
           const ab = new ArrayBuffer(64);
           new Uint8Array(ab).fill(42);
           const { promise, resolve, reject } = Promise.withResolvers<void>();
           // Starting the async deflate pins ab for the duration of the call.
-          zlib.deflate(new Uint8Array(ab), (e: unknown) => (e ? reject(e) : resolve()));
-          const clone = structuredCloneFn(ab, { transfer: [ab] });
-          expect({
-            cloneLength: clone.byteLength,
-            origLength: ab.byteLength,
-            sameObject: clone === ab,
-            cloneFirst: new Uint8Array(clone)[0],
-          }).toEqual({ cloneLength: 64, origLength: 64, sameObject: false, cloneFirst: 42 });
-          await promise;
+          deflate(new Uint8Array(ab), e => (e ? reject(e) : resolve()));
+          try {
+            const clone = structuredCloneFn(ab, { transfer: [ab] });
+            expect({
+              cloneLength: clone.byteLength,
+              origLength: ab.byteLength,
+              sameObject: clone === ab,
+              cloneFirst: new Uint8Array(clone)[0],
+            }).toEqual({ cloneLength: 64, origLength: 64, sameObject: false, cloneFirst: 42 });
+          } finally {
+            await promise;
+          }
           expect(ab.byteLength).toBe(64);
         });
         // https://html.spec.whatwg.org/multipage/structured-data.html#structuredserializeinternal

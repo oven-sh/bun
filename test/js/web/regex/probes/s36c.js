@@ -1,0 +1,12 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const G="\u{1F600}"; const S=G+G;
+const g = (label, src, fl) => { try { const re = new RegExp(src, fl); const r=[]; let m,k=0; while ((m = re.exec(S)) !== null && k++ < 10) { r.push(m.index); if (m[0]==="") re.lastIndex++; } out(label.padEnd(38) + s(r)); } catch (e) { out(label.padEnd(38) + "THREW"); } };
+g("A  (?![\\w9A-Z]+|.q?)|c[9]", "(?![\\w9A-Z]+|.[0xb]?)|c[[9]&&[\\d]]", "vg");
+g("A1 no-alt2", "(?![\\w9A-Z]+|.[0xb]?)", "vg");
+g("A2 (?![\\w9]+|.q?)", "(?![\\w9]+|.[0xb]?)", "vg");
+g("A3 (?![9A-Z]+|.q?)", "(?![9A-Z]+|.[0xb]?)", "vg");
+g("A4 (?![\\wZ]+|.q?)", "(?![\\wZ]+|.[0xb]?)", "vg");
+g("A5 (?![\\w9A-Z]|.q?) noplus", "(?![\\w9A-Z]|.[0xb]?)", "vg");
+g("A6 (?![\\w9A-Z]+)", "(?![\\w9A-Z]+)", "vg");
+g("A7 (?!.q?|[\\w9A-Z]+) swap", "(?!.[0xb]?|[\\w9A-Z]+)", "vg");
+g("A8 /gu", "(?![\\w9A-Z]+|.[0xb]?)", "gu");

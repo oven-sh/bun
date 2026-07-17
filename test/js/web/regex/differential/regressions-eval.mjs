@@ -29,7 +29,15 @@ export function evaluateCase(c) {
       let guard = 0;
       while ((m = re.exec(c.input)) !== null && guard++ < 30) {
         results.push({ match: [...m].map(v => (v === undefined ? null : v)), index: m.index, lastIndex: re.lastIndex });
-        if (re.lastIndex === 0 || !re.global) break;
+        // advanceEmpty models matchAll: step lastIndex past a zero-width match
+        // (by one code point under /u,/v) so empty matches can be enumerated.
+        if (m[0] === "") {
+          if (!c.advanceEmpty) break;
+          const unicode = re.unicode || re.unicodeSets;
+          const cp = c.input.codePointAt(re.lastIndex);
+          re.lastIndex += unicode && cp !== undefined && cp > 0xffff ? 2 : 1;
+        }
+        if (!re.global) break;
       }
       return results;
     }

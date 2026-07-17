@@ -1,0 +1,12 @@
+const out = typeof print === "function" ? print : console.log; const s = v => JSON.stringify(v);
+const G = "😀"; const S = "prefix  " + G + " suffix";
+const t = (label, src, fl) => { try { const m = new RegExp(src, fl).exec(S); out(label.padEnd(38) + s(m && [m.index, m[0]])); } catch (e) { out(label.padEnd(38) + "THREW"); } };
+t("iu (fails)", "\\s" + G + "|\\s{0,2}(?!.{1,3}^)\\n", "iu");
+t("ium (multiline)", "\\s" + G + "|\\s{0,2}(?!.{1,3}^)\\n", "ium");
+t("iu swap order", "\\s{0,2}(?!.{1,3}^)\\n|\\s" + G, "iu");
+t("iu alt1 alone", "\\s" + G, "iu");
+t("iu alt2 alone", "\\s{0,2}(?!.{1,3}^)\\n", "iu");
+t("iu .{2}^", "\\s" + G + "|\\s{0,2}(?!.{2}^)\\n", "iu");
+t("iu .{1,3}$", "\\s" + G + "|\\s{0,2}(?!.{1,3}$)\\n", "iu");
+t("iu no astral alt1", "\\sq|\\s{0,2}(?!.{1,3}^)\\n", "iu");
+t("iu bmp subject", "\\s" + G + "|\\s{0,2}(?!.{1,3}^)\\n", "iu");

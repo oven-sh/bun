@@ -314,4 +314,140 @@ export const knownBunFailures = [
     expected: null,
     currentBun: { match: ["FooBĀĂĄr", "BĀĂĄ"], index: 0 },
   },
+  // Class-first equal-minimum alternative over-advance (pre-existing upstream
+  // JSC, JIT-only: the interpreter and V8 agree with `expected`). An astral
+  // first alternative followed by an alternative of EQUAL minimum size whose
+  // leading term (after optimizeAlternative) is a non-inverted BMP character
+  // class misses the astral match under /u and /v. Inverted classes, unequal
+  // minima, and /iu (case-insensitive class path) are unaffected. Full boundary
+  // table: differential/matrix.mjs (10 variants) and probes/eq.js.
+  {
+    name: "jit-astral-eqmin-classfirst-lit-astral",
+    source: "\u{1F600}|[qz]a",
+    flags: "u",
+    input: "-\u{1F600}",
+    op: "exec",
+    expected: { match: ["\u{1F600}"], index: 1 },
+    currentBun: null,
+    tierDependent: true,
+  },
+  {
+    name: "jit-astral-eqmin-classfirst-wordclass",
+    source: "\u{1F600}|\\wa",
+    flags: "u",
+    input: "-\u{1F600}",
+    op: "exec",
+    expected: { match: ["\u{1F600}"], index: 1 },
+    currentBun: null,
+    tierDependent: true,
+  },
+  {
+    name: "jit-astral-eqmin-classfirst-astral-class-first",
+    source: "[\u{1F600}\u{1F436}]|[qz]a",
+    flags: "u",
+    input: "-\u{1F600}",
+    op: "exec",
+    expected: { match: ["\u{1F600}"], index: 1 },
+    currentBun: null,
+    tierDependent: true,
+  },
+  // Capture-clearing after a failed assertion attempt (pre-existing JSC-vs-V8:
+  // ALL JSC engines -- JIT, interpreter, and stock -- keep a group value that V8
+  // reports as undefined for a group that did not participate in the winning
+  // alternative). Shared-layer semantics, not tier-dependent.
+  {
+    name: "capture-not-cleared-lookahead-forward-ref",
+    source: "\\t|(?=^|\u03a9|\\t[\\s\\w])((?:\\1){2,}?.{2}\\W{0,2}|.(?!d{2,}?)|\\t+(?:\\1)??)",
+    flags: "v",
+    input: "\n\t\n",
+    op: "exec",
+    expected: { match: ["\t", null], index: 1 },
+    currentBun: { match: ["\t", "\t"], index: 1 },
+  },
+  // Mirrored quantified-split capture ownership: the optional copy's abandoned
+  // iteration cleared the capture that its mandatory sibling had committed, and
+  // the sibling re-emerged through its End only, leaving the capture half-set.
+  {
+    name: "lookbehind-lazy-empty-body-group-capture-recorded",
+    source: "\\w(?<=$(.?)+?)",
+    flags: "",
+    input: "0",
+    op: "exec",
+    expected: { match: ["0", ""], index: 0 },
+  },
+  {
+    name: "lookbehind-bounded-lazy-empty-body-group-capture-recorded",
+    source: "\\w(?<=$(.?){1,2}?)",
+    flags: "",
+    input: "0",
+    op: "exec",
+    expected: { match: ["0", ""], index: 0 },
+  },
+  {
+    name: "lookbehind-lazy-copy-owner-nested-capture-depth2",
+    source: "\\w(?<=$(?:(?:(.?)))+?)",
+    flags: "",
+    input: "0",
+    op: "exec",
+    expected: { match: ["0", ""], index: 0 },
+  },
+  // Deeply nested min>0 quantified groups must stay linear (a split-based
+  // routing once deep-copied the body per nesting level: 21 levels crashed).
+  {
+    name: "deep-nested-plus-groups-linear",
+    source: "(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:a)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+",
+    flags: "",
+    input: "x",
+    op: "exec",
+    expected: null,
+  },
+  // Same nesting, inside a lookbehind (backward parens split; only the innermost
+  // quantification may split or the copies compound exponentially and crash).
+  {
+    name: "deep-nested-plus-groups-in-lookbehind-linear",
+    source: "(?<=(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:(?:a)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)+)z",
+    flags: "",
+    input: "aaaz",
+    op: "exec",
+    expected: { match: ["z"], index: 3 },
+  },
+
+  // is only valid when the pattern cannot match zero-width; a zero-width
+  // alternative can legitimately succeed at a mid-pair position.
+  {
+    name: "no-astral-skip-when-zero-width-match-possible-v",
+    advanceEmpty: true,
+    source: "(?![\\w9A-Z]+|.[0xb]?)|c[[9]&&[\\d]]",
+    flags: "gv",
+    input: "\u{1F600}\u{1F600}",
+    op: "iterate",
+    expected: [
+      { match: [""], index: 1, lastIndex: 1 },
+      { match: [""], index: 3, lastIndex: 3 },
+      { match: [""], index: 4, lastIndex: 4 },
+    ],
+  },
+  {
+    name: "no-astral-skip-when-zero-width-match-possible-u",
+    advanceEmpty: true,
+    source: "(?!.)|\u{1F600}q",
+    flags: "gu",
+    input: "\u{1F600}\u{1F600}",
+    op: "iterate",
+    expected: [
+      { match: [""], index: 1, lastIndex: 1 },
+      { match: [""], index: 3, lastIndex: 3 },
+      { match: [""], index: 4, lastIndex: 4 },
+    ],
+  },
+  {
+    name: "jit-astral-eqmin-classfirst-v-mode",
+    source: "\u{1F600}|[qz]a",
+    flags: "v",
+    input: "-\u{1F600}",
+    op: "exec",
+    expected: { match: ["\u{1F600}"], index: 1 },
+    currentBun: null,
+    tierDependent: true,
+  },
 ];

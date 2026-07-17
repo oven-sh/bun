@@ -1002,7 +1002,6 @@ function highlightRegExp(regexpString) {
     // Safeguard against bugs in the implementation.
     const color = palette[idx] ?? palette[0];
     out += color[0] + str + color[1];
-    return idx;
   }
 
   function writeDepth(str, incDepth, incI) {
@@ -1196,9 +1195,11 @@ function highlightRegExp(regexpString) {
 function stylizeWithColor(str, styleType) {
   const style = inspect.styles[styleType];
   if (style !== undefined) {
+    // Checked first: a function style (regexp) would otherwise be stringified
+    // into a property key on every lookup.
+    if (typeof style === "function") return style(str);
     const color = inspect.colors[style];
     if (color !== undefined) return `\u001b[${color[0]}m${str}\u001b[${color[1]}m`;
-    if (typeof style === "function") return style(str);
   }
   return str;
 }

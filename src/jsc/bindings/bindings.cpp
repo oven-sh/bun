@@ -652,6 +652,15 @@ JSValue getIndexWithoutAccessors(JSGlobalObject* globalObject, JSObject* obj, ui
 template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2);
 
+// Typed array elements and boxed string characters are synthesized by
+// getOwnPropertySlot instead of being stored in the structure, so a structure with
+// no named properties means nothing is left to compare once the contents match.
+// Checking this keeps those comparisons off the index-enumerating slow path.
+static ALWAYS_INLINE bool hasNamedOwnProperties(JSC::Structure* structure)
+{
+    return structure->outOfLineSize() != 0 || structure->inlineSize() != 0;
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype>
 bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, bool addToStack)
 {
@@ -735,6 +744,7 @@ bool Bun__deepEquals(JSC::JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     isSpecialEqual = specialObjectsDequal<isStrict, enableAsymmetricMatchers, skipPrototype>(globalObject, gcBuffer, stack, scope, c2, c1);
+    RETURN_IF_EXCEPTION(scope, false);
     if (isSpecialEqual.has_value()) return WTF::move(*isSpecialEqual);
     JSObject* o1 = v1.getObject();
     JSObject* o2 = v2.getObject();
@@ -1355,15 +1365,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        if constexpr (isStrict && !skipPrototype) {
-            // Buffer and Uint8Array share a JSType, so matching elements are not
-            // enough to call them equal. This mirrors the constructor check below,
-            // which typed arrays never reach because this case returns directly.
-            if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
-                return false;
-            }
-        }
-
         auto info = c1->classInfo();
         auto info2 = c2->classInfo();
         if (!info || !info2) {
@@ -1437,14 +1438,20 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             return false;
         }
 
-        // The elements match. In strict mode node also compares own non-index
-        // properties (e.g. symbols); loose comparison ignores them. Falling through
-        // to the property walk below would also enumerate every index, which is
-        // O(elements) per comparison, so only do it when one of the two actually
-        // carries named properties. Elements live in the vector, never in the
-        // structure, so an empty out-of-line size means there are none.
+        // Buffer and Uint8Array share a JSType, so matching elements are not enough.
+        // Typed arrays never reach the shared constructor check below, because this
+        // case returns directly.
+        if constexpr (isStrict && !skipPrototype) {
+            if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
+                return false;
+            }
+        }
+
+        // Strict mode also compares own non-index properties (e.g. symbols); loose
+        // ignores them. Guarded because the property walk below enumerates every
+        // index, which would make each comparison O(elements).
         if constexpr (isStrict) {
-            if (c1->structure()->outOfLineSize() != 0 || c2->structure()->outOfLineSize() != 0) {
+            if (hasNamedOwnProperties(c1->structure()) || hasNamedOwnProperties(c2->structure())) {
                 break;
             }
         }
@@ -1452,11 +1459,20 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
     }
     case StringObjectType: {
         if (c2Type != StringObjectType) {
-            return false;
+            // A String subclass instance is DerivedStringObjectType. Only skipPrototype
+            // mode, where the constructor is ignored, treats it as an equivalent boxed
+            // string; every other mode keeps the existing "different type" answer.
+            if constexpr (!(isStrict && skipPrototype)) {
+                return false;
+            } else if (c2Type != DerivedStringObjectType) {
+                return false;
+            }
         }
 
-        if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
-            return false;
+        if constexpr (!skipPrototype) {
+            if (!equal(JSObject::calculatedClassName(c1->getObject()), JSObject::calculatedClassName(c2->getObject()))) {
+                return false;
+            }
         }
 
         JSString* s1 = c1->toStringInline(globalObject);
@@ -1469,9 +1485,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         if (!stringsEqual) return false;
 
         if constexpr (isStrict) {
-            // Fall through to check own properties. Only in strict mode: loose
-            // comparison ignores extra properties on boxed primitives.
-            break;
+            // Only strict mode compares extra own properties on boxed primitives.
+            // Guarded so a plain boxed string does not fall through to the property
+            // walk, which would enumerate every character index.
+            if (hasNamedOwnProperties(c1->structure()) || hasNamedOwnProperties(c2->structure())) {
+                break;
+            }
         }
         return true;
     }

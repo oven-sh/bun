@@ -21,6 +21,8 @@ const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
+const { uncurryThis, SafeMap } = require("internal/primordials");
+const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
 
 var cjs_exports;
 
@@ -238,7 +240,7 @@ let styleCache;
 let hexStyleCache;
 
 function getHexStyleCache() {
-  hexStyleCache ??= new Map();
+  hexStyleCache ??= new SafeMap();
   return hexStyleCache;
 }
 
@@ -278,7 +280,7 @@ function hexToRgb(hex) {
 
 function getHexStyle(hex) {
   const cache = getHexStyleCache();
-  const cached = cache.$get(hex);
+  const cached = cache.get(hex);
   if (cached !== undefined) return cached;
   const rgb = hexToRgb(hex);
   const style = {
@@ -287,9 +289,9 @@ function getHexStyle(hex) {
     closeSeq: kHexCloseSeq,
   };
   if (cache.size >= kHexStyleCacheMax) {
-    cache.$delete(cache.keys().next().value);
+    cache.delete(cache.keys().next().value);
   }
-  cache.$set(hex, style);
+  cache.set(hex, style);
   return style;
 }
 
@@ -330,8 +332,8 @@ function styleText(format, text, options) {
     }
 
     if (format[0] === "#") {
-      let hexStyle = getHexStyleCache().$get(format);
-      if (hexStyle === undefined && hexColorRegExp.exec(format) !== null) {
+      let hexStyle = getHexStyleCache().get(format);
+      if (hexStyle === undefined && RegExpPrototypeExec(hexColorRegExp, format) !== null) {
         hexStyle = getHexStyle(format);
       }
       if (hexStyle !== undefined) {
@@ -366,9 +368,9 @@ function styleText(format, text, options) {
     if (key === "none") continue;
 
     if (typeof key === "string" && key[0] === "#") {
-      let hexStyle = getHexStyleCache().$get(key);
+      let hexStyle = getHexStyleCache().get(key);
       if (hexStyle === undefined) {
-        if (hexColorRegExp.exec(key) === null) {
+        if (RegExpPrototypeExec(hexColorRegExp, key) === null) {
           throw $ERR_INVALID_ARG_VALUE("format", key, "must be a valid hex color (#RGB or #RRGGBB)");
         }
         if (skipColorize) continue;
@@ -406,12 +408,16 @@ function prepareCallSites(_err, callSites) {
   const result = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
+    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
+    // exposes the column under both names.
+    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
     result.push({
       functionName: callSite.getFunctionName() ?? "",
-      scriptName: callSite.getFileName() ?? "",
       scriptId: `${callSite.getScriptId()}`,
+      scriptName: callSite.getFileName() ?? "",
       lineNumber: callSite.getLineNumber() ?? 0,
-      columnNumber: callSite.getColumnNumber() ?? 0,
+      columnNumber,
+      column: columnNumber,
     });
   }
   return result;

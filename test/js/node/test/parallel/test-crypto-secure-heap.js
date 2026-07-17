@@ -1,7 +1,3 @@
-/*
-Skipped test
-https://github.com/electron/electron/blob/5680c628b6718385bbd975b51ec2640aa7df226b/script/node-disabled-tests.json#L26
-
 'use strict';
 
 const common = require('../common');
@@ -15,6 +11,10 @@ if (common.isWindows) {
 
 if (common.isASan) {
   common.skip('ASan does not play well with secure heap allocations');
+}
+
+if (process.features.openssl_is_boringssl) {
+  common.skip('BoringSSL does not support secure heap');
 }
 
 const assert = require('assert');
@@ -83,5 +83,3 @@ child.on('exit', common.mustCall((code) => {
   child.stderr.setEncoding('utf8');
   child.stderr.on('data', (chunk) => res += chunk);
 }
-
-*/

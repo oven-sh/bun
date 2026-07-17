@@ -1603,6 +1603,11 @@ impl WebWorker {
             WebWorker__dispatchError(global, self.cpp_worker, &mut str, err)
         });
         if let Err(e) = dispatch {
+            // terminate() can also land mid-dispatchError above; re-check so
+            // the termination sentinel is never reported as an error.
+            if self.has_requested_terminate() {
+                return;
+            }
             // `take_exception` on a `JsError` always returns an Exception
             // cell; None is unreachable. Do not silently drop the error.
             let exc = global

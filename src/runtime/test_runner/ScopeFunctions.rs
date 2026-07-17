@@ -94,8 +94,9 @@ impl ScopeFunctions {
     }
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_todo<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
-        let v = this.generic_extend(scope.unscoped_global(), BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())?;
-        Ok(scope.local(v))
+        let global = scope.unscoped_global();
+        this.generic_extend(global, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"get .todo", strings::TODO())
+            .map(|v| scope.local(v))
     }
     #[bun_jsc::host_fn(getter, scoped)]
     pub fn get_failing<'s>(this: &Self, scope: &mut Scope<'s>) -> JsResult<Local<'s>> {
@@ -129,8 +130,9 @@ impl ScopeFunctions {
     }
     #[bun_jsc::host_fn(method, scoped)]
     pub fn fn_todo_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {
-        let v = this.generic_if(scope.unscoped_global(), frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())?;
-        Ok(scope.local(v))
+        let global = scope.unscoped_global();
+        this.generic_if(global, frame, BaseScopeCfg { self_mode: SelfMode::Todo, ..Default::default() }, b"call .todoIf()", false, strings::TODO_IF())
+            .map(|v| scope.local(v))
     }
     #[bun_jsc::host_fn(method, scoped)]
     pub fn fn_failing_if<'s>(this: &Self, scope: &mut Scope<'s>, frame: &CallFrame) -> JsResult<Local<'s>> {

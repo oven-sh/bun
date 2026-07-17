@@ -261,9 +261,9 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   const opts = validateRunOptions(options);
   const reporter = createTestsStream();
 
-  // A test file that calls run() on itself would otherwise fork forever; node
-  // skips the files and returns an empty stream instead.
-  if (runChildReporterEnabled) {
+  // A test file that calls run() on itself would otherwise fork (or, with
+  // isolation 'none', import) forever; node skips the files instead.
+  if (runChildReporterEnabled || inProcessRunActive) {
     process.emitWarning("node:test run() is being called recursively within a test file. skipping running files.");
     reporter.endStream();
     return reporter;
@@ -275,15 +275,47 @@ function run(options: Record<string, unknown> = kEmptyObject) {
   if (opts.watch) throwNotImplemented("run({ watch: true })", 5090, "Use `bun:test --watch` in the interim.");
   if (opts.coverage) throwNotImplemented("run({ coverage: true })", 5090, "Use `bun:test --coverage` in the interim.");
   if (opts.shard) throwNotImplemented("run({ shard })", 5090);
-  if (opts.isolation === "none") throwNotImplemented("run({ isolation: 'none' })", 5090);
-  if (opts.globPatterns?.length > 0) throwNotImplemented("run({ globPatterns })", 5090);
   if (opts.globalSetupPath != null) throwNotImplemented("run({ globalSetupPath })", 5090);
   if (opts.only) throwNotImplemented("run({ only: true })", 5090);
   if (opts.testNamePatterns != null) throwNotImplemented("run({ testNamePatterns })", 5090);
   if (opts.testSkipPatterns != null) throwNotImplemented("run({ testSkipPatterns })", 5090);
 
-  runFiles(opts, reporter);
+  if (opts.isolation === "none") {
+    // Set synchronously so an overlapping run() hits the recursion guard
+    // instead of sharing the queue and sink.
+    inProcessRunActive = true;
+    runFilesInProcess(opts, reporter);
+  } else {
+    runFiles(opts, reporter);
+  }
   return reporter;
+}
+
+// node's default discovery pattern (utils.js:71-77). Split into two globs:
+// Bun.Glob mis-parses `test/**/*` nested inside a brace group.
+const kDefaultRunPatterns = ["**/{test,test-*,*[._-]test}.{js,mjs,cjs}", "**/test/**/*.{js,mjs,cjs}"];
+
+function discoverRunFiles(opts: ReturnType<typeof validateRunOptions>): string[] {
+  const path = require("node:path");
+  const cwd = opts.cwd as string;
+  const files = opts.files as string[] | undefined;
+  // An explicit files array wins even when empty: node runs nothing for [].
+  if (files !== undefined) {
+    return files.map(file => path.resolve(cwd, file));
+  }
+  const patterns = (opts.globPatterns as string[] | undefined)?.length
+    ? (opts.globPatterns as string[])
+    : kDefaultRunPatterns;
+  const results = new Set<string>();
+  for (const pattern of patterns) {
+    for (const match of new Bun.Glob(pattern).scanSync({ cwd, onlyFiles: true })) {
+      if (match.split("/").includes("node_modules") || match.split(require("node:path").sep).includes("node_modules")) {
+        continue;
+      }
+      results.add(path.resolve(cwd, match));
+    }
+  }
+  return Array.from(results).sort();
 }
 
 function makeRunCounts() {
@@ -600,6 +632,8 @@ function reportDirectiveOnlyNode(node: TestNode, mode: "skip" | "todo") {
     name: node.name,
     nesting: nestingOf(node),
     testNumber: nextTestNumberFor(node),
+    testId: runTestIdFor(node),
+    parentId: runParentIdFor(node),
     duration_ms: 0,
     skip: skipped ? true : undefined,
     todo: !skipped ? true : undefined,
@@ -622,6 +656,17 @@ function hasTodoAncestor(node: TestNode): boolean {
     if (cur.todoFlag) return true;
   }
   return false;
+}
+
+let runTestIdCounter = 0;
+function runTestIdFor(node: TestNode): number {
+  if (node.runTestId === 0) node.runTestId = ++runTestIdCounter;
+  return node.runTestId;
+}
+
+function runParentIdFor(node: TestNode): number {
+  const parent = node.parent;
+  return parent !== undefined && parent.parent !== undefined ? runTestIdFor(parent) : 0;
 }
 
 function nextTestNumberFor(node: TestNode): number {
@@ -647,6 +692,8 @@ function reportQueueChain(node: TestNode) {
       name: entry.name,
       nesting: nestingOf(entry),
       type: entry.isSuite ? "suite" : "test",
+      testId: runTestIdFor(entry),
+      parentId: runParentIdFor(entry),
       tags: entry.tags,
     };
     emitRunChildEvent("test:enqueue", data);
@@ -669,6 +716,8 @@ function reportStartChain(node: TestNode) {
       __proto__: null,
       name: entry.name,
       nesting: nestingOf(entry),
+      testId: runTestIdFor(entry),
+      parentId: runParentIdFor(entry),
       tags: entry.tags,
     });
   }
@@ -705,6 +754,8 @@ function maybeCompleteSuite(suite: TestNode): boolean {
     name: suite.name,
     nesting: nestingOf(suite),
     testNumber: nextTestNumberFor(suite),
+    testId: runTestIdFor(suite),
+    parentId: runParentIdFor(suite),
     type: "suite",
     todo: isTodo ? true : undefined,
     duration_ms: suite.startedAtMs > 0 ? performance.now() - suite.startedAtMs : 0,
@@ -760,6 +811,8 @@ function reportNodeToRunParent(node: TestNode, startedAt: number) {
     name: node.name,
     nesting: nestingOf(node),
     testNumber: nextTestNumberFor(node),
+    testId: runTestIdFor(node),
+    parentId: runParentIdFor(node),
     duration_ms: performance.now() - startedAt,
     skip: skipped ? true : undefined,
     todo: !skipped && todoEffective ? true : undefined,
@@ -1586,6 +1639,8 @@ class TestNode {
   startedAtMs = 0;
   // node numbers each reported child 1..n within its parent.
   reportedCount = 0;
+  // Stable per-instance id carried on every per-test event.
+  runTestId = 0;
   // Standalone mode: children collected at declaration, run on beforeExit.
   standaloneChildren: StandaloneEntry[] | undefined;
   finished = false;
@@ -1617,7 +1672,8 @@ class TestNode {
     // Direct children of the root capture the entry file at declaration time
     // (under `bun test` with multiple files, Bun.main is the file currently
     // being collected); nested tests inherit their parent's file.
-    this.filePath = parent !== undefined && parent.parent !== undefined ? parent.filePath : Bun.main;
+    this.filePath =
+      parent !== undefined && parent.parent !== undefined ? parent.filePath : (currentImportFile ?? Bun.main);
     this.skipped = !!options.skip;
     this.todoFlag = !!options.todo;
     this.expectFailure = parseExpectFailure(options.expectFailure) || parent?.expectFailure || false;
@@ -2152,7 +2208,8 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
       if (err) reject(err);
       else resolve();
     };
-    const result = fn(arg, done);
+    // Node invokes test/hook callbacks with `this` bound to the context.
+    const result = fn.$call(arg, arg, done);
     returned = true;
     if ($isPromise(result)) {
       // Node fails the test but still awaits the returned promise, so hooks
@@ -2171,11 +2228,16 @@ function invokeWithDoneCallback(fn: Function, arg: unknown) {
 
 // Node passes a `done` callback when a test or hook function declares exactly
 // two parameters; completion is then done()'s call, not the returned value.
+// Node invokes describe callbacks with `this` bound to the SuiteContext.
+function invokeSuiteFn(fn: Function, ctx: unknown) {
+  return fn.$call(ctx, ctx);
+}
+
 function invokeTestFn(fn: Function, arg: unknown) {
   if (fn.length === 2) {
     return invokeWithDoneCallback(fn, arg);
   }
-  return fn(arg);
+  return fn.$call(arg, arg);
 }
 
 // A single timeout armed once per test and raced against both the body and
@@ -2533,9 +2595,17 @@ type StandaloneEntry = {
 
 let standaloneActive = false;
 let standaloneScheduled = false;
+// True while run({ isolation: 'none' }) imports and executes files in-process:
+// registrations queue standalone-style even under `bun test`, and no
+// beforeExit pass is scheduled (the run loop drains the queue itself).
+let inProcessRunActive = false;
+// The file being imported (registration) / executed (events) by an in-process run.
+let currentImportFile: string | null = null;
+let activeRunFile: string | null = null;
 const standaloneQueue: StandaloneEntry[] = [];
 
 function inStandaloneMode(): boolean {
+  if (inProcessRunActive) return true;
   if (standaloneActive) return true;
   if (runChildReporterEnabled) return false;
   // The native runner's file generation is 0 iff this process is not
@@ -2547,6 +2617,10 @@ function inStandaloneMode(): boolean {
 
 function standaloneRegister(entry: StandaloneEntry) {
   standaloneActive = true;
+  if (inProcessRunActive) {
+    // The in-process run loop drains the queue; no beforeExit pass.
+    standaloneScheduled = true;
+  }
   const parent = entry.node.parent;
   if (parent !== undefined && parent.parent !== undefined) {
     (parent.standaloneChildren ??= []).push(entry);
@@ -2559,8 +2633,225 @@ function standaloneRegister(entry: StandaloneEntry) {
   }
 }
 
+// Runs root before hooks, the queued entries, then root after hooks.
+// Returns the root hook failure (if any) so callers fail the run cleanly
+// instead of destroying the stream.
+async function executeStandaloneQueue(root: TestNode): Promise<unknown> {
+  let hookError: unknown;
+  for (const hook of root.hooks.before) {
+    try {
+      // Memoized: hooks that ran immediately (started root) are not re-run.
+      await runBeforeHookOnce(hook, root, root.getSuiteCtx());
+    } catch (err) {
+      hookError = err;
+      break;
+    }
+  }
+  if (hookError === undefined) {
+    // Entries can register more entries (rare); index loop tolerates growth.
+    for (let i = 0; i < standaloneQueue.length; i++) {
+      await runStandaloneEntry(standaloneQueue[i]);
+    }
+  }
+  standaloneQueue.length = 0;
+  for (const hook of root.hooks.after) {
+    try {
+      await runHook(hook, root, root.getSuiteCtx());
+    } catch (err) {
+      hookError ??= err;
+    }
+  }
+  return hookError;
+}
+
+function entryHasOnly(entry: StandaloneEntry): boolean {
+  if (entry.node.options.only) return true;
+  for (const child of entry.node.standaloneChildren ?? []) {
+    if (entryHasOnly(child)) return true;
+  }
+  return false;
+}
+
+function standaloneQueueHasOnly(entries: StandaloneEntry[]): boolean {
+  return entries.some(entryHasOnly);
+}
+
+// Keeps only-marked branches: an only suite keeps all children; a plain suite
+// with only-marked descendants keeps just those branches.
+function pruneToOnly(entries: StandaloneEntry[]): StandaloneEntry[] {
+  const kept: StandaloneEntry[] = [];
+  for (const entry of entries) {
+    if (entry.node.options.only) {
+      kept.push(entry);
+      continue;
+    }
+    if (!entry.isSuite) continue;
+    if (!entryHasOnly(entry)) continue;
+    const keptChildren = pruneToOnly(entry.node.standaloneChildren ?? []);
+    entry.node.standaloneChildren = keptChildren;
+    entry.node.childrenCount = keptChildren.length;
+    kept.push(entry);
+  }
+  return kept;
+}
+
+function tagsMatchFilters(tags: string[], filters: string[]): boolean {
+  for (const tag of tags) {
+    if (filters.includes(tag)) return true;
+  }
+  return false;
+}
+
+// Drops tests whose (inherited) tags miss every filter; a suite survives only
+// if any descendant does, and its child accounting shrinks to the survivors.
+function pruneStandaloneEntries(entries: StandaloneEntry[], filters: string[]): StandaloneEntry[] {
+  const kept: StandaloneEntry[] = [];
+  for (const entry of entries) {
+    if (!entry.isSuite) {
+      if (tagsMatchFilters(entry.node.tags, filters)) kept.push(entry);
+      continue;
+    }
+    const keptChildren = pruneStandaloneEntries(entry.node.standaloneChildren ?? [], filters);
+    entry.node.standaloneChildren = keptChildren;
+    entry.node.childrenCount = keptChildren.length;
+    if (keptChildren.length > 0) kept.push(entry);
+  }
+  return kept;
+}
+
+// run({ isolation: 'none' }): every file imports into this process (all
+// registrations first, like node), then one merged queue executes with shared
+// root hooks. Events flow through the same restructuring as process isolation.
+async function runFilesInProcess(opts: ReturnType<typeof validateRunOptions>, reporter: TestsStream) {
+  const started = Date.now();
+  const counts = makeRunCounts();
+  // A standalone caller may already have queued its own tests; they belong to
+  // its beforeExit pass, not to this run. Saved here so the restore helper
+  // (function scope) can hand them back.
+  const callerEntries = standaloneQueue.splice(0, standaloneQueue.length);
+  const wasStandaloneActive = standaloneActive;
+  const wasScheduled = standaloneScheduled;
+
+  // Callers attach listeners synchronously on the returned stream; yield first.
+  await Promise.resolve();
+
+  try {
+    if (typeof opts.setup === "function") await opts.setup(reporter);
+
+    const files = discoverRunFiles(opts);
+    standaloneSink = inProcessSinkImpl.bind(undefined, reporter, counts);
+    // node's root test is already running while files load, so before() hooks
+    // registered at a file's top level execute immediately, in file order.
+    getRootNode().started = true;
+    try {
+      for (const file of files) {
+        if (file === Bun.main) {
+          // Importing the entry module from inside its own evaluation can
+          // never settle (the import awaits the very evaluation that is
+          // awaiting the run); node skips the file in this shape too.
+          process.emitWarning(
+            "node:test run() is being called recursively within a test file. skipping running files.",
+          );
+          continue;
+        }
+        currentImportFile = file;
+        try {
+          await import(file);
+        } catch (err) {
+          // A file that fails to load is itself a failing test node.
+          const fileNode = {
+            __proto__: null,
+            name: file,
+            nesting: 0,
+            file,
+            testId: ++runTestIdCounter,
+            parentId: 0,
+            tags: [],
+          };
+          reporter.emitMessage("test:enqueue", { ...fileNode, type: "test" });
+          reporter.emitMessage("test:dequeue", { ...fileNode, type: "test" });
+          reporter.emitMessage("test:complete", {
+            ...fileNode,
+            testNumber: 1,
+            details: { __proto__: null, duration_ms: 0, type: "test", passed: false, error: err },
+          });
+          reporter.emitMessage("test:start", { ...fileNode });
+          reporter.emitMessage("test:fail", {
+            ...fileNode,
+            testNumber: 1,
+            details: { __proto__: null, duration_ms: 0, type: "test", error: err },
+          });
+          counts.tests++;
+          counts.failed++;
+          counts.topLevel++;
+        }
+      }
+    } finally {
+      currentImportFile = null;
+    }
+
+    const filters = opts.testTagFilterExpressions as string[] | null;
+    if (filters !== null && filters.length > 0) {
+      const pruned = pruneStandaloneEntries(standaloneQueue, filters);
+      standaloneQueue.length = 0;
+      standaloneQueue.push(...pruned);
+    }
+
+    // node honors `only` in the shared process: when any registration carries
+    // it, everything outside the only-marked branches is dropped silently.
+    if (standaloneQueueHasOnly(standaloneQueue)) {
+      const pruned = pruneToOnly(standaloneQueue);
+      standaloneQueue.length = 0;
+      standaloneQueue.push(...pruned);
+    }
+
+    const root = getRootNode();
+    const hookError = await executeStandaloneQueue(root);
+    if (hookError !== undefined) {
+      console.error(hookError);
+      counts.failed++;
+    }
+
+    const durationMs = Date.now() - started;
+    if (root.reportedCount > 0) {
+      standaloneSink("test:plan", { __proto__: null, nesting: 0, count: root.reportedCount });
+    }
+    emitRunDiagnostics(reporter, counts, durationMs);
+    reporter.emitMessage("test:summary", {
+      __proto__: null,
+      success: counts.failed === 0,
+      counts,
+      duration_ms: durationMs,
+      file: undefined,
+    });
+  } catch (err) {
+    restoreAfterInProcessRun();
+    reporter.destroy(err as Error);
+    return;
+  }
+  restoreAfterInProcessRun();
+  reporter.endStream();
+
+  function restoreAfterInProcessRun() {
+    inProcessRunActive = false;
+    standaloneSink = null;
+    activeRunFile = null;
+    // Give the caller its own tests and mode flags back so a standalone file
+    // that also calls run() still gets its beforeExit pass (finding: the run
+    // must not latch standalone state for the rest of the process).
+    getRootNode().started = false;
+    standaloneQueue.push(...callerEntries);
+    standaloneActive = wasStandaloneActive || callerEntries.length > 0;
+    standaloneScheduled = wasScheduled;
+  }
+}
+
+function inProcessSinkImpl(reporter: TestsStream, counts: Record<string, number>, type: string, data: unknown) {
+  republishChildEvent({ type, data }, activeRunFile ?? Bun.main, reporter, counts);
+}
+
 async function runStandalone() {
-  const stream = new TestsStream();
+  const stream = createTestsStream();
   const counts = makeRunCounts();
   const startedAt = performance.now();
 
@@ -2573,14 +2864,10 @@ async function runStandalone() {
   const root = getRootNode();
 
   try {
-    for (const hook of root.hooks.before) {
-      await runHook(hook, root, root.getSuiteCtx());
-    }
-    for (const entry of standaloneQueue) {
-      await runStandaloneEntry(entry);
-    }
-    for (const hook of root.hooks.after) {
-      await runHook(hook, root, root.getSuiteCtx());
+    const hookError = await executeStandaloneQueue(root);
+    if (hookError !== undefined) {
+      console.error(hookError);
+      counts.failed++;
     }
   } catch (err) {
     console.error(err);
@@ -2611,6 +2898,7 @@ function standaloneSinkImpl(stream: TestsStream, counts: Record<string, number>,
 
 async function runStandaloneEntry(entry: StandaloneEntry) {
   const { node, fn, isSuite, mode } = entry;
+  activeRunFile = node.filePath ?? null;
   if (mode === "skip") {
     // Never executes; its directive event is its completion.
     if (isSuite) node.suiteReported = true;
@@ -2900,7 +3188,7 @@ function addSuite(
     // collecting children onto the suite's own subtest chain.
     let build: unknown;
     try {
-      build = runWithNode(suite, () => fn(suite.getSuiteCtx()));
+      build = runWithNode(suite, () => invokeSuiteFn(fn, suite.getSuiteCtx()));
     } catch (err) {
       // The callback threw after possibly registering children: fail the suite
       // but still schedule it so those children are awaited and rolled up.
@@ -2935,7 +3223,7 @@ function addSuite(
     // the callback land in suiteNode.standaloneChildren.
     let build: unknown;
     try {
-      build = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
+      build = runWithNode(suiteNode, () => invokeSuiteFn(fn, suiteNode.getSuiteCtx()));
     } catch (err) {
       suiteNode.childrenFailed++;
       suiteNode.error = err;
@@ -2960,7 +3248,7 @@ function addSuite(
     effectiveMode === "skip"
       ? kDefaultFunction
       : () => {
-          const built = runWithNode(suiteNode, () => fn(suiteNode.getSuiteCtx()));
+          const built = runWithNode(suiteNode, () => invokeSuiteFn(fn, suiteNode.getSuiteCtx()));
           if (built != null && typeof (built as PromiseLike<unknown>).then === "function") {
             return (built as Promise<unknown>).finally(() => noteSuiteCollectionSettled(suiteNode));
           }
@@ -3049,6 +3337,17 @@ function hookArgFor(node: TestNode) {
 function before(arg0: unknown, arg1: unknown) {
   const hook = createHook(arg0, arg1);
   const owner = hookOwner();
+  // The standalone root check precedes isRunning(): the in-process runner
+  // marks the root started, and node runs a root before() SYNCHRONOUSLY at
+  // that point (that is how root hooks interleave with file loads), while
+  // scheduleImmediateBeforeHook would defer it past the rest of the import.
+  if (inStandaloneMode() && owner.parent === undefined) {
+    owner.hooks.before.push(hook);
+    if (owner.started && !owner.finished) {
+      runBeforeHookOnce(hook, owner, hookArgFor(owner)).catch(() => {});
+    }
+    return;
+  }
   if (owner.isRunning()) {
     owner.hooks.before.push(hook);
     if (owner.started && !owner.finished) {
@@ -3057,7 +3356,6 @@ function before(arg0: unknown, arg1: unknown) {
     return;
   }
   if (inStandaloneMode()) {
-    // Standalone execution runs owner.hooks.before itself.
     owner.hooks.before.push(hook);
     return;
   }

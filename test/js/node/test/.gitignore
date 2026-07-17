@@ -17,3 +17,6 @@ fixtures/repl*
 !fixtures/test-runner/coverage
 fixtures/test-runner/coverage/*
 !fixtures/test-runner/coverage/stdin.test.js
+!fixtures/test-runner/no-isolation
+!fixtures/test-runner/no-isolation/**
+!fixtures/test-runner/test-id-fixture.js

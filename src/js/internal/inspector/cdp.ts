@@ -312,15 +312,22 @@ class InspectorCDPAdapter {
         }
         // CDP allows executionContextId-only (calls with this === globalThis);
         // JSC requires an objectId, so fetch the global's first. JSC has a
-        // single execution context and rejects contextId, so omit it.
-        this.#sendToBackend("Runtime.evaluate", { expression: "globalThis" }, null, method, (result, error) => {
-          const globalObjectId = result.result?.objectId;
-          if (error || !globalObjectId) {
-            this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
-            return;
-          }
-          forward(globalObjectId);
-        });
+        // single execution context and rejects contextId, so omit it. Pass the
+        // client's objectGroup so its releaseObjectGroup reclaims this handle.
+        this.#sendToBackend(
+          "Runtime.evaluate",
+          { expression: "globalThis", objectGroup: params.objectGroup },
+          null,
+          method,
+          (result, error) => {
+            const globalObjectId = result.result?.objectId;
+            if (error || !globalObjectId) {
+              this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
+              return;
+            }
+            forward(globalObjectId);
+          },
+        );
         return;
       }
 

@@ -16,6 +16,7 @@
 #include "ErrorCode+List.h"
 #include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/CallData.h"
+#include "JavaScriptCore/DeferTermination.h"
 #include "JavaScriptCore/TopExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
@@ -207,8 +208,14 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 #endif
 }
 
+// LazyPropertyCallback builders run inside getOwnPropertySlot, which performs no
+// exception check; defer termination (as JSC's own LazyProperty::callFunc does)
+// so a worker.terminate() mid-builder can't leave it pending for the caller.
+#define DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm__) JSC::DeferTerminationForAWhile deferScopeForLazyProperty(vm__)
+
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = processObject->globalObject();
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
@@ -270,6 +277,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* release = JSC::constructEmptyObject(globalObject);
 
@@ -2503,6 +2511,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     auto process = uncheckedDowncast<Process>(processObject);
 
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::jsBoolean(false), 0);
@@ -2547,6 +2556,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     // }
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
@@ -2675,6 +2685,7 @@ extern "C" void Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(JSC::JSGl
 static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdioWriteStreamCodeGenerator(vm), globalObject);
@@ -2738,6 +2749,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2807,6 +2819,7 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         auto& vm = JSC::getVM(globalObject);
         // Lazy property builder: exceptions must not propagate into
         // reifyStaticProperty, which performs no exception check.
+        DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
@@ -3014,6 +3027,7 @@ static JSValue constructEnv(VM& vm, JSObject* processObject)
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue env = globalObject->processEnvObject();
     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -3883,6 +3897,7 @@ static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSArray* array = JSC::constructEmptyArray(processObject->globalObject(), nullptr);
     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -3896,6 +3911,7 @@ static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSSet* result = JSSet::create(vm, globalObject->setStructure());
     RETURN_IF_EXCEPTION(scope, {});
@@ -4018,6 +4034,7 @@ static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto* bun = globalObject->bunObject();
@@ -4058,6 +4075,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
 
     // Lazy property builder: exceptions must not propagate into
     // reifyStaticProperty, which performs no exception check.
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -4104,6 +4122,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     //     cached_builtins: [Getter]
     // }
     auto* globalObject = processObject->globalObject();
+    DEFER_TERMINATION_FOR_LAZY_PROPERTY(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
 

@@ -474,7 +474,18 @@ impl Listener {
             log!("Failed to listen {}", errno);
             // libuv reports UV_EINVAL for a pipe path it cannot express in a
             // sockaddr_un, which is what Node surfaces for an over-long path.
-            let errno = if errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
+            // Node's createServerHandle(fd) calls guessHandleType first and
+            // returns UV_EINVAL for anything that is not TCP or PIPE, so a
+            // non-socket or bad fd surfaces as EINVAL there, not the kernel's
+            // ENOTSOCK/EBADF (or WSAENOTSOCK on Windows).
+            let mapped = bun_sys::SystemErrno::init(errno as i64);
+            let errno = if mapped == Some(bun_sys::SystemErrno::ENAMETOOLONG)
+                || (matches!(connection, UnixOrHost::Fd(_))
+                    && matches!(
+                        mapped,
+                        Some(bun_sys::SystemErrno::ENOTSOCK) | Some(bun_sys::SystemErrno::EBADF)
+                    ))
+            {
                 bun_sys::SystemErrno::EINVAL as c_int
             } else {
                 errno

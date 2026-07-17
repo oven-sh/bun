@@ -573,14 +573,15 @@ int32_t bun_coregraphics_clipboard_read_type(const char* uti, void** out_data, s
     if (!ustr) return CG_UNAVAILABLE;
     CFRef nsdata = msg<CFRef>(s, pb, s->sel_registerName("dataForType:"), ustr);
     s->CFRelease(ustr);
-    long n = nsdata ? s->CFDataGetLength(nsdata) : 0;
-    if (n <= 0)
+    if (!nsdata)
         return CG_OK; // that representation is absent — not an error
     // dataForType: returns autoreleased; retain so it survives the pool drain
-    // before the caller copies it out.
+    // before the caller copies it out. A present 0-byte NSData still retains:
+    // `*out_data` is null ⇔ the representation is absent.
     *out_data = msg<CFRef>(s, nsdata, s->sel_registerName("retain"));
     if (!*out_data) return CG_UNAVAILABLE;
-    *out_len = static_cast<size_t>(n);
+    long n = s->CFDataGetLength(nsdata);
+    *out_len = n > 0 ? static_cast<size_t>(n) : 0;
     return CG_OK;
 }
 
@@ -592,7 +593,8 @@ int32_t bun_coregraphics_clipboard_take_data(void* data, uint8_t* out)
     // Never report success over an unwritten buffer: the caller would hand a run
     // of zeroes to JS as the clipboard's contents.
     if (!s) return CG_UNAVAILABLE;
-    std::memcpy(out, s->CFDataGetBytePtr(data), static_cast<size_t>(s->CFDataGetLength(data)));
+    long n = s->CFDataGetLength(data);
+    if (n > 0) std::memcpy(out, s->CFDataGetBytePtr(data), static_cast<size_t>(n));
     s->CFRelease(data);
     return CG_OK;
 }

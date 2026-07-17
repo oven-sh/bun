@@ -133,9 +133,7 @@ impl AnyTaskJobCtx for ClipboardCtx {
                     match platform::read_type(*mime) {
                         Ok(Some(bytes)) => {
                             readable = true;
-                            if !bytes.is_empty() {
-                                present.push((*mime, bytes));
-                            }
+                            present.push((*mime, bytes));
                         }
                         Ok(None) => readable = true,
                         Err(reason) => unavailable = reason,
@@ -1012,6 +1010,11 @@ mod platform {
                 continue; // `/bin/sh` unavailable
             };
             match classify(result) {
+                // Some helper/target pairs exit 0 with empty stdout for an
+                // absent type; only `text/plain` is ever deliberately empty.
+                HelperRun::Succeeded(stdout) if stdout.is_empty() && mime != Mime::TextPlain => {
+                    return Ok(None);
+                }
                 HelperRun::Succeeded(stdout) => return Ok(Some(stdout)),
                 HelperRun::NotInstalled => {}
                 HelperRun::TimedOut | HelperRun::Failed { clean: false } => ran += 1,

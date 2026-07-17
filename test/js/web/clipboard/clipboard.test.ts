@@ -193,6 +193,31 @@ describe("ClipboardItem", () => {
     await expectDOMException(item.getType("image/png"), "NotFoundError");
   });
 
+  // WebIDL `(DOMString or Blob)`: a non-Blob fulfillment value is ToString'd
+  // (so `42` → `"42"`, `null` → `"null"`); only uncoercible values reject.
+  test("getType() coerces non-Blob, non-string data with ToString per WebIDL", async () => {
+    const item = new ClipboardItem({
+      "text/plain": 42 as never,
+      "text/html": Promise.resolve(true) as never,
+      "application/json": { toString: () => '{"a":1}' } as never,
+    });
+    expect(await (await item.getType("text/plain")).text()).toBe("42");
+    expect(await (await item.getType("text/html")).text()).toBe("true");
+    expect(await (await item.getType("application/json")).text()).toBe('{"a":1}');
+    // `null` / `undefined` stringify; a Symbol (the one value ToString cannot
+    // convert) rejects, as does a `toString` that throws.
+    expect(await (await new ClipboardItem({ "text/plain": null as never }).getType("text/plain")).text()).toBe("null");
+    await expect(new ClipboardItem({ "text/plain": Symbol("x") as never }).getType("text/plain")).rejects.toThrow(
+      TypeError,
+    );
+    const throwing = {
+      toString() {
+        throw new Error("nope");
+      },
+    };
+    await expect(new ClipboardItem({ "text/plain": throwing as never }).getType("text/plain")).rejects.toThrow("nope");
+  });
+
   test("supports() tells the per-platform truth and coerces per WebIDL", () => {
     expect(ClipboardItem.supports("text/plain")).toBe(true);
     expect(ClipboardItem.supports("image/png")).toBe(true);
@@ -422,7 +447,11 @@ describe("readText / writeText", () => {
         const multi = await navigator.clipboard
           .write([new ClipboardItem({ "text/plain": "a", "text/html": "<b>a</b>" })])
           .then(() => null, e => e.name);
-        console.log(JSON.stringify({ ok: back === token, helperRan: existsSync(process.env.CLIP_STATE_FILE), events, multi }));
+        // An empty text/plain representation is present, not absent.
+        await navigator.clipboard.writeText("");
+        const [empty] = await navigator.clipboard.read();
+        const emptyTypes = empty ? [...empty.types] : null;
+        console.log(JSON.stringify({ ok: back === token, helperRan: existsSync(process.env.CLIP_STATE_FILE), events, multi, emptyTypes }));
       `,
     });
     for (const helper of ["xclip", "xsel", "wl-paste", "wl-copy"]) chmodSync(join(String(dir), helper), 0o755);
@@ -440,7 +469,13 @@ describe("readText / writeText", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: JSON.stringify({ ok: true, helperRan: true, events: ["copy", "paste"], multi: "NotAllowedError" }),
+      stdout: JSON.stringify({
+        ok: true,
+        helperRan: true,
+        events: ["copy", "paste", "copy", "paste"],
+        multi: "NotAllowedError",
+        emptyTypes: ["text/plain"],
+      }),
       stderr: expect.any(String),
       exitCode: 0,
     });
@@ -477,6 +512,12 @@ describe("readText / writeText", () => {
       // Writing "" is legal, and readText() of an empty clipboard resolves "".
       await navigator.clipboard.writeText("");
       expect(await navigator.clipboard.readText()).toBe("");
+      // An empty text/plain representation is present, not absent: `read()`
+      // resolves `[ClipboardItem]` with a 0-byte text/plain Blob, like browsers.
+      const emptyItems = await navigator.clipboard.read();
+      expect(emptyItems).toHaveLength(1);
+      expect(emptyItems[0].types).toContain("text/plain");
+      expect(await (await emptyItems[0].getType("text/plain")).text()).toBe("");
     } finally {
       // Put the machine's clipboard back so running this locally doesn't
       // clobber the developer's clipboard.

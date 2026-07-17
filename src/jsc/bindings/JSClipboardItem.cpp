@@ -354,8 +354,13 @@ JSC::JSValue clipboardDataToBlob(JSC::JSGlobalObject* globalObject, JSC::JSValue
         if (blobTypeString == type || (parameterized && blobTypeString.startsWith(type)))
             return value;
     }
-    if (!isBlob && !value.isString()) [[unlikely]]
-        return throwTypeError(globalObject, scope, makeString("The data for \""_s, type, "\" is not a string or a Blob"_s));
+    // WebIDL `(DOMString or Blob)`: a non-Blob value is ToString-coerced; only
+    // a Symbol (or a throwing `toString`) fails the conversion.
+    if (!isBlob && !value.isString()) {
+        auto string = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        value = JSC::jsString(vm, WTF::move(string));
+    }
     // new Blob([value], { type })
     auto* zigGlobal = defaultGlobalObject(globalObject);
     JSC::JSObject* blobConstructor = zigGlobal->JSBlobConstructor();

@@ -964,8 +964,10 @@ it.skipIf(isWindows)(
     expect(stderr).toBe("");
     const { before, after, delta } = JSON.parse(stdout.trim().split("\n").pop()!);
     // Without the balancing deref: +25 pages (release) / +163 pages
-    // (debug+ASAN). With it: 0 ± 2. The threshold sits well clear of both.
-    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(10);
+    // (debug+ASAN). With it: 0 ± 2 (the extra per-Socket fields for onread/tls
+    // bookkeeping can push this a few pages higher). The threshold sits well
+    // clear of both.
+    expect(delta, `mimalloc page count: ${before} -> ${after}`).toBeLessThan(15);
     expect(exitCode).toBe(0);
   },
   60_000,

@@ -459,8 +459,9 @@ import inspector from "node:inspector";
 inspector.open(0, "127.0.0.1", false);
 process.stderr.write("READY\\n");
 inspector.waitForDebugger();
-process.stderr.write("FIRST_RESUMED " + globalThis.__mark + "\\n");
+process.stderr.write("FIRST_RESUMED\\n");
 inspector.waitForDebugger();
+process.stderr.write("SECOND_RESUMED\\n");
 console.log(JSON.stringify({ first: globalThis.__mark, second: globalThis.__mark2 }));
 process.exit(0);
 `;
@@ -492,7 +493,11 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
   const wsUrl = stderrText.match(/Debugger listening on (ws:\S+)/)?.[1];
   expect(wsUrl).toBeDefined();
 
-  const connectAndResume = async (expression: string) => {
+  // Close only once the fixture has observably resumed: closing the socket
+  // immediately after send() can race the cross-thread dispatch so
+  // Inspector.initialized lands but Runtime.evaluate is still queued,
+  // leaving __mark undefined.
+  const connectAndResume = async (expression: string, resumedNeedle: string) => {
     const ws = new WebSocket(wsUrl!);
     const closed = Promise.withResolvers<void>();
     const opened = Promise.withResolvers<void>();
@@ -505,16 +510,18 @@ test("inspector.waitForDebugger() blocks again on the second call after a fronte
     await opened.promise;
     ws.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression } }));
     ws.send(JSON.stringify({ id: 2, method: "Runtime.runIfWaitingForDebugger", params: {} }));
+    await readUntil(resumedNeedle);
     ws.close();
     await closed.promise;
   };
 
-  await connectAndResume("globalThis.__mark = 1");
   // The fixture resumes, prints FIRST_RESUMED, then blocks again in the second
   // waitForDebugger(). Seeing FIRST_RESUMED proves the first wait blocked; the
   // fixture would already have exited if the second call returned immediately.
-  await readUntil("FIRST_RESUMED 1");
-  await connectAndResume("globalThis.__mark2 = 2");
+  // Runtime.evaluate may dispatch after the wait resolves (separate batch), so
+  // the mark values are asserted only in the final JSON, not here.
+  await connectAndResume("globalThis.__mark = 1", "FIRST_RESUMED");
+  await connectAndResume("globalThis.__mark2 = 2", "SECOND_RESUMED");
 
   const drained = (async () => {
     for (;;) {

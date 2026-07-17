@@ -182,9 +182,7 @@ function createZlibHandle(mode, options, processCallback, onError) {
 function createBrotliHandle(mode, options, processCallback, onError) {
   // Validate before creating native handle.
   const chunkSize = validateChunkSize(options);
-  // Note: bun's NativeBrotli.init() does not take a dictionary parameter;
-  // validate for parity but the dictionary is not passed to the engine.
-  validateDictionary(options.dictionary);
+  const dictionary = validateDictionary(options.dictionary);
   validateParams(options.params, kMaxBrotliParam, key => $ERR_BROTLI_INVALID_PARAM(key));
 
   const handle = new NativeBrotli(mode);
@@ -211,7 +209,7 @@ function createBrotliHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  if (!handle.init(brotliInitParamsArray, writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 

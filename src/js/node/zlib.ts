@@ -564,7 +564,7 @@ function Zlib(opts, mode) {
       if (isAnyArrayBuffer(dictionary)) {
         dictionary = Buffer.from(dictionary);
       } else {
-        throw $ERR_INVALID_ARG_TYPE("options.dictionary", "Buffer, TypedArray, DataView, or ArrayBuffer", dictionary);
+        throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
       }
     }
   }
@@ -713,10 +713,19 @@ function Brotli(opts, mode) {
     });
   }
 
+  let dictionary = opts?.dictionary;
+  if (dictionary !== undefined && !isArrayBufferView(dictionary)) {
+    if (isAnyArrayBuffer(dictionary)) {
+      dictionary = Buffer.from(dictionary);
+    } else {
+      throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
+    }
+  }
+
   const handle = new NativeBrotli(mode);
 
   this._writeState = new Uint32Array(2);
-  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback)) {
+  if (!handle.init(brotliInitParamsArray, this._writeState, processCallback, dictionary)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 

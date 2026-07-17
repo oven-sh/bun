@@ -54,10 +54,16 @@ test.concurrent("Bun.serve: graceful stop() keeps the loop alive until in-flight
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
+    timeout: 10_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "SAW_ABORT", stderr: "", exitCode: 0 });
+  expect({ stdout, stderr, exitCode, signalCode: proc.signalCode }).toEqual({
+    stdout: "SAW_ABORT",
+    stderr: "",
+    exitCode: 0,
+    signalCode: null,
+  });
 });
 
 test.concurrent("node:http: server.close() with a half-closed connection drains without wedging", async () => {

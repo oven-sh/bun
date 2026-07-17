@@ -40,7 +40,7 @@ async function runOnce() {
   const { markers, rest } = splitStderr(stderr);
 
   if (proc.signalCode === "SIGTERM" && exitCode !== 42) {
-    return { hung: true as const, markers, rest };
+    return { hung: true as const, markers, rest, stdout };
   }
 
   // Any other outcome (normal exit, crash, non-timeout signal) is asserted
@@ -65,6 +65,7 @@ test("es-module-lexer consistently loads", async () => {
     if (result.hung) {
       console.error(
         `iteration ${i}: child hung >${perChildTimeoutMs}ms; reached: ${result.markers || "<none>"}` +
+          ` (stdout ${result.stdout.length}b)` +
           (result.rest ? `\n${result.rest}` : ""),
       );
       hangs.push({ i, markers: result.markers });
@@ -74,11 +75,11 @@ test("es-module-lexer consistently loads", async () => {
   if (hangs.length === 0) return;
 
   const summary = hangs.map(h => `#${h.i}(${h.markers || "<none>"})`).join(", ");
-  // Windows CI intermittently parks in `await init` (WebAssembly.compile completion
-  // never wakes uv_run). Tolerate <5/10 hangs stalled specifically at await-init there;
-  // anything else (non-Windows, different phase, or a majority) must fail.
-  const stalledAtInit = hangs.every(h => h.markers.includes("await init") && !h.markers.includes("init resolved"));
-  if (isWindows && stalledAtInit && hangs.length < 5) {
+  // Windows CI intermittently parks after the child has written all markers and
+  // called process.exit(42). Tolerate <5/10 hangs there that reached the exit
+  // marker; anything else (non-Windows, stalled earlier, or a majority) must fail.
+  const stalledAtExit = hangs.every(h => h.markers.includes("] exit"));
+  if (isWindows && stalledAtExit && hangs.length < 5) {
     console.error(`es-module-lexer: ${hangs.length}/10 iterations hung on Windows: ${summary}`);
     return;
   }

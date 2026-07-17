@@ -1,14 +1,16 @@
+const { writeSync } = require("fs");
+
 async function main() {
-  // stderr markers let the parent test see which phase stalled when the
-  // per-child timeout fires; they do not keep the event loop alive.
-  process.stderr.write("[es-module-lexer] require\n");
+  // Synchronous fd-2 markers so the parent test can see which phase
+  // stalled when the per-child timeout fires; they do not ref the event loop.
+  writeSync(2, "[es-module-lexer] require\n");
   const { init, parse } = require("es-module-lexer");
-  process.stderr.write("[es-module-lexer] await init\n");
+  writeSync(2, "[es-module-lexer] await init\n");
   await init;
-  process.stderr.write("[es-module-lexer] init resolved\n");
+  writeSync(2, "[es-module-lexer] init resolved\n");
   const [imports, exports] = parse("import { a } from 'b'; export const c = 1;");
   console.write(JSON.stringify({ imports, exports }));
-  process.stderr.write("[es-module-lexer] exit\n");
+  writeSync(2, "[es-module-lexer] exit\n");
   process.exit(42);
 }
 

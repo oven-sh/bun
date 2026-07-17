@@ -291,11 +291,19 @@ unsafe extern "C" {
 pub extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
     // SAFETY: as in Bun__nodeQuic__processEndpoint below.
     let this = unsafe { &*owner.cast::<QuicEndpoint>() };
-    if this.closed.get() || this.send_scope_depth.get() != 0 {
+    if this.closed.get() {
+        return;
+    }
+    if this.send_scope_depth.get() != 0 {
+        // The walker cleared `pending` before calling; a pass is already on
+        // the stack and its tail flush must still see the flag, or the write
+        // that set it sits out the 1ms backstop timer.
+        this.nq_driver.with_mut(|d| d.pending = 1);
         return;
     }
     let global_ptr = this.global.get();
     if global_ptr.is_null() {
+        this.nq_driver.with_mut(|d| d.pending = 1);
         return;
     }
     this.defer_closes.set(true);
@@ -309,11 +317,17 @@ pub extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
     // SAFETY: registered by `ensure_bound`, unregistered by `release_native`
     // before the endpoint can be freed.
     let this = unsafe { &*owner.cast::<QuicEndpoint>() };
-    if this.closed.get() || this.send_scope_depth.get() != 0 {
+    if this.closed.get() {
+        return;
+    }
+    if this.send_scope_depth.get() != 0 {
+        // As in drainEndpoint: give the flag back to the pass on the stack.
+        this.nq_driver.with_mut(|d| d.pending = 1);
         return;
     }
     let global_ptr = this.global.get();
     if global_ptr.is_null() {
+        this.nq_driver.with_mut(|d| d.pending = 1);
         return;
     }
     // SAFETY: as in `on_data`.

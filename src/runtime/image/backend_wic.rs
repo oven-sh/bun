@@ -897,8 +897,18 @@ fn factory() -> Result<ComPtr<IWICImagingFactory>, BackendError> {
 fn load_factory() {
     // Resolve the one flat C export first; if windowscodecs.dll isn't present
     // we never attempt CoCreateInstance and the whole backend stays disabled.
-    // SAFETY: literal C string; LoadLibraryA is safe to call from any thread.
-    let dll = unsafe { windows::LoadLibraryA(c"windowscodecs.dll".as_ptr()) };
+    // LOAD_LIBRARY_SEARCH_SYSTEM32 pins resolution to %SystemRoot%\System32:
+    // windowscodecs.dll is not a KnownDLL, so a bare-name LoadLibrary would
+    // otherwise search the application directory and CWD first.
+    const LOAD_LIBRARY_SEARCH_SYSTEM32: u32 = 0x0000_0800;
+    // SAFETY: literal NUL-terminated wide string; hFile must be null per MSDN.
+    let dll = unsafe {
+        windows::kernel32::LoadLibraryExW(
+            bun_core::w!("windowscodecs.dll\0").as_ptr(),
+            core::ptr::null_mut(),
+            LOAD_LIBRARY_SEARCH_SYSTEM32,
+        )
+    };
     if dll.is_null() {
         return;
     }

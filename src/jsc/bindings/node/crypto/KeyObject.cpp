@@ -16,6 +16,9 @@
 #include "CryptoGenKeyPair.h"
 #include "JSBuffer.h"
 #include "BunString.h"
+#include "BunProcess.h"
+
+extern "C" bool Bun__Node__ProcessNoDeprecation;
 
 namespace Bun {
 
@@ -23,6 +26,22 @@ using namespace Bun;
 using namespace JSC;
 using namespace ncrypto;
 using namespace WebCore;
+
+// DEP0203: passing a WebCrypto CryptoKey (instead of a KeyObject) to node:crypto
+// functions is deprecated but still accepted. Emitted at most once per realm, like Node.
+static void emitCryptoKeyDeprecationWarning(JSGlobalObject* globalObject)
+{
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    if (zigGlobalObject->hasWarnedCryptoKeyDeprecation || Bun__Node__ProcessNoDeprecation)
+        return;
+    zigGlobalObject->hasWarnedCryptoKeyDeprecation = true;
+    auto& vm = globalObject->vm();
+    Process::emitWarning(globalObject,
+        jsString(vm, makeString("Passing a CryptoKey to node:crypto functions is deprecated."_s)),
+        jsString(vm, makeString("DeprecationWarning"_s)),
+        jsString(vm, makeString("DEP0203"_s)),
+        jsUndefined());
+}
 
 JSValue encodeBignum(JSGlobalObject* globalObject, ThrowScope& scope, const BIGNUM* bn, int size)
 {
@@ -277,6 +296,112 @@ JSC::JSValue KeyObject::exportJwk(JSC::JSGlobalObject* globalObject, JSC::ThrowS
     return exportJwkAsymmetricKey(globalObject, scope, type, handleRsaPss);
 }
 
+static JSValue dataPointerToBuffer(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, ncrypto::DataPointer&& data)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    size_t size = data.size();
+    RefPtr<ArrayBuffer> buf = JSC::ArrayBuffer::tryCreateUninitialized(size, 1);
+    if (!buf) {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+    if (size > 0)
+        memcpy(buf->data(), data.get(), size);
+    return JSUint8Array::create(lexicalGlobalObject, globalObject->JSBufferSubclassStructure(), WTF::move(buf), 0, size);
+}
+
+JSC::JSValue KeyObject::exportRaw(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, ncrypto::EVPKeyPointer::PKFormatType format, int ecPointForm)
+{
+    ASSERT(type() != CryptoKeyType::Secret);
+
+    const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
+    const int id = pkey.id();
+
+    if (format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic) {
+        if (id == EVP_PKEY_EC) {
+            const EC_KEY* ec = pkey;
+            const EC_GROUP* group = ncrypto::ECKeyPointer::GetGroup(ec);
+            const EC_POINT* point = ncrypto::ECKeyPointer::GetPublicKey(ec);
+            if (group == nullptr || point == nullptr) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to get raw public key"_s);
+                return {};
+            }
+            point_conversion_form_t form = static_cast<point_conversion_form_t>(ecPointForm);
+            size_t len = EC_POINT_point2oct(group, point, form, nullptr, 0, nullptr);
+            if (len == 0) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to get raw public key"_s);
+                return {};
+            }
+            auto buf = ncrypto::DataPointer::Alloc(len);
+            if (!buf) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            if (EC_POINT_point2oct(group, point, form, static_cast<unsigned char*>(buf.get()), len, nullptr) == 0) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to get raw public key"_s);
+                return {};
+            }
+            return dataPointerToBuffer(globalObject, scope, WTF::move(buf));
+        }
+
+        if (id == EVP_PKEY_ED25519 || id == EVP_PKEY_ED448 || id == EVP_PKEY_X25519 || id == EVP_PKEY_X448) {
+            auto raw = pkey.rawPublicKey();
+            if (!raw) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to get raw public key"_s);
+                return {};
+            }
+            return dataPointerToBuffer(globalObject, scope, WTF::move(raw));
+        }
+
+        ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+        return {};
+    }
+
+    if (format == ncrypto::EVPKeyPointer::PKFormatType::RawPrivate) {
+        if (type() != CryptoKeyType::Private) {
+            ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+            return {};
+        }
+        if (id == EVP_PKEY_EC) {
+            const EC_KEY* ec = pkey;
+            const EC_GROUP* group = ncrypto::ECKeyPointer::GetGroup(ec);
+            const BIGNUM* priv = ncrypto::ECKeyPointer::GetPrivateKey(ec);
+            if (group == nullptr || priv == nullptr) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to export EC private key"_s);
+                return {};
+            }
+            auto order = ncrypto::BignumPointer::New();
+            if (!order || !EC_GROUP_get_order(group, order.get(), nullptr)) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to export EC private key"_s);
+                return {};
+            }
+            auto buf = ncrypto::BignumPointer::EncodePadded(priv, order.byteLength());
+            if (!buf) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to export EC private key"_s);
+                return {};
+            }
+            return dataPointerToBuffer(globalObject, scope, WTF::move(buf));
+        }
+
+        if (id == EVP_PKEY_ED25519 || id == EVP_PKEY_ED448 || id == EVP_PKEY_X25519 || id == EVP_PKEY_X448) {
+            auto raw = pkey.rawPrivateKey();
+            if (!raw) {
+                ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Failed to get raw private key"_s);
+                return {};
+            }
+            return dataPointerToBuffer(globalObject, scope, WTF::move(raw));
+        }
+
+        ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+        return {};
+    }
+
+    ASSERT(format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed);
+    // raw-seed is only supported for PQC key types, which BoringSSL does not provide.
+    ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+    return {};
+}
+
 JSValue toJS(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, const ncrypto::BIOPointer& bio, const ncrypto::EVPKeyPointer::AsymmetricKeyEncodingConfig& encodingConfig)
 {
     VM& vm = lexicalGlobalObject->vm();
@@ -320,6 +445,10 @@ JSC::JSValue KeyObject::exportPublic(JSC::JSGlobalObject* lexicalGlobalObject, J
         return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Public, false);
     }
 
+    if (config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPrivate || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
+        return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
+    }
+
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
     auto res = pkey.writePublicKey(config);
     if (!res) {
@@ -346,6 +475,10 @@ JSValue KeyObject::exportPrivate(JSGlobalObject* lexicalGlobalObject, ThrowScope
 
     if (config.format == ncrypto::EVPKeyPointer::PKFormatType::JWK) {
         return exportJwk(lexicalGlobalObject, scope, CryptoKeyType::Private, false);
+    }
+
+    if (config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawPrivate || config.format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
+        return exportRaw(lexicalGlobalObject, scope, config.format, config.ec_point_form);
     }
 
     const ncrypto::EVPKeyPointer& pkey = m_data->asymmetricKey;
@@ -385,6 +518,54 @@ JSValue KeyObject::exportAsymmetric(JSGlobalObject* globalObject, ThrowScope& sc
                 }
 
                 return exportJwk(globalObject, scope, exportType, false);
+            }
+
+            if (formatView == "raw-public"_s || formatView == "raw-private"_s || formatView == "raw-seed"_s) {
+                if (exportType == CryptoKeyType::Private) {
+                    JSValue passphraseValue = options->get(globalObject, Identifier::fromString(vm, "passphrase"_s));
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!passphraseValue.isUndefined()) {
+                        ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject, formatView, "does not support encryption"_s);
+                        return {};
+                    }
+                }
+
+                ncrypto::EVPKeyPointer::PKFormatType rawFormat;
+                if (formatView == "raw-public"_s) {
+                    rawFormat = ncrypto::EVPKeyPointer::PKFormatType::RawPublic;
+                } else if (formatView == "raw-private"_s) {
+                    if (exportType != CryptoKeyType::Private) {
+                        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.format"_s, formatValue);
+                        return {};
+                    }
+                    rawFormat = ncrypto::EVPKeyPointer::PKFormatType::RawPrivate;
+                } else {
+                    if (exportType != CryptoKeyType::Private) {
+                        ERR::INVALID_ARG_VALUE(scope, globalObject, "options.format"_s, formatValue);
+                        return {};
+                    }
+                    rawFormat = ncrypto::EVPKeyPointer::PKFormatType::RawSeed;
+                }
+
+                int form = POINT_CONVERSION_UNCOMPRESSED;
+                if (rawFormat == ncrypto::EVPKeyPointer::PKFormatType::RawPublic && m_data->asymmetricKey.id() == EVP_PKEY_EC) {
+                    JSValue typeValue = options->get(globalObject, Identifier::fromString(vm, "type"_s));
+                    RETURN_IF_EXCEPTION(scope, {});
+                    if (!typeValue.isUndefined()) {
+                        auto* typeStr = typeValue.toString(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        auto typeView = typeStr->view(globalObject);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        if (typeView == "compressed"_s) {
+                            form = POINT_CONVERSION_COMPRESSED;
+                        } else if (typeView != "uncompressed"_s) {
+                            ERR::INVALID_ARG_VALUE(scope, globalObject, "options.type"_s, typeValue, "must be one of: 'compressed', 'uncompressed'"_s);
+                            return {};
+                        }
+                    }
+                }
+
+                return exportRaw(globalObject, scope, rawFormat, form);
             }
         }
 
@@ -997,6 +1178,130 @@ KeyObject KeyObject::getKeyObjectHandleFromJwk(JSGlobalObject* globalObject, Thr
     UNREACHABLE();
 }
 
+static bool isUnavailablePqcKeyType(const WTF::String& type)
+{
+    return type.startsWith("ml-dsa-"_s) || type.startsWith("ml-kem-"_s) || type.startsWith("slh-dsa-"_s);
+}
+
+static bool isUnsupportedRawKeyType(const WTF::String& type)
+{
+    return type == "rsa"_s || type == "rsa-pss"_s || type == "dsa"_s || type == "dh"_s;
+}
+
+KeyObject KeyObject::getKeyObjectHandleFromRaw(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> keyData, ncrypto::EVPKeyPointer::PKFormatType format, const WTF::String& asymmetricKeyType, JSValue namedCurveValue)
+{
+    CryptoKeyType targetType = format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic
+        ? CryptoKeyType::Public
+        : CryptoKeyType::Private;
+
+    auto throwInvalid = [&]() {
+        if (!scope.exception())
+            ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, jsUndefined(), "Invalid key data"_s);
+    };
+
+    int nid = 0;
+    if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "ed25519"_s))
+        nid = EVP_PKEY_ED25519;
+    else if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "ed448"_s))
+        nid = EVP_PKEY_ED448;
+    else if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "x25519"_s))
+        nid = EVP_PKEY_X25519;
+    else if (WTF::equalIgnoringASCIICase(asymmetricKeyType, "x448"_s))
+        nid = EVP_PKEY_X448;
+
+    // Validate key type / format compatibility (Node's ValidateRawKeyImportFormat).
+    if (asymmetricKeyType == "ec"_s || nid != 0) {
+        if (format == ncrypto::EVPKeyPointer::PKFormatType::RawSeed) {
+            ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+            return {};
+        }
+    } else if (isUnavailablePqcKeyType(asymmetricKeyType)) {
+        ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, jsUndefined(), "Unsupported key type"_s);
+        return {};
+    } else if (isUnsupportedRawKeyType(asymmetricKeyType)) {
+        ERR::CRYPTO_INCOMPATIBLE_KEY_OPTIONS(scope, globalObject);
+        return {};
+    } else {
+        ERR::INVALID_ARG_VALUE(scope, globalObject, "key"_s, jsUndefined(), makeString("Invalid asymmetricKeyType: "_s, asymmetricKeyType));
+        return {};
+    }
+
+    MarkPopErrorOnReturn markPopError;
+
+    if (asymmetricKeyType == "ec"_s) {
+        if (!namedCurveValue.isString()) {
+            ERR::INVALID_ARG_TYPE(scope, globalObject, "key.namedCurve"_s, "string"_s, namedCurveValue);
+            return {};
+        }
+        WTF::String curveStr = namedCurveValue.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        auto curveUtf8 = curveStr.utf8();
+        int curveNid = ncrypto::Ec::GetCurveIdFromName(curveUtf8.data());
+        if (curveNid == NID_undef) {
+            ERR::CRYPTO_INVALID_CURVE(scope, globalObject);
+            return {};
+        }
+
+        auto eckey = ncrypto::ECKeyPointer::NewByCurveName(curveNid);
+        if (!eckey) {
+            throwInvalid();
+            return {};
+        }
+        const EC_GROUP* group = eckey.getGroup();
+
+        if (format == ncrypto::EVPKeyPointer::PKFormatType::RawPublic) {
+            auto pub = ncrypto::ECPointPointer::New(group);
+            if (!pub) {
+                throwInvalid();
+                return {};
+            }
+            ncrypto::Buffer<const unsigned char> buffer { .data = keyData.data(), .len = keyData.size() };
+            if (!pub.setFromBuffer(buffer, group) || !eckey.setPublicKey(pub)) {
+                throwInvalid();
+                return {};
+            }
+        } else {
+            auto order = ncrypto::BignumPointer::New();
+            if (!order || !EC_GROUP_get_order(group, order.get(), nullptr)) {
+                throwInvalid();
+                return {};
+            }
+            if (keyData.size() != order.byteLength()) {
+                throwInvalid();
+                return {};
+            }
+            ncrypto::BignumPointer priv(keyData.data(), keyData.size());
+            if (!priv || !eckey.setPrivateKey(priv)) {
+                throwInvalid();
+                return {};
+            }
+            auto pub = ncrypto::ECPointPointer::New(group);
+            if (!pub || !pub.mul(group, priv.get()) || !eckey.setPublicKey(pub)) {
+                throwInvalid();
+                return {};
+            }
+        }
+
+        auto pkey = ncrypto::EVPKeyPointer::New();
+        if (!pkey.assign(eckey)) {
+            throwInvalid();
+            return {};
+        }
+        eckey.release();
+        return create(targetType, WTF::move(pkey));
+    }
+
+    ncrypto::Buffer<const unsigned char> buffer { .data = keyData.data(), .len = keyData.size() };
+    auto pkey = targetType == CryptoKeyType::Private
+        ? ncrypto::EVPKeyPointer::NewRawPrivate(nid, buffer)
+        : ncrypto::EVPKeyPointer::NewRawPublic(nid, buffer);
+    if (!pkey) {
+        throwInvalid();
+        return {};
+    }
+    return create(targetType, WTF::move(pkey));
+}
+
 void KeyObject::getKeyFormatAndType(
     EVPKeyPointer::PKFormatType formatType,
     std::optional<EVPKeyPointer::PKEncodingType> encodingType,
@@ -1217,6 +1522,9 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
         checkCryptoKey(key, keyValue);
         RETURN_IF_EXCEPTION(scope, {});
 
+        emitCryptoKeyDeprecationWarning(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+
         auto keyObject = create(key);
         if (keyObject.hasException()) [[unlikely]] {
             WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
@@ -1285,6 +1593,9 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             checkCryptoKey(key, dataValue);
             RETURN_IF_EXCEPTION(scope, {});
 
+            emitCryptoKeyDeprecationWarning(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
             auto keyObject = create(key);
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(*globalObject, scope, keyObject.releaseException());
@@ -1304,6 +1615,53 @@ KeyObject::PrepareAsymmetricKeyResult KeyObject::prepareAsymmetricKey(JSC::JSGlo
             RETURN_IF_EXCEPTION(scope, {});
             JSObject* jwk = dataValue.getObject();
             KeyObject handle = getKeyObjectHandleFromJwk(globalObject, scope, jwk, mode);
+            RETURN_IF_EXCEPTION(scope, {});
+            return { .keyData = handle.data() };
+        }
+
+        if (formatView == "raw-public"_s || formatView == "raw-private"_s || formatView == "raw-seed"_s) {
+            if ((mode == PrepareAsymmetricKeyMode::ConsumePrivate || mode == PrepareAsymmetricKeyMode::CreatePrivate) && formatView == "raw-public"_s) {
+                ERR::INVALID_ARG_VALUE(scope, globalObject, "key.format"_s, formatValue);
+                return {};
+            }
+
+            if (!dynamicDowncast<JSArrayBufferView>(dataValue) && !dynamicDowncast<JSArrayBuffer>(dataValue)) {
+                ERR::INVALID_ARG_TYPE(scope, globalObject, "key.key"_s, "ArrayBuffer, Buffer, TypedArray, or DataView"_s, dataValue);
+                return {};
+            }
+
+            JSValue typeValue = keyObj->get(globalObject, Identifier::fromString(vm, "asymmetricKeyType"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            V::validateString(scope, globalObject, typeValue, "key.asymmetricKeyType"_s);
+            RETURN_IF_EXCEPTION(scope, {});
+            auto typeStr = typeValue.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+
+            JSValue namedCurveValue = jsUndefined();
+            if (typeStr == "ec"_s) {
+                namedCurveValue = keyObj->get(globalObject, Identifier::fromString(vm, "namedCurve"_s));
+                RETURN_IF_EXCEPTION(scope, {});
+                V::validateString(scope, globalObject, namedCurveValue, "key.namedCurve"_s);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+
+            // Capture the key span only after the last property getter has run, so a user
+            // getter that detaches the buffer cannot leave us with a stale pointer.
+            std::span<const uint8_t> keySpan;
+            if (auto* view = dynamicDowncast<JSArrayBufferView>(dataValue)) {
+                keySpan = view->span();
+            } else {
+                auto* arrayBuffer = uncheckedDowncast<JSArrayBuffer>(dataValue);
+                keySpan = arrayBuffer->impl()->span();
+            }
+
+            ncrypto::EVPKeyPointer::PKFormatType rawFormat = formatView == "raw-public"_s
+                ? ncrypto::EVPKeyPointer::PKFormatType::RawPublic
+                : (formatView == "raw-private"_s
+                          ? ncrypto::EVPKeyPointer::PKFormatType::RawPrivate
+                          : ncrypto::EVPKeyPointer::PKFormatType::RawSeed);
+
+            KeyObject handle = getKeyObjectHandleFromRaw(globalObject, scope, keySpan, rawFormat, typeStr, namedCurveValue);
             RETURN_IF_EXCEPTION(scope, {});
             return { .keyData = handle.data() };
         }
@@ -1420,6 +1778,8 @@ KeyObject KeyObject::prepareSecretKey(JSGlobalObject* globalObject, ThrowScope& 
                 ERR::CRYPTO_INVALID_KEY_OBJECT_TYPE(scope, globalObject, key.type(), "secret"_s);
                 return {};
             }
+            emitCryptoKeyDeprecationWarning(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
             auto keyObject = create(key);
             if (keyObject.hasException()) [[unlikely]] {
                 WebCore::propagateException(globalObject, scope, keyObject.releaseException());

@@ -197,10 +197,11 @@ pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_
 }
 
 /// Recover the [`RuntimeState`] owned by a specific `vm` (not the calling
-/// thread's). `WTFTimer` and the `timer_insert`/`timer_remove` hooks may be
-/// invoked off the VM's JS thread (the `All.lock` mutex exists for exactly
-/// that), so they must reach the heap through `vm.runtime_state` rather than
-/// the thread-local cache.
+/// thread's). `WTFTimer` may be entered off the VM's JS thread (the locked
+/// `All.wtf_timers` heap exists for exactly that), and the
+/// `timer_insert`/`timer_remove` hooks take `vm` from a tier that cannot see
+/// `RuntimeState`; both must reach the heap through `vm.runtime_state`
+/// rather than the thread-local cache.
 ///
 /// # Safety
 /// `vm` must point at a live `VirtualMachine` whose `runtime_state` was set by
@@ -337,9 +338,24 @@ unsafe fn init_runtime_state(
         // allocations use the same heap as the global allocator and skip the
         // `mi_heap_new`/`mi_heap_destroy` pair.
         transpiler_arena: Box::new(bun_alloc::Arena::borrowing_default()),
-        body_value_pool: Box::new(core::mem::ManuallyDrop::new(
-            crate::webcore::body::HiveAllocator::init(),
-        )),
+        body_value_pool: {
+            // `Box::new(ManuallyDrop::new(HiveAllocator::init()))` still builds the
+            // ~100 KB pool in a stack temporary before moving it into the box (see
+            // `HiveArray::new_boxed`). Allocate it on the heap and initialize it in
+            // place instead — only the occupancy bitset is written.
+            let pool = crate::webcore::body::HiveAllocator::new_boxed();
+            // SAFETY: `new_boxed` leaks a `Box<HiveAllocator>`; reclaim ownership of
+            // that same allocation. `ManuallyDrop` is `repr(transparent)`, so
+            // `Box<ManuallyDrop<T>>` and `Box<T>` have identical layout — the wrapper
+            // only suppresses the inner drop, which is the behavior documented on the
+            // field.
+            unsafe {
+                Box::from_raw(
+                    pool.as_ptr()
+                        .cast::<core::mem::ManuallyDrop<crate::webcore::body::HiveAllocator>>(),
+                )
+            }
+        },
         isolation_handles: IsolationHandles::default(),
     }));
     RUNTIME_STATE.with(|c| c.set(state));
@@ -1211,8 +1227,7 @@ unsafe fn timer_insert(
     let state = unsafe { runtime_state_of(vm) };
     debug_assert!(!state.is_null(), "timer_insert before init_runtime_state");
     // SAFETY: this leaf hook runs no JS, so a short-lived `&mut RuntimeState`
-    // does not alias anything. `Timer::All::insert` takes its own lock and
-    // re-derefs `t` per-field.
+    // does not alias anything. `Timer::All::insert` re-derefs `t` per-field.
     unsafe { &mut (*state).timer }.insert(t);
 }
 
@@ -1337,7 +1352,11 @@ unsafe fn handle_ipc_internal_child(global: *mut JSGlobalObject, data: JSValue) 
     // error.JSError => {} }`); the low tier already wrapped this call in
     // `event_loop.enter()/exit()` which clears any pending exception, so
     // dropping the `Err` is correct.
-    let _ = crate::node::node_cluster_binding::handle_internal_message_child(global, data);
+    let _ = crate::node::node_cluster_binding::handle_internal_message_child(
+        global,
+        data,
+        JSValue::UNDEFINED,
+    );
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —

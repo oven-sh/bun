@@ -29,6 +29,7 @@
 const { isTypedArray } = require("node:util/types");
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { STATUS_CODES } = require("internal/http");
+const { kTimeout, getTimerDuration } = require("internal/timers");
 const tls = require("node:tls");
 const net = require("node:net");
 const fs = require("node:fs");
@@ -37,6 +38,8 @@ const FileHandle = $data.FileHandle;
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const kInfoHeaders = Symbol("sent-info-headers");
+const kStrictSingleValueFields = Symbol("strictSingleValueFields");
+const kDeferWriteCallback = Symbol("deferWriteCallback");
 const kProxySocket = Symbol("proxySocket");
 const kSessions = Symbol("sessions");
 const kOptions = Symbol("options");
@@ -121,6 +124,41 @@ const kDefaultSettings = {
   maxHeaderSize: 65535,
   enableConnectProtocol: false,
 };
+
+const kLocalSettingsKeys = [
+  "headerTableSize",
+  "enablePush",
+  "maxConcurrentStreams",
+  "initialWindowSize",
+  "maxFrameSize",
+  "maxHeaderListSize",
+  "maxHeaderSize",
+  "enableConnectProtocol",
+];
+
+// node's session.localSettings reflects the settings this side submitted (including
+// customSettings) from the moment they go out with the connection preface — it does not wait for
+// the peer's SETTINGS ACK. Overlay the user-submitted values on top of the pre-ACK defaults; the
+// native localSettings dispatch replaces the object with the engine's confirmed view once the ACK
+// arrives.
+function applySubmittedLocalSettings(target: Record<string, any>, submitted: any) {
+  if (submitted == null || typeof submitted !== "object") return target;
+  for (let i = 0; i < kLocalSettingsKeys.length; i++) {
+    const key = kLocalSettingsKeys[i];
+    const value = submitted[key];
+    if (value !== undefined) target[key] = value;
+  }
+  // maxHeaderListSize and maxHeaderSize alias the same SETTINGS entry.
+  if (submitted.maxHeaderListSize !== undefined && submitted.maxHeaderSize === undefined) {
+    target.maxHeaderSize = submitted.maxHeaderListSize;
+  } else if (submitted.maxHeaderSize !== undefined && submitted.maxHeaderListSize === undefined) {
+    target.maxHeaderListSize = submitted.maxHeaderSize;
+  }
+  if (submitted.customSettings != null && typeof submitted.customSettings === "object") {
+    target.customSettings = { ...submitted.customSettings };
+  }
+  return target;
+}
 
 function throwSettingRangeError(name: string, value: any) {
   const err = new RangeError(`Invalid value for setting "${name}": ${value}`);
@@ -346,6 +384,12 @@ const bunHTTP2StreamStatus = Symbol.for("::bunhttp2StreamStatus::");
 
 const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 const bunHTTP2Headers = Symbol.for("::bunhttp2headers::");
+const bunHTTP2AsyncContextFrame = Symbol("::bunhttp2asynccontextframe::");
+const bunHTTP2SessionTeardownFrame = Symbol("::bunhttp2sessionteardownframe::");
+// Sentinel for bunHTTP2SessionTeardownFrame: a captured frame can itself be
+// undefined (the root context), so "no teardown in progress" needs its own value.
+const kNoSessionTeardown = Symbol("::bunhttp2noteardown::");
+const runInFrame = require("internal/async_context_frame").run;
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 
@@ -365,8 +409,25 @@ const kSetStreamId = Symbol("setStreamId");
 const kRequest = Symbol("request");
 const kHeadRequest = Symbol("headRequest");
 const kSessionDestroyError = Symbol("sessionDestroyError");
+// Set on a ServerHttp2Stream by respondWithFile(): the stream opened the descriptor itself and is
+// responsible for closing it exactly once. respondWithFD() descriptors belong to the caller.
+const kOwnsFd = Symbol("ownsFd");
 const kRequestHeaders = Symbol("requestHeaders");
+// True only for the synchronous extent of Http2Stream#sendTrailers()'s native call. node submits
+// trailers on a later turn (finishSendTrailers via setImmediate), so a stream never observes its
+// own close from inside sendTrailers() — the streamEnd(closed) dispatch is re-queued when this is
+// set so a second sendTrailers() in the same tick reports ERR_HTTP2_TRAILERS_ALREADY_SENT, not
+// ERR_HTTP2_INVALID_STREAM.
+const kSendingTrailers = Symbol("sendingTrailers");
+const kSettingsAckGraceTimer = Symbol("settingsAckGraceTimer");
+// node: a socket can be bound to at most one Http2Session (ERR_HTTP2_SOCKET_BOUND).
+const kBoundSession = Symbol("boundSession");
+const kInspect = Symbol.for("nodejs.util.inspect.custom");
+let util; // lazy node:util (only needed for the custom inspect output)
+let addAbortListener; // lazy internal/abort_listener
 let priorityDeprecationWarned = false;
+// DEP0194 for the request `weight` option (distinct from the Http2Stream#priority() warning above).
+let priorityWeightDeprecationWarned = false;
 // Marks a client stream created from a received PUSH_PROMISE: its response HEADERS fire 'push'.
 const kPush = Symbol("pushStream");
 const kNeverAnnounced = Symbol("neverAnnounced");
@@ -376,7 +437,15 @@ const kReceivedGoaway = Symbol("receivedGoaway");
 const kGoawayCode = Symbol("goawayCode");
 const kReleaseUnannouncedStream = Symbol("releaseUnannouncedStream");
 const kGoawaySent = Symbol("goawaySent");
-const kSocketTeardown = Symbol("socketTeardown");
+
+// Node's socketOnError: once a GOAWAY has been received the peer is fully
+// within its rights to drop the connection, so an ECONNRESET behind it is
+// teardown, not an error - the session is destroyed without one. Whether the
+// RST is actually observed is timing- and platform-dependent (routine on
+// Windows loopback), so this must not depend on 'error' listener count.
+function isEconnresetAfterGoaway(session, error: Error): boolean {
+  return (error as NodeJS.ErrnoException)?.code === "ECONNRESET" && session[kGoawayCode] !== undefined;
+}
 const kMaxStreams = 2 ** 32 - 1;
 const kMaxUint32 = 4294967295;
 const kMaxInt = 4294967295;
@@ -389,9 +458,9 @@ const {
   checkIsHttpToken,
   validateLinkHeaderValue,
   validateUint32,
-  validateInt32,
   validateBuffer,
   validateNumber,
+  validateBoolean,
   validateAbortSignal,
 } = require("internal/validators");
 
@@ -404,6 +473,14 @@ function utcDate() {
 function emitEventNT(self: any, event: string, ...args: any[]) {
   if (self.listenerCount(event) > 0) {
     self.emit(event, ...args);
+  }
+}
+// The frame is passed in: destroy() clears it off the session before emitting
+// 'error', so a throwing listener on either event cannot leave a retained
+// session pinning the store.
+function emitSessionCloseNT(self: Http2Session, frame) {
+  if (self.listenerCount("close") > 0) {
+    runInFrame(frame, self.emit, self, "close");
   }
 }
 function emitErrorNT(self: any, error: any, destroy: boolean) {
@@ -588,15 +665,15 @@ function assertValidHeader(name, value) {
     connectionHeaderMessageWarn();
   }
 }
-function assertIsObject(value: any, name: string, types?: string): asserts value is object {
+function assertIsObject(value: any, name: string, types?: string | string[]): asserts value is object {
   if (value !== undefined && (!$isObject(value) || $isArray(value))) {
-    throw $ERR_INVALID_ARG_TYPE(name, types || "object", value);
+    throw $ERR_INVALID_ARG_TYPE(name, $isArray(types) ? types : [types || "Object"], value);
   }
 }
 
-function assertIsArray(value: any, name: string, types?: string): asserts value is any[] {
+function assertIsArray(value: any, name: string, types?: string | string[]): asserts value is any[] {
   if (value !== undefined && !$isArray(value)) {
-    throw $ERR_INVALID_ARG_TYPE(name, types || "Array", value);
+    throw $ERR_INVALID_ARG_TYPE(name, $isArray(types) ? types : [types || "Array"], value);
   }
 }
 hideFromStack(assertIsObject);
@@ -972,7 +1049,10 @@ class Http2ServerResponse extends Stream {
   writeHead(statusCode, statusMessage?, headers?) {
     const state = this[kState];
 
-    if (state.closed || this.stream.destroyed) return this;
+    // Node also bails on stream.closed: writeHead() after stream.close() must not send the
+    // response HEADERS — the peer treats HEADERS on a stream it already saw end as a session
+    // error (nghttp2 STREAM_CLOSED).
+    if (state.closed || this.stream.destroyed || this.stream.closed) return this;
     if (this[kStream].headersSent) throw $ERR_HTTP2_HEADERS_SENT();
 
     if (typeof statusMessage === "string") statusMessageWarn();
@@ -1956,6 +2036,58 @@ function assertValidPseudoHeader(key) {
 }
 hideFromStack(assertValidPseudoHeader);
 
+// node's internal/http2/util sessionName() — used for debug output and exposed to the ported
+// node test suite through the internals object below.
+function sessionName(type: number) {
+  switch (type) {
+    case NGHTTP2_SESSION_SERVER:
+      return "server";
+    case NGHTTP2_SESSION_CLIENT:
+      return "client";
+    default:
+      return "<invalid>";
+  }
+}
+
+// node's internal/http2/util assertWithinRange(): settings-style range check that reports
+// ERR_HTTP2_INVALID_SETTING_VALUE instead of ERR_OUT_OF_RANGE.
+function assertWithinRange(name: string, value: number, min = 0, max = Infinity) {
+  if (value !== undefined && (value < min || value > max || !Number.isFinite(value))) {
+    throwSettingRangeError(name, value);
+  }
+}
+
+// nghttp2_strerror() messages for the codes the runtime/test-suite surface; everything else uses
+// nghttp2's default branch ("Unknown error code").
+// https://github.com/nghttp2/nghttp2/blob/master/lib/nghttp2_helper.c (nghttp2_strerror)
+const kNghttp2ErrorMessages = {
+  0: "Success",
+  [-501]: "Invalid argument",
+  [-502]: "Out of buffer space",
+  [-505]: "Protocol error",
+  [-510]: "Stream was already closed or invalid",
+  [-522]: "The length of the frame is invalid",
+  [-523]: "Header compression/decompression error",
+  [-524]: "Flow control error",
+  [-901]: "Out of memory",
+  [-903]: "Received bad client magic byte string",
+  [-904]: "Flooding was detected in this HTTP/2 session, and it must be closed",
+};
+
+class NghttpError extends Error {
+  code: string;
+  errno: number;
+  constructor(integerCode: number, customErrorCode?: string) {
+    super(customErrorCode ? customErrorCode : kNghttp2ErrorMessages[integerCode] || "Unknown error code");
+    this.code = customErrorCode || "ERR_HTTP2_ERROR";
+    this.errno = integerCode;
+  }
+
+  toString() {
+    return `${this.name} [${this.code}]: ${this.message}`;
+  }
+}
+
 const NoPayloadMethods = new Set([HTTP2_METHOD_DELETE, HTTP2_METHOD_GET, HTTP2_METHOD_HEAD]);
 
 type Settings = {
@@ -1969,8 +2101,13 @@ type Settings = {
 };
 
 class Http2Session extends EventEmitter {
+  [bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
   [bunHTTP2OriginSet]: Set<string> | undefined = undefined;
+  // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
+  // run inside it so 'close' doesn't inherit the last stream's frame.
+  [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
+  [kDeferWriteCallback] = setImmediate;
   [EventEmitter.captureRejectionSymbol](err, event, ...args) {
     switch (event) {
       case "stream": {
@@ -1992,14 +2129,56 @@ function streamErrorFromCode(code: number) {
 }
 hideFromStack(streamErrorFromCode);
 // Pending ping callbacks are invoked with the cancel error when their session goes away (node
-// semantics) instead of being silently dropped.
+// semantics) instead of being silently dropped. Like node's pingCallback wrapper, a cancelled
+// ping reports only the error (no duration/payload arguments).
+// Each ping() call is a tracked async resource (node's Http2Ping); the test
+// asserts init/before/after/destroy fire for type 'HTTP2PING'.
+const { AsyncResource } = require("node:async_hooks");
+const kEmptyPingPayload = Buffer.alloc(8);
+function makeHttp2Ping(callback) {
+  const resource = new AsyncResource("HTTP2PING");
+  return function done(err, duration, payload) {
+    if (err) {
+      resource.runInAsyncScope(callback, null, err);
+    } else {
+      resource.runInAsyncScope(callback, null, null, duration, payload);
+    }
+    resource.emitDestroy();
+  };
+}
+
 function cancelPendingPings(callbacks): void {
   if (!callbacks) return;
   const err = $ERR_HTTP2_PING_CANCEL();
   for (let i = 0; i < callbacks.length; i++) {
-    process.nextTick(callbacks[i][0], err, 0, null);
+    process.nextTick(callbacks[i][0], err);
   }
 }
+
+// ERR_HTTP2_STREAM_CANCEL is not in the native error-code registry (the registry is positional
+// and shared across Rust/C++/the JS bundle, so additions need a coordinated regeneration);
+// construct the node-shaped error directly. Mirrors node's ERR_HTTP2_STREAM_CANCEL(error).
+function createPendingStreamCancelError(cause?: any) {
+  let message = "The pending stream has been canceled";
+  const cancelError = new Error(message);
+  if (cause != null && typeof cause === "object") {
+    cancelError.cause = cause;
+    if (typeof cause.message === "string") {
+      cancelError.message = `${message} (caused by: ${cause.message})`;
+    }
+  }
+  cancelError.code = "ERR_HTTP2_STREAM_CANCEL";
+  return cancelError;
+}
+// The native settings object for a server session: session options + the user's settings, with
+// enablePush forced off only when the caller explicitly provided it (see the RFC 9113 §6.5.2 note
+// at the construction site). Only explicitly-present settings are serialized by the native layer.
+function serverNativeSettings(options) {
+  const merged = { ...options, ...options?.settings };
+  if (merged.enablePush !== undefined) merged.enablePush = false;
+  return merged;
+}
+
 function sessionErrorFromCode(code: number) {
   if (code === 0xe) {
     return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
@@ -2007,11 +2186,11 @@ function sessionErrorFromCode(code: number) {
   return $ERR_HTTP2_SESSION_ERROR(code);
 }
 hideFromStack(sessionErrorFromCode);
-// For violations OUR engine detects (bad frame sizes, etc.): the message carries the
-// NGHTTP2_* constant name. Node surfaces these as a generic ERR_HTTP2_ERROR from
-// nghttp2; bun deliberately keeps its richer named session error (covered by the
-// "bun aligned" suite in node-http2.test.js). GOAWAY-received errors stay numeric
-// (sessionErrorFromCode) to match node's message exactly.
+// Used for the legacy native error dispatches that still carry a positive HTTP/2 error code
+// (e.g. MAX_PENDING_SETTINGS_ACK, ENHANCE_YOUR_CALM from the outbound paths): the message carries
+// the NGHTTP2_* constant name. Violations detected by the inbound engine arrive as negative
+// nghttp2 library codes and are surfaced as NghttpError (ERR_HTTP2_ERROR), exactly like node.
+// GOAWAY-received errors stay numeric (sessionErrorFromCode) to match node's message exactly.
 function sessionErrorFromCodeNamed(code: number) {
   if (code === 0xe) {
     return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
@@ -2027,6 +2206,22 @@ function assertSession(session) {
 }
 hideFromStack(assertSession);
 
+// node validates with validateInt32(windowSize, 'windowSize', 0) whose range string is literally
+// `>= ${min} && <= ${max}`:
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L126
+function validateWindowSize(windowSize) {
+  if (typeof windowSize !== "number") {
+    throw $ERR_INVALID_ARG_TYPE("windowSize", "number", windowSize);
+  }
+  if (!Number.isInteger(windowSize)) {
+    throw $ERR_OUT_OF_RANGE("windowSize", "an integer", windowSize);
+  }
+  if (windowSize < 0 || windowSize > kMaxWindowSize) {
+    throw $ERR_OUT_OF_RANGE("windowSize", `>= 0 && <= ${kMaxWindowSize}`, windowSize);
+  }
+}
+hideFromStack(validateWindowSize);
+
 function pushToStream(stream, data) {
   if (data && stream[bunHTTP2StreamStatus] & StreamState.Closed) {
     if (!stream._readableState.ended) {
@@ -2037,7 +2232,17 @@ function pushToStream(stream, data) {
     return;
   }
 
-  stream.push(data);
+  // Node's onStreamRead (lib/internal/stream_base_commons.js): push() returning false
+  // is the readable side's backpressure signal, and the reader must readStop()
+  // synchronously - a consumer's read()/_read() from this very push must be the LAST
+  // word on the window, not overwritten by a deferred stop. Without this half,
+  // _read()'s readStart makes pause() unenforceable: one reopen lets the peer flood
+  // past the buffer's high-water mark instead of stalling on the receive window.
+  // setStreamReading(id, false) only records the paused bit natively, so calling it
+  // from inside the dispatch that delivered `data` cannot re-enter the engine.
+  if (!stream.push(data) && data !== null) {
+    streamOnPause.$call(stream);
+  }
 }
 
 enum StreamState {
@@ -2050,6 +2255,22 @@ enum StreamState {
   // The native side fully closed and freed the stream (state 7 delivered): there is
   // nothing left to send on the wire for it.
   NativeClosed = 1 << 6, // 1000000 = 64
+}
+// native.writeStream() return-value flag (mirrors WRITE_FLUSHED_WITHOUT_CALLBACK in
+// h2_frame_parser.rs): the chunk was handed to the socket without queueing and the engine did
+// not invoke the write callback. The Writable callback is completed on a later turn instead, so
+// write() never settles synchronously — node's Http2Stream writes also only complete after the
+// session flushes to the socket, which is what makes write() return false past the
+// highWaterMark and 'drain' fire afterwards. When the chunk was queued (flow-control or socket
+// backpressure), the engine keeps the callback and invokes it once the queued frames flush.
+const kWriteFlushedWithoutCallback = 0x10;
+// Over a native socket the deferred callback can fire on nextTick (after write() returns) — the
+// frame was already handed to the OS. Over a JS-side socket (duplexPair / generic Duplex) the
+// frame is dispatched into the JS socket via onWrite, and the callback must wait a full
+// event-loop turn so the JS-side delivery has run before 'drain' is observed
+// (test-http2-backpressure). Chosen once per session.
+function deferWriteCallbackForSocket(nativeSocket) {
+  return nativeSocket ? process.nextTick : setImmediate;
 }
 function markWritableDone(stream: Http2Stream) {
   const _final = stream[bunHTTP2StreamFinal];
@@ -2087,19 +2308,92 @@ function rstNextTick(id: number, rstCode: number) {
   const session = this as Http2Session;
   session[bunHTTP2Native]?.rstStream(id, rstCode);
 }
+// node streamOnPause/streamOnResume (lib/internal/http2/core.js): the readable's flow state
+// drives the native receive window. While paused, the stream's window is not replenished; on
+// resume the deferred WINDOW_UPDATE is sent. A pending stream (no id yet) has nothing on the
+// wire to backpressure.
+function streamOnPause(this: Http2Stream) {
+  const session = this[bunHTTP2Session];
+  const id = this.id;
+  if (session && id) session[bunHTTP2Native]?.setStreamReading(id, false);
+}
+function streamOnResume(this: Http2Stream) {
+  const session = this[bunHTTP2Session];
+  const id = this.id;
+  if (session && id) session[bunHTTP2Native]?.setStreamReading(id, true);
+}
+// A close() on a stream that has not been submitted yet (no id): the RST_STREAM has to follow the
+// HEADERS frame, which is sent when the queued request becomes ready (node's finishCloseStream).
+function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) {
+  setImmediate(rstNextTick.bind(session, this.id, code));
+}
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
+}
+// Per-request AbortSignal handler: node destroys the stream with an AbortError when the signal
+// fires (lib/internal/http2/core.js request()).
+function abortRequestStream(this: Http2Stream, signal: AbortSignal) {
+  this.destroy($makeAbortError(undefined, { cause: signal.reason }));
+}
+// Shared tail of ClientHttp2Session.request(): node closes the writable side when endStream is
+// set (the END_STREAM flag itself rides on the HEADERS frame) and attaches exactly one 'abort'
+// listener per request, detached when the stream closes.
+function setupRequestEndAndSignal(req: Http2Stream, options: any, signal: AbortSignal | undefined) {
+  if (options?.endStream) req.end();
+  if (signal) {
+    addAbortListener ??= require("internal/abort_listener").addAbortListener;
+    const disposable = addAbortListener(signal, abortRequestStream.bind(req, signal));
+    req.once("close", disposable[Symbol.dispose]);
+  }
+}
+// node destroys every open stream synchronously from inside session.destroy(): a write() issued
+// right after destroy() must already observe an ended + destroyed stream (write-after-end without
+// an 'error' event), and stream teardown must not wait a tick.
+function destroyStreamForSessionDestroy(error: Error | undefined, rstCode: number, stream: Http2Stream) {
+  if (stream.destroyed) return;
+  if (rstCode && !stream.rstCode) stream.rstCode = rstCode;
+  // A clean session teardown can reach here while a stream's already-received request data is
+  // still being drained by its consumer: the native side is done with the stream (state 7,
+  // which is what allowed the session to start destroying), but the JS side is not. Destroying
+  // now discards that data and emits 'close' without 'end' (a piped request body never
+  // finishes). Node's session waits for the JS stream, so finish delivering and destroy on
+  // 'end'. Only for natively-closed streams: a still-open one must keep node's contract that
+  // session.destroy() destroys it synchronously (and the engine error sweep follows for it).
+  if (
+    error === undefined &&
+    (stream[bunHTTP2StreamStatus] & StreamState.NativeClosed) !== 0 &&
+    stream.readable &&
+    stream.readableFlowing !== null
+  ) {
+    stream.push(null);
+    stream.once("end", destroySelfOnEnd);
+    return;
+  }
+  // Only surface the session error on streams that are listening for it (the
+  // same guard emitStreamErrorNT applies): a still-open stream with no 'error'
+  // listener would otherwise turn session.destroy(code) into an uncaught
+  // exception (e.g. grpc-js forceShutdown destroying sessions with
+  // NGHTTP2_CANCEL while unread UNIMPLEMENTED streams are still around).
+  stream.destroy(error !== undefined && stream.listenerCount("error") > 0 ? error : undefined);
 }
 class Http2Stream extends Duplex {
   #id: number;
   [bunHTTP2Session]: ClientHttp2Session | ServerHttp2Session | null = null;
   [bunHTTP2StreamFinal]: VoidFunction | null = null;
   [bunHTTP2StreamStatus]: number = 0;
+  // Async-context frame captured at construction so native-driven callbacks
+  // (response/data/end/…) on client streams observe the AsyncLocalStorage
+  // context that request() ran in, matching Node's Http2Stream AsyncWrap.
+  // Read only by withStreamFrame; user-initiated emit() is untouched. The raw
+  // frame is snapshotted directly so session.request() does not flip on
+  // async-context tracking when no AsyncLocalStorage is in use.
+  [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
 
   rstCode: number | undefined = undefined;
   [bunHTTP2Headers]: any;
   [kInfoHeaders]: any;
   #sentTrailers: any;
+  [kSendingTrailers]: boolean = false;
   [kAborted]: boolean = false;
   [kHeadRequest]: boolean = false;
   constructor(streamId, session, headers) {
@@ -2110,6 +2404,11 @@ class Http2Stream extends Duplex {
     this.#id = streamId;
     this[bunHTTP2Session] = session;
     this[bunHTTP2Headers] = headers;
+    // node ties the stream's receive window to JS-side consumption (readStart/readStop on the
+    // native handle): while the readable is paused the peer is not granted more window, so it
+    // backpressures instead of the session buffering the whole body.
+    this.on("pause", streamOnPause);
+    this.on("resume", streamOnResume);
   }
 
   get scheme() {
@@ -2132,11 +2431,29 @@ class Http2Stream extends Duplex {
     this.#id = id;
   }
 
+  // Mirrors node's Http2Stream[kInspect] (lib/internal/http2/core.js).
+  [kInspect](depth, opts) {
+    if (typeof depth === "number" && depth < 0) return this;
+
+    const obj = {
+      id: this.#id || "<pending>",
+      closed: this.closed,
+      destroyed: this.destroyed,
+      state: this.state,
+      readableState: this._readableState,
+      writableState: this._writableState,
+    };
+    util ??= require("node:util");
+    return `Http2Stream ${util.inspect(obj, opts)}`;
+  }
+
   get bufferSize() {
-    const session = this[bunHTTP2Session];
-    if (!session) return 0;
-    // native queued + socket queued
-    return session.bufferSize() + (session[bunHTTP2Socket]?.bufferSize || 0);
+    // node: kState.writeQueueSize + writableLength
+    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js Http2Stream#bufferSize).
+    // There is no separate native write-queue counter here: bytes that have not reached the
+    // native session yet (a pending stream, or chunks buffered behind an in-flight write) are all
+    // accounted for by writableLength.
+    return this.writableLength;
   }
 
   get sentHeaders() {
@@ -2198,6 +2515,7 @@ class Http2Stream extends Duplex {
     // coercion hits ERR_HTTP2_TRAILERS_ALREADY_SENT, but clear it if validation throws
     // (no frame is written then) so a corrected retry succeeds like node.
     this.#sentTrailers = headers;
+    this[kSendingTrailers] = true;
     try {
       if (ObjectKeys(headers).length === 0) {
         session[bunHTTP2Native]?.noTrailers(this.#id);
@@ -2207,6 +2525,8 @@ class Http2Stream extends Duplex {
     } catch (error) {
       this.#sentTrailers = undefined;
       throw error;
+    } finally {
+      this[kSendingTrailers] = false;
     }
   }
 
@@ -2241,10 +2561,11 @@ class Http2Stream extends Duplex {
 
   get state() {
     const session = this[bunHTTP2Session];
-    if (session && !session.destroyed) {
+    if (session && !session.destroyed && typeof this.#id === "number") {
       return session[bunHTTP2Native]?.getStreamState(this.#id) ?? {};
     }
-    // node reports an empty object once the stream's session has been destroyed.
+    // node reports an empty object while the stream is still pending (no id yet) and once the
+    // stream's session has been destroyed.
     return {};
   }
 
@@ -2297,8 +2618,14 @@ class Http2Stream extends Duplex {
     if ((this[bunHTTP2StreamStatus] & StreamState.Closed) === 0) {
       const session = this[bunHTTP2Session];
       assertSession(session);
-      code = code || 0;
-      validateInteger(code, "code", 0, kMaxInt);
+      if (code === undefined) code = 0;
+      validateInteger(code, "code");
+      if (code < 0 || code > kMaxInt) {
+        // node validates with validateInteger(code, 'code', 0, kMaxInt) whose range string is
+        // literally `>= ${min} && <= ${max}`:
+        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/validators.js#L102
+        throw $ERR_OUT_OF_RANGE("code", `>= 0 && <= ${kMaxInt}`, code);
+      }
 
       if (typeof callback !== "undefined") {
         validateFunction(callback, "callback");
@@ -2317,7 +2644,11 @@ class Http2Stream extends Duplex {
       }
       this.rstCode = code;
       markStreamClosed(this);
-      if (this.writableFinished || code) {
+      if (this.pending) {
+        // No id yet (the HEADERS frame is still queued behind connect/concurrency limits): the
+        // RST_STREAM has to be sent after the HEADERS frame, once the id is assigned.
+        this.once("ready", sendRstOnReady.bind(this, session, code));
+      } else if (this.writableFinished || code) {
         setImmediate(rstNextTick.bind(session, this.#id, code));
       } else {
         this.once("finish", rstNextTick.bind(session, this.#id, code));
@@ -2332,6 +2663,10 @@ class Http2Stream extends Duplex {
     }
   }
   _destroy(err, callback) {
+    // Cleared first: everything below can reach user code ('aborted', end(),
+    // push(null)) and a throwing listener would otherwise skip the clear and
+    // leave a retained stream pinning the store.
+    this[bunHTTP2AsyncContextFrame] = undefined;
     const { ending } = this._writableState;
     this.push(null);
     // A pushed stream's request was synthesized by the server, so its local (writable) half is
@@ -2367,14 +2702,20 @@ class Http2Stream extends Duplex {
       }
     }
     this.rstCode = rstCode;
-    // node closes the stream from inside _destroy, so the close channel publish observes
-    // closed === true and destroyed === true with the final rstCode.
+    // node closes the stream from inside _destroy, so the close-channel publish observes
+    // closed === true and destroyed === true with the final rstCode. The non-error close path
+    // (streamEnd state=7) calls markStreamClosed BEFORE destroy(), where the channel observes
+    // destroyed === false instead.
     markStreamClosed(this);
     // RST code 8 not emitted as an error as its used by clients to signify
     // abort and is already covered by aborted event, also allows more
-    // seamless compatibility with http1
-    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL)
-      err = $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
+    // seamless compatibility with http1. When the session is being torn down with an error
+    // (closeSession in node passes the session error to every stream), surface that error
+    // instead of a generic stream error so the same error reaches both client.on('error')
+    // and req.on('error') regardless of which dispatch path reached _destroy first.
+    if (err == null && rstCode !== NGHTTP2_NO_ERROR && rstCode !== NGHTTP2_CANCEL) {
+      err = session?.[kSessionDestroyError] ?? $ERR_HTTP2_STREAM_ERROR(nameForErrorCode[rstCode] || rstCode);
+    }
 
     this[bunHTTP2Session] = null;
     // This notifies the session that this stream has been destroyed and
@@ -2420,6 +2761,14 @@ class Http2Stream extends Duplex {
     if (session) {
       const native = session[bunHTTP2Native];
       if (native) {
+        if (this instanceof ServerHttp2Stream && !this.headersSent && (this.id & 1) === 0) {
+          // A locally-pushed (even-id) stream ended before respond() (HEAD/endStream pushes): an
+          // empty DATA frame would precede the response HEADERS on the wire. respond() forces
+          // endStream for these streams, so END_STREAM rides on the HEADERS frame and the
+          // onStreamEnd(5) dispatch completes this callback through markWritableDone.
+          this[bunHTTP2StreamFinal] = callback;
+          return;
+        }
         this[bunHTTP2StreamStatus] |= StreamState.FinalCalled;
         // When waitForTrailers is active, writing an empty DATA frame with
         // close=true emits a bare empty DATA frame (flags=0) to the wire
@@ -2433,7 +2782,16 @@ class Http2Stream extends Duplex {
           this[bunHTTP2WaitForTrailers] = false;
           if ((this[bunHTTP2StreamStatus] & StreamState.WantTrailer) === 0) {
             this[bunHTTP2StreamStatus] |= StreamState.WantTrailer;
-            if (this.listenerCount("wantTrailers") === 0) {
+            // The native call below can settle the stream to CLOSED synchronously (the peer
+            // already half-closed) and the streamEnd(7) handler runs markStreamClosed →
+            // markWritableDone before control returns here: stash the callback there so the
+            // writable finishes ('finish' before 'close') instead of being torn down mid-final.
+            this[bunHTTP2StreamFinal] = callback;
+            if ((this[bunHTTP2StreamStatus] & StreamState.Closed) !== 0 || this.listenerCount("wantTrailers") === 0) {
+              // No 'wantTrailers' listener — or the stream was close()d while the last write
+              // was still in flight, in which case node never asks for trailers (the compat
+              // onStreamTrailersReady would throw ERR_HTTP2_INVALID_STREAM on a closed
+              // stream): end the writable with the empty END_STREAM DATA frame directly.
               native.noTrailers(this.#id);
               // Mark trailers as "sent" so a later stream.sendTrailers()
               // call hits the ERR_HTTP2_TRAILERS_ALREADY_SENT guard instead
@@ -2445,13 +2803,36 @@ class Http2Stream extends Duplex {
             } else {
               this.emit("wantTrailers");
             }
+            // Hand the END_STREAM (or trailer) frame to the socket now: with deferred write
+            // completion, _final can run on the program's last live turn and a frame left in
+            // the cork for the auto-flusher would strand a generic-streams (duplexPair) peer
+            // waiting for 'end'.
+            native.flush();
+            if (this[bunHTTP2StreamFinal] !== callback) {
+              // markWritableDone already consumed and invoked the callback during the
+              // synchronous streamEnd dispatch above.
+              return;
+            }
+            this[bunHTTP2StreamFinal] = null;
           }
           callback();
           return;
         }
-        if (native.writeStream(this.#id, "", "ascii", true, callback) === 5) {
+        const settled = native.writeStream(this.#id, "", "ascii", true, callback);
+        // Same as above: don't leave the END_STREAM frame in the cork on what may be the
+        // program's last live turn.
+        native.flush();
+        if (settled === 5) {
           // HALF_CLOSED_LOCAL settled synchronously; the dispatch was suppressed.
           markWritableDone(this);
+          // A server-initiated push (even id) has no client→server half, so HALF_CLOSED_LOCAL is
+          // its CLOSED state — mark it closed here so the diagnostics close-channel observes
+          // destroyed === false and rstCode === NGHTTP2_NO_ERROR, like node's nghttp2
+          // onStreamClose path.
+          if ((this.#id & 1) === 0 && this[bunHTTP2Session]?.type === constants.NGHTTP2_SESSION_SERVER) {
+            if (!this.rstCode) this.rstCode = 0;
+            markStreamClosed(this);
+          }
         }
         return;
       }
@@ -2465,7 +2846,21 @@ class Http2Stream extends Duplex {
   }
 
   _read(_size) {
-    // we always use the internal stream queue now
+    // Node's Http2Stream._read (lib/internal/http2/core.js): every read re-opens the
+    // stream's receive window (readStart). A pull-mode read() after pause() never
+    // emits 'resume', so this is the only path that reopens the window for it. This
+    // is only correct together with pushToStream's readStop-on-full-buffer above:
+    // Node's Readable calls _read even while paused (maybeReadMore), so an unbounded
+    // reopen here would otherwise defeat pause() entirely.
+    if (this.destroyed) {
+      this.push(null);
+      return;
+    }
+    if (!this.pending) {
+      streamOnResume.$call(this);
+    } else {
+      this.once("ready", streamOnResume);
+    }
   }
 
   end(chunk, encoding, callback) {
@@ -2482,7 +2877,8 @@ class Http2Stream extends Duplex {
 
     if ((status & StreamState.EndedCalled) !== 0) {
       typeof callback == "function" && callback();
-      return;
+      // Writable#end always returns the stream (request(...).end() chains rely on it).
+      return this;
     }
     this[bunHTTP2StreamStatus] = status | StreamState.EndedCalled;
     // Don't create an empty buffer for end() without data - let the Duplex stream
@@ -2523,7 +2919,9 @@ class Http2Stream extends Duplex {
           }
         }
         const chunk = Buffer.concat(chunks || []);
-        native.writeStream(this.#id, chunk, undefined, false, callback);
+        if (session[kTimeout]) session[kTimeout].refresh();
+        const status = native.writeStream(this.#id, chunk, undefined, false, callback, true);
+        if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: true, data, encoding: "" });
         }
@@ -2552,7 +2950,9 @@ class Http2Stream extends Duplex {
           wireChunk = Buffer.from(chunk, encoding);
           wireEncoding = undefined;
         }
-        native.writeStream(this.#id, wireChunk, wireEncoding, false, callback);
+        if (session[kTimeout]) session[kTimeout].refresh();
+        const status = native.writeStream(this.#id, wireChunk, wireEncoding, false, callback, true);
+        if (status & kWriteFlushedWithoutCallback) session[kDeferWriteCallback](callback);
         if (onClientStreamBodyChunkSentChannel.hasSubscribers && this instanceof ClientHttp2Stream) {
           onClientStreamBodyChunkSentChannel.publish({ stream: this, writev: false, data: chunk, encoding });
         }
@@ -2576,10 +2976,23 @@ class Http2Stream extends Duplex {
     }
   }
 }
-class ClientHttp2Stream extends Http2Stream {
-  constructor(streamId, session, headers) {
-    super(streamId, session, headers);
-  }
+class ClientHttp2Stream extends Http2Stream {}
+
+// Wrap a native→JS #Handlers callback so its body runs inside the target
+// stream's captured async-context frame — the JS-side equivalent of Node's
+// AsyncWrap MakeCallback re-entering the resource scope. Applied only at the
+// native seam, not to public emit(), so user-driven emit()/destroy() observe
+// the caller's ALS context (matching Node).
+function withStreamFrame(handler) {
+  return function (self, stream, a, b, c) {
+    if (typeof stream !== "object" || stream === null) return handler(self, stream, a, b, c);
+    // A session mid-destroy() fans onStreamError out via emitErrorToAllStreams
+    // under the destroy() caller's captured frame (Node's teardown context),
+    // scoped to that session so a coincident dispatch elsewhere is unaffected.
+    const teardownFrame = self != null ? self[bunHTTP2SessionTeardownFrame] : kNoSessionTeardown;
+    const frame = teardownFrame !== kNoSessionTeardown ? teardownFrame : stream[bunHTTP2AsyncContextFrame];
+    return runInFrame(frame, handler, undefined, self, stream, a, b, c);
+  };
 }
 function tryClose(fd) {
   try {
@@ -2587,10 +3000,14 @@ function tryClose(fd) {
   } catch {}
 }
 
+// Shared by respondWithFile (the stream owns the descriptor it opened: every terminal path closes
+// it exactly once) and respondWithFD (the caller owns the descriptor: nothing here may close it,
+// matching node's doSendFD).
 function doSendFileFD(options, fd, headers, err, stat) {
   const onError = options.onError;
+  const ownsFd = this[kOwnsFd] === true;
   if (err) {
-    if (err.code !== "EBADF") {
+    if (ownsFd && err.code !== "EBADF") {
       tryClose(fd);
     }
 
@@ -2612,7 +3029,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
       isDirectory
     ) {
       const err = isDirectory ? $ERR_HTTP2_SEND_FILE() : $ERR_HTTP2_SEND_FILE_NOSEEK();
-      tryClose(fd);
+      if (ownsFd) tryClose(fd);
       if (onError) onError(err);
       else {
         this.respond(headers, options);
@@ -2626,7 +3043,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
   }
 
   if (this.destroyed || this.closed) {
-    tryClose(fd);
+    if (ownsFd) tryClose(fd);
     this.destroy($ERR_HTTP2_INVALID_STREAM());
     return;
   }
@@ -2654,7 +3071,7 @@ function doSendFileFD(options, fd, headers, err, stat) {
     (typeof options.statCheck === "function" && options.statCheck.$call(this, stat, headers, options) === false) ||
     this.headersSent
   ) {
-    tryClose(fd);
+    if (this[kOwnsFd] === true) tryClose(fd);
     return;
   }
 
@@ -2673,20 +3090,80 @@ function doSendFileFD(options, fd, headers, err, stat) {
   }
   try {
     this.respond(headers, options);
-    fs.createReadStream(null, {
-      fd: fd,
-      autoClose: false,
-      start: statOptions.offset ? statOptions.offset : undefined,
-      end: typeof statOptions.length === "number" ? statOptions.length + (statOptions.offset || 0) - 1 : undefined,
-      emitClose: false,
-    }).pipe(this);
   } catch (err) {
+    // respond() rejected the headers (e.g. a request pseudo-header in the response): the fd opened
+    // for the file never reaches a read stream, so close it here before the stream is destroyed.
+    if (this[kOwnsFd] === true) tryClose(fd);
     if (typeof onError === "function") {
       onError(err);
     } else {
       this.destroy(err);
     }
+    return;
   }
+
+  // The file is piped to the native stream directly below; its completion runs the regular
+  // _final (END_STREAM / wantTrailers) logic returned here.
+  const finishNativeStream = closeWritableForFileResponse(this);
+
+  const stream = this;
+  const fileStream = fs.createReadStream(null, {
+    fd: fd,
+    // An fd opened by respondWithFile is closed by its read stream once the transfer ends or
+    // fails; an fd handed to respondWithFD stays the caller's to close (node semantics).
+    autoClose: this[kOwnsFd] === true,
+    start: statOptions.offset ? statOptions.offset : undefined,
+    end: typeof statOptions.length === "number" ? statOptions.length + (statOptions.offset || 0) - 1 : undefined,
+    emitClose: false,
+  });
+  const sink = new Stream.Writable({
+    write(chunk, _encoding, cb) {
+      const native = stream[bunHTTP2Session]?.[bunHTTP2Native];
+      if (!native || stream.destroyed || stream.closed) {
+        cb();
+        return;
+      }
+      const status = native.writeStream(stream.id, chunk, undefined, false, cb, true);
+      if (status & kWriteFlushedWithoutCallback) process.nextTick(cb);
+    },
+    final(cb) {
+      if (stream.destroyed || stream.closed) {
+        cb();
+        return;
+      }
+      finishNativeStream(cb);
+    },
+  });
+  // A read error mid-transfer tears the stream down like node's onPipedFileHandleRead; if the
+  // stream itself goes away (peer reset, session destroy), stop reading the file. Like node's
+  // onFileUnpipe, only an fd the stream opened itself (respondWithFile) is closed here; an fd
+  // handed to respondWithFD stays the caller's to close.
+  fileStream.on("error", onFileStreamError.bind(this));
+  this.once("close", () => {
+    fileStream.unpipe(sink);
+    if (ownsFd) fileStream.destroy();
+    else fileStream.pause();
+  });
+  fileStream.pipe(sink);
+}
+function onFileStreamError(this: Http2Stream) {
+  if (!this.destroyed && !this.closed) this.close(NGHTTP2_INTERNAL_ERROR);
+}
+const kFileResponseFinal = Symbol("fileResponseFinal");
+// node processRespondWithFD: a file response closes the user-facing writable side
+// (`self._final = null; self.end()`), so a stream.end() issued by the user afterwards cannot cut
+// the transfer short. Returns the original _final, which the file sink runs once the whole file
+// has been handed to the native stream. Idempotent: respondWithFD() (no statCheck) neutralizes
+// synchronously, like node, while doSendFileFD — shared with respondWithFile — runs after fstat.
+function closeWritableForFileResponse(stream: Http2Stream) {
+  let final = stream[kFileResponseFinal];
+  if (final === undefined) {
+    final = stream._final.bind(stream);
+    stream[kFileResponseFinal] = final;
+    stream._final = null;
+    stream.end();
+  }
+  return final;
 }
 function afterOpen(options, headers, err, fd) {
   const onError = options.onError;
@@ -2704,10 +3181,54 @@ function afterOpen(options, headers, err, fd) {
   fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
 }
 
+// Node's Http2Stream[kMaybeDestroy] server branch (lib/internal/http2/core.js): once the
+// response has finished, a server stream with no pending trailers whose request body was
+// never consumed (no read()/'data'/pipe - readableDidRead + readableFlowing) is closed
+// with RST_STREAM NO_ERROR. Without it a rejected upload deadlocks: the request body
+// stalls once the receive window fills (nothing reads, so backpressure never reopens it)
+// and the stream never reaches the fully-closed state, so the peer is never released.
+// setImmediate matches node (it lets push streams reach the peer before the close).
+//
+// Unlike node, the native layer can dispatch the request's END_STREAM and body to JS
+// after the response's 'finish' (node learns endOfStream with the headers), so at
+// 'finish' an untouched readable does not prove the peer is stuck and an empty one does
+// not prove it is not. Two timing-independent triggers cover both orderings:
+//  - 'finish' with unread request bytes already buffered (the peer was mid-upload), and
+//  - unread request bytes reaching JS after the response already finished
+//    (ServerHttp2Session's streamData). A request with no body can produce neither.
+function maybeCloseUnreadServerStream(stream: ServerHttp2Stream) {
+  if (stream.destroyed || stream.closed) return;
+  if (!stream.writableFinished || !stream.headersSent) return;
+  // A file response (respondWithFile/FD) ends the user-facing writable while the file is
+  // still being written natively, so writableFinished does not mean the response is done;
+  // node never installs its auto-close hook for that path (it nulls _final), match it.
+  if (stream[kFileResponseFinal] !== undefined) return;
+  // Node holds the auto-close while trailers are pending: its HAS_TRAILERS flag is set by
+  // respond({waitForTrailers}) and only cleared once sendTrailers() has submitted them.
+  if (stream[kSendingTrailers]) return;
+  if ((stream[bunHTTP2StreamStatus] & StreamState.WantTrailer) !== 0 && stream.sentTrailers === undefined) return;
+  if (!stream.readableDidRead && stream.readableFlowing === null) {
+    setImmediate(callStreamClose, stream);
+  }
+}
+function serverStreamOnFinish(this: ServerHttp2Stream) {
+  if (this.readableLength > 0) maybeCloseUnreadServerStream(this);
+}
+function callStreamClose(stream: ServerHttp2Stream) {
+  if (!stream.destroyed && !stream.closed) stream.close();
+}
 class ServerHttp2Stream extends Http2Stream {
   headersSent = false;
   constructor(streamId, session, headers) {
     super(streamId, session, headers);
+  }
+  // Node registers its 'finish' -> kMaybeDestroy hook inside shutdownWritable (its
+  // _final): a file response (respondWithFile/FD) nulls out _final and ends the
+  // user-facing writable while the file is still being written natively, so it must
+  // never install the hook - the early 'finish' would RST and truncate the transfer.
+  _final(callback) {
+    this.once("finish", serverStreamOnFinish);
+    super._final(callback);
   }
   // Node sends the implicit response headers (:status 200) when the stream is written to before
   // respond() was called; without this the DATA frames would go out with no preceding HEADERS.
@@ -2806,6 +3327,17 @@ class ServerHttp2Stream extends Http2Stream {
       process.nextTick(callback, err);
       return;
     }
+    // node: a HEAD push (or options.endStream) carries no response body, so the pushed stream's
+    // writable side is already ended when the callback runs; respond() then forces endStream so
+    // END_STREAM rides on the response HEADERS frame.
+    if (pushedStream) {
+      if (headers[HTTP2_HEADER_METHOD] === HTTP2_METHOD_HEAD) {
+        pushedStream[kHeadRequest] = true;
+        pushedStream.end();
+      } else if (options?.endStream) {
+        pushedStream.end();
+      }
+    }
     process.nextTick(callback, null, pushedStream, headers);
   }
 
@@ -2853,6 +3385,7 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
+    this[kOwnsFd] = true;
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
@@ -2911,6 +3444,15 @@ class ServerHttp2Stream extends Http2Stream {
     if (options.statCheck !== undefined && typeof options.statCheck !== "function") {
       throw $ERR_INVALID_ARG_VALUE("options.statCheck", options.statCheck);
     }
+    // The caller owns this fd; clear any stale flag left by a prior respondWithFile()
+    // on the same stream so doSendFileFD will not close it (node semantics).
+    this[kOwnsFd] = false;
+    if (options.statCheck === undefined) {
+      // node's processRespondWithFD runs synchronously when no statCheck is given: the
+      // user-facing writable side is already closed by the time respondWithFD() returns, so a
+      // stream.end() right after it is a no-op instead of ending the stream before the file.
+      closeWritableForFileResponse(this);
+    }
     if (fd instanceof FileHandle) {
       fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
     } else {
@@ -2953,7 +3495,7 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
     // Pre-validate single-value headers in JS so a throwing additionalHeaders() leaves no partial
     // state in the shared HPACK table (same rule request() applies).
-    assertSingleValueHeaders(headers);
+    if (this[bunHTTP2Session]?.[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     let hasStatus = true;
     if (headers[HTTP2_HEADER_STATUS] === undefined) {
       headers[HTTP2_HEADER_STATUS] = 200;
@@ -3064,7 +3606,7 @@ class ServerHttp2Stream extends Http2Stream {
     const sensitiveNames = buildSensitiveNames(headers, sensitives);
     // Pre-validate single-value headers in JS so a throwing respond() leaves no partial state in
     // the shared HPACK table (same rule request() applies).
-    assertSingleValueHeaders(headers);
+    if (session[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
     // node keeps the never-index list visible on sentHeaders (symbol keys are not iterated by the
     // wire-encoding path, so re-attaching is safe).
     if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -3159,6 +3701,21 @@ function emitConnectNT(self, socket) {
 function destroyWithInvalidSessionNT(stream) {
   if (!stream.destroyed) stream.destroy($ERR_HTTP2_INVALID_SESSION());
 }
+// A gracefully closed, idle session whose settings() ACK has not arrived yet gets a short,
+// bounded grace instead of an immediate destroy. Node never needs this: it coalesces the
+// SETTINGS frame into the same write as the request, so its ACK always beats the response
+// the caller is closing from. Bun flushes the request first, so the ACK can still be one
+// round-trip away when close() runs - destroying then silently drops the user's settings
+// callback and its 'localSettings' event. An ACK is mandatory (RFC 9113 6.5.3) and its
+// dispatch completes the destroy at once; a peer that never sends one only delays the
+// teardown by the grace, never past it.
+function scheduleSettingsAckGraceNT(session) {
+  if (session[kSettingsAckGraceTimer] !== undefined) return;
+  const timer = setTimeout(destroyIfNotDestroyedNT, 250, session);
+  // Never keeps the event loop alive: if nothing else does, the process is exiting anyway.
+  timer.unref?.();
+  session[kSettingsAckGraceTimer] = timer;
+}
 function destroyIfNotDestroyedNT(target) {
   if (!target.destroyed) target.destroy();
 }
@@ -3167,9 +3724,6 @@ function scheduleDestroyIfNotDestroyed(target) {
     setImmediate(destroyIfNotDestroyedNT, target);
   }
 }
-function settingsCallbackNT(self, callback, start) {
-  callback(null, self.localSettings, Date.now() - start);
-}
 function rejectNoPayloadContentLengthNT(req) {
   req.rstCode = constants.NGHTTP2_PROTOCOL_ERROR;
   req.destroy(streamErrorFromCode(constants.NGHTTP2_PROTOCOL_ERROR));
@@ -3177,6 +3731,16 @@ function rejectNoPayloadContentLengthNT(req) {
 
 function emitStreamErrorNT(self, stream, error, destroy, destroy_self) {
   if (stream) {
+    if (stream.destroyed && stream.listenerCount("error") === 0) {
+      // Already destroyed with no consumer listening: re-destroying with an
+      // error re-emits it as an uncaught exception (the Windows agents hit
+      // this in grpc-js test-server, "Session closed with error code 8").
+      // A destroyed stream that IS listened keeps the delivery below -
+      // node's errorEmitted de-dupes the re-emission, and grpc's status
+      // codes ride exactly this deferred path.
+      if (destroy_self) self.destroy();
+      return;
+    }
     if (typeof error === "number" && self != null && self[kSessionDestroyError] != null) {
       // The stream is being torn down because its session was destroyed with an error: surface
       // that session error on the stream (node semantics) instead of a generic stream error. The
@@ -3428,6 +3992,8 @@ class ServerHttp2Session extends Http2Session {
   [kServer]: Http2Server = null;
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
+  // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
+  #destroying: boolean = false;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -3459,6 +4025,9 @@ class ServerHttp2Session extends Http2Session {
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
+  // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
+  // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
+  #pendingSettingsCallbacks: Array<[Function, number] | null> = [null];
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
   #strictFieldWhitespaceValidation: boolean = true;
@@ -3487,6 +4056,9 @@ class ServerHttp2Session extends Http2Session {
       // setStreamContext host call needed.
       return stream;
     },
+    // Server handlers are NOT withStreamFrame-wrapped: streamStart runs in
+    // the native handler_pair! wrap's parser-construction context, so a
+    // peer-initiated stream's captured frame equals what every handler sees.
     frameError(self: ServerHttp2Session, stream: ServerHttp2Stream, frameType: number, errorCode: number) {
       if (!self || typeof stream !== "object") return;
       // Emit the frameError event with the frame type and error code
@@ -3512,6 +4084,13 @@ class ServerHttp2Session extends Http2Session {
     },
     streamEnd(self: ServerHttp2Session, stream: ServerHttp2Stream, state: number) {
       if (!self || typeof stream !== "object") return;
+      if (state === 7 && stream[kSendingTrailers]) {
+        // The trailer frame submitted by an in-flight sendTrailers() fully closed the stream:
+        // re-queue the close so it is not observable from inside sendTrailers() (node defers the
+        // submission itself via setImmediate, see kSendingTrailers).
+        process.nextTick(ServerHttp2Session.#Handlers.streamEnd, self, stream, state);
+        return;
+      }
       if (state == 6 || state == 7) {
         if (stream.readable) {
           if (!stream.rstCode) {
@@ -3534,7 +4113,19 @@ class ServerHttp2Session extends Http2Session {
         markStreamClosed(stream);
         self.#connections--;
         if (stream.id % 2 === 1) self.#peerInitiatedStreams--;
-        stream.destroy();
+        if (stream.readable && !stream.rstCode) {
+          // Clean close while data is still buffered on the readable side (e.g. the response
+          // ended before the request body was consumed): node defers the destroy until the
+          // consumer drains it ('end'), so the buffered request body is not lost.
+          stream.once("end", destroySelfOnEnd);
+        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
+          // The writable side is mid-finish (an in-flight _final settled the native stream
+          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
+          // for the writable side to finish before destroying a cleanly closed stream.
+          stream.once("finish", destroySelfOnEnd);
+        } else {
+          stream.destroy();
+        }
         if (self.#connections === 0 && self.#closed) {
           self.destroy();
         }
@@ -3546,6 +4137,9 @@ class ServerHttp2Session extends Http2Session {
     streamData(self: ServerHttp2Session, stream: ServerHttp2Stream, data: Buffer) {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
+      // Request data arriving unread after the response finished: the peer is uploading
+      // into a receive window nothing will reopen (see maybeCloseUnreadServerStream).
+      maybeCloseUnreadServerStream(stream);
     },
     streamHeaders(
       self: ServerHttp2Session,
@@ -3595,7 +4189,8 @@ class ServerHttp2Session extends Http2Session {
         if (onServerStreamStartChannel.hasSubscribers) {
           onServerStreamStartChannel.publish({ stream, headers });
         }
-        self[kServer].emit("stream", stream, headers, flags, rawheaders);
+        // performServerHandshake() sessions have no owning server.
+        self[kServer]?.emit("stream", stream, headers, flags, rawheaders);
         self.emit("stream", stream, headers, flags, rawheaders);
       }
     },
@@ -3604,6 +4199,10 @@ class ServerHttp2Session extends Http2Session {
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      const queued = self.#pendingSettingsCallbacks.shift();
+      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
+      // callback first and emits 'localSettings' after it.
+      if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
       self.emit("localSettings", settings);
     },
     remoteSettings(self: ServerHttp2Session, settings: Settings) {
@@ -3634,6 +4233,13 @@ class ServerHttp2Session extends Http2Session {
         self.destroy($ERR_HTTP2_TOO_MANY_INVALID_FRAMES());
         return;
       }
+      // A negative code is an nghttp2-style library error for a violation our own engine
+      // detected; node surfaces those as NghttpError (code ERR_HTTP2_ERROR) via
+      // onSessionInternalError.
+      if (typeof errorCode === "number" && errorCode < 0) {
+        self.destroy(new NghttpError(errorCode));
+        return;
+      }
       self.destroy(errorCode as number);
     },
     wantTrailers(self: ServerHttp2Session, stream: ServerHttp2Stream) {
@@ -3657,6 +4263,16 @@ class ServerHttp2Session extends Http2Session {
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
         // Graceful shutdown: no new streams, existing ones may finish.
         self.close();
+      } else if (self.closed && self.#connections === 0) {
+        // Mutual teardown: this side already sent its own graceful GOAWAY
+        // (close()) and every stream is done, so the peer's error code cannot
+        // affect anything user-visible - both ends agreed the connection is
+        // over. Destroy cleanly instead of surfacing a session error: node
+        // never observes this state (its socket is torn down before the
+        // peer's late GOAWAY could be read - grpc-js forceShutdown sends
+        // GOAWAY(NGHTTP2_CANCEL) at a client that just close()d, and on the
+        // Windows agents the frame deterministically arrived first).
+        self.destroy();
       } else {
         self.#parser?.emitErrorToAllStreams(errorCode);
         // Like Node, destroy with an error but send our own goaway with
@@ -3679,6 +4295,8 @@ class ServerHttp2Session extends Http2Session {
     },
   };
   #onRead(data: Buffer) {
+    // Inbound traffic refreshes the session's idle timer (node's [kUpdateTimer]).
+    if (this[kTimeout]) this[kTimeout].refresh();
     this.#parser?.read(data);
   }
   #onClose() {
@@ -3699,6 +4317,18 @@ class ServerHttp2Session extends Http2Session {
     this.destroy();
   }
   #onError(error: Error) {
+    // Node's socketOnError reads `const session = this[kSession]` and does
+    // nothing when it is undefined: destroying the session detaches it from the
+    // socket, so a transport error that lands afterwards (the peer's RST racing
+    // our own teardown - routine on Windows loopback) is not re-reported on an
+    // already-destroyed session.
+    if (this.destroyed) {
+      return;
+    }
+    if (isEconnresetAfterGoaway(this, error)) {
+      this.destroy();
+      return;
+    }
     if (this.listenerCount("error") === 0 && (error as NodeJS.ErrnoException)?.code === "ECONNRESET") {
       // An unobserved transport teardown (the peer dropped a connection
       // nobody is listening to anymore): destroy quietly - the destroy still
@@ -3794,10 +4424,19 @@ class ServerHttp2Session extends Http2Session {
 
   constructor(socket: TLSSocket | Socket, options?: Http2ConnectOptions, server?: Http2Server) {
     super();
+    // node: a socket can only ever be bound to a single Http2Session
+    // (ERR_HTTP2_SOCKET_BOUND is not in the native error-code registry; construct it directly).
+    if (socket[kBoundSession] !== undefined) {
+      const err = new Error("The socket is already bound to an Http2Session");
+      err.code = "ERR_HTTP2_SOCKET_BOUND";
+      throw err;
+    }
+    socket[kBoundSession] = this;
     this[kServer] = server;
     if (options?.strictFieldWhitespaceValidation === false) {
       this.#strictFieldWhitespaceValidation = false;
     }
+    this[kStrictSingleValueFields] = options?.strictSingleValueFields !== false;
     if (server) {
       server[kSessions].add(this);
     }
@@ -3810,6 +4449,7 @@ class ServerHttp2Session extends Http2Session {
     }
     this[bunHTTP2Socket] = socket;
     const nativeSocket = socket._handle;
+    this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     this.#encrypted = socket instanceof TLSSocket;
 
     if (typeof options?.maxOutstandingSettings === "number" && options.maxOutstandingSettings >= 1) {
@@ -3823,16 +4463,19 @@ class ServerHttp2Session extends Http2Session {
     if (options?.settings !== undefined) {
       validateSettings(options.settings);
     }
+    const nativeSettings = serverNativeSettings(options);
+    // localSettings reads the submitted values (incl. customSettings) before the peer ACKs.
+    this.#localSettings = applySubmittedLocalSettings({ ...this.#localSettings }, nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
       // RFC 9113 §6.5.2: a server MUST NOT send SETTINGS_ENABLE_PUSH with a
       // value other than 0 — any non-zero value is treated by a client as a
-      // PROTOCOL_ERROR (nghttp2 reports this as callback failure). This is
-      // unconditional at the protocol level, so `enablePush: false` is
-      // spread LAST to override any user-supplied setting and keep the
-      // server compliant regardless of caller configuration.
-      settings: { ...options, ...options?.settings, enablePush: false },
+      // PROTOCOL_ERROR (nghttp2 reports this as callback failure). When the
+      // caller asked for enablePush it is forced to false; when it is absent
+      // the setting is simply never serialized (node's initial SETTINGS frame
+      // is empty for default options).
+      settings: nativeSettings,
       type: 0, // server type
       handlers: ServerHttp2Session.#Handlers,
     });
@@ -3915,47 +4558,38 @@ class ServerHttp2Session extends Http2Session {
     if (typeof socket?.ref === "function") return socket.ref();
   }
   setTimeout(msecs, callback) {
-    // node registers the callback as a one-shot 'timeout' listener on the session itself; the
-    // socket-level timeout only drives the session's 'timeout' event (see #onTimeout).
-    if (callback !== undefined) {
-      validateFunction(callback, "callback");
-      this.once("timeout", callback);
-    }
-    typeof this[bunHTTP2Socket]?.setTimeout === "function" && this[bunHTTP2Socket].setTimeout(msecs);
-    return this;
+    // node's setStreamTimeout: the session owns its own unref'd idle timer under kTimeout
+    // (refreshed on inbound frames and writes), it does not arm the socket's timeout.
+    return setSessionTimeout.$call(this, msecs, callback);
   }
 
   ping(payload, callback) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
     if (typeof payload === "function") {
       callback = payload;
-      payload = Buffer.alloc(8);
-    } else {
-      payload = payload || Buffer.alloc(8);
+      payload = undefined;
     }
-    if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      throw $ERR_INVALID_ARG_TYPE("payload", ["Buffer", "TypedArray"], payload);
+    if (payload) {
+      validateBuffer(payload, "payload");
+      if (payload.byteLength !== 8) throw $ERR_HTTP2_PING_LENGTH();
     }
+    validateFunction(callback, "callback");
+
+    const cb = makeHttp2Ping(callback);
     const parser = this.#parser;
-    if (!parser) return false;
-    if (!this[bunHTTP2Socket]) return false;
-
-    if (typeof callback === "function") {
-      if (payload.byteLength !== 8) {
-        const error = $ERR_HTTP2_PING_LENGTH();
-        callback(error, 0, payload);
-        return;
-      }
-      if (this.#pingCallbacks) {
-        this.#pingCallbacks.push([callback, Date.now()]);
-      } else {
-        this.#pingCallbacks = [[callback, Date.now()]];
-      }
-    } else if (payload.byteLength !== 8) {
-      throw $ERR_HTTP2_PING_LENGTH();
+    if (!parser || !this[bunHTTP2Socket]) {
+      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
+      return false;
     }
-
-    parser.ping(payload);
+    if (parser.ping(payload || kEmptyPingPayload) === false) {
+      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
+      return false;
+    }
+    if (this.#pingCallbacks) {
+      this.#pingCallbacks.push([cb, Date.now()]);
+    } else {
+      this.#pingCallbacks = [[cb, Date.now()]];
+    }
     return true;
   }
   goaway(code = NGHTTP2_NO_ERROR, lastStreamID = 0, opaqueData) {
@@ -3972,7 +4606,7 @@ class ServerHttp2Session extends Http2Session {
   setLocalWindowSize(windowSize) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
 
-    validateInt32(windowSize, "windowSize", 0, kMaxWindowSize);
+    validateWindowSize(windowSize);
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
 
@@ -3981,6 +4615,8 @@ class ServerHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    // node treats an omitted/undefined settings object as an empty update.
+    if (settings === undefined) settings = {} as Settings;
     // Validate the caller-supplied object FIRST so null / arrays / primitives
     // still throw ERR_INVALID_ARG_TYPE — spreading ({ ...null }) would hide
     // these from the type guard in validateSettings.
@@ -4003,10 +4639,15 @@ class ServerHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
-    if (typeof callback === "function") {
-      const start = Date.now();
-      this.once("localSettings", settingsCallbackNT.bind(null, this, callback, start));
-    }
+    // The frame is queued on the native session; flush it now (as close() does for its
+    // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
+    // write for every settings() call, so its SETTINGS goes out with the current batch -
+    // a late frame here means the ACK trails the peer's response and a session closed at
+    // that response's end never resolves the settings callback.
+    this.#parser?.flush?.();
+    // Queue the callback so this call's own ACK invokes it (after 'localSettings');
+    // the null seed absorbs the initial-preface ACK that has no user callback.
+    this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
   // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
@@ -4031,56 +4672,200 @@ class ServerHttp2Session extends Http2Session {
   }
 
   destroy(error: Error | number | undefined = NGHTTP2_NO_ERROR, code?: number) {
-    const server = this[kServer];
-    if (server) {
-      server[kSessions].delete(this);
+    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
+    // first line - so a second destroy (e.g. the received-GOAWAY handler
+    // destroying with a session error after a socket error's destroy already
+    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
+    // re-emits 'error' on a session whose one-shot listeners are consumed.
+    // Guard on a latch, not the destroyed getter: that getter reads "socket
+    // detached", which #onError sets before calling in here, and the
+    // error-carrying destroy must still run once.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
+    if (this.#destroying) {
+      return;
     }
-    cancelPendingPings(this.#pingCallbacks);
-    this.#pingCallbacks = null;
-    if (typeof error === "number") {
-      code = error;
-      error = code !== NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
-    }
-    if (code === undefined && error != null) {
-      code = constants.NGHTTP2_INTERNAL_ERROR;
-    }
-    if (error) {
-      // Streams torn down by this destroy surface the same session error (node semantics).
-      this[kSessionDestroyError] = error;
-    }
-
-    const socket = this[bunHTTP2Socket];
-    if (!this.#connected) return;
-    this.#closed = true;
-    this.#connected = false;
-    if (socket) {
-      if (!this[kGoawaySent] || code) {
-        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-        // and double-fires the peer's 'goaway' event. An error code is new information, though:
-        // a destroy(err) after close() must still put the error GOAWAY on the wire.
-        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+    this.#destroying = true;
+    try {
+      const server = this[kServer];
+      if (server) {
+        server[kSessions].delete(this);
       }
-      socket.end();
-    }
-    const parser = this.#parser;
-    if (parser) {
-      // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
-      // precedence over the destroy code when streams are torn down.
-      parser.emitErrorToAllStreams(this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR);
-      parser.detach();
-      this.#parser = null;
+      if (this[kTimeout]) {
+        clearTimeout(this[kTimeout]);
+        this[kTimeout] = null;
+      }
+      cancelPendingPings(this.#pingCallbacks);
+      this.#pingCallbacks = null;
+      if (typeof error === "number") {
+        code = error;
+        error = code !== NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
+      }
+      if (code === undefined && error != null) {
+        code = constants.NGHTTP2_INTERNAL_ERROR;
+      }
+      if (error) {
+        // Streams torn down by this destroy surface the same session error (node semantics).
+        this[kSessionDestroyError] = error;
+      }
+
+      const socket = this[bunHTTP2Socket];
+      if (!this.#connected) return;
+      this.#closed = true;
+      this.#connected = false;
+      if (socket) {
+        if (!this[kGoawaySent] || code) {
+          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
+          // and double-fires the peer's 'goaway' event. An error code is new information, though:
+          // a destroy(err) after close() must still put the error GOAWAY on the wire.
+          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+        }
+        if (error) {
+          // node's finishSessionClose destroys the socket when the session dies
+          // with an error (a misbehaving peer must observe the connection going
+          // away) - but it still ends first and destroys a tick later, so the
+          // final GOAWAY flushes behind a FIN instead of an abortive close (see
+          // endThenDestroySessionSocket).
+          endThenDestroySessionSocket(socket, error);
+        } else {
+          // Node's finishSessionClose: "If we're gracefully closing the socket,
+          // call resume() so we can detect the peer closing in case
+          // binding.Http2Session is already gone." Without a reader, unread
+          // inbound bytes (a late GOAWAY from the peer) turn the close into an
+          // RST, which the peer surfaces as read ECONNRESET (routine on Windows
+          // loopback - the same reason Node delays the error-path destroy).
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+          socket.resume();
+          socket.end();
+        }
+      }
+      const parser = this.#parser;
+      if (parser) {
+        // node destroys every open stream synchronously from inside session.destroy(); the native
+        // dispatch below still runs for connection bookkeeping, but by then each stream is already
+        // ended + destroyed (a write() racing the destroy reports write-after-end without 'error').
+        // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
+        // precedence over the destroy code when streams are torn down.
+        const streamRstCode = this[kGoawayCode] || code || constants.NGHTTP2_NO_ERROR;
+        parser.forEachStream(
+          FunctionPrototypeBind.$call(destroyStreamForSessionDestroy, undefined, error, streamRstCode),
+        );
+        parser.emitErrorToAllStreams(streamRstCode);
+        parser.detach();
+        this.#parser = null;
+      }
+    } catch (e) {
+      // A throwing destroy did not destroy: argument validation (goaway's
+      // validateInteger, the native session rejecting a non-numeric error
+      // code) throws mid-teardown, and a corrected retry must still run.
+      this.#destroying = false;
+      throw e;
     }
     this[bunHTTP2Socket] = null;
 
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
+    const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    this[bunHTTP2AsyncContextFrame] = undefined;
     if (error) {
-      this.emit("error", error);
+      runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitEventNT, this, "close");
+    process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 }
 function emitTimeout(session: ClientHttp2Session) {
+  session.emit("timeout");
+}
+// Outbound-progress snapshot taken the last time the session's idle timer expired while writes
+// were still pending (see sessionTimerExpired / node's chunksSentSinceLastWrite).
+const kTimeoutBytesSnapshot = Symbol("timeoutBytesSnapshot");
+const kTimeoutWrittenSnapshot = Symbol("timeoutWrittenSnapshot");
+let sessionHasPendingWrite = false;
+function checkStreamWritePending(stream: Http2Stream) {
+  if (stream.writableLength > 0) sessionHasPendingWrite = true;
+}
+// node setStreamTimeout (lib/internal/stream_base_commons.js): the session owns an unref'd idle
+// timer stored under kTimeout; activity (inbound frames, writes) refreshes it.
+function setSessionTimeout(this: Http2Session, msecs, callback) {
+  if (this.destroyed) return this;
+  this.timeout = msecs;
+  msecs = getTimerDuration(msecs, "msecs");
+  clearTimeout(this[kTimeout]);
+  this[kTimeout] = null;
+  if (msecs === 0) {
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+      this.removeListener("timeout", callback);
+    }
+  } else {
+    // Snapshot the monotonic written counter at arm time so the first expiry
+    // only refreshes if bytes actually went out during the period (see
+    // sessionTimerExpired for why the native handle's counter, not the JS
+    // getter's drain-driven mirror).
+    this[kTimeoutWrittenSnapshot] =
+      this[bunHTTP2Socket]?._handle?.bytesWritten ?? this[bunHTTP2Socket]?.bytesWritten ?? 0;
+    this[kTimeout] = setTimeout(sessionTimerExpired, msecs, this).unref();
+    if (callback !== undefined) {
+      validateFunction(callback, "callback");
+      this.once("timeout", callback);
+    }
+  }
+  return this;
+}
+
+// Node's finishSessionClose error path: socket.end() flushes and sends the FIN
+// first, and the hard destroy runs a tick later - "If session.destroy() was
+// called, destroy the underlying socket. Delay it a bit to try to avoid
+// ECONNRESET on Windows" - so the peer reads our final frames off a FIN'd
+// socket instead of observing an abortive close.
+// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+function destroySessionSocketDelayedNT(socket, error) {
+  if (!socket.destroyed) {
+    socket.destroy(error);
+  }
+}
+function endThenDestroySessionSocket(socket, error) {
+  socket.end(() => setImmediate(destroySessionSocketDelayedNT, socket, error));
+}
+// node callTimeout (lib/internal/http2/core.js): when the timer expires while writes are still in
+// flight and bytes have reached the wire since the previous expiry, the session is not idle —
+// refresh instead of emitting 'timeout' (a large flow-controlled response trickling out to a slow
+// peer must not be treated as an idle connection).
+function sessionTimerExpired(session: Http2Session) {
+  if (session.destroyed) return;
+  const parser = session[bunHTTP2Native];
+  if (parser) {
+    // Node compares a monotonic chunks-sent counter, not instantaneous buffer
+    // levels: a write that filled and fully drained between two expiries is
+    // still progress, and sampling the (empty) buffer would misread it as an
+    // idle session. The native handle's bytesWritten is the live cumulative
+    // counter (advanced by the parser's direct native writes); the JS socket's
+    // getter only mirrors it on drain events, which the native write path does
+    // not raise - reading the mirror missed every native write on Windows.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (callTimeout)
+    const sessionSocket = session[bunHTTP2Socket];
+    const bytesWritten = sessionSocket?._handle?.bytesWritten ?? sessionSocket?.bytesWritten ?? 0;
+    if (bytesWritten !== (session[kTimeoutWrittenSnapshot] ?? 0)) {
+      session[kTimeoutWrittenSnapshot] = bytesWritten;
+      session[kTimeout]?.refresh();
+      return;
+    }
+    sessionHasPendingWrite = false;
+    parser.forEachStream(checkStreamWritePending);
+    // Bytes still queued natively (flow-control or socket backpressure). A change since the
+    // previous expiry means the pending writes are draining (or growing) — not an idle session.
+    const nativeBuffered = parser.bufferSize();
+    const previousBuffered = session[kTimeoutBytesSnapshot] ?? 0;
+    if (sessionHasPendingWrite || nativeBuffered > 0 || previousBuffered > 0) {
+      if (nativeBuffered !== previousBuffered) {
+        session[kTimeoutBytesSnapshot] = nativeBuffered;
+        session[kTimeout]?.refresh();
+        return;
+      }
+    }
+    parser.forEachStream(emitTimeout);
+  }
   session.emit("timeout");
 }
 function destroySelfOnEnd(this: Http2Stream) {
@@ -4120,6 +4905,8 @@ function streamRejectedByGoawaySession(stream: Http2Stream) {
 class ClientHttp2Session extends Http2Session {
   /// close indicates that the session is shutting down (close() or destroy() was called)
   #closed: boolean = false;
+  // One-shot destroy latch (Node: "if (this.destroyed) return;" opens destroy()).
+  #destroying: boolean = false;
   /// closeCalled tracks whether close() specifically was called: `session.closed` only reports a
   /// graceful close() in node — destroy() leaves it false while `session.destroyed` flips to true.
   #closeCalled: boolean = false;
@@ -4148,6 +4935,9 @@ class ClientHttp2Session extends Http2Session {
   // ERR_HTTP2_MAX_PENDING_SETTINGS_ACK when this exceeds maxOutstandingSettings.
   #pendingSettingsAckCount: number = 1;
   #maxOutstandingSettings: number = 10;
+  // node's Http2Settings queue: one entry per outstanding SETTINGS (initial-preface
+  // seed = null), invoked after 'localSettings' when that submission's ACK arrives.
+  #pendingSettingsCallbacks: Array<[Function, number] | null> = [null];
   #remoteSettings: Settings | null = null;
   #pingCallbacks: Array<[Function, number]> | null = null;
   // RFC 9113 reserved (pushed) streams the peer may have open at once (node session option).
@@ -4214,12 +5004,14 @@ class ClientHttp2Session extends Http2Session {
       }
       self.emit("stream", pushedStream, headers, flags, rawheaders);
     },
-    frameError(self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) {
-      if (!self || typeof stream !== "object") return;
-      // Emit the frameError event with the frame type and error code
-      process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
-    },
-    aborted(self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) {
+    frameError: withStreamFrame(
+      (self: ClientHttp2Session, stream: ClientHttp2Stream, frameType: number, errorCode: number) => {
+        if (!self || typeof stream !== "object") return;
+        // Emit the frameError event with the frame type and error code
+        process.nextTick(emitFrameErrorEventNT, stream, frameType, errorCode);
+      },
+    ),
+    aborted: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: any, old_state: number) => {
       if (!self || typeof stream !== "object") return;
       stream.rstCode = constants.NGHTTP2_CANCEL;
       // if writable and not closed emit aborted
@@ -4229,16 +5021,22 @@ class ClientHttp2Session extends Http2Session {
       }
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamError(self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) {
+    }),
+    streamError: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, error: number) => {
       if (!self || typeof stream !== "object") return;
 
       self.#connections--;
       process.nextTick(emitStreamErrorNT, self, stream, error, true, self.#connections === 0 && self.#closed);
-    },
-    streamEnd(self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) {
+    }),
+    streamEnd: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, state: number) => {
       if (!self || typeof stream !== "object") return;
-
+      if (state === 7 && stream[kSendingTrailers]) {
+        // The trailer frame submitted by an in-flight sendTrailers() fully closed the stream:
+        // re-queue the close so it is not observable from inside sendTrailers() (node defers the
+        // submission itself via setImmediate, see kSendingTrailers).
+        process.nextTick(ClientHttp2Session.#Handlers.streamEnd, self, stream, state);
+        return;
+      }
       if (state == 6 || state == 7) {
         if (stream.readable) {
           if (!stream.rstCode) {
@@ -4261,80 +5059,104 @@ class ClientHttp2Session extends Http2Session {
           // destroy until the consumer drains it ('end'), so a late-attaching reader does not
           // lose data.
           stream.once("end", destroySelfOnEnd);
+        } else if (stream.writableEnded && !stream.writableFinished && !stream.destroyed) {
+          // The writable side is mid-finish (an in-flight _final settled the native stream
+          // synchronously): destroying now would swallow 'finish'. Node's kMaybeDestroy waits
+          // for the writable side to finish before destroying a cleanly closed stream.
+          stream.once("finish", destroySelfOnEnd);
         } else {
           stream.destroy();
         }
         if (self.#connections === 0 && self.#closed) {
-          self.destroy();
+          // Deferred like close()'s own destroy: this runs inside a native dispatch
+          // batch, and frames the engine already received but has not dispatched yet
+          // must still reach JS. An outstanding settings() ACK gets a bounded grace
+          // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+          if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
+          else setImmediate(destroyIfNotDestroyedNT, self);
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed
         markWritableDone(stream);
       }
-    },
-    streamData(self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) {
+    }),
+    streamData: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream, data: Buffer) => {
       if (!self || typeof stream !== "object" || !data) return;
       pushToStream(stream, data);
-    },
-    streamHeaders(
-      self: ClientHttp2Session,
-      stream: ClientHttp2Stream,
-      headersTuple: [string[], Record<string, any>, string[] | undefined],
-      flags: number,
-    ) {
-      if (!self || typeof stream !== "object" || stream.rstCode) return;
-      let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
-      if (self.#strictFieldWhitespaceValidation) {
-        // stripInvalidWhitespaceFields returns its input by identity when nothing was
-        // stripped (the common case) — only then can the native-built object be reused.
-        const filtered = stripInvalidWhitespaceFields(rawheaders);
-        if (filtered !== rawheaders) {
-          rawheaders = filtered;
-          headers = toHeaderObject(filtered, headersTuple[2] || []);
+    }),
+    streamHeaders: withStreamFrame(
+      (
+        self: ClientHttp2Session,
+        stream: ClientHttp2Stream,
+        headersTuple: [string[], Record<string, any>, string[] | undefined],
+        flags: number,
+      ) => {
+        if (!self || typeof stream !== "object" || stream.rstCode) return;
+        let rawheaders = headersTuple[0];
+        let headers = headersTuple[1];
+        if (self.#strictFieldWhitespaceValidation) {
+          // stripInvalidWhitespaceFields returns its input by identity when nothing was
+          // stripped (the common case) — only then can the native-built object be reused.
+          const filtered = stripInvalidWhitespaceFields(rawheaders);
+          if (filtered !== rawheaders) {
+            rawheaders = filtered;
+            headers = toHeaderObject(filtered, headersTuple[2] || []);
+          }
         }
-      }
-      const status = stream[bunHTTP2StreamStatus];
-      const header_status = headers[HTTP2_HEADER_STATUS];
-      if (header_status === HTTP_STATUS_CONTINUE) {
-        stream.emit("continue");
-      }
+        const status = stream[bunHTTP2StreamStatus];
+        const header_status = headers[HTTP2_HEADER_STATUS];
+        if (header_status === HTTP_STATUS_CONTINUE) {
+          stream.emit("continue");
+        }
 
-      if ((status & StreamState.StreamResponded) !== 0) {
-        stream.emit("trailers", headers, flags, rawheaders);
-      } else {
-        if (header_status >= 100 && header_status < 200) {
-          stream.emit("headers", headers, flags, rawheaders);
+        if ((status & StreamState.StreamResponded) !== 0) {
+          stream.emit("trailers", headers, flags, rawheaders);
         } else {
-          // Set the bit BEFORE dispatching synchronously to user code — a
-          // 'response' handler that mutates stream state would otherwise be
-          // clobbered by a stale read-modify-write (see the server-side note
-          // at the stream handler above).
-          stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
-          if (header_status === 421) {
-            // 421 Misdirected Request
-            removeOriginFromSet(self, stream);
-          }
-          if (onClientStreamFinishChannel.hasSubscribers) {
-            onClientStreamFinishChannel.publish({ stream, headers, flags });
-          }
-          if (stream[kPush]) {
-            // A pushed stream delivers its response via 'push'; the session 'stream' event already
-            // fired (with the promised request headers) when the PUSH_PROMISE arrived.
-            stream.emit("push", headers, flags, rawheaders);
+          if (header_status >= 100 && header_status < 200) {
+            stream.emit("headers", headers, flags, rawheaders);
           } else {
-            // Node's ClientHttp2Session emits 'stream' only for pushed streams; a normal request's
-            // response arrives solely via the stream's own 'response' event.
-            stream.emit("response", headers, flags, rawheaders);
+            // Set the bit BEFORE dispatching synchronously to user code — a
+            // 'response' handler that mutates stream state would otherwise be
+            // clobbered by a stale read-modify-write (see the server-side note
+            // at the stream handler above).
+            stream[bunHTTP2StreamStatus] |= StreamState.StreamResponded;
+            if (header_status === 421) {
+              // 421 Misdirected Request
+              removeOriginFromSet(self, stream);
+            }
+            if (onClientStreamFinishChannel.hasSubscribers) {
+              onClientStreamFinishChannel.publish({ stream, headers, flags });
+            }
+            if (stream[kPush]) {
+              // A pushed stream delivers its response via 'push'; the session 'stream' event already
+              // fired (with the promised request headers) when the PUSH_PROMISE arrived.
+              stream.emit("push", headers, flags, rawheaders);
+            } else {
+              // Node's ClientHttp2Session emits 'stream' only for pushed streams; a normal request's
+              // response arrives solely via the stream's own 'response' event.
+              stream.emit("response", headers, flags, rawheaders);
+            }
           }
         }
-      }
-    },
+      },
+    ),
     localSettings(self: ClientHttp2Session, settings: Settings) {
       if (!self) return;
       self.#localSettings = settings;
       self.#pendingSettingsAck = false;
       if (self.#pendingSettingsAckCount > 0) self.#pendingSettingsAckCount--;
+      // This ACK may be the only thing a gracefully closed, idle session was waiting for.
+      if (self.#pendingSettingsAckCount === 0 && self[kSettingsAckGraceTimer] !== undefined) {
+        clearTimeout(self[kSettingsAckGraceTimer]);
+        self[kSettingsAckGraceTimer] = undefined;
+      }
+      if (self.#closed && self.#connections === 0 && self.#pendingSettingsAckCount === 0 && !self.destroyed) {
+        setImmediate(destroyIfNotDestroyedNT, self);
+      }
+      const queued = self.#pendingSettingsCallbacks.shift();
+      // Node's settingsCallback (lib/internal/http2/core.js) invokes the settings()
+      // callback first and emits 'localSettings' after it.
+      if (queued != null) queued[0](null, settings, Date.now() - queued[1]);
       self.emit("localSettings", settings);
     },
     remoteSettings(self: ClientHttp2Session, settings: Settings) {
@@ -4364,15 +5186,19 @@ class ClientHttp2Session extends Http2Session {
     error(self: ClientHttp2Session, errorCode: number | string, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       // The native parser reports the maxSessionInvalidFrames violation with a string code
-      // (it is a JS-level error, not an HTTP/2 error code).
+      // (it is a JS-level error, not an HTTP/2 error code). A negative numeric code is an
+      // nghttp2-style library error for a violation our own engine detected; node surfaces
+      // those as NghttpError (code ERR_HTTP2_ERROR) via onSessionInternalError.
       const error_instance =
         errorCode === "ERR_HTTP2_TOO_MANY_INVALID_FRAMES"
           ? $ERR_HTTP2_TOO_MANY_INVALID_FRAMES()
-          : sessionErrorFromCodeNamed(errorCode as number);
+          : typeof errorCode === "number" && errorCode < 0
+            ? new NghttpError(errorCode)
+            : sessionErrorFromCodeNamed(errorCode as number);
       self.destroy(error_instance);
     },
 
-    wantTrailers(self: ClientHttp2Session, stream: ClientHttp2Stream) {
+    wantTrailers: withStreamFrame((self: ClientHttp2Session, stream: ClientHttp2Stream) => {
       if (!self || typeof stream !== "object") return;
       const status = stream[bunHTTP2StreamStatus];
       if ((status & StreamState.WantTrailer) !== 0) return;
@@ -4382,7 +5208,7 @@ class ClientHttp2Session extends Http2Session {
       } else {
         stream.emit("wantTrailers");
       }
-    },
+    }),
     goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
       if (self.destroyed) return;
@@ -4411,13 +5237,22 @@ class ClientHttp2Session extends Http2Session {
       // shutdown: no new streams permitted, existing streams may finish naturally.
       if (errorCode === constants.NGHTTP2_NO_ERROR) {
         self.close();
+      } else if (self.closed && self.#connections === 0) {
+        // Mutual teardown: this side already sent its own graceful GOAWAY
+        // (close()) and every stream is done, so the peer's error code cannot
+        // affect anything user-visible - both ends agreed the connection is
+        // over. Destroy cleanly instead of surfacing a session error: node
+        // never observes this state (its socket is torn down before the
+        // peer's late GOAWAY could be read - grpc-js forceShutdown sends
+        // GOAWAY(NGHTTP2_CANCEL) at a client that just close()d, and on the
+        // Windows agents the frame deterministically arrived first).
+        self.destroy();
       } else {
         self.destroy(sessionErrorFromCode(errorCode), constants.NGHTTP2_NO_ERROR);
       }
     },
     end(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
       if (!self) return;
-      self[kSocketTeardown] = true;
       self.destroy();
     },
     altsvc(self: ClientHttp2Session, origin: string, value: string, streamId: number) {
@@ -4452,6 +5287,8 @@ class ClientHttp2Session extends Http2Session {
   };
 
   #onRead(data: Buffer) {
+    // Inbound traffic refreshes the session's idle timer (node's [kUpdateTimer]).
+    if (this[kTimeout]) this[kTimeout].refresh();
     this.#parser?.read(data);
   }
 
@@ -4482,6 +5319,7 @@ class ClientHttp2Session extends Http2Session {
     const nativeSocket = socket._handle;
     if (nativeSocket) {
       this.#parser.setNativeSocket(nativeSocket);
+      this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
     }
     process.nextTick(emitConnectNT, this, socket);
     this.#parser.flush();
@@ -4489,9 +5327,19 @@ class ClientHttp2Session extends Http2Session {
       // close() was called while the socket was still connecting: requests made in the meantime
       // never reached the peer, so node rejects them with ERR_HTTP2_GOAWAY_SESSION once the
       // connect completes and then lets the session finish closing.
+      const pendingRequests = this.#pendingRequests;
+      this.#pendingRequests = null;
+      if (pendingRequests !== null) {
+        for (let i = 0; i < pendingRequests.length; i++) {
+          streamRejectedByGoawaySession(pendingRequests[i].req);
+        }
+      }
       this.#parser?.forEachStream(streamRejectedByGoawaySession);
       this.destroy();
+      return;
     }
+    // Requests made while the socket was still connecting were queued; submit them now.
+    this.#flushPendingRequests();
   }
 
   #onClose() {
@@ -4503,16 +5351,22 @@ class ClientHttp2Session extends Http2Session {
       parser.detach();
       this.#parser = null;
     }
-    // Socket-driven teardown: node's destroyed flag flips asynchronously in this path, so a
-    // request() racing the teardown returns a stream that errors instead of throwing.
-    this[kSocketTeardown] = true;
     this.destroy(err, NGHTTP2_NO_ERROR);
     this[bunHTTP2Socket] = null;
   }
   #onError(error: Error) {
-    this[kSocketTeardown] = true;
+    // See the client session's #onError: Node's socketOnError is a no-op once
+    // the session has been detached from the socket, so a transport error that
+    // races our own teardown is not re-reported.
+    if (this.destroyed) {
+      return;
+    }
     this[bunHTTP2Socket] = null;
     if (this.#closed) {
+      this.destroy();
+      return;
+    }
+    if (isEconnresetAfterGoaway(this, error)) {
       this.destroy();
       return;
     }
@@ -4592,46 +5446,37 @@ class ClientHttp2Session extends Http2Session {
     this.#parser?.setNextStreamID(id);
   }
   setTimeout(msecs, callback) {
-    // node registers the callback as a one-shot 'timeout' listener on the session itself; the
-    // socket-level timeout only drives the session's 'timeout' event (see #onTimeout).
-    if (callback !== undefined) {
-      validateFunction(callback, "callback");
-      this.once("timeout", callback);
-    }
-    typeof this[bunHTTP2Socket]?.setTimeout === "function" && this[bunHTTP2Socket].setTimeout(msecs);
-    return this;
+    // node's setStreamTimeout: the session owns its own unref'd idle timer under kTimeout
+    // (refreshed on inbound frames and writes), it does not arm the socket's timeout.
+    return setSessionTimeout.$call(this, msecs, callback);
   }
   ping(payload, callback) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
     if (typeof payload === "function") {
       callback = payload;
-      payload = Buffer.alloc(8);
-    } else {
-      payload = payload || Buffer.alloc(8);
+      payload = undefined;
     }
-    if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      throw $ERR_INVALID_ARG_TYPE("payload", ["Buffer", "TypedArray"], payload);
+    if (payload) {
+      validateBuffer(payload, "payload");
+      if (payload.byteLength !== 8) throw $ERR_HTTP2_PING_LENGTH();
     }
+    validateFunction(callback, "callback");
+
+    const cb = makeHttp2Ping(callback);
     const parser = this.#parser;
-    if (!parser) return false;
-    if (!this[bunHTTP2Socket]) return false;
-
-    if (typeof callback === "function") {
-      if (payload.byteLength !== 8) {
-        const error = $ERR_HTTP2_PING_LENGTH();
-        callback(error, 0, payload);
-        return;
-      }
-      if (this.#pingCallbacks) {
-        this.#pingCallbacks.push([callback, Date.now()]);
-      } else {
-        this.#pingCallbacks = [[callback, Date.now()]];
-      }
-    } else if (payload.byteLength !== 8) {
-      throw $ERR_HTTP2_PING_LENGTH();
+    if (!parser || !this[bunHTTP2Socket]) {
+      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
+      return false;
     }
-
-    parser.ping(payload);
+    if (parser.ping(payload || kEmptyPingPayload) === false) {
+      process.nextTick(cb, $ERR_HTTP2_PING_CANCEL(), 0, payload);
+      return false;
+    }
+    if (this.#pingCallbacks) {
+      this.#pingCallbacks.push([cb, Date.now()]);
+    } else {
+      this.#pingCallbacks = [[cb, Date.now()]];
+    }
     return true;
   }
   goaway(errorCode = constants.NGHTTP2_NO_ERROR, lastStreamId = 0, opaqueData) {
@@ -4642,7 +5487,7 @@ class ClientHttp2Session extends Http2Session {
   setLocalWindowSize(windowSize) {
     if (this.destroyed) throw $ERR_HTTP2_INVALID_SESSION();
 
-    validateInt32(windowSize, "windowSize", 0, kMaxWindowSize);
+    validateWindowSize(windowSize);
     return this.#parser?.setLocalWindowSize?.(windowSize);
   }
   get socket() {
@@ -4661,6 +5506,8 @@ class ClientHttp2Session extends Http2Session {
     if (callback !== undefined && typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
+    // node treats an omitted/undefined settings object as an empty update.
+    if (settings === undefined) settings = {} as Settings;
     validateSettings(settings);
     // node: when more SETTINGS are submitted than maxOutstandingSettings allows un-ACKed, the
     // session is destroyed with ERR_HTTP2_MAX_PENDING_SETTINGS_ACK (surfaced via 'error').
@@ -4671,10 +5518,15 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#pendingSettingsAck = true;
     this.#parser?.settings(settings);
-    if (typeof callback === "function") {
-      const start = Date.now();
-      this.once("localSettings", settingsCallbackNT.bind(null, this, callback, start));
-    }
+    // The frame is queued on the native session; flush it now (as close() does for its
+    // GOAWAY) instead of waiting for the next unrelated write. Node schedules a session
+    // write for every settings() call, so its SETTINGS goes out with the current batch -
+    // a late frame here means the ACK trails the peer's response and a session closed at
+    // that response's end never resolves the settings callback.
+    this.#parser?.flush?.();
+    // Queue the callback so this call's own ACK invokes it (after 'localSettings');
+    // the null seed absorbs the initial-preface ACK that has no user callback.
+    this.#pendingSettingsCallbacks.push(typeof callback === "function" ? [callback, Date.now()] : null);
   }
 
   constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
@@ -4704,6 +5556,7 @@ class ClientHttp2Session extends Http2Session {
     if (options.strictFieldWhitespaceValidation === false) {
       this.#strictFieldWhitespaceValidation = false;
     }
+    this[kStrictSingleValueFields] = options.strictSingleValueFields !== false;
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
@@ -4783,14 +5636,18 @@ class ClientHttp2Session extends Http2Session {
     }
     this.#encrypted = socket instanceof TLSSocket;
     const nativeSocket = socket._handle;
+    this[kDeferWriteCallback] = deferWriteCallbackForSocket(nativeSocket);
 
     if (options?.settings !== undefined) {
       validateSettings(options.settings);
     }
+    const nativeSettings = { ...options, ...options?.settings };
+    // localSettings reads the submitted values (incl. customSettings) before the peer ACKs.
+    this.#localSettings = applySubmittedLocalSettings({ ...this.#localSettings }, nativeSettings);
     this.#parser = new H2FrameParser({
       native: nativeSocket,
       context: this,
-      settings: { ...options, ...options?.settings },
+      settings: nativeSettings,
       handlers: ClientHttp2Session.#Handlers,
     });
     socket.on("data", this.#onRead.bind(this));
@@ -4816,83 +5673,140 @@ class ClientHttp2Session extends Http2Session {
     this.goaway(constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
     this[kGoawaySent] = true;
     this.#parser?.flush?.();
-    if (this.#connections === 0) {
-      setImmediate(destroyIfNotDestroyedNT, this);
+    // Requests queued while the socket is still connecting count as in-flight too: they are
+    // rejected with ERR_HTTP2_GOAWAY_SESSION from #onConnect (node's requestOnConnect), not
+    // canceled by an early destroy.
+    //
+    // A settings() whose ACK has not arrived also keeps the graceful close from destroying
+    // the session yet: node always observes that ACK before it gets here because it batches
+    // the SETTINGS frame into the same write as the request (so the ACK beats the response),
+    // and the vendored tests close() from the response's 'end' relying on it. The wait is
+    // bounded: an ACK is mandatory (RFC 9113 6.5.3) and arrives one round-trip later; the
+    // localSettings dispatch finishes the deferred destroy, and a dead socket still tears
+    // the session down. destroy() remains immediate.
+    if (this.#connections === 0 && (this.#pendingRequests === null || this.#pendingRequests.length === 0)) {
+      if (this.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(this);
+      else setImmediate(destroyIfNotDestroyedNT, this);
     }
   }
 
   destroy(error?: Error | number, code?: number) {
-    const socket = this[bunHTTP2Socket];
-    if (this.#closed && !this.#connected && !this.#parser) {
+    // Node's destroy() is idempotent - "if (this.destroyed) return;" is its
+    // first line - so a second destroy (e.g. the received-GOAWAY handler
+    // destroying with a session error after a socket error's destroy already
+    // ran re-entrantly out of the 'goaway' emit) never re-runs the teardown or
+    // re-emits 'error' on a session whose one-shot listeners are consumed.
+    // Guard on a latch, not the destroyed getter: that getter reads "socket
+    // detached", which #onError sets before calling in here, and the
+    // error-carrying destroy must still run once.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js (Http2Session#destroy)
+    if (this.#destroying) {
       return;
     }
-    cancelPendingPings(this.#pingCallbacks);
-    this.#pingCallbacks = null;
-    if (typeof error === "number") {
-      code = error;
-      error = code !== constants.NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
+    const socket = this[bunHTTP2Socket];
+    if (this.#closed && !this.#connected && !this.#parser) {
+      // Nothing left to tear down. Do NOT latch here: latching on this
+      // early-out left the session permanently un-destroyable when a
+      // redundant destroy() ran first (zombie sessions on the darwin agents:
+      // half-torn sockets surfacing ECONNRESET, writes into closed handles).
+      return;
     }
-    if (code === undefined && error != null) {
-      code = constants.NGHTTP2_INTERNAL_ERROR;
-    }
-    if (error) {
-      // Streams torn down by this destroy surface the same session error (node semantics).
-      this[kSessionDestroyError] = error;
-    }
-    this.#closed = true;
-    this.#connected = false;
-    {
-      // Requests still queued behind the concurrency limit never reached the wire; cancel them like
-      // node cancels pending streams when their session is destroyed.
-      const pendingRequests = this.#pendingRequests;
-      this.#pendingRequests = null;
-      if (pendingRequests !== null) {
-        for (let i = 0; i < pendingRequests.length; i++) {
-          const req = pendingRequests[i].req;
-          if (!req.destroyed) {
-            req.rstCode = code !== undefined ? code : constants.NGHTTP2_CANCEL;
-            req.destroy(error);
+    this.#destroying = true;
+    try {
+      if (this[kTimeout]) {
+        clearTimeout(this[kTimeout]);
+        this[kTimeout] = null;
+      }
+      cancelPendingPings(this.#pingCallbacks);
+      this.#pingCallbacks = null;
+      if (typeof error === "number") {
+        code = error;
+        error = code !== constants.NGHTTP2_NO_ERROR ? $ERR_HTTP2_SESSION_ERROR(code) : undefined;
+      }
+      if (code === undefined && error != null) {
+        code = constants.NGHTTP2_INTERNAL_ERROR;
+      }
+      if (error) {
+        // Streams torn down by this destroy surface the same session error (node semantics).
+        this[kSessionDestroyError] = error;
+      }
+      this.#closed = true;
+      this.#connected = false;
+      {
+        // Requests still queued (waiting for connect or for a concurrency slot) never reached the
+        // wire; node cancels them with ERR_HTTP2_STREAM_CANCEL (carrying the session error, if any,
+        // as its cause).
+        const pendingRequests = this.#pendingRequests;
+        this.#pendingRequests = null;
+        if (pendingRequests !== null && pendingRequests.length > 0) {
+          const cancelError = createPendingStreamCancelError(error);
+          for (let i = 0; i < pendingRequests.length; i++) {
+            const req = pendingRequests[i].req;
+            if (!req.destroyed) {
+              req.rstCode = code !== undefined ? code : constants.NGHTTP2_CANCEL;
+              req.destroy(cancelError);
+            }
           }
         }
       }
-    }
-    if (socket) {
-      if (!this[kGoawaySent] || code) {
-        // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
-        // and double-fires the peer's 'goaway' event. An error code is new information, though:
-        // a destroy(err) after close() must still put the error GOAWAY on the wire.
-        this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+      if (socket) {
+        if (!this[kGoawaySent] || code) {
+          // close() already announced a graceful shutdown - re-sending NO_ERROR would be redundant
+          // and double-fires the peer's 'goaway' event. An error code is new information, though:
+          // a destroy(err) after close() must still put the error GOAWAY on the wire.
+          this.goaway(code || constants.NGHTTP2_NO_ERROR, 0, Buffer.alloc(0));
+        }
+        if (error) {
+          // See the client session: end first, destroy a tick later (node's
+          // finishSessionClose Windows-ECONNRESET avoidance).
+          endThenDestroySessionSocket(socket, error);
+        } else {
+          // See the client session's destroy: Node's finishSessionClose resumes
+          // the socket on a graceful close so unread inbound bytes cannot turn
+          // the FIN teardown into an RST.
+          // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1188
+          socket.resume();
+          socket.end();
+        }
       }
-      socket.end();
-    }
-    const parser = this.#parser;
-    if (parser) {
-      // node cancels streams still open when their session is destroyed: each gets
-      // ERR_HTTP2_STREAM_CANCEL (or the session error when one was provided), with the CANCEL
-      // rst code.
-      if (this[kSessionDestroyError] == null && error == null) {
-        // ERR_HTTP2_STREAM_CANCEL is not in the native error-code registry (the registry is
-        // positional and shared across Rust/C++/the JS bundle, so additions need a coordinated
-        // regeneration); construct the node-shaped error directly.
-        const cancelError = new Error("The pending stream has been canceled");
-        cancelError.name = "Error";
-        cancelError.code = "ERR_HTTP2_STREAM_CANCEL";
-        this[kSessionDestroyError] = cancelError;
+      const parser = this.#parser;
+      if (parser) {
+        // node cancels streams still open when their session is destroyed: each gets
+        // ERR_HTTP2_STREAM_CANCEL (or the session error when one was provided), with the CANCEL
+        // rst code.
+        if (this[kSessionDestroyError] == null && error == null) {
+          this[kSessionDestroyError] = createPendingStreamCancelError();
+        }
+        // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
+        // precedence over the destroy code when streams are torn down.
+        this[bunHTTP2SessionTeardownFrame] = $getInternalField($asyncContext, 0);
+        try {
+          parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
+        } finally {
+          this[bunHTTP2SessionTeardownFrame] = kNoSessionTeardown;
+        }
+        parser.detach();
       }
-      // Like Node's Http2Stream._destroy: a received GOAWAY's code takes
-      // precedence over the destroy code when streams are torn down.
-      parser.emitErrorToAllStreams(this[kGoawayCode] || (code !== undefined ? code : constants.NGHTTP2_CANCEL));
-      parser.detach();
+    } catch (e) {
+      // A throwing destroy did not destroy: argument validation (goaway's
+      // validateInteger, the native session rejecting a non-numeric error
+      // code) throws mid-teardown, and a corrected retry must still run.
+      this.#destroying = false;
+      throw e;
     }
     this.#parser = null;
     this[bunHTTP2Socket] = null;
 
+    // Read-and-clear the frame first: emitting 'error' with no listener throws,
+    // which would skip the clear and leave a retained session pinning the store.
+    const asyncFrame = this[bunHTTP2AsyncContextFrame];
+    this[bunHTTP2AsyncContextFrame] = undefined;
     if (error) {
-      this.emit("error", error);
+      runInFrame(asyncFrame, this.emit, this, "error", error);
     }
     // node emits the session 'close' event asynchronously (a listener attached right after
     // close()/destroy() returns must still observe it).
-    process.nextTick(emitEventNT, this, "close");
+    process.nextTick(emitSessionCloseNT, this, asyncFrame);
   }
 
   request(headers: any, options?: any) {
@@ -4900,17 +5814,19 @@ class ClientHttp2Session extends Http2Session {
     // throws before that point must not decrement.
     let connectionsCounted = false;
     try {
-      // node: a destroyed session reports INVALID_SESSION; a closed (GOAWAY) one reports
-      // GOAWAY_SESSION. When the destruction came from the socket
-      // tearing down (not an explicit destroy()), node's destroyed flag flips asynchronously -
-      // a racing request() must not throw, it returns a stream that errors.
+      // node validates arguments synchronously and only defers session-state failures
+      // (destroyed/closed/GOAWAY) to the returned stream, so bad options throw even on
+      // a destroyed session (lib/internal/http2/core.js request()).
+      if (options !== undefined) {
+        if (options.endStream !== undefined) validateBoolean(options.endStream, "options.endStream");
+        if (options.parent !== undefined) validateNumber(options.parent, "options.parent");
+        if (options.exclusive !== undefined) validateBoolean(options.exclusive, "options.exclusive");
+        if (options.silent !== undefined) validateBoolean(options.silent, "options.silent");
+      }
       if (this.destroyed) {
-        if (this[kSocketTeardown]) {
-          const req = new ClientHttp2Stream(undefined, this, headers);
-          process.nextTick(destroyWithInvalidSessionNT, req);
-          return req;
-        }
-        throw $ERR_HTTP2_INVALID_SESSION();
+        const req = new ClientHttp2Stream(undefined, this, headers);
+        process.nextTick(destroyWithInvalidSessionNT, req);
+        return req;
       }
       if (this[kReceivedGoaway]) {
         const err = new Error("New streams cannot be created after receiving a GOAWAY");
@@ -5010,6 +5926,20 @@ class ClientHttp2Session extends Http2Session {
         options = { ...options };
       }
 
+      if ($isObject(options) && "weight" in options) {
+        // RFC 9113 deprecated priority signalling: node emits DEP0194 when the option is present
+        // and ignores it (the request always goes out with the default weight).
+        if (!priorityWeightDeprecationWarned) {
+          priorityWeightDeprecationWarned = true;
+          process.emitWarning(
+            "Priority signaling has been deprecated as of RFC 9113.",
+            "DeprecationWarning",
+            "DEP0194",
+          );
+        }
+        delete options.weight;
+      }
+
       const sensitives = headers[sensitiveHeaders];
       // Note: the sensitiveHeaders symbol stays on the object — the native header walk skips
       // symbol keys, and deleting it here would flip the object into dictionary mode,
@@ -5018,9 +5948,29 @@ class ClientHttp2Session extends Http2Session {
         throw $ERR_INVALID_ARG_VALUE("headers[http2.neverIndex]", sensitives);
       }
       const sensitiveNames = buildSensitiveNames(headers, sensitives);
+      // Validate header names in JS like node's buildNgHeaderString does: request() must throw
+      // synchronously for an invalid name even while the session is still connecting (the native
+      // encoder only sees the headers once a queued request is actually submitted). Empty names
+      // keep going to the native validator, matching its acceptance.
+      {
+        const headerNames = ObjectKeys(headers);
+        for (let i = 0; i < headerNames.length; i++) {
+          const name = headerNames[i];
+          if (name === "") continue;
+          if (name.charCodeAt(0) === 0x3a /* ':' */) {
+            // Unknown pseudo-header names throw synchronously (node's mapToHeaders); known ones
+            // are still re-checked by the native encoder at submission time.
+            assertValidPseudoHeader(name);
+            continue;
+          }
+          if (!checkIsHttpToken(name)) {
+            throw $ERR_INVALID_HTTP_TOKEN("Header name", name);
+          }
+        }
+      }
       // Validate single-value constraints before anything is encoded (a mid-encode throw would
       // desync the shared HPACK table from the peer).
-      assertSingleValueHeaders(headers);
+      if (this[kStrictSingleValueFields] !== false) assertSingleValueHeaders(headers);
       // node keeps the never-index list visible on the request's sentHeaders (symbol keys are
       // not iterated by the wire-encoding path, so re-attaching is safe).
       if (sensitives !== undefined) headers[sensitiveHeaders] = sensitives;
@@ -5080,17 +6030,23 @@ class ClientHttp2Session extends Http2Session {
 
       let rejectContentLengthOnNoPayload = false;
       if (NoPayloadMethods.has(method.toUpperCase())) {
+        // Like Node, a payload-meaningless method only defaults endStream to
+        // true when the caller expressed no preference; an explicit endStream
+        // (validated above) is honored, so { endStream: false } stays open.
         if (!options || !$isObject(options)) {
           options = { endStream: true };
-        } else {
+        } else if (options.endStream === undefined) {
           options = { ...options, endStream: true };
         }
-        // nghttp2 refuses content-length on a request that cannot carry a payload: the stream is
-        // reset with PROTOCOL_ERROR after creation (an async stream error, not a throw).
-        for (const key of Object.keys(headers)) {
-          if (key.toLowerCase() === "content-length") {
-            rejectContentLengthOnNoPayload = true;
-            break;
+        // nghttp2 refuses content-length on a request whose HEADERS carry END_STREAM (no payload
+        // can follow): reset with PROTOCOL_ERROR after creation (an async stream error, not a
+        // throw). An explicit endStream:false keeps the body legal, so only the ended case rejects.
+        if (options.endStream) {
+          for (const key of Object.keys(headers)) {
+            if (key.toLowerCase() === "content-length") {
+              rejectContentLengthOnNoPayload = true;
+              break;
+            }
           }
         }
       }
@@ -5130,32 +6086,36 @@ class ClientHttp2Session extends Http2Session {
       }
 
       // Like Node, a request whose signal is already aborted never touches the
-      // wire: the stream is created without an id and destroyed with an
-      // AbortError on the next tick (_destroy skips the RST for id-less
-      // streams). Sending an RST for a stream the peer never saw is a
-      // connection error that makes conforming servers reply with GOAWAY.
+      // wire: the stream is created without an id and destroyed synchronously
+      // with an AbortError (_destroy skips the RST for id-less streams).
+      // Sending an RST for a stream the peer never saw is a connection error
+      // that makes conforming servers reply with GOAWAY.
+      let signal;
       if ($isObject(options) && options.signal) {
         // Node validates the signal before reading .aborted: any object with an
         // 'aborted' property passes (so a duck-typed { aborted: true } takes
         // the abort fast path), while objects without one and non-objects
         // throw ERR_INVALID_ARG_TYPE synchronously.
-        validateAbortSignal(options.signal, "options.signal");
-        if (options.signal.aborted) {
+        signal = options.signal;
+        validateAbortSignal(signal, "options.signal");
+        if (signal.aborted) {
           const req = new ClientHttp2Stream(undefined, this, headers);
-          const signal = options.signal;
-          // The request never started, so the stream counts as aborted but the
-          // 'aborted' event is not emitted — only the AbortError.
-          req[kAborted] = true;
-          process.nextTick(() => req.destroy($makeAbortError(undefined, { cause: signal.reason })));
+          // The writable side is ended first (endStream requests), so the stream is destroyed
+          // without counting as aborted — only the AbortError is reported.
+          if (options.endStream) req.end();
+          req.destroy($makeAbortError(undefined, { cause: signal.reason }));
           return req;
         }
       }
 
-      // Peer SETTINGS_MAX_CONCURRENT_STREAMS: when no slot is available the request is not
-      // submitted yet — node returns a "pending" stream (no id) and sends its HEADERS frame once a
-      // slot frees, keeping stream id allocation in submission order.
+      // A request made before the socket finished connecting, or while the peer's
+      // SETTINGS_MAX_CONCURRENT_STREAMS limit leaves no slot, is not submitted yet — node returns
+      // a "pending" stream (no id) and sends its HEADERS frame once the session connects / a slot
+      // frees, keeping stream id allocation in submission order. Deferring until connect is what
+      // lets a stream destroyed before connect never reach the wire.
       const maxConcurrentStreams = this.#remoteSettings?.maxConcurrentStreams;
       if (
+        !this.#connected ||
         (this.#pendingRequests !== null && this.#pendingRequests.length > 0) ||
         (typeof maxConcurrentStreams === "number" && this.#activeRequestCount >= maxConcurrentStreams)
       ) {
@@ -5181,6 +6141,7 @@ class ClientHttp2Session extends Http2Session {
         // synchronous writes after a queued request() batch through _writev once the slot frees.
         req.cork();
         process.nextTick(uncorkNT, req);
+        setupRequestEndAndSignal(req, options, signal);
         return req;
       }
 
@@ -5212,6 +6173,7 @@ class ClientHttp2Session extends Http2Session {
       // and flushed together through _writev.
       req.cork();
       process.nextTick(uncorkNT, req);
+      setupRequestEndAndSignal(req, options, signal);
       process.nextTick(emitEventNT, req, "ready");
       return req;
     } catch (e: any) {
@@ -5254,7 +6216,9 @@ class ClientHttp2Session extends Http2Session {
         break;
       }
       const { req, headers, wireHeaders, sensitiveNames, options } = queue.shift();
-      if (req.destroyed || req.closed) continue;
+      // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
+      // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
+      if (req.destroyed) continue;
       const stream_id: number = parser.getNextStream();
       if (stream_id < 0) {
         process.nextTick(emitOutofStreamErrorNT, req);
@@ -5356,8 +6320,11 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     let hasTransferEncoding = false;
     let hasDate = false;
     let hasConnection = false;
+    let hasKeepAlive = false;
     const headers = head?.headers;
     if (headers) {
+      // ServerResponse drives this handle with renderNativeHeaders(): a flat
+      // [name, value, name, value, ...] array with original-case names.
       for (let i = 0, end = headers.length - 1; i < end; i += 2) {
         const name = headers[i];
         const value = headers[i + 1];
@@ -5382,6 +6349,9 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
           case "connection":
             hasConnection = true;
             break;
+          case "keep-alive":
+            hasKeepAlive = true;
+            break;
         }
         out += `${name}: ${value}\r\n`;
       }
@@ -5397,14 +6367,37 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     if (!hasDate) {
       out += `Date: ${new Date().toUTCString()}\r\n`;
     }
-    // A close-delimited response with no Connection pair means the user removed
-    // it (Node's _removedConnection): write none rather than inventing
-    // keep-alive on a connection that ends with the body.
-    if (!hasConnection && !closeDelimited) {
-      if (shouldKeepAlive) {
-        out += `Connection: keep-alive\r\nKeep-Alive: timeout=${Math.floor((keepAliveTimeout || 5000) / 1000)}\r\n`;
-      } else {
+    // renderNativeHeaders reports its Connection decision through the
+    // auto-header bits (AUTO_HEADER_* in _http_server.ts / kAutoHeader* in
+    // NodeHTTP.cpp); honor an explicit close (res.shouldKeepAlive = false,
+    // the graceful-shutdown pattern) over the parser-derived flag.
+    // A close-delimited response still advertises the close it performs: only
+    // the keep-alive line is suppressed, since the connection ends with the
+    // body. When the user removed the Connection header (_removedConnection),
+    // renderNativeHeaders sets neither bit, so nothing is written here.
+    const autoBits = head?.autoHeaderBits ?? 0;
+    if (!hasConnection) {
+      if ((autoBits & 4) !== 0) {
         out += "Connection: close\r\n";
+      } else if (!closeDelimited) {
+        // No close bit and no Connection pair on a close-delimited response means
+        // the user removed the header (Node's _removedConnection) — write none
+        // rather than inventing keep-alive on a connection that ends with the
+        // body. Every other response still advertises its connection state.
+        if (shouldKeepAlive) {
+          out += "Connection: keep-alive\r\n";
+          // A user-sent Keep-Alive header (already written by the loop above)
+          // suppresses the auto line, like the native writeAutoHeaders. The
+          // bit-carried timeout wins when present; otherwise fall back to this
+          // handle's configured timeout, preserving pre-bits behavior.
+          if (!hasKeepAlive) {
+            const kaSecs =
+              (autoBits & 8) !== 0 ? head.keepAliveTimeoutSecs : Math.floor((keepAliveTimeout || 5000) / 1000);
+            out += `Keep-Alive: timeout=${kaSecs}\r\n`;
+          }
+        } else {
+          out += "Connection: close\r\n";
+        }
       }
     }
     out += "\r\n";
@@ -5442,7 +6435,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     cork(callback) {
       return callback();
     },
-    writeHead(statusCode, statusMessage, headers) {
+    writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs) {
       const originalStatusCode = statusCode;
       statusCode |= 0;
       if (statusCode < 100 || statusCode > 999) {
@@ -5451,10 +6444,25 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (typeof statusMessage === "string" && checkInvalidHeaderChar(statusMessage)) {
         throw $ERR_INVALID_CHAR("statusMessage");
       }
-      head = { statusCode, statusMessage, headers };
+      head = { statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs };
     },
     flushHeaders() {
       writeHeadToSocket(null);
+    },
+    writeHeadAndEnd(
+      statusCode,
+      statusMessage,
+      headers,
+      chunk,
+      encoding,
+      strictContentLength,
+      autoHeaderBits,
+      keepAliveTimeoutSecs,
+    ) {
+      // The native NodeHTTPResponse batches writeHead + end into one call;
+      // this fallback composes the same two steps.
+      this.writeHead(statusCode, statusMessage, headers, autoHeaderBits, keepAliveTimeoutSecs);
+      return this.end(chunk, encoding, undefined, strictContentLength);
     },
     write(chunk, encoding, _callback, _strictContentLength) {
       const buf = toBuffer(chunk, encoding);
@@ -5498,7 +6506,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 // the socket to the HTTP/1 connection listener.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
-  const { HTTPParser } = require("node:_http_common");
+  const { HTTPParser, prepareError } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
@@ -5541,21 +6549,7 @@ function connectionListenerHTTP1(server, socket, options) {
     req.url = url;
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
-    req.rawHeaders = rawHeaders;
-    const headers = {};
-    for (let i = 0; i < rawHeaders.length; i += 2) {
-      const name = rawHeaders[i].toLowerCase();
-      const value = rawHeaders[i + 1];
-      const existing = headers[name];
-      if (existing === undefined) {
-        headers[name] = name === "set-cookie" ? [value] : value;
-      } else if (name === "set-cookie") {
-        existing.push(value);
-      } else if (name !== "content-length" && name !== "host") {
-        headers[name] = `${existing}, ${value}`;
-      }
-    }
-    req.headers = headers;
+    req._addHeaderLines(rawHeaders, rawHeaders.length);
     // The body is fed by the parser callbacks below; reading just resumes the socket.
     req._read = function (_size) {
       if (socket.readable) socket.resume();
@@ -5571,6 +6565,12 @@ function connectionListenerHTTP1(server, socket, options) {
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
+    // node's resOnFinish: release the socket once the response completes so the next
+    // keep-alive request's response can attach (assignSocket throws
+    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
+    res.on("finish", function onFallbackResponseFinish() {
+      this.detachSocket(socket);
+    });
 
     server.emit("request", req, res);
     return 0;
@@ -5585,19 +6585,31 @@ function connectionListenerHTTP1(server, socket, options) {
     }
   };
 
+  function onHttp1SocketError(err, rawPacket) {
+    // Match Node's http _connectionListener: attach err.rawPacket and, when no
+    // 'clientError' listener is present, write the same raw error response
+    // Node's socketOnError does before destroying.
+    prepareError(err, parser, rawPacket);
+    if (!server.emit("clientError", err, socket)) {
+      if (socket.writable && !socket.destroyed) {
+        const code = err?.code;
+        socket.write(
+          code === "HPE_HEADER_OVERFLOW"
+            ? "HTTP/1.1 431 Request Header Fields Too Large\r\nConnection: close\r\n\r\n"
+            : "HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n",
+          "latin1",
+        );
+      }
+      socket.destroy(err);
+    }
+  }
   socket.on("data", data => {
     const ret = parser.execute(data);
     if (ret instanceof Error) {
-      if (!server.emit("clientError", ret, socket)) {
-        socket.destroy(ret);
-      }
+      onHttp1SocketError(ret, data);
     }
   });
-  socket.on("error", function onHttp1SocketError(error) {
-    if (!server.emit("clientError", error, socket)) {
-      this.destroy(error);
-    }
-  });
+  socket.on("error", err => onHttp1SocketError(err, undefined));
   socket.once("close", () => {
     connections.delete(socket);
     try {
@@ -5890,6 +6902,12 @@ function createServer(options, onRequestHandler) {
 function createSecureServer(options, onRequestHandler) {
   return new Http2SecureServer(options, onRequestHandler);
 }
+// Establishes a server-side HTTP/2 session over an arbitrary already-connected Duplex
+// (https://nodejs.org/api/http2.html#http2performserverhandshakesocket-options).
+function performServerHandshake(socket, options = {}) {
+  options = initializeOptions(options);
+  return new ServerHttp2Session(socket, options, undefined);
+}
 function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
@@ -5915,6 +6933,7 @@ export default {
   getDefaultSettings,
   getPackedSettings,
   getUnpackedSettings,
+  performServerHandshake,
   sensitiveHeaders,
   Http2ServerRequest,
   Http2ServerResponse,
@@ -5932,7 +6951,14 @@ export default {
       ServerHttp2Stream,
       ClientHttp2Stream,
     },
-    util: {},
+    util: {
+      assertIsObject,
+      assertIsArray,
+      assertWithinRange,
+      assertValidPseudoHeader,
+      sessionName,
+      NghttpError,
+    },
   },
 };
 

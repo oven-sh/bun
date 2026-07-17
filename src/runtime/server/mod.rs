@@ -596,23 +596,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 }
 
-/// Single point of truth for "wrap a handler callback and mirror it into the
-/// wrapper's WriteBarrier slot". If `*shadow` is unset (empty/undefined/null),
-/// normalize it to `ZERO` and clear the slot; otherwise apply the
-/// async-context wrap and write the wrapped fn into both the slot and
-/// `*shadow`. Every call site already holds a live wrapper (`ptr_to_js` on
-/// serve, `callframe.this()` on reload / setOnClientError), so `server_js`
-/// is always valid. Keeping the is-empty check, the wrap step, and the
-/// shadow↔slot pairing in one helper is what stops the serve / reload / ws /
-/// clientError sites from drifting.
-#[inline]
 /// gcProtect every handler callback `ServerConfig::from_js` / `Handler::from_js`
-/// stored as a raw-`JSValue` shadow, for the window between `init()` (which
-/// `mem::take`s `config` into the unscanned heap box) and the
-/// `wrap_handler_slot` writes in `serve_with!`. Returns an RAII array whose
-/// `Drop` unprotects on every exit path. `JSValue::ZERO` slots are cheap
-/// no-ops on both sides (the C++ `gcProtect`/`gcUnprotect` early-return on
-/// non-cells), so there is no need to branch on `is_empty()`.
+/// stored as a raw-`JSValue` shadow, for the window between those being moved
+/// into an unscanned heap box (`init()`'s `mem::take` on serve,
+/// `self.config.websocket = Some(ws)` on reload) and the `wrap_handler_slot`
+/// writes. Returns an RAII array whose `Drop` unprotects on every exit path.
+/// `JSValue::ZERO` slots are cheap no-ops on both sides (the C++
+/// `gcProtect`/`gcUnprotect` early-return on non-cells), so there is no need
+/// to branch on `is_empty()`.
 pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_value::Protected; 10] {
     let ws = config.websocket.as_ref().map(|w| &w.handler);
     let z = JSValue::ZERO;
@@ -631,6 +622,16 @@ pub(crate) fn protect_handler_shadows(config: &ServerConfig) -> [bun_jsc::js_val
     .map(JSValue::protected)
 }
 
+/// Single point of truth for "wrap a handler callback and mirror it into the
+/// wrapper's WriteBarrier slot". If `*shadow` is unset (empty/undefined/null),
+/// normalize it to `ZERO` and clear the slot; otherwise apply the
+/// async-context wrap and write the wrapped fn into both the slot and
+/// `*shadow`. Every call site already holds a live wrapper (`ptr_to_js` on
+/// serve, `callframe.this()` on reload / setOnClientError), so `server_js`
+/// is always valid. Keeping the is-empty check, the wrap step, and the
+/// shadow↔slot pairing in one helper is what stops the serve / reload / ws /
+/// clientError sites from drifting.
+#[inline]
 pub(crate) fn wrap_handler_slot(
     shadow: &mut JSValue,
     server_js: JSValue,

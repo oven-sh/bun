@@ -2442,6 +2442,63 @@ describe("handler GC tracing (heapStats wrapper-count)", () => {
     expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
   }, 30_000);
 
+  // Sibling of the above for server.reload(): on_reload_from_zig moves the
+  // websocket handler shadows into the heap-boxed self.config before
+  // write_ws_handler_slots roots them, and each wrap_handler_slot allocates
+  // via with_async_context_if_needed. Pre-PR on_create's server.protect()
+  // gcProtected all 7 at read time.
+  test("reload() with accessor-backed websocket handlers survives under collectContinuously", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+        const { AsyncLocalStorage } = require("node:async_hooks");
+        const als = new AsyncLocalStorage();
+        const server = Bun.serve({
+          port: 0, development: true,
+          fetch(req, s) { if (s.upgrade(req)) return; return new Response("v1"); },
+          websocket: { open() {}, message() {}, close() {} },
+        });
+        // Reload inside als.run so with_async_context_if_needed allocates an
+        // AsyncContextFrame for every ws handler it wraps (the GC point
+        // between moving the shadows into self.config and rooting them).
+        als.run({}, () => server.reload({
+          fetch(req, s) { if (s.upgrade(req)) return; return new Response("v2"); },
+          websocket: {
+            get open() { return ws => ws.send("r-open"); },
+            get message() { return (ws, m) => ws.send("r:" + m); },
+            get close() { return () => {}; },
+            get drain() { return () => {}; },
+            get ping() { return () => {}; },
+            get pong() { return () => {}; },
+          },
+        }));
+        const body = await (await fetch(server.url, { keepalive: false })).text();
+        const ws = new WebSocket(server.url);
+        const msgs = [];
+        await new Promise(r => {
+          ws.onmessage = e => { msgs.push(e.data); if (msgs.length === 2) r(); };
+          ws.onopen = () => ws.send("hi");
+          ws.onerror = () => r();
+        });
+        ws.close();
+        server.stop(true);
+        console.log(JSON.stringify({ body, msgs }));
+      `,
+      ],
+      env: { ...bunEnv, BUN_JSC_collectContinuously: "1", BUN_JSC_useConcurrentGC: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const { body, msgs } = JSON.parse(stdout.trim() || "{}");
+    expect({ body, msgs }).toEqual({ body: "v2", msgs: ["r-open", "r:hi"] });
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  }, 30_000);
+
   // A ws.close() inside the message handler on the last socket of a stopped
   // server downgrades the wrapper (the sole GC root for wsOnError) before the
   // message handler returns. The error path must have copied on_error to the

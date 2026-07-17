@@ -2324,6 +2324,11 @@ where
             return Err(JsError::Thrown);
         }
 
+        // `on_reload_from_zig` moves `new_config.websocket` into the unscanned
+        // `self.config` heap box before `write_ws_handler_slots` roots the 7
+        // ws shadows, and each `wrap_handler_slot` call allocates via
+        // `with_async_context_if_needed`. Same window as `serve()`; same fix.
+        let _handler_pins = super::protect_handler_shadows(&new_config);
         self.on_reload_from_zig(&mut new_config, global);
 
         Ok(self.js_value.try_get().unwrap_or(JSValue::UNDEFINED))

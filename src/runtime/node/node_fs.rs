@@ -3638,16 +3638,10 @@ pub mod args {
             let mut mode: Mode = DEFAULT_PERMISSION;
             if let Some(val) = arguments.next() {
                 arguments.eat();
-                if val.is_object() {
-                    if let Some(flags_) = val.get_truthy(ctx, "flags")? {
-                        flags = FileSystemFlags::from_js(ctx, flags_)?.unwrap_or(flags);
-                    }
-                    if let Some(mode_) = val.get_truthy(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
-                    }
-                } else if !val.is_empty() {
+                if !val.is_empty() {
                     if !val.is_undefined_or_null() {
-                        // error is handled below
+                        // Node has no options-object form here: the second argument is
+                        // always the flags, so `{}` is an invalid flags value.
                         flags = FileSystemFlags::from_js(ctx, val)?.unwrap_or(flags);
                     }
                     if let Some(next) = arguments.next_eat() {

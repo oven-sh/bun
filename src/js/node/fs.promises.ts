@@ -727,11 +727,96 @@ function asyncWrap(fn: any, name: string) {
       return this.close();
     }
 
-    readableWebStream(_options = kEmptyObject) {
+    // Port of Node.js FileHandle.prototype.readableWebStream
+    // (https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/promises.js#L324).
+    // The handle is locked for the lifetime of the stream, is kept referenced
+    // until the stream ends or is cancelled, and closing the handle closes the
+    // stream even while a reader holds it.
+    readableWebStream(options = kEmptyObject) {
       const fd = this[kFd];
-      throwEBADFIfNecessary("readableWebStream", fd);
+      // Node reports a closed or closing handle as ERR_INVALID_STATE here
+      // rather than the EBADF the other FileHandle methods use.
+      if (fd === -1) throw $ERR_INVALID_STATE("The FileHandle is closed");
+      if (this[kClosePromise]) throw $ERR_INVALID_STATE("The FileHandle is closing");
+      if (this[kLocked]) throw $ERR_INVALID_STATE("The FileHandle is locked");
+      this[kLocked] = true;
 
-      return Bun.file(fd).stream();
+      validateObject(options, "options");
+      const { type = "bytes", autoClose = false } = options;
+      validateBoolean(autoClose, "options.autoClose");
+
+      if (type !== "bytes") {
+        process.emitWarning(
+          'A non-"bytes" options.type has no effect. A byte-oriented steam is always created.',
+          "ExperimentalWarning",
+        );
+      }
+
+      const handle = this;
+      let controllerRef;
+      let done = false;
+
+      async function ondone() {
+        if (done) return;
+        done = true;
+        handle[kUnref]();
+        if (autoClose) await handle.close();
+      }
+
+      const readable = new ReadableStream({
+        type: "bytes",
+        autoAllocateChunkSize: 16384,
+
+        start(controller) {
+          controllerRef = controller;
+        },
+
+        async pull(controller) {
+          const request = controller.byobRequest;
+          // The handle can be closed while a pull is in flight, which settles the
+          // request and drops the fd out from under the read below.
+          if (request === null) return;
+          const view = request.view;
+
+          let bytesRead;
+          try {
+            ({ bytesRead } = await handle.read(view, view.byteOffset, view.byteLength));
+          } catch (err) {
+            if (done) return;
+            throw err;
+          }
+          if (done) return;
+
+          if (bytesRead === 0) {
+            controller.close();
+            await ondone();
+          }
+
+          controller.byobRequest.respond(bytesRead);
+        },
+
+        async cancel() {
+          await ondone();
+        },
+      });
+
+      this[kRef]();
+      // Node cancels the stream from here with the internal readableStreamCancel,
+      // which is not reachable from JS. Closing the controller and then settling
+      // any outstanding BYOB request ends the stream the same way, including when
+      // a reader is attached and waiting on a read.
+      this.once("close", function onFileHandleClose() {
+        if (done) return;
+        try {
+          controllerRef?.close();
+        } catch {}
+        try {
+          controllerRef?.byobRequest?.respond(0);
+        } catch {}
+        ondone();
+      });
+
+      return readable;
     }
 
     createReadStream(options = kEmptyObject) {

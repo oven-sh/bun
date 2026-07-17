@@ -2232,6 +2232,11 @@ describe("open flag string validation matches node", () => {
     "xyz",
     "",
     true,
+    // Node has no options-object form for open(): the second argument is always
+    // the flags, so an object is just an invalid flags value. Only `{}` is listed
+    // here because a populated object is rendered multi-line by the native error
+    // inspector, where node (and util.inspect) render it on one line.
+    {},
   ];
 
   it.each(invalidFlags)("openSync rejects flag %p with ERR_INVALID_ARG_VALUE", flag => {

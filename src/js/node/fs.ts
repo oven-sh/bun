@@ -212,6 +212,8 @@ var access = function access(path, mode, callback) {
   open = function open(path, flags, mode, callback) {
     if (arguments.length < 3) {
       callback = flags;
+      // The shifted-out slot has to be cleared: flags default to "r".
+      flags = undefined;
     } else if ($isCallable(mode)) {
       callback = mode;
       mode = undefined;

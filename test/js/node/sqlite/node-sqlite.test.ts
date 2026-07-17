@@ -1072,6 +1072,44 @@ describe.skipIf(!sqliteHasSession)("Session / changeset", () => {
     dst.close();
   });
 
+  test("applyChangeset error has errcode but no errstr own property", () => {
+    // Node's THROW_ERR_SQLITE_ERROR(isolate, int) overload attaches errcode
+    // but not errstr, unlike the db-handle overload exec()/prepare() use.
+    const db = new DatabaseSync(":memory:");
+    db.exec("CREATE TABLE t (a INTEGER PRIMARY KEY, b)");
+    let err: any;
+    try {
+      db.applyChangeset(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8]));
+    } catch (e) {
+      err = e;
+    }
+    expect({
+      code: err.code,
+      errcode: err.errcode,
+      message: err.message,
+      hasErrstr: Object.prototype.hasOwnProperty.call(err, "errstr"),
+    }).toEqual({
+      code: "ERR_SQLITE_ERROR",
+      errcode: 11,
+      message: "database disk image is malformed",
+      hasErrstr: false,
+    });
+
+    // Control: exec() goes through the db-handle path and DOES carry errstr.
+    let ctrl: any;
+    try {
+      db.exec("selecx 1");
+    } catch (e) {
+      ctrl = e;
+    }
+    expect({ code: ctrl.code, errcode: ctrl.errcode, errstr: ctrl.errstr }).toEqual({
+      code: "ERR_SQLITE_ERROR",
+      errcode: 1,
+      errstr: "SQL logic error",
+    });
+    db.close();
+  });
+
   test("applyChangeset rejects a changeset detached by an options getter", () => {
     // The option getters run before the owned-buffer copy is made; a getter
     // that detaches the input must produce an error, not a silent no-op

@@ -843,13 +843,10 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (!http_req[kReqShouldKeepAlive]) {
           http_res[kMustCloseConnection] = true;
         }
-        // on(), not once(): "finish" fires at most once per response and once()
-        // allocates a wrapper closure per request.
-        http_res.on("finish", emitResponseFinishHandleSocket);
-        // Registered before the 'request' event, like Node.js's resOnFinish:
-        // middleware that replaces res.on (e.g. @polka/compression) must not
-        // swallow the detach listener, or the socket keeps a stale _httpMessage.
-        http_res.on("finish", emitAsyncResponseFinish);
+        // One plain on() listener (once() allocates a wrapper, a second listener
+        // deoptimizes every 'finish' emit), registered before the 'request' event
+        // like Node's resOnFinish so res.on-replacing middleware cannot swallow it.
+        http_res.on("finish", emitResponseFinish);
 
         if (hasObserver("http")) {
           startPerf(http_res, kServerResponseStatistics, {
@@ -1076,6 +1073,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         if (handle.finished || didFinish) {
           handle = undefined;
           http_res[kCloseCallback] = undefined;
+          // Set in time only because end() defers the 'finish' emit to a
+          // process.nextTick (see ServerResponse.prototype.end) and nothing
+          // between the 'request' emit and here drains the tick queue.
           http_res[kDispatcherDetached] = true;
           http_res.detachSocket(socket);
           if (socket[kPipelinedResponses] !== undefined) {
@@ -2425,32 +2425,18 @@ function stopServerResponsePerf(this: any) {
   }
 }
 
-// `on("finish", fn.bind(server, socket, ...))` allocated a bound closure per
-// request. Inside a "finish" listener `this` is the response; the connection
-// socket is `this.req.socket`, with `this.socket` (assigned by assignSocket,
-// cleared only by detachSocket) as the fallback for requests the stream
-// destroyer already detached. A single shared function needs no per-request
-// state at all.
-function emitResponseFinishHandleSocket() {
-  // req.socket is nulled by the stream destroyer (pipeline/compose cleanup
-  // does `stream.socket = null` for server requests); the response's own
-  // socket - set by assignSocket and cleared only by detachSocket - still
-  // references the connection then.
+// Node.js's resOnFinish as one shared listener: connection handling (close or
+// arm keep-alive) runs first because onResponseFinishHandleSocket's guards
+// read pre-detach state, then detach the socket and advance the pipeline.
+function emitResponseFinish() {
+  // req.socket is nulled by the stream destroyer (pipeline/compose cleanup);
+  // the response's own socket (set by assignSocket, cleared only by
+  // detachSocket) still references the connection then.
   const socket = this.req?.socket ?? this.socket;
   onResponseFinishHandleSocket(socket?.server, socket, this);
-}
-
-// The async-response half of Node.js's resOnFinish. Detach before advancing,
-// in the same order as the two separate listeners this replaces.
-// advanceResponsePipeline already bails on a missing socket.
-function emitAsyncResponseFinish() {
   // The dispatcher detached a synchronously-finished response itself;
   // advancing the pipeline again here would skip a queued response.
   if (this[kDispatcherDetached]) return;
-  // Same destroyer-null fallback as emitResponseFinishHandleSocket: without
-  // it a destroyed request leaves socket._httpMessage assigned and the next
-  // kept-alive request fails with ERR_HTTP_SOCKET_ASSIGNED.
-  const socket = this.req?.socket ?? this.socket;
   if (socket != null) this.detachSocket(socket);
   advanceResponsePipeline(socket?.server, socket);
 }
@@ -3228,6 +3214,9 @@ ServerResponse.prototype.end = function (chunk, encoding, callback) {
   this.emit("prefinish");
   this._callPendingCallbacks();
 
+  // Deferring the 'finish' emit to nextTick is load-bearing: the dispatcher
+  // sets kDispatcherDetached only after a sync-finished handler returns, so
+  // an emit before that would detach and advance the pipeline twice.
   if (callback) {
     process.nextTick(
       function (callback, self) {

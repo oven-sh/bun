@@ -16,12 +16,13 @@
 // `ZIG_EXPORT(..., reenters_js | no_user_js)` annotation) instead of adding
 // a hatch. If the hatch is genuinely needed (the API it reaches is not yet
 // classified), update the limits by running
-// `bun ./test/internal/scope-escapes.test.ts`.
+// `bun ./test/internal/scope-escapes.test.ts --update`.
 //
 // If it fails because a count went DOWN: you removed hatches — update the
 // limits the same way so the inventory stays accurate.
 
 import { file } from "bun";
+import { describe, test } from "bun:test";
 import { realpathSync } from "fs";
 import path from "path";
 import { globAllSources } from "../../scripts/glob-sources.ts";
@@ -67,8 +68,9 @@ for (const abs of rustSources) {
   if (n > 0) counts[source] = n;
 }
 
-if (typeof describe === "undefined") {
-  // Standalone mode: regenerate the limits file from the current tree.
+if (process.argv.includes("--update")) {
+  // Explicit regeneration (`bun ./test/internal/scope-escapes.test.ts --update`).
+  // Gated on an argv flag so a `bun test` run can never overwrite the inventory.
   const sorted = Object.fromEntries(Object.entries(counts).sort(([a], [b]) => (a < b ? -1 : 1)));
   await Bun.write(import.meta.dir + "/scope-escape-limits.json", JSON.stringify(sorted, null, 2) + "\n");
   console.log(`Wrote ${Object.keys(sorted).length} files to scope-escape-limits.json`);
@@ -87,12 +89,12 @@ describe("scope-layer escape hatches", () => {
             `Route through the scoped API instead: a Local method, or a scoped wrapper generated from a\n` +
             `ZIG_EXPORT(..., reenters_js | no_user_js) annotation on the C++ declaration.\n` +
             `If the hatch is justified (target API not yet classified), update the inventory with\n` +
-            `\`bun ./test/internal/scope-escapes.test.ts\`.`,
+            `\`bun ./test/internal/scope-escapes.test.ts --update\`.`,
         );
       } else if (count < limit) {
         throw new Error(
           `${source} has ${count} scope escape hatches, down from ${limit}.\n` +
-            `Update the inventory with \`bun ./test/internal/scope-escapes.test.ts\`.`,
+            `Update the inventory with \`bun ./test/internal/scope-escapes.test.ts --update\`.`,
         );
       }
     });

@@ -3778,9 +3778,9 @@ it.concurrent("a dropped request carrying a body does not stall the rest of the 
 });
 
 it.concurrent("the connection is ended only after the pipelined requests have been answered", async () => {
-  // Node leans on keepAliveTimeout to reap the connection; Bun has no
-  // keep-alive reaping, so the server hangs up itself - but not before the
-  // requests already sitting in the read buffer have each been answered.
+  // Node leans on keepAliveTimeout to reap the connection; Bun hangs up once
+  // the current read has been answered - but not before the requests already
+  // sitting in the read buffer have each gotten their own 503.
   const drops: string[] = [];
   const server = createServer((req, res) => {
     req.resume();
@@ -3803,6 +3803,34 @@ it.concurrent("the connection is ended only after the pipelined requests have be
     server.close();
   }
 });
+
+it.concurrent(
+  "over-limit 503s queued behind an async response are written before the connection ends",
+  async () => {
+    // When the first response finishes asynchronously, the over-limit 503s are
+    // buffered in the response pipeline; closing before the last one flushes
+    // would drop it.
+    const drops: string[] = [];
+    const server = createServer((req, res) => {
+      req.resume();
+      setImmediate(() => res.end("ok"));
+    });
+    server.maxRequestsPerSocket = 1;
+    server.on("dropRequest", req => drops.push(req.url));
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const { port } = server.address() as AddressInfo;
+
+      const { raw } = await sendRequests(port, [rawGet("/a"), rawGet("/b"), rawGet("/c")], "serverClose");
+
+      expect([...raw.matchAll(/HTTP\/1\.1 (\d{3})/g)].map(m => m[1])).toEqual(["200", "503", "503"]);
+      expect(drops).toEqual(["/b", "/c"]);
+    } finally {
+      server.close();
+    }
+  },
+);
 
 it("a non-200 CONNECT through a proxy that holds the connection open is destroyed client-side", async () => {
   // cleanupAndPropagate deliberately defers destroy to req.onSocket for

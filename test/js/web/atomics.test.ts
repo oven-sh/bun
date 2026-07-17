@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
 
 describe("Atomics", () => {
   describe("basic operations", () => {
@@ -159,6 +160,53 @@ describe("Atomics", () => {
         expect(typeof result.value).toBe("string");
       }
     });
+
+    test("waitAsync timeout stopped by notify does not leak the DispatchTimer", async () => {
+      // RunLoop::dispatchAfter stores a self-Ref in DispatchTimer::m_function; before
+      // the fix, Waiter::clearTimer's stop() left that cycle intact and every notified
+      // waiter leaked a DispatchTimer + Bun-side WTFTimer box.
+      const perBatch = isASAN ? 10_000 : 40_000;
+      const src = `
+        const i32 = new Int32Array(new SharedArrayBuffer(4));
+        async function batch(n) {
+          const ps = new Array(n);
+          for (let i = 0; i < n; i++) {
+            ps[i] = Atomics.waitAsync(i32, 0, 0, 300_000).value;
+            Atomics.notify(i32, 0, 1);
+          }
+          // Drain the deferred-work tickets so the promise reactions and the
+          // Waiter refs they hold aren't still queued when rss is sampled.
+          for (const v of await Promise.all(ps)) {
+            if (v !== "ok") throw new Error("expected ok, got " + v);
+          }
+          Bun.gc(true);
+        }
+        await batch(${perBatch});
+        await batch(${perBatch});
+        const rss0 = process.memoryUsage().rss;
+        for (let i = 0; i < 4; i++) await batch(${perBatch});
+        const rss1 = process.memoryUsage().rss;
+        console.log(JSON.stringify({ delta: rss1 - rss0 }));
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", src],
+        env: {
+          ...bunEnv,
+          // ASAN's freed-allocation quarantine keeps freed DispatchTimer/Waiter
+          // memory resident, which hides the fix's effect on rss. The gate runs
+          // debug+ASAN; disable the quarantine so rss reflects what's live.
+          ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS ?? "allow_user_segv_handler=1"}:quarantine_size_mb=0`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const { delta } = JSON.parse(stdout);
+      // Without the fix the four measured batches leak ~15 MB under ASAN and
+      // well over 30 MB in release; with the fix rss is flat after warm-up.
+      expect(delta).toBeLessThan(6 * 1024 * 1024);
+    }, 30_000);
   });
 
   describe("different TypedArray types", () => {

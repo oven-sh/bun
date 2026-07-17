@@ -866,8 +866,11 @@ impl All {
         }
     }
 
+    /// Returns `true` when the timer was still in the heap (i.e. not yet popped
+    /// by [`Self::drain_due_wtf_timers`]); `false` means it has already been
+    /// popped for firing or was never armed.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub(crate) fn wtf_disarm(&mut self, timer: *mut EventLoopTimer) {
+    pub(crate) fn wtf_disarm(&mut self, timer: *mut EventLoopTimer) -> bool {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
         debug_assert!(unsafe { (*timer).tag } == EventLoopTimerTag::WTFTimer);
         let mut wtf = self.wtf_timers.lock();
@@ -876,8 +879,10 @@ impl All {
             if (*timer).state == EventLoopTimerState::ACTIVE {
                 wtf.remove(timer);
                 (*timer).state = EventLoopTimerState::CANCELLED;
+                return true;
             }
         }
+        false
     }
 
     unsafe fn drain_due_wtf_timers(

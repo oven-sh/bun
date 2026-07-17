@@ -85,7 +85,7 @@ impl WTFTimer {
         // SAFETY: `vm` is the live VM that owns this timer's heap.
         unsafe {
             let state = crate::jsc_hooks::runtime_state_of(vm);
-            (*state)
+            let _ = (*state)
                 .timer
                 .wtf_disarm(ptr::addr_of_mut!((*this).event_loop_timer));
         }
@@ -181,9 +181,12 @@ impl WTFTimer {
         }
     }
 
+    /// Returns `true` if the timer was still armed in the `wtf_timers` heap
+    /// and has now been removed (see [`super::All::wtf_disarm`]).
+    ///
     /// # Safety
     /// `this` must point at a live heap-allocated `WTFTimer`.
-    pub unsafe fn cancel(this: *mut Self) {
+    pub unsafe fn cancel(this: *mut Self) -> bool {
         // SAFETY: per fn contract — `this` outlives this scope. `ThisPtr` vends
         // only fresh short-lived `&Self` per Deref.
         let t = unsafe { bun_ptr::ThisPtr::new(this) };
@@ -205,11 +208,12 @@ impl WTFTimer {
             // any thread and is a no-op for a node that is no longer linked.
             unsafe {
                 let state = crate::jsc_hooks::runtime_state_of(t.vm.as_ptr());
-                (*state)
+                return (*state)
                     .timer
                     .wtf_disarm(ptr::addr_of_mut!((*this).event_loop_timer));
             }
         }
+        false
     }
 
     /// `EventLoopTimer.fire` dispatch arm body for `Tag::WTFTimer`.
@@ -239,7 +243,7 @@ impl WTFTimer {
     /// `this` must be the unique owner of a `heap::alloc`-produced `WTFTimer`.
     pub unsafe fn deinit(this: *mut Self) {
         // SAFETY: per fn contract.
-        unsafe { Self::cancel(this) };
+        let _ = unsafe { Self::cancel(this) };
         // SAFETY: `bun.TrivialNew` ↔ `heap::alloc`, so `heap::take` is
         // the paired free.
         drop(unsafe { bun_core::heap::take(this) });
@@ -309,9 +313,22 @@ pub(crate) unsafe extern "C" fn WTFTimer__deinit(this: *mut WTFTimer) {
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
     // SAFETY: per fn contract.
-    unsafe { WTFTimer::cancel(this) };
+    let was_armed = unsafe { WTFTimer::cancel(this) };
+    // `dispatchAfter` captures a self-`Ref` in `DispatchTimer::m_function` that
+    // only `fired()` moves out; stopping a still-armed timer (the
+    // `Atomics.waitAsync` notify/unregister path) would orphan the cycle and
+    // leak both the timer and this box. `was_armed` proves `drain_due_wtf_timers`
+    // has not popped it (ACTIVE → FIRED is set under the same lock), so
+    // `m_function` is not executing and is safe to clear. Not on `deinit`'s
+    // path: `~TimerBase` runs after `~DispatchTimer` already destroyed it.
+    if was_armed {
+        // SAFETY: `this` is live (the caller in `TimerBase::stop()` owns it).
+        unsafe { Bun__breakDispatchTimerCycle((*this).run_loop_timer) };
+    }
 }
 
 unsafe extern "C" {
     safe fn WTFTimer__fire(this: NonNull<RunLoopTimer>);
+    /// Defined in `src/jsc/bindings/BunJSCEventLoop.cpp`.
+    safe fn Bun__breakDispatchTimerCycle(timer: NonNull<RunLoopTimer>);
 }

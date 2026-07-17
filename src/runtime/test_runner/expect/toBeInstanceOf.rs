@@ -29,7 +29,7 @@ pub(crate) fn to_be_instance_of(
     // `defer formatter.deinit()` → handled by Drop.
 
     let expected_value = arguments[0];
-    if !expected_value.is_constructor() {
+    if !expected_value.is_callable() {
         return Err(global.throw(format_args!(
             "Expected value must be a function: {}",
             expected_value.to_fmt(&mut formatter),

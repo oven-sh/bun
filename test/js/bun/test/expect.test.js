@@ -875,6 +875,33 @@ describe("expect()", () => {
     }).toThrow(expect.objectContaining({ code: "ERR_BAZ", name: "TypeError" }));
   });
 
+  test("toThrow honors Symbol.hasInstance with a primitive thrown value", () => {
+    class H {
+      static [Symbol.hasInstance]() {
+        return true;
+      }
+    }
+    expect(1 instanceof H).toBe(true);
+    expect(() => {
+      throw 1;
+    }).toThrow(H);
+    expect(() => {
+      throw 1;
+    }).not.toThrow(Error);
+    // The .not failure path reads .message off the thrown value; it must
+    // produce a matcher error for a primitive thrown value.
+    expect(() =>
+      expect(() => {
+        throw 1;
+      }).not.toThrow(H),
+    ).toThrow(/Expected constructor: not/);
+    expect(() =>
+      expect(() => {
+        throw "boom";
+      }).not.toThrow(H),
+    ).toThrow(/Expected constructor: not/);
+  });
+
   test("toThrow", () => {
     expect(() => {
       throw new Error("hello");
@@ -1172,25 +1199,32 @@ describe("expect()", () => {
   // Allocation-heavy by design (GC stress for #14256); measured at ~4 minutes
   // under a debug+ASAN build, far past the 5s default per-test timeout.
   test("deepEquals Set/Map stress test", () => {
+    // Each deepEquals call on object elements is quadratic in `elements`. Debug
+    // builds run it roughly 100x slower and exceed the test timeout, so only
+    // scale the volume down there; release keeps the full workload.
+    const isDebugBuild = isBun && Bun.version.includes("debug");
+    const elements = isDebugBuild ? 20 : 150;
+    const iterations = isDebugBuild ? 50 : 2000;
+
     const arr1 = [];
     const arr2 = [];
     const arr3 = [];
     const arr4 = [];
 
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < elements; i++) {
       arr1[i] = [i];
       arr2[i] = [i];
       arr3[i] = [i, [i]];
       arr4[i] = [i, [i]];
     }
 
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < iterations; i++) {
       let outerSet = new Set(arr1);
       let innerSet = new Set(arr2);
       Bun.deepEquals(outerSet, innerSet);
     }
 
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < iterations / 2; i++) {
       let outerMap = new Map(arr3);
       let innerMap = new Map(arr4);
       Bun.deepEquals(outerMap, innerMap);
@@ -4038,6 +4072,75 @@ describe("expect()", () => {
     expect("bob").not.toEndWith("alice");
   });
 
+  describe("toBeInstanceOf()", () => {
+    test("prototype chain", () => {
+      class A {}
+      class B extends A {}
+      expect(new B()).toBeInstanceOf(B);
+      expect(new B()).toBeInstanceOf(A);
+      expect(new B()).toBeInstanceOf(Object);
+      expect(new A()).not.toBeInstanceOf(B);
+      expect({}).not.toBeInstanceOf(A);
+    });
+
+    test("honors Symbol.hasInstance on class with primitive received", () => {
+      class H {
+        static [Symbol.hasInstance]() {
+          return true;
+        }
+      }
+      expect(1 instanceof H).toBe(true);
+      expect(1).toBeInstanceOf(H);
+      expect("x").toBeInstanceOf(H);
+      expect(null).toBeInstanceOf(H);
+      expect(true).toBeInstanceOf(H);
+      // The .not failure path formats the primitive received value.
+      expect(() => expect(1).not.toBeInstanceOf(H)).toThrow(/Expected constructor: not/);
+    });
+
+    test("honors Symbol.hasInstance on class with object received", () => {
+      class H {
+        static [Symbol.hasInstance](v) {
+          return v && v.tag === "ok";
+        }
+      }
+      expect({ tag: "ok" }).toBeInstanceOf(H);
+      expect({ tag: "no" }).not.toBeInstanceOf(H);
+      expect(new H()).not.toBeInstanceOf(H);
+    });
+
+    test("honors Symbol.hasInstance returning false for default instance", () => {
+      class H {
+        static [Symbol.hasInstance]() {
+          return false;
+        }
+      }
+      expect(new H() instanceof H).toBe(false);
+      expect(new H()).not.toBeInstanceOf(H);
+    });
+
+    test("accepts non-constructor function with Symbol.hasInstance", () => {
+      const H = () => {};
+      Object.defineProperty(H, Symbol.hasInstance, { value: v => typeof v === "number" });
+      expect(typeof H).toBe("function");
+      expect(1 instanceof H).toBe(true);
+      expect(1).toBeInstanceOf(H);
+      expect("x").not.toBeInstanceOf(H);
+    });
+
+    test("rejects non-function expected", () => {
+      // Jest's matcher error spells it "expected value must be a function".
+      const message = isBun ? "Expected value must be a function" : "value must be a function";
+      expect(() => expect({}).toBeInstanceOf({})).toThrow(message);
+      expect(() => expect({}).toBeInstanceOf(1)).toThrow(message);
+      // Jest requires `typeof expected === "function"`, so a plain object with
+      // Symbol.hasInstance (a valid `instanceof` RHS) is still rejected.
+      const nonCallable = { [Symbol.hasInstance]: () => true };
+      expect(1 instanceof nonCallable).toBe(true);
+      expect(() => expect(1).toBeInstanceOf(nonCallable)).toThrow(message);
+    });
+  });
+
   describe("asymmetric matchers", () => {
     test("expect.any", () => {
       class Thing {}
@@ -4100,6 +4203,30 @@ describe("expect()", () => {
       expect(expect.any(Boolean)).toEqual(new Boolean(true));
       expect(expect.any(BigInt)).toEqual(Object(1n));
       expect(expect.any(Symbol)).toEqual(Object(Symbol()));
+    });
+
+    test("expect.any honors Symbol.hasInstance", () => {
+      class H {
+        static [Symbol.hasInstance](v) {
+          return typeof v === "number";
+        }
+      }
+      expect(1 instanceof H).toBe(true);
+      expect(1).toEqual(expect.any(H));
+      expect("x").not.toEqual(expect.any(H));
+
+      // Non-constructor callable, matching Jest's `typeof expected === "function"` check.
+      const F = () => {};
+      Object.defineProperty(F, Symbol.hasInstance, { value: v => typeof v === "number" });
+      expect(1 instanceof F).toBe(true);
+      expect(1).toEqual(expect.any(F));
+      expect("x").not.toEqual(expect.any(F));
+
+      if (isBun) {
+        // Bun validates eagerly; Jest's expect.any only rejects undefined.
+        expect(() => expect.any(1)).toThrow("Expected a constructor");
+        expect(() => expect.any({})).toThrow("Expected a constructor");
+      }
     });
 
     //test('Any.toAsymmetricMatcher()', () => {

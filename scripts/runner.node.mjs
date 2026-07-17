@@ -511,7 +511,7 @@ async function checkLoopbackHealth(context) {
   if (v4 === "ok" || v6 === "ok") return true;
 
   const where = context ? ` after ${context} timed out` : "";
-  const diag = isMacOS ? spawnSync("netstat", ["-I", "lo0"]).stdout?.toString().trim() : "";
+  const diag = isMacOS ? spawnSync("netstat", ["-I", "lo0"], { timeout: 5_000 }).stdout?.toString().trim() : "";
   const message =
     `Loopback health check FAILED${where}: 127.0.0.1 => ${v4}, ::1 => ${v6}.\n` +
     `This agent (${getHostname()}) cannot reach its own listening sockets; every ` +

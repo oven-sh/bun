@@ -3368,9 +3368,8 @@ where
         // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.
         let global = this.global();
         // SAFETY: `request_object_ptr` is live; no other borrow is outstanding.
-        let args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
-        let request_value = args[0];
-        request_value.ensure_still_alive();
+        let mut args = [unsafe { (*request_object_ptr).to_js(&global) }, server_js];
+        args[0].ensure_still_alive();
 
         let response_value = match this.config.on_request.call(&global, server_js, &args) {
             Ok(v) => v,
@@ -3386,7 +3385,14 @@ where
 
         // SAFETY: self_ptr is live for the request's duration; the &mut held
         // by ctx.create's BACKREF aliases disjoint fields.
-        ctx.on_response(unsafe { &*self_ptr }, request_value, response_value);
+        ctx.on_response(unsafe { &*self_ptr }, args[0], response_value);
+
+        // Overwrite the stack slot holding the Request JS cell so the
+        // conservative stack scan cannot pin it once this frame's callers
+        // reuse the bytes for an exit-time collectNow. black_box forces the
+        // store; if the user retained `req` it stays reachable via the heap.
+        args[0] = JSValue::ZERO;
+        core::hint::black_box(&mut args);
 
         ctx.defer_deinit_until_callback_completes = None;
 

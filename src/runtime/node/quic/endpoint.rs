@@ -355,17 +355,23 @@ impl QuicEndpoint {
 /// The microtask-drain pass: full processing, but session close events hold
 /// until the next loop point so a running microtask chain never observes a
 /// session ending mid-chain (node's loop never interleaves that way).
+///
+/// # Safety
+/// `owner` must be the pointer `link_loop_driver` installed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
-    // SAFETY: `owner` comes from the loop's driver list.
+pub unsafe extern "C" fn Bun__nodeQuic__drainEndpoint(owner: *mut c_void) {
+    // SAFETY: guaranteed by this function's contract.
     unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(true);
 }
 
 /// One process pass per loop turn (loop_pre/loop_post): the writes a JS turn
 /// queued leave as one engine pass and one sendmmsg batch.
+///
+/// # Safety
+/// `owner` must be the pointer `link_loop_driver` installed.
 #[unsafe(no_mangle)]
-pub extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
-    // SAFETY: `owner` comes from the loop's driver list.
+pub unsafe extern "C" fn Bun__nodeQuic__processEndpoint(owner: *mut c_void) {
+    // SAFETY: guaranteed by this function's contract.
     unsafe { QuicEndpoint::from_driver_owner(owner) }.run_driver_pass(false);
 }
 

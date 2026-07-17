@@ -11,12 +11,18 @@ impl ParameterDescription {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
-        let mut remaining_bytes = reader.length()?;
-        remaining_bytes = remaining_bytes.saturating_sub(4);
-        let _ = remaining_bytes;
+        // The Int32 message length bounds the Int16 count and the Int32[n]
+        // body; an overrun is a malformed message, not a ShortRead.
+        let remaining_bytes = reader.length()?.saturating_sub(4) as usize;
 
+        if remaining_bytes < 2 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
         let count = reader.short()?;
         let n = usize::from(count);
+        if n * core::mem::size_of::<Int4>() > remaining_bytes - 2 {
+            return Err(AnyPostgresError::InvalidMessage);
+        }
         let mut parameters: Box<[Int4]> = vec![Int4::default(); n].into_boxed_slice();
 
         let data = reader.read(n * core::mem::size_of::<Int4>())?;

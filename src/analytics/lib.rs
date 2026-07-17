@@ -473,10 +473,8 @@ pub mod generate_header {
         #[cfg(target_os = "macos")]
         fn detect_use_msgx_on_macos_15_6_or_later() -> bool {
             let parsed = semver::Version::parse_utf8(for_os().version);
-            let minimum = semver::Version::parse_utf8(b"15.6.0").version.min();
-            parsed.valid
-                && semver::Version::order_without_tag(parsed.version.min(), minimum)
-                    != core::cmp::Ordering::Less
+            let version = parsed.version.min();
+            parsed.valid && (version.major, version.minor) >= (15, 6)
         }
 
         #[unsafe(no_mangle)]

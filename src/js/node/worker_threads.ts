@@ -333,17 +333,15 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 
 // Readable fed by a control MessagePort (worker.stdout/stderr on the parent,
 // process.stdin in the worker). The peer posts arrays of Buffers; null signals EOF.
-function makePortReadable(port) {
-  let attached = false;
+function makePortReadable(port, incrementsPortRef) {
   let ended = false;
+  let startedReading = false;
   function onMessage(payload) {
     if (payload === null) {
       if (ended === false) {
         ended = true;
         stream.push(null);
       }
-      // Drop the listener so the control port stops holding the event loop
-      // open once the stream has ended.
       port.off("message", onMessage);
     } else if (ended === false) {
       for (let i = 0; i < payload.length; i++) {
@@ -351,26 +349,37 @@ function makePortReadable(port) {
       }
     }
   }
-  // Attach the 'message' listener lazily on first read(): a listener refs the event
-  // loop, which would keep a { stdin: true } worker alive even if stdin is never read.
   const stream = new Readable({
     read() {
-      if (attached === false && ended === false) {
-        attached = true;
-        port.on("message", onMessage);
+      if (startedReading === false && incrementsPortRef) {
+        startedReading = true;
+        port.ref();
       }
       // Tell the writer we want more data; it completes its in-flight writev
       // on receipt (node's STDIO_WANTS_MORE_DATA).
       if (ended === false) port.postMessage(true);
     },
   });
+  // Attach eagerly so the peer's writev is ack'd (via push -> maybeReadMore ->
+  // _read) even when no one consumes this stream; unref immediately so an
+  // unconsumed captured stream never pins the loop on its own (node's model).
+  port.on("message", onMessage);
+  port.unref();
+  // 'close' covers natural EOF and destroy(); release the read-time ref and
+  // drop the listener so a destroyed captured stream can't pin an unref'd worker.
+  stream.on("close", () => {
+    ended = true;
+    port.off("message", onMessage);
+    if (startedReading && incrementsPortRef) {
+      startedReading = false;
+      port.unref();
+    }
+  });
   // Lets the parent end worker.stdout/stderr when the worker exits abruptly.
   stream.endFromOwner = function () {
     if (ended === false) {
       ended = true;
       stream.push(null);
-      // Drop the listener so the port stops holding the event loop open once
-      // the owner (worker exit) has ended the stream.
       port.off("message", onMessage);
     }
   };
@@ -458,7 +467,7 @@ function setupWorkerStdio(stdio) {
   // would race the main thread (and hang on a TTY).
   Object.defineProperty(process, "stdin", {
     value: stdin
-      ? makePortReadable(stdin)
+      ? makePortReadable(stdin, true)
       : new Readable({
           read() {
             this.push(null);
@@ -926,8 +935,6 @@ class Worker extends EventEmitter {
   #stdin;
   #stdout;
   #stderr;
-  #stdoutAutoPipe = false;
-  #stderrAutoPipe = false;
 
   // this is used by terminate();
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
@@ -988,19 +995,19 @@ class Worker extends EventEmitter {
       }
       // worker.stdout/stderr are always Readables fed by the worker; without capture
       // they auto-pipe to the parent's stdio so output still surfaces.
+      const stdoutAutoPipe = !options.stdout;
+      const stderrAutoPipe = !options.stderr;
       {
         const channel = new MessageChannel();
         this.#stdoutPort = channel.port1;
         stdioForWorker.stdout = channel.port2;
         stdioTransfer.push(channel.port2);
-        if (!options.stdout) this.#stdoutAutoPipe = true;
       }
       {
         const channel = new MessageChannel();
         this.#stderrPort = channel.port1;
         stdioForWorker.stderr = channel.port2;
         stdioTransfer.push(channel.port2);
-        if (!options.stderr) this.#stderrAutoPipe = true;
       }
       // Control channel for postMessageToThread; wrap workerData so the control and
       // stdio ports ride along transferred.
@@ -1040,18 +1047,15 @@ class Worker extends EventEmitter {
         preload: ["node:worker_threads", ...($isArray(userPreload) ? userPreload : userPreload ? [userPreload] : [])],
       } as NodeWorkerOptions;
       this.#worker = new WebWorker(filename, options as Bun.WorkerOptions, this);
-      // Uncaptured stdio forwards to the parent's stdio. Keep these ports unref'd:
-      // the worker's own ref keeps the parent alive, and unref() must still let it exit.
-      if (this.#stdoutAutoPipe) {
-        // 'data' instead of pipe(): pipe() adds an error listener on the shared
-        // process.stdout per worker, tripping MaxListenersExceededWarning.
-        this.stdout.on("data", chunk => process.stdout.write(chunk));
-        this.#stdoutPort.unref();
-      }
-      if (this.#stderrAutoPipe) {
-        this.stderr.on("data", chunk => process.stderr.write(chunk));
-        this.#stderrPort.unref();
-      }
+      // Create the readables eagerly so the worker's writev is ack'd even when
+      // worker.stdout/stderr is never touched; only captured streams ref their
+      // port on first read (node's kIncrementsPortRef).
+      this.#stdout = makePortReadable(this.#stdoutPort, !stdoutAutoPipe);
+      this.#stderr = makePortReadable(this.#stderrPort, !stderrAutoPipe);
+      // 'data' instead of pipe(): pipe() adds an error listener on the shared
+      // process.stdout per worker, tripping MaxListenersExceededWarning.
+      if (stdoutAutoPipe) this.#stdout.on("data", chunk => process.stdout.write(chunk));
+      if (stderrAutoPipe) this.#stderr.on("data", chunk => process.stderr.write(chunk));
     } catch (e) {
       // Restore any transferList handles that were already neutered by
       // packJSTransferables, so their fds aren't orphaned.
@@ -1099,19 +1103,13 @@ class Worker extends EventEmitter {
   }
 
   ref() {
+    // stdio ports are not touched here (node's ref()/unref() only touch the
+    // handle and the public port); their ref state tracks in-flight I/O.
     this.#worker.ref();
-    // Captured stdio ports follow the worker's ref state; auto-piped ports stay
-    // unref'd (the worker's own ref governs them).
-    if (!this.#stdoutAutoPipe) this.#stdoutPort?.ref();
-    if (!this.#stderrAutoPipe) this.#stderrPort?.ref();
-    this.#stdinPort?.ref();
   }
 
   unref() {
     this.#worker.unref();
-    if (!this.#stdoutAutoPipe) this.#stdoutPort?.unref();
-    if (!this.#stderrAutoPipe) this.#stderrPort?.unref();
-    this.#stdinPort?.unref();
   }
 
   get stdin() {
@@ -1126,23 +1124,11 @@ class Worker extends EventEmitter {
   }
 
   get stdout() {
-    if (this.#stdoutPort === undefined) return null;
-    if (this.#stdout === undefined) {
-      this.#stdout = makePortReadable(this.#stdoutPort);
-      // If the worker already exited, end immediately: a late first access
-      // would otherwise ref the parent loop with no release (peer gone) -> hang.
-      if (this.#exited) this.#stdout.endFromOwner();
-    }
-    return this.#stdout;
+    return this.#stdout ?? null;
   }
 
   get stderr() {
-    if (this.#stderrPort === undefined) return null;
-    if (this.#stderr === undefined) {
-      this.#stderr = makePortReadable(this.#stderrPort);
-      if (this.#exited) this.#stderr.endFromOwner();
-    }
-    return this.#stderr;
+    return this.#stderr ?? null;
   }
 
   get performance() {

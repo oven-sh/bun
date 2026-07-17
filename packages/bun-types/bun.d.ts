@@ -692,7 +692,8 @@ declare module "bun" {
 
     /**
      * If `true`, wrap at word boundaries when possible.
-     * If `false`, don't perform word wrapping (only wrap at explicit newlines).
+     * If `false`, break every line at exactly the column width (characters
+     * are split wherever the limit falls, ignoring word boundaries).
      *
      * @default true
      */
@@ -6555,6 +6556,12 @@ declare module "bun" {
        * callback contains only the portion that fit in the buffer.
        */
       truncated: boolean;
+      /**
+       * `true` if the datagram's source address was IPv6, `false` for IPv4.
+       * Reflects the packet's own `sockaddr` — a socket adopting an existing
+       * fd may receive packets of the other family than it was created with.
+       */
+      ipv6: boolean;
     }
 
     export interface SocketHandler<DataBinaryType extends BinaryType> {

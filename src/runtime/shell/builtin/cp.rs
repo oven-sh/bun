@@ -397,7 +397,7 @@ pub struct ShellCpTask {
     /// `cp_on_copy` is invoked from work-pool threads (concurrently per
     /// copied file) while the directory walk is still fanning out, so the
     /// buffer must live inside the mutex.
-    pub verbose_output: bun_threading::Guarded<Vec<u8>>,
+    pub verbose_output: bun_sys::threading::Guarded<Vec<u8>>,
     pub err: Option<ShellErr>,
     pub task: ShellTask,
 }
@@ -422,7 +422,7 @@ impl ShellCpTask {
             src_absolute: None,
             tgt_absolute: None,
             cwd_path,
-            verbose_output: bun_threading::Guarded::new(Vec::new()),
+            verbose_output: bun_sys::threading::Guarded::new(Vec::new()),
             err: None,
             task: ShellTask::new(evtloop),
         });
@@ -498,7 +498,7 @@ impl ShellCpTask {
     /// # Safety
     /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
     pub(crate) unsafe fn schedule(this: *mut ShellCpTask) {
-        use bun_threading::work_pool::WorkPool;
+        use bun_sys::threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
         // may already be running.

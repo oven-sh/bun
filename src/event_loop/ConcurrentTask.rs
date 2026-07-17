@@ -9,8 +9,8 @@
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
 use crate::ManagedTask;
-use bun_threading::UnboundedQueue;
-use bun_threading::unbounded_queue::{Link, Linked};
+use bun_sys::threading::UnboundedQueue;
+use bun_sys::threading::unbounded_queue::{Link, Linked};
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
 // Several callers import this file

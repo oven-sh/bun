@@ -60,7 +60,7 @@ pub type Array = Vec<UpdateRequest>;
 /// reachable. `UpdateRequest::name`/`version_buf` store raw `&'static`/
 /// `RawSlice` views because they may later be repointed at lockfile buffers.
 fn anchor_cli_bytes(b: Box<[u8]>) -> &'static [u8] {
-    static ANCHOR: bun_threading::Guarded<Vec<Box<[u8]>>> = bun_threading::Guarded::new(Vec::new());
+    static ANCHOR: bun_sys::threading::Guarded<Vec<Box<[u8]>>> = bun_sys::threading::Guarded::new(Vec::new());
     let ptr: *const [u8] = &raw const *b;
     ANCHOR.lock().push(b);
     // SAFETY: `b`'s heap allocation is owned by `ANCHOR` for the rest of the

@@ -4,8 +4,8 @@ use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use bun_ast::{Loc, Log};
 use bun_core::FeatureFlags;
 use bun_core::{MutableString, ZigStringSlice};
-use bun_threading::IntrusiveWorkTask as _;
-use bun_threading::thread_pool::{self, Batch, Task};
+use bun_sys::threading::IntrusiveWorkTask as _;
+use bun_sys::threading::thread_pool::{self, Batch, Task};
 use bun_core::url::{PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
@@ -46,7 +46,7 @@ pub struct AsyncHTTP<'a> {
     /// Intrusive link for `UnboundedQueue(AsyncHTTP, .next)` in HTTPThread.
     /// Lifetime-erased (`'static`) — the queue mixes requests with unrelated
     /// borrow scopes; consumers never read borrowed fields through `next`.
-    pub next: bun_threading::Link<AsyncHTTP<'static>>,
+    pub next: bun_sys::threading::Link<AsyncHTTP<'static>>,
 
     pub task: thread_pool::Task,
     pub result_callback: HTTPClientResultCallback,
@@ -69,14 +69,14 @@ pub struct AsyncHTTP<'a> {
     pub signals: Signals,
 }
 
-bun_threading::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
+bun_sys::intrusive_work_task!(['a] AsyncHTTP<'a>, task);
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(AsyncHTTP, .next)`.
 // Only implemented for the lifetime-erased form — the queue is heterogeneous
 // over borrow scopes and `next` is always stored as `Link<AsyncHTTP<'static>>`.
-unsafe impl bun_threading::Linked for AsyncHTTP<'static> {
+unsafe impl bun_sys::threading::Linked for AsyncHTTP<'static> {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }
@@ -496,7 +496,7 @@ impl<'a> AsyncHTTP<'a> {
             url,
             http_proxy,
             real: None,
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
             task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: start_async_http,
@@ -600,19 +600,19 @@ impl<'a> AsyncHTTP<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 // 32 pointers much cheaper than 1000 pointers
-// Note: `bun_threading::Channel` requires `T: Copy`, which
+// Note: `bun_sys::threading::Channel` requires `T: Copy`, which
 // `HTTPClientResult` is not. `send_sync` is a one-shot blocking handoff, so a
 // Guarded<Option<T>>+Condvar is the exact semantics needed.
 pub struct SingleHTTPChannel {
-    slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
-    cv: bun_threading::Condvar,
+    slot: bun_sys::threading::Guarded<Option<HTTPClientResult<'static>>>,
+    cv: bun_sys::threading::Condvar,
 }
 
 impl SingleHTTPChannel {
     pub fn init() -> SingleHTTPChannel {
         SingleHTTPChannel {
-            slot: bun_threading::Guarded::new(None),
-            cv: bun_threading::Condvar::new(),
+            slot: bun_sys::threading::Guarded::new(None),
+            cv: bun_sys::threading::Condvar::new(),
         }
     }
     pub fn reset(&mut self) {
@@ -950,12 +950,12 @@ impl<'a> AsyncHTTP<'a> {
 // HTTPCallbackPair / HTTPChannel / HTTPChannelContext
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun_threading::Channel` requires `T: Copy`, which `HTTPClientResult` is not, so the
+// `bun_sys::threading::Channel` requires `T: Copy`, which `HTTPClientResult` is not, so the
 // `HTTPChannel` here boxes the pair and ships the pointer (which IS `Copy`) through
 // a static-buffer channel. The receiver takes ownership of the Box.
 pub type HTTPCallbackPair = (*mut AsyncHTTP<'static>, HTTPClientResult<'static>);
 
-pub type HTTPChannel = bun_threading::Channel<
+pub type HTTPChannel = bun_sys::threading::Channel<
     *mut HTTPCallbackPair,
     bun_core::collections::linear_fifo::StaticBuffer<*mut HTTPCallbackPair, 1000>,
 >;

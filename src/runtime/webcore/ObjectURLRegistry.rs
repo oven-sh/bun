@@ -4,7 +4,7 @@ use bun_core::collections::HashMap;
 use bun_core::strings;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, UUID};
-use bun_threading::Guarded;
+use bun_sys::threading::Guarded;
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;

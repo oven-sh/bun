@@ -64,7 +64,7 @@ pub(crate) struct Crc32;
 impl HashAlgorithm for Crc32 {
     type Output = u32;
     fn hash(seed: u64, input: &[u8]) -> u32 {
-        bun_zlib::crc32_bytes(seed as u32, input)
+        bun_sys::zlib::crc32_bytes(seed as u32, input)
     }
 }
 

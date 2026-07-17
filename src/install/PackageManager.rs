@@ -24,7 +24,7 @@ use bun_core::paths::resolve_path::{self, PosixToWinNormalizer, platform};
 use bun_core::paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_core::semver as Semver;
 use bun_sys::{self, Fd};
-use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
+use bun_sys::threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
 use bun_core::url::URL;
 
@@ -1378,7 +1378,7 @@ pub(crate) fn allocate_package_manager() {
 
 #[cfg(bun_asan)]
 extern "C" fn deinit_caches_at_exit() {
-    if !bun_crash_handler::cli_state::is_main_thread() {
+    if !bun_sys::crash_handler::cli_state::is_main_thread() {
         return;
     }
     if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {

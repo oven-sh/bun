@@ -40,7 +40,7 @@ unsafe extern "C" {
 }
 
 #[allow(non_camel_case_types, unused_imports)]
-pub use bun_zlib_sys::shared::{Byte, Bytef, gzFile, struct_gzFile_s, uInt, uLong, uLongf, voidpf};
+pub use bun_sys::zlib_sys::shared::{Byte, Bytef, gzFile, struct_gzFile_s, uInt, uLong, uLongf, voidpf};
 
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
@@ -1401,11 +1401,11 @@ fn step(
 // Re-export from bun_zlib_sys, platform-selected.
 mod internal {
     #[cfg(not(windows))]
-    pub(super) use bun_zlib_sys::posix::{DataType, zStream_struct};
+    pub(super) use bun_sys::zlib_sys::posix::{DataType, zStream_struct};
     #[cfg(not(windows))]
-    pub use bun_zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
+    pub use bun_sys::zlib_sys::posix::{FlushValue, ReturnCode, z_stream, z_streamp};
     #[cfg(windows)]
-    pub(super) use bun_zlib_sys::win32::{DataType, zStream_struct};
+    pub(super) use bun_sys::zlib_sys::win32::{DataType, zStream_struct};
     #[cfg(windows)]
-    pub use bun_zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
+    pub use bun_sys::zlib_sys::win32::{FlushValue, ReturnCode, z_stream, z_streamp};
 }

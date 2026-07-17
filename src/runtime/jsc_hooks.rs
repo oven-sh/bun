@@ -2122,7 +2122,7 @@ fn transpile_source_code_inner(
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 
-            let hash = bun_watcher::Watcher::get_hash(path.text);
+            let hash = bun_sys::watcher::Watcher::get_hash(path.text);
             // SAFETY: per fn contract.
             let (main, main_hash) = unsafe { ((*jsc_vm).main(), (*jsc_vm).main_hash) };
             let is_main = main.len() == path.text.len() && main_hash == hash && main == path.text;
@@ -2229,7 +2229,7 @@ fn transpile_source_code_inner(
             let ast_alloc_scope = bun_core::alloc_impl::ast_alloc::ScopedAstAlloc::with_spill(arena_heap);
             // ── Watcher fd / package_json lookup ────────────────────────────
             let mut fd: Option<bun_sys::Fd> = None;
-            let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
+            let mut package_json: Option<&'static bun_sys::watcher::PackageJSON> = None;
             {
                 // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
                 // set during VM init (BACKREF); cast recovers the concrete type.
@@ -2829,7 +2829,7 @@ fn transpile_source_code_inner(
                         // unconditional `read_dir_info` cost +9.6% instructions
                         // on the cache-hit path for a 222 KB CJS file.
                         //
-                        // SAFETY: `bun_watcher::PackageJSON` is the opaque
+                        // SAFETY: `bun_sys::watcher::PackageJSON` is the opaque
                         // forward-decl of `bun_resolver::package_json::
                         // PackageJSON` (same layout, see the cast at the
                         // `:561-592` arm below); `package_json` is a
@@ -3097,7 +3097,7 @@ fn transpile_source_code_inner(
                 let tag = match loader {
                     L::Json | L::Jsonc => ResolvedSourceTag::JsonForObjectLoader,
                     L::Js | L::Jsx | L::Ts | L::Tsx => {
-                        // Note: `bun_watcher::PackageJSON` is an opaque
+                        // Note: `bun_sys::watcher::PackageJSON` is an opaque
                         // forward-decl of
                         // `bun_resolver::package_json::PackageJSON`; cast
                         // through to read `module_type`.
@@ -3105,7 +3105,7 @@ fn transpile_source_code_inner(
                         // backref into the resolver's package.json cache.
                         let module_type_ = package_json
                             .map(|pj| unsafe {
-                                (*std::ptr::from_ref::<bun_watcher::PackageJSON>(pj)
+                                (*std::ptr::from_ref::<bun_sys::watcher::PackageJSON>(pj)
                                     .cast::<bun_resolver::package_json::PackageJSON>())
                                 .module_type
                             })
@@ -3341,20 +3341,20 @@ fn transpile_source_code_inner(
                 }
                 // kqueue watchers need a file descriptor to receive event
                 // notifications on it; inotify/win32 watch by path.
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                let input_fd = if bun_sys::watcher::REQUIRES_FILE_DESCRIPTORS {
                     let mut buf = bun_core::paths::path_buffer_pool::get();
                     if path.text.len() >= buf.len() {
                         break 'auto_watch;
                     }
                     let z = bun_core::paths::resolve_path::z(path.text, &mut buf);
-                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+                    match bun_sys::open(z, bun_sys::watcher::WATCH_OPEN_FLAGS, 0) {
                         Ok(fd) => fd,
                         Err(_) => break 'auto_watch,
                     }
                 } else {
                     bun_sys::Fd::INVALID
                 };
-                let hash = bun_watcher::Watcher::get_hash(path.text);
+                let hash = bun_sys::watcher::Watcher::get_hash(path.text);
                 // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
                 // set when `is_watcher_enabled()`; cast recovers the concrete
                 // type.
@@ -3443,7 +3443,7 @@ fn maybe_watch_file(
     path: &Fs::Path,
     hash: u32,
     loader: Loader,
-    package_json: Option<&'static bun_watcher::PackageJSON>,
+    package_json: Option<&'static bun_sys::watcher::PackageJSON>,
 ) {
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
     if !unsafe { &*jsc_vm }.is_watcher_enabled() {

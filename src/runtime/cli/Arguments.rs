@@ -93,7 +93,7 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// `bun_crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
+// `bun_sys::crash_handler::VERBOSE_ERROR_TRACE` gates extra crash diagnostics.
 // Expose the flag in crash-trace builds (debug/test/asan).
 const VERBOSE_ERROR_TRACE_PARAMS: &[ParamType] = &[parse_param!(
     "--verbose-error-trace             Dump error return traces"
@@ -763,7 +763,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
 
     // See `maybe_verbose_error_trace!` above.
     if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
-        bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
+        bun_sys::crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────

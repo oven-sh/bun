@@ -12,7 +12,7 @@ use bun_http::{
     self as http, AsyncHTTP, HTTPClientResult, HTTPClientResultCallback, HTTPVerboseLevel,
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
-use bun_threading::thread_pool::Batch;
+use bun_sys::threading::thread_pool::Batch;
 use bun_core::url::URL;
 
 use crate::extract_tarball;
@@ -75,7 +75,7 @@ pub struct NetworkTask {
     // `'static` because NetworkTask is stored lifetime-less in
     // `PreallocatedNetworkTasks`; PatchTask's `'a` is a BACKREF on
     pub apply_patch_task: Option<Box<PatchTask>>,
-    pub next: bun_threading::Link<NetworkTask>,
+    pub next: bun_sys::threading::Link<NetworkTask>,
 
     /// Producer/consumer buffer that feeds tarball bytes from the HTTP thread
     /// to a worker running libarchive. `None` when streaming extraction is
@@ -101,9 +101,9 @@ pub struct NetworkTask {
 
 // SAFETY: `next` is the sole intrusive link and is only ever read/written via
 // these accessors by `UnboundedQueue<NetworkTask>`.
-unsafe impl bun_threading::Linked for NetworkTask {
+unsafe impl bun_sys::threading::Linked for NetworkTask {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }
@@ -978,7 +978,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).retried).write(0);
-            addr_of_mut!((*slot).next).write(bun_threading::Link::new());
+            addr_of_mut!((*slot).next).write(bun_sys::threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);
             addr_of_mut!((*slot).streaming_extract_task).write(ptr::null_mut());
             addr_of_mut!((*slot).streaming_committed).write(false);

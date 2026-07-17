@@ -48,7 +48,7 @@ pub(crate) static HEAP_DESTROY_COUNT: core::sync::atomic::AtomicUsize =
 #[cfg(debug_assertions)]
 #[inline]
 fn debug_thread_stamp() -> u64 {
-    // Intentionally NOT `bun_threading::current_thread_id()` /
+    // Intentionally NOT `bun_sys::threading::current_thread_id()` /
     // `bun_core::safety::thread_id::current()`: `bun_alloc` is tier-0 and sits below
     // both in the crate graph (they depend on us), so routing there would
     // create a cycle. The contract here is only "any nonzero per-thread-unique

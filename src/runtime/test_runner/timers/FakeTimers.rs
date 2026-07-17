@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use bun_threading::RwLock;
+use bun_sys::threading::RwLock;
 
 use bun_core::Environment;
 use bun_core::Timespec;

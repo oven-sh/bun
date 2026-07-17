@@ -487,7 +487,7 @@ pub fn do_patch_commit(
             }
         };
         let mut gitbuf = PathBuffer::uninit();
-        let git = match bun_which::which(
+        let git = match bun_sys::which::which(
             &mut gitbuf,
             bun_core::env_var::PATH.get().unwrap_or(b""),
             cwd.as_bytes(),

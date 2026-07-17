@@ -232,7 +232,7 @@ impl Expect {
         use bun_core::collections::HashMap;
         use std::sync::OnceLock;
         type Key = (&'static str, &'static str, bool);
-        static CACHE: OnceLock<bun_threading::Guarded<HashMap<Key, Box<str>>>> = OnceLock::new();
+        static CACHE: OnceLock<bun_sys::threading::Guarded<HashMap<Key, Box<str>>>> = OnceLock::new();
         let cache = CACHE.get_or_init(Default::default);
 
         let mut map = cache.lock();

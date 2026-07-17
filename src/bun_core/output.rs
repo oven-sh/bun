@@ -21,7 +21,7 @@ use crate::env_var;
 use crate::strings;
 // MOVE_DOWN: bun_sys::Fd / bun_sys::fd → bun_core (move-in pass).
 use crate::Fd;
-// MOVE_DOWN: bun_threading::Mutex → bun_core (move-in pass).
+// MOVE_DOWN: bun_sys::threading::Mutex → bun_core (move-in pass).
 use crate::Mutex;
 // MOVE_DOWN: io::Writer → bun_core (move-in pass) — re-exported as crate::io::Writer.
 use crate::util::io;
@@ -1276,7 +1276,7 @@ pub fn print_start_end_stdout(start: i128, end: i128) {
 }
 
 /// Minimal timer abstraction so bun_core doesn't depend on bun_perf.
-/// bun_perf::SystemTimer impls this (move-in pass).
+/// bun_sys::perf::SystemTimer impls this (move-in pass).
 pub trait ReadTimer {
     fn read(&mut self) -> u64;
 }
@@ -1582,7 +1582,7 @@ impl ScopedLogger {
         if scoped_debug_writer::DISABLE_INSIDE_LOG.get() > 0 {
             return;
         }
-        // MOVE_DOWN: bun_crash_handler::is_panicking → bun_core (move-in pass).
+        // MOVE_DOWN: bun_sys::crash_handler::is_panicking → bun_core (move-in pass).
         if crate::is_panicking() {
             return;
         }

@@ -66,7 +66,7 @@ fn strings_to_js_array(global: &JSGlobalObject, strs: &[bun_core::String]) -> Js
 
 // Runtime availability is governed by `bun_core::Environment::ENABLE_TINYCC`
 // via the early-return guards in the host-fns below.
-use bun_tcc_sys as TCC;
+use bun_sys::tcc_sys as TCC;
 
 bun_core::declare_scope!(TCC, visible);
 

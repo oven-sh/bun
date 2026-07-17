@@ -37,7 +37,7 @@ use bun_core::ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
-use bun_which::which;
+use bun_sys::which::which;
 
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;

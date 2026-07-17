@@ -26,5 +26,4 @@ bun_macros.workspace = true
 bun_collections.workspace = true
 bun_ast.workspace = true
 bun_sys.workspace = true
-bun_which.workspace = true
 bun_wyhash.workspace = true

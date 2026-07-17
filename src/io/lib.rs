@@ -1129,7 +1129,7 @@ impl IoRequestLoop {
 // ─── Request ──────────────────────────────────────────────────────────────────
 
 pub struct Request {
-    pub next: bun_threading::Link<Request>,
+    pub next: bun_sys::threading::Link<Request>,
     pub callback: for<'a> fn(&'a mut Request) -> Action<'a>,
     pub scheduled: bool,
 }
@@ -1138,7 +1138,7 @@ impl Request {
     #[inline]
     pub fn new(callback: for<'a> fn(&'a mut Request) -> Action<'a>) -> Self {
         Self {
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
             callback,
             scheduled: false,
         }
@@ -1163,7 +1163,7 @@ impl Request {
 }
 
 // ─── Intrusive io_request → parent recovery ──────────────────────────────────
-// Mirrors `bun_threading::IntrusiveWorkTask`/`intrusive_work_task!`
+// Mirrors `bun_sys::threading::IntrusiveWorkTask`/`intrusive_work_task!`
 // (work_pool.rs:23) — same const-offset + provided `container_of` shape — so
 // `ReadFile`/`WriteFile` use one idiom for BOTH their intrusive fields (`task`
 // and `io_request`).
@@ -1252,7 +1252,7 @@ macro_rules! intrusive_uv_fs {
 impl Default for Request {
     fn default() -> Self {
         Self {
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
             callback: |_| unreachable!(),
             scheduled: false,
         }
@@ -1265,15 +1265,15 @@ impl Default for Request {
 // paths (`get_next`/`set_next`, used only by the batch iterator and the
 // debug-mode `pushBatch` reachability assert) lower to `Relaxed` ops.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(Request, .next)`.
-unsafe impl bun_threading::Linked for Request {
+unsafe impl bun_sys::threading::Linked for Request {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }
 }
 
-pub(crate) type RequestQueue = bun_threading::UnboundedQueue<Request>;
+pub(crate) type RequestQueue = bun_sys::threading::UnboundedQueue<Request>;
 
 // ─── Action ───────────────────────────────────────────────────────────────────
 
@@ -2241,7 +2241,7 @@ pub mod closer {
     // ── POSIX ────────────────────────────────────────────────────────────────
 
     #[cfg(not(windows))]
-    use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+    use bun_sys::threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
     #[cfg(not(windows))]
     #[repr(C)]
@@ -2251,10 +2251,10 @@ pub mod closer {
     }
 
     #[cfg(not(windows))]
-    bun_threading::intrusive_work_task!(Closer, task);
+    bun_sys::intrusive_work_task!(Closer, task);
     // SAFETY: `Closer` is `Send` (`Fd` + intrusive `Task`).
     #[cfg(not(windows))]
-    unsafe impl bun_threading::work_pool::OwnedTask for Closer {
+    unsafe impl bun_sys::threading::work_pool::OwnedTask for Closer {
         fn run(self: Box<Self>) {
             use bun_sys::FdExt;
             self.fd.close();
@@ -2270,7 +2270,7 @@ pub mod closer {
                 fd,
                 task: WorkPoolTask {
                     node: Default::default(),
-                    callback: <Self as bun_threading::work_pool::OwnedTask>::__callback,
+                    callback: <Self as bun_sys::threading::work_pool::OwnedTask>::__callback,
                 },
             }));
         }

@@ -1994,11 +1994,11 @@ pub(crate) fn install_isolated_packages(
                     // placeholder is never dereferenced
                     installer: bun_core::ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
-                    task: bun_threading::thread_pool::Task {
+                    task: bun_sys::threading::thread_pool::Task {
                         callback: installer::Task::callback,
                         node: Default::default(),
                     },
-                    next: bun_threading::Link::new(),
+                    next: bun_sys::threading::Link::new(),
                 });
             }
             // SAFETY: every element was written in the loop above.

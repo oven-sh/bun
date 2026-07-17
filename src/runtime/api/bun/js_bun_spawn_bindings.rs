@@ -195,7 +195,7 @@ fn get_argv0(
         ZBox::from_bytes(argv0_to_use)
     } else {
         let Some(resolved) =
-            bun_which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
+            bun_sys::which::which_for_spawn(&mut path_buf, path_to_use, cwd, argv0_to_use)
         else {
             return Err(throw_command_not_found(global_this, argv0_to_use));
         };
@@ -261,8 +261,8 @@ fn get_argv(
     // (BatBadBut, CVE-2024-24576 / CVE-2024-27980). libuv's MSVCRT-style
     // quoting cannot make that safe, so reject arguments that cmd.exe would
     // reinterpret.
-    let is_batch_file = cfg!(windows) && bun_which::is_batch_file(argv0_result.argv0.as_bytes());
-    if is_batch_file && bun_which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
+    let is_batch_file = cfg!(windows) && bun_sys::which::is_batch_file(argv0_result.argv0.as_bytes());
+    if is_batch_file && bun_sys::which::batch_arg_has_cmd_metachars(argv0_result.arg0.as_bytes()) {
         return Err(global_this
             .err(
                 jsc::ErrorCode::INVALID_ARG_VALUE,
@@ -300,7 +300,7 @@ fn get_argv(
         }
 
         let owned = arg.to_owned_slice_z();
-        if is_batch_file && bun_which::batch_arg_has_cmd_metachars(owned.as_bytes()) {
+        if is_batch_file && bun_sys::which::batch_arg_has_cmd_metachars(owned.as_bytes()) {
             return Err(global_this
                 .err(
                     jsc::ErrorCode::INVALID_ARG_VALUE,

@@ -290,7 +290,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     if R::IS_WORKSPACE {
         let _tracer =
-            bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
+            bun_sys::perf::trace(bun_sys::perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
         // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
         // argument; `log` points into a separate `Log` allocation (see the
@@ -321,7 +321,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         }
     } else {
         let _tracer =
-            bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
+            bun_sys::perf::trace(bun_sys::perf::PerfEvent::FolderResolverReadPackageJSONFromDiskFolder);
 
         let source = {
             let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;

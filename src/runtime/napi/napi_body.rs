@@ -16,9 +16,9 @@ use bun_jsc::{
     self as jsc, CallFrame, Debugger, GlobalRef, JSGlobalObject, JSPromiseStrong, JSValue,
     JsResult, StrongOptional, Task,
 };
-use bun_threading::Condition as Condvar;
-use bun_threading::Mutex;
-use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_sys::threading::Condition as Condvar;
+use bun_sys::threading::Mutex;
+use bun_sys::threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 // ─── local shims for upstream-crate gaps (see PORTING.md §extension traits) ───
 
@@ -1776,7 +1776,7 @@ pub struct napi_async_work {
     pub poll_ref: KeepAlive,
 }
 
-bun_threading::intrusive_work_task!(napi_async_work, task);
+bun_sys::intrusive_work_task!(napi_async_work, task);
 
 impl napi_async_work {
     pub fn new(
@@ -1789,7 +1789,7 @@ impl napi_async_work {
 
         bun_core::heap::into_raw(Box::new(napi_async_work {
             task: WorkPoolTask {
-                node: bun_threading::thread_pool::Node::default(),
+                node: bun_sys::threading::thread_pool::Node::default(),
                 callback: Self::run_from_thread_pool,
             },
             concurrent_task: ConcurrentTask::default(),
@@ -2339,7 +2339,7 @@ pub(super) extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
         .get()
         .unwrap_or(false)
     {
-        bun_crash_handler::suppress_reporting();
+        bun_sys::crash_handler::suppress_reporting();
     }
 }
 

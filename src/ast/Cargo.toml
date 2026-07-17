@@ -28,5 +28,4 @@ bun_core.workspace = true
 bun_ptr.workspace = true
 bun_collections.workspace = true
 bun_sys.workspace = true
-bun_perf.workspace = true
 bun_wyhash.workspace = true

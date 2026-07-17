@@ -10,9 +10,9 @@ use bun_core::semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
 use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
-use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
-use bun_threading::work_pool::Task as WorkPoolTask;
-use bun_threading::{ThreadPool, WaitGroup};
+use bun_sys::threading::thread_pool::{Batch, Node as ThreadPoolNode};
+use bun_sys::threading::work_pool::Task as WorkPoolTask;
+use bun_sys::threading::{ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
@@ -204,7 +204,7 @@ impl InstallResult {
     pub(crate) fn fail(
         err: crate::Error,
         step: Step,
-        _trace: Option<&bun_crash_handler::StackTrace>,
+        _trace: Option<&bun_sys::crash_handler::StackTrace>,
     ) -> InstallResult {
         InstallResult::Failure(Box::new(Failure {
             err,
@@ -456,7 +456,7 @@ pub struct NewTaskQueue<TaskType> {
     /// thread to the consumer that called `wait()`. A `Mutex<Option<Box<_>>>`
     /// makes ownership explicit (vs. the original `AtomicPtr`, which forced
     /// every reader to remember `Box::from_raw` and risked leaks/double-free).
-    pub errored_task: bun_threading::Guarded<Option<Box<TaskType>>>,
+    pub errored_task: bun_sys::threading::Guarded<Option<Box<TaskType>>>,
     pub wait_group: WaitGroup,
 }
 
@@ -559,7 +559,7 @@ impl HardLinkWindowsInstallTask {
             } else {
                 (*HARDLINK_QUEUE.get()).write(HardLinkQueue {
                     thread_pool: &PackageManager::get().thread_pool,
-                    errored_task: bun_threading::Guarded::new(None),
+                    errored_task: bun_sys::threading::Guarded::new(None),
                     wait_group: WaitGroup::init(),
                 });
             }

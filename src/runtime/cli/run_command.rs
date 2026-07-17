@@ -25,7 +25,7 @@ use bun_core::paths::strings;
 use bun_core::paths::{self as paths, DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::package_json::PackageJSON;
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_which::which;
+use bun_sys::which::which;
 
 use crate::cli;
 use crate::cli::arguments;
@@ -451,7 +451,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                             .get()
                             == Some(true)
                         {
-                            bun_crash_handler::suppress_reporting();
+                            bun_sys::crash_handler::suppress_reporting();
                         }
 
                         Global::raise_ignoring_panic_handler(sig);
@@ -491,7 +491,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_IN_BUN_RUN.get()
                     == Some(true)
                 {
-                    bun_crash_handler::suppress_reporting();
+                    bun_sys::crash_handler::suppress_reporting();
                 }
 
                 if let Some(sig) = signal_code {
@@ -970,9 +970,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // `InitOptions` has no `store_fd` field, so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
-        // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
+        // it to `bun_sys::dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
         vm.dns_result_order =
-            bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
+            bun_sys::dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
         // `vm.main` is a BACKREF into these bytes; convert the `Box` to a raw
         // heap pointer now so the address
         // is stable for both `set_main` and the `RUN` write below. The runner
@@ -1174,9 +1174,9 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
             // `Options::dns_result_order` is `u8` until the
-            // b2-cycle widens it to `bun_dns::Order`; the enum is
+            // b2-cycle widens it to `bun_sys::dns::Order`; the enum is
             // `#[repr(u8)]` so `as u8` is exact.
-            dns_result_order: bun_dns::Order::from_string_or_die(
+            dns_result_order: bun_sys::dns::Order::from_string_or_die(
                 &ctx.runtime_options.dns_result_order,
             ) as u8,
             ..Default::default()
@@ -1653,7 +1653,7 @@ impl Run {
         // C symbols do.)
         crate::napi::fix_dead_code_elimination();
         crate::webcore::bake_response::fix_dead_code_elimination();
-        bun_crash_handler::fix_dead_code_elimination();
+        bun_sys::crash_handler::fix_dead_code_elimination();
         vm.global_exit();
     }
 }
@@ -2258,7 +2258,7 @@ impl RunCommand {
                             .get()
                             == Some(true)
                         {
-                            bun_crash_handler::suppress_reporting();
+                            bun_sys::crash_handler::suppress_reporting();
                         }
 
                         Global::raise_ignoring_panic_handler_raw(::core::ffi::c_int::from(signal));
@@ -2280,7 +2280,7 @@ impl RunCommand {
                                 .get()
                                 == Some(true)
                             {
-                                bun_crash_handler::suppress_reporting();
+                                bun_sys::crash_handler::suppress_reporting();
                             }
 
                             Global::raise_ignoring_panic_handler(sc);
@@ -3117,7 +3117,7 @@ pub enum Filter {
 }
 
 type DoneChannel =
-    bun_threading::Channel<u32, bun_core::collections::linear_fifo::StaticBuffer<u32, 256>>;
+    bun_sys::threading::Channel<u32, bun_core::collections::linear_fifo::StaticBuffer<u32, 256>>;
 
 /// One pending remote-image download. Lives on the heap so its
 /// `async_http.task` (embedded in ThreadPool.Task) has a stable
@@ -3275,7 +3275,7 @@ impl RunCommand {
         // single ThreadPool.Batch, then ship the whole batch to the
         // HTTP thread in one schedule() call — worker picks up and runs
         // them concurrently.
-        let mut batch = bun_threading::thread_pool::Batch::default();
+        let mut batch = bun_sys::threading::thread_pool::Batch::default();
         for raw_url in remote_urls.into_iter() {
             let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;

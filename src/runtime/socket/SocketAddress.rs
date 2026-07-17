@@ -9,7 +9,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
-use bun_cares_sys::c_ares as ares;
+use bun_sys::cares::c_ares as ares;
 use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
 
@@ -971,7 +971,7 @@ impl sockaddr {
         };
         // SAFETY: buf is INET6_ADDRSTRLEN bytes; addr_src points to in_addr/in6_addr per family().
         let len =
-            unsafe { bun_cares_sys::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
+            unsafe { bun_sys::cares::ntop(self.family().int() as c_int, addr_src, &mut buf[..]) }
                 .expect("Invariant violation: SocketAddress created with invalid IPv6 address")
                 .len();
         // SAFETY: buf[len] == 0 written by ares_inet_ntop above

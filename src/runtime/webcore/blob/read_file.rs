@@ -31,7 +31,7 @@ use bun_sys::Stat;
 #[cfg(windows)]
 use bun_sys::windows::libuv;
 use bun_sys::{self, Fd};
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+use bun_sys::threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 bun_core::declare_scope!(WriteFile, hidden);
 bun_core::declare_scope!(ReadFile, hidden);
@@ -204,7 +204,7 @@ pub struct ReadFile {
     pub state: AtomicU8, // ClosingState
 }
 
-bun_threading::intrusive_work_task!(ReadFile, task);
+bun_sys::intrusive_work_task!(ReadFile, task);
 
 // The default methods on the FileOpener/FileCloser traits provide the bodies.
 impl FileOpener for ReadFile {
@@ -367,7 +367,7 @@ impl ReadFile {
             io_task: None,
             io_poll: io::Poll::default(),
             io_request: io::Request {
-                next: bun_threading::Link::new(),
+                next: bun_sys::threading::Link::new(),
                 callback: Self::on_request_readable,
                 scheduled: false,
             },

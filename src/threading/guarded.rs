@@ -6,7 +6,7 @@ use crate::Mutex;
 use bun_core::safety::ThreadLock;
 
 /// A wrapper around a mutex, and a value protected by the mutex.
-/// This type uses `bun_threading::Mutex` internally.
+/// This type uses `bun_sys::threading::Mutex` internally.
 ///
 /// Drop-in for `parking_lot::Mutex<T>`: `const fn new(T)`, `.lock()` returns
 /// a guard with `Deref`/`DerefMut`, no poisoning.

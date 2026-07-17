@@ -64,11 +64,11 @@ pub(crate) fn compress_into(
         CompressEncoding::Gzip | CompressEncoding::Deflate => {
             let gzip = opt.encoding == CompressEncoding::Gzip;
             let enc = if gzip {
-                bun_libdeflate_sys::libdeflate::Encoding::Gzip
+                bun_sys::libdeflate_sys::libdeflate::Encoding::Gzip
             } else {
                 // HTTP "deflate" is the zlib-wrapped DEFLATE stream (RFC 9110
                 // §8.4.1.2); libdeflate's `Deflate` is the raw stream.
-                bun_libdeflate_sys::libdeflate::Encoding::Zlib
+                bun_sys::libdeflate_sys::libdeflate::Encoding::Zlib
             };
             match compress_libdeflate_fast(state, input, enc, opt.level) {
                 Some(n) => Ok(CompressOutput::Shared(n)),
@@ -89,10 +89,10 @@ pub(crate) fn compress_into(
 fn compress_libdeflate_fast(
     state: &mut LibdeflateState,
     input: &[u8],
-    enc: bun_libdeflate_sys::libdeflate::Encoding,
+    enc: bun_sys::libdeflate_sys::libdeflate::Encoding,
     level: Option<i32>,
 ) -> Option<usize> {
-    use bun_libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
+    use bun_sys::libdeflate_sys::libdeflate::{Compressor, OwnedCompressor};
 
     // Split-borrow so the compressor handle and `shared_buffer` can be used
     // together.
@@ -134,7 +134,7 @@ fn compress_zlib_streaming(
     level: Option<i32>,
     out: &mut Vec<u8>,
 ) -> crate::Result<()> {
-    use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
+    use bun_sys::zlib::{DeflateEncoder, FlushValue, ReturnCode};
 
     // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
     // (RFC 9110 §8.4.1.2): plain 15.
@@ -177,7 +177,7 @@ fn compress_brotli(
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
-    use bun_brotli::c;
+    use bun_sys::brotli::c;
     let quality = level.unwrap_or(DEFAULT_BROTLI_QUALITY);
     let window = c::BROTLI_DEFAULT_WINDOW;
     let mode = c::BrotliEncoderMode::generic;
@@ -186,7 +186,7 @@ fn compress_brotli(
     // BrotliEncoderMaxCompressedSize returns 0 when the bound would overflow
     // size_t — fall back to a heap buffer in that case.
     if bound != 0 && bound <= state.shared_buffer.len() {
-        if let Some(n) = bun_brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
+        if let Some(n) = bun_sys::brotli::encode(quality, window, mode, input, &mut state.shared_buffer)
         {
             return Ok(CompressOutput::Shared(n));
         }
@@ -198,7 +198,7 @@ fn compress_brotli(
         input.len() + 1024
     };
     spill.resize(cap, 0);
-    match bun_brotli::encode(quality, window, mode, input, spill) {
+    match bun_sys::brotli::encode(quality, window, mode, input, spill) {
         Some(n) => {
             spill.truncate(n);
             Ok(CompressOutput::Spilled)
@@ -216,24 +216,24 @@ fn compress_zstd(
     level: Option<i32>,
     spill: &mut Vec<u8>,
 ) -> crate::Result<CompressOutput> {
-    let bound = bun_zstd::compress_bound(input.len());
-    if bun_zstd::is_error(bound) {
+    let bound = bun_sys::zstd::compress_bound(input.len());
+    if bun_sys::zstd::is_error(bound) {
         return Err(crate::Error::CompressionFailed);
     }
     if bound <= state.shared_buffer.len() {
-        return match bun_zstd::compress(&mut state.shared_buffer, input, level) {
-            bun_zstd::Result::Success(n) => Ok(CompressOutput::Shared(n)),
-            bun_zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
+        return match bun_sys::zstd::compress(&mut state.shared_buffer, input, level) {
+            bun_sys::zstd::Result::Success(n) => Ok(CompressOutput::Shared(n)),
+            bun_sys::zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
         };
     }
 
     spill.resize(bound, 0);
-    match bun_zstd::compress(spill, input, level) {
-        bun_zstd::Result::Success(n) => {
+    match bun_sys::zstd::compress(spill, input, level) {
+        bun_sys::zstd::Result::Success(n) => {
             spill.truncate(n);
             Ok(CompressOutput::Spilled)
         }
-        bun_zstd::Result::Err(_) => {
+        bun_sys::zstd::Result::Err(_) => {
             spill.clear();
             Err(crate::Error::CompressionFailed)
         }

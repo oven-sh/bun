@@ -2180,7 +2180,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         let path_env = vm_mut().transpiler.env().map.get(b"PATH").unwrap_or(b"");
         // SAFETY: argv[0] is a NUL-terminated string from caller.
         let argv0 = unsafe { core::ffi::CStr::from_ptr(argv[0]) }.to_bytes();
-        match bun_which::which(&mut path_buf, path_env, b"", argv0) {
+        match bun_sys::which::which(&mut path_buf, path_env, b"", argv0) {
             Some(p) => resolved_argv0 = Some(p.as_ptr().cast()),
             None => {
                 s.set_err(format_args!(
@@ -2392,13 +2392,13 @@ fn find_crontab() -> Option<*const c_char> {
                 const { core::cell::RefCell::new(bun_core::PathBuffer::ZEROED) };
         }
         let path_env = env_var::PATH.get().unwrap_or(b"/usr/bin:/bin");
-        // `bun_which::which` is a pure PATH walk that cannot reenter
+        // `bun_sys::which::which` is a pure PATH walk that cannot reenter
         // `find_crontab`, so the `RefCell` borrow is never contested. The
         // returned raw pointer escapes the `RefMut` guard but stays valid:
         // it points into per-thread storage and is consumed by `posix_spawn`
         // on this thread before any later call could overwrite the buffer.
         BUF.with_borrow_mut(|buf| {
-            let found = bun_which::which(buf, path_env, b"", b"crontab")?;
+            let found = bun_sys::which::which(buf, path_env, b"", b"crontab")?;
             Some(found.as_ptr().cast())
         })
     }

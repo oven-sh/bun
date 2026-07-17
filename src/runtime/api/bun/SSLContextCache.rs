@@ -24,7 +24,7 @@ use core::ptr;
 
 use bun_boringssl_sys as boringssl;
 use bun_core::collections::array_hash_map::{ArrayHashContext, ArrayHashMap};
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 use bun_uws as uws;
 use bun_uws::create_bun_socket_error_t;
 

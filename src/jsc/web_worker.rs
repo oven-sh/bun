@@ -66,7 +66,7 @@ use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::{String as BunString, WTFStringImpl};
 use bun_io::KeepAlive;
-use bun_threading::{Futex, Mutex};
+use bun_sys::threading::{Futex, Mutex};
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
 use crate::{self as jsc, JSGlobalObject, JSValue, JsError, LogJsc};
@@ -605,7 +605,7 @@ impl WebWorker {
         unsafe impl Send for SendPtr {}
         let send = SendPtr(worker);
         let spawn = std::thread::Builder::new()
-            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .stack_size(bun_sys::threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || {
                 let send = send;
                 // SAFETY: `send.0` is a valid heap `WebWorker` owned by C++;

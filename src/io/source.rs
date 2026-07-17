@@ -457,7 +457,7 @@ pub mod stdin_tty {
     // afterwards only accessed by uv on the loop thread. RacyCell.
     static DATA: bun_core::RacyCell<MaybeUninit<uv::uv_tty_t>> =
         bun_core::RacyCell::new(MaybeUninit::uninit());
-    static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();
+    static LOCK: bun_sys::threading::Mutex = bun_sys::threading::Mutex::new();
     static INITIALIZED: AtomicBool = AtomicBool::new(false);
 
     #[inline]
@@ -470,7 +470,7 @@ pub mod stdin_tty {
     }
 
     pub(super) fn get_stdin_tty(loop_: *mut uv::Loop) -> bun_sys::Result<bun_core::ptr::BackRef<Tty>> {
-        // bun_threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
+        // bun_sys::threading::Mutex::lock() returns `()` — must use lock_guard() for RAII
         // unlock-on-drop, otherwise the mutex is held forever and the next call
         // (e.g. Source__setRawModeStdin → open_tty(stdin)) deadlocks/UB-relocks.
         let _guard = LOCK.lock_guard();

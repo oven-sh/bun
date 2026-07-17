@@ -15,7 +15,7 @@ use bun_core::collections::VecExt;
 use bun_core::strings;
 use bun_core::{self, FeatureFlags, declare_scope, scoped_log};
 use bun_sys::Fd;
-use bun_threading::thread_pool as ThreadPoolLib;
+use bun_sys::threading::thread_pool as ThreadPoolLib;
 
 use bun_ast::Index;
 use bun_ast::{self as ast, E, Expr, G, Part};

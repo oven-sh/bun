@@ -17,7 +17,7 @@ use bun_install::npm::{self as Npm};
 use bun_install::package_manager_real::PackageManager;
 use bun_install::package_manager_real::directories;
 use bun_install::resolution::{Resolution, Tag as ResolutionTag};
-use bun_libarchive::{ArchiveAppender, ExtractOptions};
+use bun_sys::libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
@@ -280,8 +280,8 @@ impl ExtractTarball {
                 }
             };
 
-            use bun_libarchive::Archiver;
-            use bun_zlib as Zlib;
+            use bun_sys::libarchive::Archiver;
+            use bun_sys::zlib as Zlib;
             let mut zlib_pool = Npm::Registry::BodyPool::get();
             zlib_pool.reset();
             // `defer Npm.Registry.BodyPool.release(zlib_pool)` → PoolGuard's Drop releases.
@@ -321,7 +321,7 @@ impl ExtractTarball {
                 && zlib_pool.list.capacity() > 16
                 && esimated_output_size > 0
             {
-                use bun_libdeflate_sys::libdeflate;
+                use bun_sys::libdeflate_sys::libdeflate;
                 if let Some(mut decompressor) = libdeflate::OwnedDecompressor::new() {
                     zlib_pool.list.clear();
                     let result = decompressor.decompress_to_vec(

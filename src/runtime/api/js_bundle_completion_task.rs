@@ -75,7 +75,7 @@ pub struct JSBundleCompletionTask {
     pub result: BundleV2Result,
 
     /// intrusive queue link (UnboundedQueue)
-    pub next: bun_threading::Link<JSBundleCompletionTask>,
+    pub next: bun_sys::threading::Link<JSBundleCompletionTask>,
     /// arena-owned by BundleThread heap
     pub transpiler: *mut BundleV2<'static>,
     pub plugins: Option<NonNull<Plugin>>,
@@ -135,7 +135,7 @@ pub(crate) fn create_and_schedule_completion_task(
         cancelled: false,
         html_build_task: None,
         result: BundleV2Result::Pending,
-        next: bun_threading::Link::new(),
+        next: bun_sys::threading::Link::new(),
         transpiler: ptr::null_mut(),
         plugins,
         started_at_ns: 0,
@@ -798,9 +798,9 @@ static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDis
 // ─── CompletionStruct impl ───────────────────────────────────────────────────
 // Hands BundleThread the field accessors it needs without exposing the layout.
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<JSBundleCompletionTask>`.
-unsafe impl bun_threading::Linked for JSBundleCompletionTask {
+unsafe impl bun_sys::threading::Linked for JSBundleCompletionTask {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }
@@ -920,7 +920,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.options.allow_unresolved = match &config.allow_unresolved {
             Some(a) => options::AllowUnresolved::from_strings(
                 a.keys().to_vec().into_boxed_slice(),
-                |p, s| bun_glob::r#match(p, s).matches(),
+                |p, s| bun_sys::glob::r#match(p, s).matches(),
             ),
             None => options::AllowUnresolved::All,
         };
@@ -1096,7 +1096,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         &mut self,
         transpiler: &'a mut Transpiler<'a>,
         bump: &'a Arena,
-        thread_pool: *mut bun_threading::ThreadPool,
+        thread_pool: *mut bun_sys::threading::ThreadPool,
     ) -> bun_bundler::Result<()> {
         // `jsc.AnyEventLoop.init(allocator)` — Mini loop. Stack-owned (not
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at

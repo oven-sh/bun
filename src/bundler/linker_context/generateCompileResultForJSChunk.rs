@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering;
 
 use bun_ast::Scope;
 use bun_js_printer::{self as js_printer, PrintResult};
-use bun_threading::thread_pool as ThreadPoolLib;
+use bun_sys::threading::thread_pool as ThreadPoolLib;
 
 use crate::linker_context_mod::LinkerContext;
 use crate::options::OutputFormat;

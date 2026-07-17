@@ -22,8 +22,8 @@ use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, Task, ThreadSa
 use bun_core::paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
-use bun_threading::UnboundedQueue;
-use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_sys::threading::UnboundedQueue;
+use bun_sys::threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Maybe(T)` shim — `crate::node::Maybe` is the same `Result<T, Error>` alias
@@ -224,13 +224,13 @@ use super::util::validators;
 //   - `bun_sys_jsc::ErrorJsc`→ `bun_sys::Error::to_js_with_async_stack()`
 use bun_sys_jsc::ErrorJsc as _;
 
-/// `WorkPoolTask` (aka `bun_threading::thread_pool::Task`) does not derive
+/// `WorkPoolTask` (aka `bun_sys::threading::thread_pool::Task`) does not derive
 /// `Default` (its `callback` field has no sensible default). Build one with
 /// the intrusive `node` zeroed and the supplied callback.
 #[inline]
 fn work_pool_task(callback: unsafe fn(*mut WorkPoolTask)) -> WorkPoolTask {
     WorkPoolTask {
-        node: bun_threading::thread_pool::Node::default(),
+        node: bun_sys::threading::thread_pool::Node::default(),
         callback,
     }
 }
@@ -609,7 +609,7 @@ mod _async_tasks {
             pub task: WorkPoolTask,
         }
 
-        bun_threading::intrusive_work_task!(AsyncMkdirp, task);
+        bun_sys::intrusive_work_task!(AsyncMkdirp, task);
 
         impl AsyncMkdirp {
             pub fn new(init: AsyncMkdirp) -> Box<Self> {
@@ -1261,7 +1261,7 @@ mod _async_tasks {
         pub tracker: AsyncTaskTracker,
     }
 
-    bun_threading::intrusive_work_task!([R, A: Unprotect, const F: NodeFSFunctionEnum] AsyncFSTask<R, A, F>, task);
+    bun_sys::intrusive_work_task!([R, A: Unprotect, const F: NodeFSFunctionEnum] AsyncFSTask<R, A, F>, task);
 
     impl<R: FsReturn, A: FsArgument, const F: NodeFSFunctionEnum> AsyncFSTask<R, A, F>
     where
@@ -1443,7 +1443,7 @@ mod _async_tasks {
         pub shelltask: Option<bun_core::ptr::ParentRef<ShellCpTask>>,
     }
 
-    bun_threading::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
+    bun_sys::intrusive_work_task!([const IS_SHELL: bool] NewAsyncCpTask<IS_SHELL>, task);
 
     /// This task is used by `AsyncCpTask/fs.promises.cp` to copy a single file.
     /// When clonefile cannot be used, this task is started once per file.
@@ -1463,7 +1463,7 @@ mod _async_tasks {
         pub task: WorkPoolTask,
     }
 
-    bun_threading::owned_task!([const IS_SHELL: bool] CpSingleTask<IS_SHELL>, task);
+    bun_sys::owned_task!([const IS_SHELL: bool] CpSingleTask<IS_SHELL>, task);
 
     impl<const IS_SHELL: bool> CpSingleTask<IS_SHELL> {
         /// `path_buf` layout: `[src @ ..src_len][0][dest @ ..dest_len][0]`.
@@ -2219,10 +2219,10 @@ mod _async_tasks {
         pub root_path: Box<[u8]>,
 
         pub pending_err: Option<sys::Error>,
-        pub pending_err_mutex: bun_threading::Mutex,
+        pub pending_err_mutex: bun_sys::threading::Mutex,
     }
 
-    bun_threading::intrusive_work_task!(AsyncReaddirRecursiveTask, task);
+    bun_sys::intrusive_work_task!(AsyncReaddirRecursiveTask, task);
 
     pub enum ResultListEntryValue {
         WithFileTypes(Vec<Dirent>),
@@ -2259,7 +2259,7 @@ mod _async_tasks {
     }
 
     pub struct ResultListEntry {
-        pub next: bun_threading::Link<ResultListEntry>, // INTRUSIVE: UnboundedQueue link
+        pub next: bun_sys::threading::Link<ResultListEntry>, // INTRUSIVE: UnboundedQueue link
         pub value: ResultListEntryValue,
     }
 
@@ -2267,9 +2267,9 @@ mod _async_tasks {
     // variants reinterpret it in-place as `AtomicPtr<Self>` (identical layout/
     // alignment to `*mut Self`). `UnboundedQueue` only ever calls these with a
     // live, properly aligned `*mut ResultListEntry` it previously had pushed.
-    unsafe impl bun_threading::Linked for ResultListEntry {
+    unsafe impl bun_sys::threading::Linked for ResultListEntry {
         #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
             // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
             unsafe { core::ptr::addr_of!((*item).next) }
         }
@@ -2282,7 +2282,7 @@ mod _async_tasks {
         pub task: WorkPoolTask,
     }
 
-    bun_threading::owned_task!(ReaddirSubtask, task);
+    bun_sys::owned_task!(ReaddirSubtask, task);
 
     impl ReaddirSubtask {
         // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local
@@ -2396,7 +2396,7 @@ mod _async_tasks {
                 result_list_queue: UnboundedQueue::default(),
                 root_fd: FD::INVALID,
                 pending_err: None,
-                pending_err_mutex: bun_threading::Mutex::default(),
+                pending_err_mutex: bun_sys::threading::Mutex::default(),
             });
             task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(global_object);
@@ -2493,7 +2493,7 @@ mod _async_tasks {
                     .fetch_add(clone.len(), Ordering::Relaxed);
                 // `IntoResultListEntry::into_variant` (trait dispatch on `T`).
                 let list = Box::new(ResultListEntry {
-                    next: bun_threading::Link::new(),
+                    next: bun_sys::threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
                 });
                 // SAFETY: freshly boxed node; `into_raw` yields a valid owned non-null pointer.

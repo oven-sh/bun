@@ -8,7 +8,7 @@ use bun_core::collections::StringHashMap;
 use bun_core::String as BunString;
 use bun_core::strings;
 use bun_core::paths as path;
-use bun_threading::thread_pool as ThreadPoolLib;
+use bun_sys::threading::thread_pool as ThreadPoolLib;
 
 use crate::BundleV2;
 use crate::Chunk;

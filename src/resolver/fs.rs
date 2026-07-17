@@ -14,7 +14,7 @@ use bun_core::paths::strings;
 use bun_core::paths::{MAX_PATH_BYTES, PathBuffer, SEP, resolve_path as path_handler};
 use bun_core::ptr::Interned;
 use bun_sys::{self, Fd};
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 // scope tag renamed `fs` → `Fs` so it doesn't collide with `fs:` fn
 // params (the `declare_scope!` macro emits a `static` with the tag name, and
@@ -922,13 +922,13 @@ impl EntriesMap {
 /// raw-pointer escape (`unsafe { &mut *entries_option_map() }`) lives in
 /// exactly one place ([`map_mut`]) instead of at ~dozen call sites.
 ///
-/// `bun_threading::MutexGuard` stores the mutex by raw pointer (no borrow of
+/// `bun_sys::threading::MutexGuard` stores the mutex by raw pointer (no borrow of
 /// `RealFS`), so holding an `EntriesGuard` does **not** keep `&self`/`&mut self`
 /// borrowed — callers may freely re-borrow `self` for `readdir`/`open_dir`/
 /// `read_directory_error` while the guard is live (matching the prior
 /// `let _g = self.entries_mutex.lock_guard()` pattern).
 pub(crate) struct EntriesGuard {
-    _lock: bun_threading::MutexGuard,
+    _lock: bun_sys::threading::MutexGuard,
 }
 impl EntriesGuard {
     /// Single `unsafe` deref site for the `entries_option_map()` singleton.

@@ -1,7 +1,7 @@
 use core::ffi::{c_char, c_int};
 use core::mem;
 
-use bun_zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, FlushValue, deflate*, inflate*)
+use bun_sys::zlib as c; // bun.zlib — C zlib FFI (NodeMode, z_stream, ReturnCode, FlushValue, deflate*, inflate*)
 
 use crate::node::node_zlib_binding::Error;
 

@@ -200,7 +200,7 @@ impl Debugger {
         // `FUTEX_ATOMIC` starts at 0 and nothing ever stores `1` before this
         // load, so this loop is a no-op on first call.
         while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
-            bun_threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
+            bun_sys::threading::Futex::wait_forever(&FUTEX_ATOMIC, 1);
         }
         if bun_core::Environment::ENABLE_LOGS {
             bun_core::scoped_log!(
@@ -499,7 +499,7 @@ impl Debugger {
                 ),
                 None => {
                     FUTEX_ATOMIC.store(0, Ordering::Relaxed);
-                    bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
+                    bun_sys::threading::Futex::wake(&FUTEX_ATOMIC, 1);
                     return;
                 }
             };
@@ -530,7 +530,7 @@ impl Debugger {
 
         bun_core::scoped_log!(debugger, "wake");
         FUTEX_ATOMIC.store(0, Ordering::Relaxed);
-        bun_threading::Futex::wake(&FUTEX_ATOMIC, 1);
+        bun_sys::threading::Futex::wake(&FUTEX_ATOMIC, 1);
 
         // SAFETY: `other_loop` is the parent VM's event loop, live for process
         // lifetime; `wakeup()` takes `&self` and is thread-safe.

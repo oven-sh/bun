@@ -6,7 +6,7 @@ use std::io::Write as _;
 use bun_core::strings;
 use bun_core::{Environment, Output};
 use bun_http::{self as http, AsyncHTTP};
-use bun_threading::thread_pool::Batch as ThreadPoolBatch;
+use bun_sys::threading::thread_pool::Batch as ThreadPoolBatch;
 
 use crate::extract_tarball;
 use crate::network_task::Callback as NetworkTaskCallback;

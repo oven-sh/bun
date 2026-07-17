@@ -7825,7 +7825,7 @@ impl GenerateSourceMap {
 // ───────────────────────────────────────────────────────────────────────────
 // Top-level print entry points — `get_source_map_builder` / `print` /
 // `print_with_writer{,_and_platform}` / `print_common_js` are live (the
-// `bun_crash_handler::current_action` / `bun_core::perf::trace` /
+// `bun_sys::crash_handler::current_action` / `bun_core::perf::trace` /
 // `bun_sourcemap::chunk::Builder: Default` blockers are all real now, so the
 // former `__gated_entry_points` wrapper has been flattened away).
 // `print_ast` is live (borrowck reshape: `opts` re-reads routed through
@@ -7913,7 +7913,7 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     opts: Options<'a>,
 ) -> crate::Result<usize> {
     let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+        bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Print(source.path.text));
 
     // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
@@ -8271,7 +8271,7 @@ pub fn print_with_writer_and_platform<
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
     let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+        bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Print(source.path.text));
 
     // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
     let _ = writer.reserve(source.contents().len() as u64);
@@ -8375,7 +8375,7 @@ pub fn print_common_js<
     opts: Options<'a>,
 ) -> crate::Result<usize> {
     let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+        bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Print(source.path.text));
 
     type PrinterType<'a, W, const A: bool, const G: bool> =
         Printer<'a, W, A, true, false, false, G>;

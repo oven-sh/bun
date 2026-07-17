@@ -49,7 +49,7 @@ pub use bun_shell_parser::parse::{
 };
 
 // Glob walker configured for SyscallAccessor + sentinel (NUL-terminated) paths.
-pub type GlobWalker = bun_glob::BunGlobWalkerZ;
+pub type GlobWalker = bun_sys::glob::BunGlobWalkerZ;
 
 pub const SUBSHELL_TODO_ERROR: &str = "Subshells are not implemented, please open GitHub issue!";
 

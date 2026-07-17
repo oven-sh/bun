@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use bun_io::StreamBuffer;
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 #[derive(bun_core::ptr::ThreadSafeRefCounted)]
 pub struct ThreadSafeStreamBuffer {

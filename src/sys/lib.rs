@@ -4,6 +4,9 @@
 // IS the bun_sys::File the lint routes everyone else through.
 #![allow(clippy::disallowed_types, clippy::disallowed_methods)]
 #![allow(ambiguous_glob_reexports, hidden_glob_reexports)]
+// zlib/zlib_sys both declare the same C externs with `*const u8` vs `*const c_char`
+// for the `version` arg; ABI-identical, but rustc now sees both in one crate.
+#![allow(clashing_extern_declarations)]
 #![cfg_attr(any(not(windows), debug_assertions), feature(core_intrinsics))]
 #![allow(internal_features)]
 #![warn(unused_must_use)]
@@ -54,7 +57,7 @@ pub mod crash_handler;
 
 pub use which::*;
 pub use perf::*;
-#[allow(unused_imports)]
+#[allow(unused_imports, unreachable_pub)]
 pub use platform::*;
 pub use threading::*;
 pub use spawn_sys::*;
@@ -5858,7 +5861,7 @@ pub mod darwin {
         pub fn as_ptr(&self) -> *const OSLog {
             core::ptr::from_ref(self)
         }
-        /// Full signpost API lives in `bun_platform::darwin`; this stub lets
+        /// Full signpost API lives in `bun_sys::platform::darwin`; this stub lets
         /// `bun_perf` compile its Darwin arm without pulling that crate up-tier.
         pub fn signpost(&self, name: i32) -> os_log::Signpost<'_> {
             os_log::Signpost { log: self, name }
@@ -5912,7 +5915,7 @@ pub mod darwin {
         pub const MEMORYSTATUS_PRESSURE_WARN: u32 = 0x00000002;
         pub const MEMORYSTATUS_PRESSURE_CRITICAL: u32 = 0x00000004;
     }
-    /// Re-export of the platform errno enum so `bun_threading::Futex` can
+    /// Re-export of the platform errno enum so `bun_sys::threading::Futex` can
     /// match `c::E::INTR` etc. against `__ulock_*` return codes.
     pub use bun_core::errno::E;
 
@@ -8753,7 +8756,7 @@ pub mod net {
     }
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // Minimal: print family for now; full impl in `bun_dns::address_to_string`.
+            // Minimal: print family for now; full impl in `bun_sys::dns::address_to_string`.
             match self.as_in4() {
                 Some(v4) => {
                     // `sin_addr` is `in_addr { s_addr: u32 }` on POSIX/ws2_32 but
@@ -8803,7 +8806,7 @@ pub mod elf {
 
     /// Walk loaded ELF objects
     /// via `dl_iterate_phdr`, returning the one whose `PT_LOAD` segment contains
-    /// `address`. Shared by `bun_crash_handler::StackLine::from_address` and
+    /// `address`. Shared by `bun_sys::crash_handler::StackLine::from_address` and
     /// `bun_jsc::btjs::SelfInfo::lookup_module_dl` / `lookup_module_name_dl`.
     #[cfg(not(any(windows, target_os = "macos")))]
     pub fn find_loaded_module(address: usize) -> Option<LoadedModule> {

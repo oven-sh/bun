@@ -2,7 +2,7 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_boringssl as boringssl;
-use bun_cares_sys::c_ares_draft as c_ares;
+use bun_sys::cares::c_ares_draft as c_ares;
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_event_loop::{
     AnyTask::AnyTask,
@@ -22,7 +22,7 @@ use bun_jsc::{
     self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
 };
 use bun_sys::FdExt;
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 use bun_core::url::URL as ZigURL;
 
 use crate::api::bun_x509 as X509;
@@ -2307,7 +2307,7 @@ impl FetchTasklet {
         let node = Self::get(global, fetch_options, promise)?;
 
         let node_ref = Self::from_raw_mut(node);
-        let mut batch = bun_threading::thread_pool::Batch::default();
+        let mut batch = bun_sys::threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
         node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
 

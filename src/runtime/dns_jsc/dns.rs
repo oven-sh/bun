@@ -12,9 +12,9 @@ use bun_core::Output;
 use bun_core::{self as bun, env_var, fmt as bun_fmt, mach_port};
 use bun_core::{ZStr, strings};
 #[cfg(not(windows))]
-use bun_dns::ResultList as GetAddrInfoResultList;
-use bun_dns::{
-    self, Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
+use bun_sys::dns::ResultList as GetAddrInfoResultList;
+use bun_sys::dns::{
+    Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
 };
 use bun_io::{self as Async, FilePoll, KeepAlive};
@@ -28,14 +28,14 @@ use bun_core::paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_sys::windows::libuv;
 #[cfg(not(windows))]
 use bun_sys::{self as sys};
-use bun_threading::thread_pool;
+use bun_sys::threading::thread_pool;
 use bun_uws::{ConnectingSocket, Loop};
 use bun_core::wyhash::hash as wyhash;
 
 use super::cares_jsc::error_to_deferred;
 use crate::socket::socket_address::inet::INET6_ADDRSTRLEN;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
-use bun_cares_sys::c_ares_draft as c_ares;
+use bun_sys::cares::c_ares_draft as c_ares;
 
 // `sockaddr_storage` / `addrinfo` / `AF_*` / `AI_*` are absent from `libc` on
 // the MSVC target; route through a single `netc` shim so call sites stay
@@ -43,7 +43,7 @@ use bun_cares_sys::c_ares_draft as c_ares;
 // (layout-identical: `ADDRINFOA`, 128-byte 8-aligned `sockaddr_storage`).
 #[cfg(not(windows))]
 pub(crate) mod netc {
-    pub(crate) use bun_dns::AI_ADDRCONFIG;
+    pub(crate) use bun_sys::dns::AI_ADDRCONFIG;
     pub(crate) use libc::{
         AF_INET, AF_INET6, AF_UNSPEC, EAI_NONAME, SOCK_STREAM, addrinfo, sockaddr, sockaddr_in,
         sockaddr_in6, sockaddr_storage,
@@ -54,7 +54,7 @@ pub(crate) mod netc {
     /// `AI_ADDRCONFIG` (`ws2def.h`). Only consulted when
     /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
     /// leave `ai_flags = 0`.
-    pub(crate) use bun_dns::AI_ADDRCONFIG;
+    pub(crate) use bun_sys::dns::AI_ADDRCONFIG;
     pub(crate) use bun_core::libuv_sys::{
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
     };
@@ -1280,7 +1280,7 @@ pub mod get_addr_info_request {
             // result list on success, so the out-pointer is unspecified on error.
             let _free = scopeguard::guard(addrinfo, |a| {
                 // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
-                unsafe { bun_dns::freeaddrinfo(a) }
+                unsafe { bun_sys::dns::freeaddrinfo(a) }
             });
 
             // SAFETY: addrinfo is non-null (checked above); freed by `_free` guard after copy.
@@ -2465,10 +2465,10 @@ pub mod internal {
         }
     }
 
-    static GLOBAL_CACHE: bun_threading::Guarded<GlobalCache> =
-        bun_threading::Guarded::new(GlobalCache::new());
+    static GLOBAL_CACHE: bun_sys::threading::Guarded<GlobalCache> =
+        bun_sys::threading::Guarded::new(GlobalCache::new());
     #[inline]
-    fn global_cache() -> &'static bun_threading::Guarded<GlobalCache> {
+    fn global_cache() -> &'static bun_sys::threading::Guarded<GlobalCache> {
         &GLOBAL_CACHE
     }
 
@@ -2699,7 +2699,7 @@ pub mod internal {
             // ws2_32!freeaddrinfo (NOT uv_freeaddrinfo: different allocator).
             // `.cast()` is identity on POSIX, libuv_sys→ws2_32 addrinfo on Windows.
             // SAFETY: `info` is non-null (checked above) and owned by getaddrinfo.
-            unsafe { bun_dns::freeaddrinfo(info.cast()) };
+            unsafe { bun_sys::dns::freeaddrinfo(info.cast()) };
             Some(res)
         } else {
             None
@@ -3097,7 +3097,7 @@ pub mod internal {
             bstr::BStr::new(host.map(|h| h.as_bytes()).unwrap_or(b""))
         );
         // schedule the request to be executed on the work pool
-        let _ = bun_threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| {
+        let _ = bun_sys::threading::work_pool::WorkPool::go(SendPtr(req), |r: SendPtr<Request>| {
             work_pool_callback(r.0)
         });
         Some(req)
@@ -3153,7 +3153,7 @@ pub mod internal {
         let _ = getaddrinfo(loop_, hostname, port, None);
     }
 
-    /// `bun_dns::__bun_dns_prefetch` body — declared `extern "Rust"` in the
+    /// `bun_sys::dns::__bun_dns_prefetch` body — declared `extern "Rust"` in the
     /// lower-tier `bun_dns` crate so `bun_install` can prefetch registry
     /// hostnames without a crate cycle. Link-time resolved.
     ///
@@ -3304,7 +3304,7 @@ pub mod internal {
     }
     /// QUIC analogue of `Bun__addrinfo_set` — link-time export so `bun_http`
     /// (lower-tier crate) can register without a `bun_runtime` dep cycle.
-    /// Called via `bun_dns::internal::register_quic`.
+    /// Called via `bun_sys::dns::internal::register_quic`.
     ///
     /// # Safety
     /// See [`register_quic`].
@@ -3906,7 +3906,7 @@ pub enum ChannelResult<'a> {
 // `--dns-result-order` without depending on the runtime). Re-export for
 // existing `crate::dns_jsc::Order` callers; `to_js` stays here as a tier-6
 // extension since it needs JSC.
-pub use bun_dns::Order;
+pub use bun_sys::dns::Order;
 
 pub(super) trait OrderJscExt {
     fn to_js(self, global_this: &JSGlobalObject) -> JsResult<JSValue>;
@@ -5168,7 +5168,7 @@ impl Resolver {
             options = match super::options_jsc::options_from_js(options_object, global_this) {
                 Ok(o) => o,
                 Err(err) => {
-                    use bun_dns::OptionsFromJsError as E;
+                    use bun_sys::dns::OptionsFromJsError as E;
                     return match err {
                         E::InvalidFlags => Err(global_this.throw_invalid_argument_value(
                             b"flags",
@@ -5534,7 +5534,7 @@ impl Resolver {
             let addr_ptr: *const c_void = current.addr_ptr();
             // SAFETY: `addr_ptr` type-erases the in_addr/in6_addr union arm (read-only);
             // `dst` is the stack buffer slice starting at [1].
-            let Some(ip) = (unsafe { bun_cares_sys::ntop(family, addr_ptr, &mut buf[1..]) }) else {
+            let Some(ip) = (unsafe { bun_sys::cares::ntop(family, addr_ptr, &mut buf[1..]) }) else {
                 return Err(global_this.throw_value(global_this.create_error_instance(
                     format_args!(
                         "ares_inet_ntop error: no more space to convert a network format address"
@@ -5958,7 +5958,7 @@ impl Resolver {
         // `&mut sockaddr` view into that storage.
         if c_ares::get_sockaddr(addr_s, port, unsafe {
             // Target type inferred from `get_sockaddr`'s signature: `libc::sockaddr`
-            // on POSIX, `bun_cares_sys::winsock::sockaddr` on Windows (the latter
+            // on POSIX, `bun_sys::cares::winsock::sockaddr` on Windows (the latter
             // is crate-private, so it cannot be named here).
             &mut *(&raw mut sa).cast()
         }) != 0

@@ -11,7 +11,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
 
-use bun_threading::Guarded;
+use bun_sys::threading::Guarded;
 use bun_uws as uws;
 use bun_uws::quic;
 
@@ -68,7 +68,7 @@ impl PendingConnect {
         let self_ = bun_core::heap::into_raw(self_);
         // SAFETY: `self_` is the Box we just leaked above and is consumed by
         // `on_dns_resolved` (via the global cache's notify path).
-        unsafe { bun_dns::internal::register_quic(addrinfo, self_.cast()) };
+        unsafe { bun_sys::dns::internal::register_quic(addrinfo, self_.cast()) };
     }
 
     pub fn r#loop(&self) -> *mut uws::Loop {

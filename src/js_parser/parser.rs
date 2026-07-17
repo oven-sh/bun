@@ -75,7 +75,7 @@ pub mod options {
     /// straight through.
     /// Glob matcher for the `Patterns` arm. `bun_js_parser` cannot depend on
     /// `bun_glob` (sibling-tier per REFACTOR_BUN_AST.md); the bundler supplies
-    /// `|pattern, shape| bun_glob::r#match(pattern, shape).matches()` when
+    /// `|pattern, shape| bun_sys::glob::r#match(pattern, shape).matches()` when
     /// constructing `Patterns`. Function pointer (not closure) since no state
     /// is captured.
     pub(crate) type AllowUnresolvedMatcher = fn(pattern: &[u8], shape: &[u8]) -> bool;
@@ -97,7 +97,7 @@ pub mod options {
 
         /// Normalize from raw CLI/JS input.
         /// [] → .none, contains "*" → .all, else → .patterns
-        /// `matcher` supplies the glob predicate (typically `bun_glob::r#match`).
+        /// `matcher` supplies the glob predicate (typically `bun_sys::glob::r#match`).
         pub fn from_strings(
             strs: Box<[Box<[u8]>]>,
             matcher: AllowUnresolvedMatcher,

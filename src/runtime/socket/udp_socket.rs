@@ -13,7 +13,7 @@ use bun_jsc::{
 use bun_core::ptr::BackRef;
 
 use crate::node::validators;
-use bun_cares_sys::c_ares_draft as c_ares;
+use bun_sys::cares::c_ares_draft as c_ares;
 #[cfg(windows)]
 use bun_core::libuv_sys::sockaddr_storage;
 use bun_sys::{self, SystemErrno};
@@ -191,7 +191,7 @@ extern "C" fn on_data(
                 let peer4 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in>() };
                 // SAFETY: src points to in_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
-                    bun_cares_sys::ntop(f, (&raw const peer4.addr).cast(), &mut addr_buf)
+                    bun_sys::cares::ntop(f, (&raw const peer4.addr).cast(), &mut addr_buf)
                 };
                 port = ntohs(peer4.port);
             }
@@ -201,7 +201,7 @@ extern "C" fn on_data(
                 let peer6 = unsafe { &*std::ptr::from_ref(peer).cast::<sockaddr_in6>() };
                 // SAFETY: src points to in6_addr, dst is INET6_ADDRSTRLEN+1 bytes.
                 hostname = unsafe {
-                    bun_cares_sys::ntop(f, (&raw const peer6.addr).cast(), &mut addr_buf)
+                    bun_sys::cares::ntop(f, (&raw const peer6.addr).cast(), &mut addr_buf)
                 };
                 port = ntohs(peer6.port);
                 if peer6.scope_id != 0 {
@@ -2050,8 +2050,8 @@ enum DgramFdState {
 /// descriptor this module does not own. A process-wide mutex because worker
 /// threads share the descriptor space; the set stays tiny so a Vec is enough.
 #[cfg(not(windows))]
-static DGRAM_FDS: bun_threading::Guarded<Vec<(c_int, DgramFdState)>> =
-    bun_threading::Guarded::new(Vec::new());
+static DGRAM_FDS: bun_sys::threading::Guarded<Vec<(c_int, DgramFdState)>> =
+    bun_sys::threading::Guarded::new(Vec::new());
 
 #[cfg(not(windows))]
 fn dgram_fd_state(fd: c_int) -> Option<DgramFdState> {

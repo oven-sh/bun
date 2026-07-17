@@ -11,11 +11,11 @@ pub use bun_resolver::fs as bun_fs;
 pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
 
 pub mod perf {
-    pub use bun_perf::{Ctx, PerfEvent};
+    pub use bun_sys::perf::{Ctx, PerfEvent};
 
     #[inline]
     pub(crate) fn trace(_name: &'static str) -> Ctx {
-        bun_perf::trace(PerfEvent::_Stub)
+        bun_sys::perf::trace(PerfEvent::_Stub)
     }
 }
 

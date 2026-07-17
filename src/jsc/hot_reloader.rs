@@ -13,8 +13,8 @@ use bun_core::paths::{self, PathBuffer};
 use bun_resolver::fs::PathName;
 use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_sys::{self, Fd};
-use bun_watcher::WatchItemColumns as _;
-use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
+use bun_sys::watcher::WatchItemColumns as _;
+use bun_sys::watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
 use crate::Task as JscTask;
 use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
@@ -35,7 +35,7 @@ pub enum ImportWatcher {
 // constant must mirror `bun_ast::Loader::File` —
 // the watcher stores that value for auto-watched directories. This crate sees
 // both types, so the compile-time check lives here.
-const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
+const _: () = assert!(bun_sys::watcher::Loader::File.0 == bun_ast::Loader::File as u8);
 
 impl ImportWatcher {
     pub fn start(&mut self) -> Result<(), crate::CrateError> {
@@ -47,7 +47,7 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn watchlist(&self) -> Option<&bun_watcher::WatchList> {
+    pub fn watchlist(&self) -> Option<&bun_sys::watcher::WatchList> {
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => Some(&w.watchlist),
             ImportWatcher::None => None,
@@ -55,7 +55,7 @@ impl ImportWatcher {
     }
 
     #[inline]
-    pub fn index_of(&self, hash: bun_watcher::HashType) -> Option<u32> {
+    pub fn index_of(&self, hash: bun_sys::watcher::HashType) -> Option<u32> {
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.index_of(hash),
             ImportWatcher::None => None,
@@ -79,10 +79,10 @@ impl ImportWatcher {
     /// `flush_evictions` take.
     pub fn snapshot_fd_and_package_json(
         &self,
-        hash: bun_watcher::HashType,
+        hash: bun_sys::watcher::HashType,
     ) -> (
         Option<bun_sys::Fd>,
-        Option<&'static bun_watcher::PackageJSON>,
+        Option<&'static bun_sys::watcher::PackageJSON>,
     ) {
         let w = match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
@@ -95,7 +95,7 @@ impl ImportWatcher {
         let watcher_fd = w.watchlist.items_fd()[index as usize];
         let package_json = w
             .watchlist
-            .items::<"package_json", Option<&'static bun_watcher::PackageJSON>>()[index as usize];
+            .items::<"package_json", Option<&'static bun_sys::watcher::PackageJSON>>()[index as usize];
         (
             if watcher_fd.is_valid() {
                 Some(watcher_fd)
@@ -108,11 +108,11 @@ impl ImportWatcher {
 
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: bun_ast::Loader) -> bool {
-        // Note: bun_watcher::Loader is an opaque newtype over u8;
+        // Note: bun_sys::watcher::Loader is an opaque newtype over u8;
         // wrap the bun_ast::Loader discriminant.
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
-                w.add_file_by_path_slow(file_path, bun_watcher::Loader(loader as u8))
+                w.add_file_by_path_slow(file_path, bun_sys::watcher::Loader(loader as u8))
             }
             ImportWatcher::None => true,
         }
@@ -123,12 +123,12 @@ impl ImportWatcher {
         &mut self,
         fd: Fd,
         file_path: &[u8],
-        hash: bun_watcher::HashType,
+        hash: bun_sys::watcher::HashType,
         loader: bun_ast::Loader,
         dir_fd: Fd,
-        // Note: bun_watcher::PackageJSON is an opaque forward-decl;
+        // Note: bun_sys::watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
-        package_json: Option<&'static bun_watcher::PackageJSON>,
+        package_json: Option<&'static bun_sys::watcher::PackageJSON>,
     ) -> bun_sys::Result<()> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => watcher
@@ -136,7 +136,7 @@ impl ImportWatcher {
                     fd,
                     file_path,
                     hash,
-                    bun_watcher::Loader(loader as u8),
+                    bun_sys::watcher::Loader(loader as u8),
                     dir_fd,
                     package_json,
                 ),
@@ -494,10 +494,10 @@ pub struct MainFile {
     // (`entry_path: Option<&'static [u8]>`): the entry path is owned by the
     // Ctx, which outlives the leaked Reloader for the process lifetime.
     pub dir: &'static [u8],
-    pub dir_hash: bun_watcher::HashType,
+    pub dir_hash: bun_sys::watcher::HashType,
 
     pub file: &'static [u8],
-    pub hash: bun_watcher::HashType,
+    pub hash: bun_sys::watcher::HashType,
 
     /// On macOS, vim's atomic save triggers a race condition:
     /// 1. Old file gets NOTE_RENAME (file renamed to temp name: a.js -> a.js~)
@@ -860,9 +860,9 @@ where
     #[inline(never)]
     pub fn on_file_update(
         &mut self,
-        events: &mut [bun_watcher::WatchEvent],
+        events: &mut [bun_sys::watcher::WatchEvent],
         changed_files: &[ChangedFilePath],
-        watchlist: &bun_watcher::WatchList,
+        watchlist: &bun_sys::watcher::WatchList,
     ) {
         let slice = watchlist.slice();
         let file_paths = slice.items_file_path();
@@ -931,11 +931,11 @@ where
             let current_hash = hashes[event.index as usize];
 
             match kind {
-                bun_watcher::Kind::File => {
+                bun_sys::watcher::Kind::File => {
                     if event.op.contains(WatchOp::DELETE)
                         || (event.op.contains(WatchOp::RENAME) && IS_KQUEUE)
                     {
-                        ctx.remove_at_index(bun_watcher::Kind::File, event.index, 0, &[]);
+                        ctx.remove_at_index(bun_sys::watcher::Kind::File, event.index, 0, &[]);
                     }
 
                     if self.verbose {
@@ -978,7 +978,7 @@ where
                         current_task.append(current_hash);
                     }
                 }
-                bun_watcher::Kind::Directory => {
+                bun_sys::watcher::Kind::Directory => {
                     #[cfg(windows)]
                     {
                         // on windows we receive file events for all items affected by a directory change
@@ -1160,8 +1160,8 @@ where
                             // SAFETY: dir_ent points into rfs.entries (or a tombstoned copy);
                             // both outlive this loop iteration.
                             let dir_ent = unsafe { &mut *dir_ent };
-                            let mut last_file_hash: bun_watcher::HashType =
-                                bun_watcher::HashType::MAX;
+                            let mut last_file_hash: bun_sys::watcher::HashType =
+                                bun_sys::watcher::HashType::MAX;
 
                             for i in 0..affected_len {
                                 let changed_name: &[u8] = if IS_KQUEUE {
@@ -1190,7 +1190,7 @@ where
                                     // Both arms of `'brk` assign these before
                                     // any read.
                                     let path_string: bun_core::ptr::Interned;
-                                    let file_hash: bun_watcher::HashType;
+                                    let file_hash: bun_sys::watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
                                         if let Some(file_ent) = dir_ent.entries().get(changed_name)
                                         {
@@ -1222,7 +1222,7 @@ where
                                                                 ));
                                                             }
                                                             ctx.remove_at_index(
-                                                                bun_watcher::Kind::File,
+                                                                bun_sys::watcher::Kind::File,
                                                                 entry_id as u16,
                                                                 0,
                                                                 &[],
@@ -1308,7 +1308,7 @@ where
 
 /// `Watcher::init` stores the `NewHotReloader` as its opaque context and
 /// dispatches file-change/error callbacks through this trait.
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherContext
+impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_sys::watcher::WatcherContext
     for NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx<EventLoop = EventLoopType>,
@@ -1316,9 +1316,9 @@ where
 {
     fn on_file_update(
         &mut self,
-        events: &mut [bun_watcher::WatchEvent],
-        changed_files: &[bun_watcher::ChangedFilePath],
-        watchlist: &bun_watcher::WatchList,
+        events: &mut [bun_sys::watcher::WatchEvent],
+        changed_files: &[bun_sys::watcher::ChangedFilePath],
+        watchlist: &bun_sys::watcher::WatchList,
     ) {
         Self::on_file_update(self, events, changed_files, watchlist);
     }

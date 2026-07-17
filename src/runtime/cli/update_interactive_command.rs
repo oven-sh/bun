@@ -8,7 +8,7 @@ use bstr::BStr;
 use bun_core::alloc_impl::Arena as Bump;
 use bun_core::collections::StringHashMap;
 use bun_core::{Global, Output};
-use bun_glob as glob;
+use bun_sys::glob as glob;
 use bun_install::dependency::{self, Behavior};
 use bun_install::lockfile::package::PackageColumns as _;
 use bun_install::lockfile::{LoadResult, LoadStep};

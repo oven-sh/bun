@@ -284,7 +284,7 @@ impl MessageType {
 // Bun__ConsoleObject__* shims.
 // ───────────────────────────────────────────────────────────────────────────
 
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 /// `globalThis.bunVM().console` — `VirtualMachine.console` is typed
 /// `*mut c_void` (erased so `virtual_machine.rs` need not name this module's

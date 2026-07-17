@@ -3,7 +3,7 @@ use core::ptr::NonNull;
 use bun_core::alloc_impl::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
 use bun_io as Async;
-use bun_threading::unbounded_queue::{Node, UnboundedQueue};
+use bun_sys::threading::unbounded_queue::{Node, UnboundedQueue};
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};
 use crate::{BundleV2, Transpiler};
@@ -14,9 +14,9 @@ pub(crate) extern "C" fn timer_callback(_: *mut bun_sys::windows::libuv::Timer) 
 
 /// Port of `std.Thread.ResetEvent` — single-shot manual-reset event used to
 /// block `spawn()` until the bundle thread has initialized its `Waker`.
-// Re-exports `bun_threading::ResetEvent` (futex-backed); the futex impl
+// Re-exports `bun_sys::threading::ResetEvent` (futex-backed); the futex impl
 // preserves the "set-before-wait does not deadlock" property `spawn()` relies on.
-pub use bun_threading::ResetEvent;
+pub use bun_sys::threading::ResetEvent;
 
 /// Result of a `Bun.build` invocation handed back to the JS thread.
 /// Consumed by `bundler_jsc` via the `CompletionStruct` trait.
@@ -107,7 +107,7 @@ pub trait CompletionStruct: Node + Send + 'static {
         // Raw `*mut` (not `&'static`) because `BundleV2::init` ultimately
         // stores it as `worker_pool: *mut ThreadPool` and `WorkPool::get()`
         // hands out `&'static`; materializing `&mut` from that would be UB.
-        thread_pool: *mut bun_threading::ThreadPool,
+        thread_pool: *mut bun_sys::threading::ThreadPool,
     ) -> Result<(), crate::Error>;
 }
 
@@ -279,7 +279,7 @@ impl<C: CompletionStruct> BundleThread<C> {
             bump,
             // `WorkPool::get()` returns `&'static ThreadPool`; pass as raw so
             // the impl can hand it to `BundleV2::init` (which stores `*mut`).
-            std::ptr::from_ref(bun_threading::work_pool::WorkPool::get()).cast_mut(),
+            std::ptr::from_ref(bun_sys::threading::work_pool::WorkPool::get()).cast_mut(),
         );
 
         // Straight-line teardown: log copy

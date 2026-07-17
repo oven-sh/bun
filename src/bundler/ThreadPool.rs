@@ -1,5 +1,5 @@
 //! The bundler-side worker pool that
-//! wraps `bun_threading::thread_pool::ThreadPool` and owns the per-thread
+//! wraps `bun_sys::threading::thread_pool::ThreadPool` and owns the per-thread
 //! [`Worker`] state (mimalloc arena, per-thread `Transpiler` clone, AST store).
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
@@ -15,7 +15,7 @@ use bun_core::alloc_impl::Arena as ThreadLocalArena;
 use bun_core::collections::{ArrayHashMap, MapEntry};
 use bun_core::{self, env_var, output as Output};
 use bun_sys::Fd;
-use bun_threading::{Mutex, thread_pool as ThreadPoolLib};
+use bun_sys::threading::{Mutex, thread_pool as ThreadPoolLib};
 
 use crate::cache::{Contents, Entry as CacheEntry};
 use crate::linker_context_mod::StmtList;
@@ -32,7 +32,7 @@ use bun_js_parser as js_ast;
 
 bun_core::declare_scope!(ThreadPool, visible);
 
-/// `std.Thread.Id` — `bun_threading::current_thread_id()` returns `u64` on
+/// `std.Thread.Id` — `bun_sys::threading::current_thread_id()` returns `u64` on
 /// every platform (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`).
 pub(crate) type ThreadId = u64;
 
@@ -59,7 +59,7 @@ pub struct ThreadPool {
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
     // would alias `&mut ThreadPool` across threads (UB before the lock is even
     // reached).
-    pub workers_assignments: bun_threading::Guarded<ArrayHashMap<ThreadId, *mut Worker>>,
+    pub workers_assignments: bun_sys::threading::Guarded<ArrayHashMap<ThreadId, *mut Worker>>,
     /// Monotonic per-pool stamp for the [`TLS_WORKER`] fast-path key. Pointer
     /// identity is unsound across `Bun.build()` calls (mimalloc reuses the
     /// freed slot), so each pool draws a fresh `u64` from [`POOL_GENERATION`].
@@ -70,14 +70,14 @@ pub struct ThreadPool {
 }
 
 // SAFETY: `ThreadPool` is shared across worker threads; the only mutated
-// field (`workers_assignments`) is guarded by its `bun_threading::Guarded`, and
+// field (`workers_assignments`) is guarded by its `bun_sys::threading::Guarded`, and
 // the raw-pointer fields are set during init, before the pool is shared with
 // worker threads, and only read thereafter (mutation in `deinit` happens on the
 // owning thread after the workers are done).
 unsafe impl Send for ThreadPool {}
 // SAFETY: `&ThreadPool` is read concurrently from worker-pool threads via
 // `get_worker(&self)`; the only field mutated under `&self` is
-// `workers_assignments` (through its `bun_threading::Guarded` lock), and the
+// `workers_assignments` (through its `bun_sys::threading::Guarded` lock), and the
 // raw-pointer targets (`ThreadPoolLib::ThreadPool`, `BundleV2`) are `Sync`.
 unsafe impl Sync for ThreadPool {}
 
@@ -89,7 +89,7 @@ impl Default for ThreadPool {
             io_pool: None,
             worker_pool: ptr::null_mut(),
             worker_pool_is_owned: false,
-            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
+            workers_assignments: bun_sys::threading::Guarded::new(ArrayHashMap::default()),
             generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
             v2: ptr::null(),
         }
@@ -254,7 +254,7 @@ impl ThreadPool {
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
             worker_pool_is_owned: false,
-            workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
+            workers_assignments: bun_sys::threading::Guarded::new(ArrayHashMap::default()),
             generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
         }
     }
@@ -273,7 +273,7 @@ impl ThreadPool {
         }
     }
 
-    /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
+    /// Safe accessor for the underlying `bun_sys::threading::ThreadPool`. The
     /// pointer is set in `init`/`init_with_pool` and never null while `self`
     /// is observable; encapsulating the deref keeps callers out of `unsafe`.
     #[inline]
@@ -401,7 +401,7 @@ impl ThreadPool {
     // callers re-borrow `ThreadPool` while holding the worker.
     // Takes `&self` (not `&mut`) because this is called concurrently from
     // worker-pool threads via `Worker::get`; mutation goes through the
-    // `bun_threading::Guarded` on `workers_assignments`.
+    // `bun_sys::threading::Guarded` on `workers_assignments`.
     //
     // Fast path is a per-thread `(pool, worker)` cache: the map lookup is a
     // pure `current_thread_id() → *mut Worker` re-read after first touch, so
@@ -678,10 +678,10 @@ impl Worker {
         // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
         // pointing at the bundle-owned pool that outlives every worker. We only
         // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
-        // map mutation via the internal `bun_threading::Guarded`, so concurrent
+        // map mutation via the internal `bun_sys::threading::Guarded`, so concurrent
         // entry from multiple worker threads is sound.
         let pool: &ThreadPool = ctx.graph.pool();
-        let worker = pool.get_worker(bun_threading::current_thread_id());
+        let worker = pool.get_worker(bun_sys::threading::current_thread_id());
         if !worker.has_created {
             worker.create(ctx);
         }
@@ -702,10 +702,10 @@ impl Worker {
     }
 
     fn create(&mut self, ctx: &BundleV2<'_>) {
-        // `bun_perf::trace` takes a generated `PerfEvent` enum, and
+        // `bun_sys::perf::trace` takes a generated `PerfEvent` enum, and
         // the generator hasn't emitted `Bundler.Worker.create` yet (only
         // `_Stub`). Dropped to avoid mis-attributing the span.
-        // let _trace = bun_perf::trace("Bundler.Worker.create");
+        // let _trace = bun_sys::perf::trace("Bundler.Worker.create");
 
         self.has_created = true;
         Output::Source::configure_thread();

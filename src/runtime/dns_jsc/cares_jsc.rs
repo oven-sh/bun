@@ -5,7 +5,7 @@
 use core::ffi::c_int;
 
 use ::bstr::BStr;
-use bun_cares_sys::c_ares_draft as c_ares;
+use bun_sys::cares::c_ares_draft as c_ares;
 use bun_core::{self as bstr, strings};
 use bun_jsc::{
     CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc,
@@ -91,7 +91,7 @@ pub(crate) fn hostent_with_ttls_to_js_response(
             if addr.is_null() {
                 break;
             }
-            // bun_dns::Address (= bun_sys::net::Address) only exposes init_posix,
+            // bun_sys::dns::Address (= bun_sys::net::Address) only exposes init_posix,
             // so build a sockaddr_in/in6 on the stack and copy through that.
             let addr_string = {
                 // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
@@ -103,7 +103,7 @@ pub(crate) fn hostent_with_ttls_to_js_response(
                     sa6.sin6_family = super::netc::AF_INET6 as _;
                     sa6.sin6_addr.s6_addr = bytes;
                     // SAFETY: &sa6 is a valid sockaddr_in6.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa6).cast()) }
+                    unsafe { bun_sys::dns::Address::init_posix((&raw const sa6).cast()) }
                 } else {
                     // SAFETY: addr points to ≥4 bytes for AF_INET.
                     let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
@@ -111,7 +111,7 @@ pub(crate) fn hostent_with_ttls_to_js_response(
                     sa4.sin_family = super::netc::AF_INET as _;
                     sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
                     // SAFETY: &sa4 is a valid sockaddr_in.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa4).cast()) }
+                    unsafe { bun_sys::dns::Address::init_posix((&raw const sa4).cast()) }
                 };
                 match address_to_js(&address, global_this) {
                     Ok(v) => v,
@@ -191,18 +191,18 @@ pub(crate) fn addr_info_to_js_array(
         while !current.is_null() {
             // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
             let this_node = unsafe { &*current };
-            // bun_dns::Address::init_posix copies from the raw sockaddr by family,
+            // bun_sys::dns::Address::init_posix copies from the raw sockaddr by family,
             // so we hand it `this_node.addr` directly after asserting a known family.
             debug_assert!(
                 this_node.family == c_ares::AF::INET || this_node.family == c_ares::AF::INET6
             );
             // SAFETY: addr is non-null sockaddr_in/in6 for AF_INET/AF_INET6 (c-ares contract).
-            let address = unsafe { bun_dns::Address::init_posix(this_node.addr.cast()) };
+            let address = unsafe { bun_sys::dns::Address::init_posix(this_node.addr.cast()) };
             array.put_index(
                 global_this,
                 j,
                 result_to_js(
-                    &bun_dns::GetAddrInfoResult {
+                    &bun_sys::dns::GetAddrInfoResult {
                         address,
                         ttl: this_node.ttl,
                     },

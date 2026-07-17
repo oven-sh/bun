@@ -2820,7 +2820,7 @@ pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
     }
 }
 
-pub type WorkPoolTask = bun_threading::work_pool::Task;
+pub type WorkPoolTask = bun_sys::threading::work_pool::Task;
 
 #[repr(C)]
 pub struct ShellTask {
@@ -2881,7 +2881,7 @@ impl ShellTask {
     ///
     /// SAFETY: same as [`Self::schedule`].
     pub unsafe fn schedule_no_ref<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_threading::work_pool::WorkPool;
+        use bun_sys::threading::work_pool::WorkPool;
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `WorkPool::schedule` returns the worker
         // thread may already be touching `*this`, so we must not hold a live

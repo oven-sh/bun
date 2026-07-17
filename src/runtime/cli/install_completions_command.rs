@@ -27,7 +27,7 @@ impl InstallCompletionsCommand {
         let mut buf = PathBuffer::uninit();
 
         // don't install it if it's already there
-        if bun_which::which(
+        if bun_sys::which::which(
             &mut buf,
             env_var::PATH.get().unwrap_or(cwd),
             cwd,

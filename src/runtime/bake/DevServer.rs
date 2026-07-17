@@ -30,7 +30,7 @@ use bun_core::paths::MAX_PATH_BYTES;
 use bun_core::paths::{self as paths, PathBuffer};
 use bun_sys as sys;
 use bun_uws::{self as uws, AnyResponse, Opcode, Request, WebSocketUpgradeContext};
-use bun_watcher::WatchItemColumns as _;
+use bun_sys::watcher::WatchItemColumns as _;
 use bun_core::wyhash::{Wyhash, hash};
 
 use crate::api::server::StaticRoute;
@@ -44,7 +44,7 @@ use bun_ast::Loader;
 use bun_bundler::{self as bundler, BundleV2, Transpiler};
 use bun_http::{Method, MimeType};
 use bun_core::safety::ThreadLock;
-use bun_watcher::Watcher;
+use bun_sys::watcher::Watcher;
 
 pub(super) use crate::bake::dev_server::DirectoryWatchStore;
 pub(super) use crate::bake::dev_server::HmrSocket;
@@ -796,7 +796,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     }
 
     // `bun_resolver::AnyResolveWatcher` is now a re-export of
-    // `bun_watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
+    // `bun_sys::watcher::AnyResolveWatcher` (LAYERING: same type), so the watcher's
     // vtable flows directly into the resolver without conversion.
     let resolve_watcher = dev.bun_watcher.get_resolve_watcher();
     dev.server_transpiler_mut().options.dev_server = dev_ptr as *const ();
@@ -1052,7 +1052,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 
     #[cfg(feature = "bake_debugging_features")]
     if dev.has_pre_crash_handler {
-        bun_crash_handler::append_pre_crash_handler::<DevServer>(
+        bun_sys::crash_handler::append_pre_crash_handler::<DevServer>(
             &mut *dev,
             dump_state_due_to_crash,
         )?;
@@ -1171,7 +1171,7 @@ impl Drop for DevServer {
         }
 
         if self.has_pre_crash_handler {
-            bun_crash_handler::remove_pre_crash_handler(std::ptr::from_mut(self).cast::<c_void>());
+            bun_sys::crash_handler::remove_pre_crash_handler(std::ptr::from_mut(self).cast::<c_void>());
         }
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
@@ -3349,7 +3349,7 @@ impl DevServer {
             event_loop,
             false, // watching is handled separately
             Some(::core::ptr::NonNull::from(
-                bun_threading::work_pool::WorkPool::get(),
+                bun_sys::threading::work_pool::WorkPool::get(),
             )),
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },
@@ -6048,9 +6048,9 @@ impl DevServer {
     /// Called on watcher's thread; Access to dev-server state restricted.
     pub fn on_file_update(
         &mut self,
-        events: &[bun_watcher::Event],
-        changed_files: &[bun_watcher::ChangedFilePath],
-        watchlist: &bun_watcher::ItemList,
+        events: &[bun_sys::watcher::Event],
+        changed_files: &[bun_sys::watcher::ChangedFilePath],
+        watchlist: &bun_sys::watcher::ItemList,
     ) {
         debug_assert!(self.magic == Magic::Valid);
         debug_log!("onFileUpdate start");
@@ -6063,7 +6063,7 @@ impl DevServer {
         let file_paths: *const [std::borrow::Cow<'static, [u8]>] = slice.items_file_path();
         // SAFETY: column 4 (`Count`) is `u32` per `WatchItemField`.
         let counts: *mut [u32] = slice.items_mut::<"count", u32>();
-        let kinds: *const [bun_watcher::Kind] = slice.items_kind();
+        let kinds: *const [bun_sys::watcher::Kind] = slice.items_kind();
         // SAFETY: `file_paths`/`kinds`/`counts` point to disjoint SoA columns owned
         // by `watchlist`, which outlives this fn; reborrow as slices for indexing.
         let file_paths = unsafe { &*file_paths };
@@ -6101,21 +6101,21 @@ impl DevServer {
             debug_log!(
                 "{} change: {} {}",
                 match kind {
-                    bun_watcher::Kind::File => "file",
-                    bun_watcher::Kind::Directory => "directory",
+                    bun_sys::watcher::Kind::File => "file",
+                    bun_sys::watcher::Kind::Directory => "directory",
                 },
                 bstr::BStr::new(file_path),
                 event.op
             );
 
             match kind {
-                bun_watcher::Kind::File => {
-                    if event.op.contains(bun_watcher::Op::DELETE)
-                        || event.op.contains(bun_watcher::Op::RENAME)
+                bun_sys::watcher::Kind::File => {
+                    if event.op.contains(bun_sys::watcher::Op::DELETE)
+                        || event.op.contains(bun_sys::watcher::Op::RENAME)
                     {
                         // TODO: audit this line heavily
                         self.bun_watcher.remove_at_index(
-                            bun_watcher::Kind::File,
+                            bun_sys::watcher::Kind::File,
                             event.index,
                             0,
                             &[],
@@ -6124,7 +6124,7 @@ impl DevServer {
 
                     ev.append_file(file_path);
                 }
-                bun_watcher::Kind::Directory => {
+                bun_sys::watcher::Kind::Directory => {
                     // Note: `target_os = "linux"` is false on Android, so
                     // include `target_os = "android"` explicitly to
                     // keep forwarding inotify sub-path names there.

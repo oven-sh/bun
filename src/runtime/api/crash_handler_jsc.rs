@@ -5,7 +5,7 @@ use bun_core::analytics as analytics;
 use bun_core::collections::BoundedArray;
 use bun_core::String as BunString;
 use bun_core::{Environment, Global};
-use bun_crash_handler as crash_handler;
+use bun_sys::crash_handler as crash_handler;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc};
 
 pub mod js_bindings {

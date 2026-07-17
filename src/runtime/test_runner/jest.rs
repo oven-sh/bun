@@ -232,8 +232,8 @@ impl<'a> TestRunner<'a> {
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {
-            let result = bun_glob::matcher::r#match(pattern, file_path);
-            if result == bun_glob::matcher::MatchResult::Match {
+            let result = bun_sys::glob::matcher::r#match(pattern, file_path);
+            if result == bun_sys::glob::matcher::MatchResult::Match {
                 return true;
             }
         }

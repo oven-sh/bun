@@ -24,7 +24,7 @@ use core::ffi::c_char;
 /// `sync`) restored so existing `bun_spawn::posix_spawn::bun_spawn::*` paths
 /// keep resolving.
 pub mod posix_spawn {
-    pub use bun_spawn_sys::posix_spawn::*;
+    pub use bun_sys::spawn_sys::posix_spawn::*;
 
     pub mod bun_spawn_impl {
         pub use crate::process;
@@ -33,10 +33,10 @@ pub mod posix_spawn {
         };
         #[cfg(windows)]
         pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
-        pub use bun_spawn_sys::posix_spawn::bun_spawn_impl::*;
+        pub use bun_sys::spawn_sys::posix_spawn::bun_spawn_impl::*;
     }
     pub use bun_spawn_impl as BunSpawn;
-    pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
+    pub use bun_sys::spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
 }
 
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /
@@ -58,9 +58,9 @@ pub use error::{Error, Result};
 pub use bun_event_loop::EventLoopHandle;
 
 // Raw OS-spawn types from the leaf -sys crate.
-pub use bun_spawn_sys::{Argv, CStrPtr, Envp, ffi};
+pub use bun_sys::spawn_sys::{Argv, CStrPtr, Envp, ffi};
 
-pub use bun_spawn_sys::RusageFields;
+pub use bun_sys::spawn_sys::RusageFields;
 pub use process::{
     Dup2, Exited, ExtraPipe, PidT, Poller, Process, Rusage, SignalCodeExt, SpawnOptions,
     SpawnProcessResult, SpawnResultExt, Status, StdioKind, WaiterThread, spawn_process,
@@ -358,7 +358,7 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
             .get("PATH")
             .map(|s| s.as_bytes())
             .unwrap_or(b"");
-        let Some(resolved) = bun_which::which(&mut argv0_buf, path, b"", first) else {
+        let Some(resolved) = bun_sys::which::which(&mut argv0_buf, path, b"", first) else {
             break 'argv0;
         };
         // Own a NUL-terminated copy so the pointer outlives the spawn call.

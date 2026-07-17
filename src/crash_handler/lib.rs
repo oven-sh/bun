@@ -540,7 +540,7 @@ mod draft {
         }
 
         pub fn is_main_thread() -> bool {
-            MAIN_THREAD_ID.load(Ordering::Relaxed) == bun_threading::current_thread_id()
+            MAIN_THREAD_ID.load(Ordering::Relaxed) == bun_sys::threading::current_thread_id()
         }
         pub(crate) fn cmd_char() -> Option<u8> {
             match CMD_CHAR.load(Ordering::Relaxed) {
@@ -570,7 +570,7 @@ mod draft {
     /// Shared with bun_core::PANICKING so T0 callers see the same state.
     use bun_core::PANICKING;
     // D131: dedup — these read the shared `PANICKING` atomic and were byte-identical
-    // to the bun_core (T0) copies. Re-export so `bun_crash_handler::{is_panicking,
+    // to the bun_core (T0) copies. Re-export so `bun_sys::crash_handler::{is_panicking,
     // sleep_forever_if_another_thread_is_crashing}` keeps resolving for any
     // out-of-tree callers. `dump_current_stack_trace` is intentionally NOT deduped:
     // the bun_core version is an `extern "Rust"` dispatch shim, this crate's is the
@@ -579,8 +579,8 @@ mod draft {
 
     // Locked to avoid interleaving panic messages from multiple threads.
     // TODO: I don't think it's safe to lock/unlock a mutex inside a signal handler.
-    // PORTING.md §Concurrency: `bun_threading::Guarded<()>` for a bare critical section.
-    static PANIC_MUTEX: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
+    // PORTING.md §Concurrency: `bun_sys::threading::Guarded<()>` for a bare critical section.
+    static PANIC_MUTEX: bun_sys::threading::Guarded<()> = bun_sys::threading::Guarded::new(());
 
     thread_local! {
         /// Counts how many times the panic handler is invoked by this thread.
@@ -600,7 +600,7 @@ mod draft {
         pub static CURRENT_ACTION: Cell<Option<Action>> = const { Cell::new(None) };
     }
 
-    // PORTING.md §Concurrency: `bun_threading::Guarded<Vec<..>>` instead of bare Mutex + global Vec.
+    // PORTING.md §Concurrency: `bun_sys::threading::Guarded<Vec<..>>` instead of bare Mutex + global Vec.
     // Stores a boxed type-erased closure (not a bare fn pointer) so that
     // `append_pre_crash_handler` can monomorphize a wrapper that actually invokes the
     // caller's typed handler.
@@ -608,8 +608,8 @@ mod draft {
     // SAFETY: only accessed under the mutex; the opaque ptr is never dereferenced
     // except by the registered callback on the crash thread.
     unsafe impl Send for CrashHandlerEntry {}
-    static BEFORE_CRASH_HANDLERS: bun_threading::Guarded<Vec<CrashHandlerEntry>> =
-        bun_threading::Guarded::new(Vec::new());
+    static BEFORE_CRASH_HANDLERS: bun_sys::threading::Guarded<Vec<CrashHandlerEntry>> =
+        bun_sys::threading::Guarded::new(Vec::new());
 
     /// Prevents crash reports from being uploaded to any server. Reports will still be printed and
     /// abort the process. Overrides BUN_CRASH_REPORT_URL, BUN_ENABLE_CRASH_REPORTING, and all other
@@ -717,7 +717,7 @@ mod draft {
     pub(crate) struct ResolverAction {
         pub source_dir: &'static [u8],
         pub import_path: &'static [u8],
-        pub kind: bun_ast::ImportKind,
+        pub kind: &'static [u8],
     }
 
     #[derive(Clone, Copy)]
@@ -764,7 +764,7 @@ mod draft {
                         "resolving {} from {} ({})",
                         bstr::BStr::new(res.import_path),
                         bstr::BStr::new(res.source_dir),
-                        bstr::BStr::new(res.kind.label()),
+                        bstr::BStr::new(res.kind),
                     )
                 }
                 #[cfg(not(feature = "show_crash_trace"))]
@@ -822,7 +822,7 @@ mod draft {
     pub fn set_current_action_resolver(
         source_dir: &[u8],
         import_path: &[u8],
-        kind: bun_ast::ImportKind,
+        kind: &'static [u8],
     ) -> ActionGuard {
         let prev = current_action();
         #[cfg(feature = "show_crash_trace")]
@@ -2287,7 +2287,7 @@ mod draft {
             // Sleep forever without hammering the CPU
             let futex = AtomicU32::new(0);
             loop {
-                bun_threading::Futex::wait_forever(&futex, 0);
+                bun_sys::threading::Futex::wait_forever(&futex, 0);
             }
         }
     }
@@ -2606,14 +2606,14 @@ mod draft {
                 writer.write_byte(b'0')?;
 
                 let mut compressed_bytes: [u8; 2048] = [0; 2048];
-                let mut len: bun_zlib::uLong = compressed_bytes.len() as bun_zlib::uLong;
+                let mut len: bun_sys::zlib::uLong = compressed_bytes.len() as bun_sys::zlib::uLong;
                 // SAFETY: buffers and lengths are valid
                 let ret = unsafe {
-                    bun_zlib::compress2(
+                    bun_sys::zlib::compress2(
                         compressed_bytes.as_mut_ptr(),
                         &raw mut len,
                         message.as_ptr(),
-                        u32::try_from(message.len()).expect("int cast") as bun_zlib::uLong,
+                        u32::try_from(message.len()).expect("int cast") as bun_sys::zlib::uLong,
                         9,
                     )
                 };
@@ -2621,15 +2621,15 @@ mod draft {
                 // regardless of whether the platform `compress2` binding returns
                 // `c_int` (posix) or the `ReturnCode` enum (win32).
                 let compressed = match ret as i32 {
-                    r if r == bun_zlib::ReturnCode::Ok as i32 => {
+                    r if r == bun_sys::zlib::ReturnCode::Ok as i32 => {
                         &compressed_bytes[0..usize::try_from(len).expect("int cast")]
                     }
                     // Insufficient memory.
-                    r if r == bun_zlib::ReturnCode::MemError as i32 => {
+                    r if r == bun_sys::zlib::ReturnCode::MemError as i32 => {
                         return Err(crate::crash_handler::Error::Alloc(bun_core::alloc_impl::AllocError));
                     }
                     // The buffer dest was not large enough to hold the compressed data.
-                    r if r == bun_zlib::ReturnCode::BufError as i32 => {
+                    r if r == bun_sys::zlib::ReturnCode::BufError as i32 => {
                         return Err(crate::crash_handler::Error::Sys(bun_core::errno::SystemErrno::ENOSPC));
                     }
                     // The level was not Z_DEFAULT_LEVEL, or was not between 0 and 9.
@@ -2849,7 +2849,7 @@ mod draft {
             // Reshaped for borrowck — capture cwd bytes by value (it
             // borrows buf2, not buf, so no actual overlap; copy len for clarity).
             let cwd_bytes = cwd.as_bytes();
-            let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
+            let Some(curl) = bun_sys::which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
                 return;
             };
             let mut cmd_line = BoundedArray::<u8, 4096>::default();
@@ -3298,7 +3298,7 @@ mod draft {
         SUPPRESS_REPORTING.store(true, Ordering::Relaxed);
     }
 
-    // src/ptr/ref_count.rs:16). Re-export so `bun_crash_handler::StoredTrace` paths
+    // src/ptr/ref_count.rs:16). Re-export so `bun_sys::crash_handler::StoredTrace` paths
     // keep compiling. NOTE: if `debug::return_address()` is ever wired to a real
     // `@returnAddress()` intrinsic, apply that improvement in bun_core's
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
@@ -3350,7 +3350,7 @@ mod draft {
 
     // D130: deduped — canonical def lives in bun_core (T0). Re-export under the
     // old name so internal use-sites and any downstream
-    // `bun_crash_handler::WriteStackTraceLimits` importers keep compiling.
+    // `bun_sys::crash_handler::WriteStackTraceLimits` importers keep compiling.
     pub use bun_core::DumpStackTraceOptions as WriteStackTraceLimits;
 
     /// Clone of `debug.writeStackTrace`, but can be configured to stop at either a

@@ -3,7 +3,7 @@
 //! `PerfEvent`-keyed spans. A T0 subset lives at `bun_core::perf` for low-tier
 //! callers that cannot reach this crate; that subset is Linux-only (ftrace
 //! needs no high-tier deps) and reports disabled on macOS, so callers above T0
-//! should use `bun_perf::trace` to keep os_signpost coverage.
+//! should use `bun_sys::perf::trace` to keep os_signpost coverage.
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
@@ -44,7 +44,7 @@ impl Ctx {
 }
 
 // `Ctx` ends itself on drop so callers
-// write `let _tracer = bun_perf::trace(...)` and forget about it.
+// write `let _tracer = bun_sys::perf::trace(...)` and forget about it.
 impl Drop for Ctx {
     #[inline]
     fn drop(&mut self) {

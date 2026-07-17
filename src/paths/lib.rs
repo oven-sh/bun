@@ -305,7 +305,7 @@ pub fn stem(p: &[u8]) -> &[u8] {
 
 // LAYERING: `PathBuffer` / `WPathBuffer` / `MAX_PATH_BYTES` / `PATH_MAX_WIDE`
 // are defined once in `bun_core` (T0) and re-exported here so `bun_paths` and
-// `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_which::which`
+// `bun_core` share a single nominal type — `bun_core::getcwd`, `bun_sys::which::which`
 // etc. accept a buffer obtained from this crate without a pointer cast.
 pub use bun_core::{MAX_PATH_BYTES, PATH_MAX_WIDE, PathBuffer, WPathBuffer};
 /// Alias for [`PATH_MAX_WIDE`].

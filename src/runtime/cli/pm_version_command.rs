@@ -19,7 +19,7 @@ use bun_parsers::json as JSON;
 use bun_core::paths::{PathBuffer, resolve_path as path, resolve_path::platform as path_platform};
 use bun_core::semver as Semver;
 use bun_sys::{self, Fd};
-use bun_which::which;
+use bun_sys::which::which;
 
 pub(crate) struct PmVersionCommand;
 

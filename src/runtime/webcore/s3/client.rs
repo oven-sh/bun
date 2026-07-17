@@ -372,7 +372,7 @@ pub(crate) fn list_objects(
 
     // queue http request
     bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
+    let mut batch = bun_sys::threading::thread_pool::Batch::default();
     // SAFETY: `http` was initialised by `task.http.write(...)` immediately above.
     unsafe { task.http.assume_init_mut() }.schedule(&mut batch);
     bun_http::HTTPThread::schedule(batch);
@@ -1094,7 +1094,7 @@ pub(crate) fn download_stream(
     http.enable_response_body_streaming();
     // queue http request
     bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
+    let mut batch = bun_sys::threading::thread_pool::Batch::default();
     http.schedule(&mut batch);
     bun_http::HTTPThread::schedule(batch);
     task_ptr

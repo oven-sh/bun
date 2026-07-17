@@ -25,5 +25,4 @@ bun_dotenv.workspace = true
 bun_io.workspace = true
 bun_ptr.workspace = true
 bun_sys.workspace = true
-bun_threading.workspace = true
 bun_uws.workspace = true

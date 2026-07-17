@@ -259,10 +259,10 @@ use bun_ast::Msg;
 use bun_core::collections::BoundedArray;
 use bun_dotenv::env_loader as DotEnv;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
-use bun_perf::system_timer::Timer;
+use bun_sys::perf::system_timer::Timer;
 use bun_core::ptr::Interned;
 use bun_sys::Fd as FD;
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 use crate::fs as Fs;
 use crate::fs::FilenameStoreAppender;
@@ -304,7 +304,7 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
     // `Box` is load-bearing: returns `NonNull<PackageJSON>` derived from the
     // box interior, treated as `'static`; unboxing would dangle on `Vec` realloc.
     #[expect(clippy::vec_box)]
-    static ARENA: std::sync::LazyLock<bun_threading::Guarded<Vec<Box<PackageJSON>>>> =
+    static ARENA: std::sync::LazyLock<bun_sys::threading::Guarded<Vec<Box<PackageJSON>>>> =
         std::sync::LazyLock::new(Default::default);
     let mut guard = ARENA.lock();
     guard.push(Box::new(pkg));
@@ -470,7 +470,7 @@ static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
 // (lower tier); defining the vtable shape there and re-exporting here keeps a
 // single type so `Watcher::get_resolve_watcher()` flows directly into
 // `Resolver.watcher` without a seam converter.
-pub use bun_watcher::AnyResolveWatcher;
+pub use bun_sys::watcher::AnyResolveWatcher;
 
 // NOTE: const fn-pointer generics (`adt_const_params` for fn ptrs) and
 // const params depending on type params are both forbidden. Carry a
@@ -1114,13 +1114,13 @@ impl<'a> Resolver<'a> {
         // and outlives the returned Result.
         // TODO: thread an explicit lifetime through Result instead.
         let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
-        let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
+        let _tracer = ::bun_sys::perf::trace(::bun_sys::perf::PerfEvent::ModuleResolverResolve);
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
         #[cfg(debug_assertions)]
         let _crash_guard =
-            ::bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
+            ::bun_sys::crash_handler::set_current_action_resolver(source_dir, import_path, kind.label());
 
         #[cfg(debug_assertions)]
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {

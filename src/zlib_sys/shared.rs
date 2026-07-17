@@ -86,7 +86,7 @@ pub type z_free_func = free_func;
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
 //
-// Previously duplicated in win32.rs and bun_zlib::lib.rs.
+// Previously duplicated in win32.rs and bun_sys::zlib::lib.rs.
 // All resolve to ABI-identical primitives on every
 // target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
 // Unix) for the same reason zStream_struct above uses `c_ulong` directly.

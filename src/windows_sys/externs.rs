@@ -618,7 +618,7 @@ pub mod ntdll {
         ) -> NTSTATUS;
         pub fn NtClose(Handle: HANDLE) -> NTSTATUS;
 
-        // ── futex (`WaitOnAddress`) — used by `bun_threading::Futex` ──
+        // ── futex (`WaitOnAddress`) — used by `bun_sys::threading::Futex` ──
         // Linked from ntdll instead of `API-MS-Win-Core-Synch-l1-2-0.dll`
         // because ntdll is autoloaded into every process; the Rtl* wrappers
         // forward to the same kernel objects.

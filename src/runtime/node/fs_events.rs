@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 
 use bun_core::collections::VecExt;
 use bun_core::zstr;
-use bun_threading::{Mutex, Semaphore, UnboundedQueue};
+use bun_sys::threading::{Mutex, Semaphore, UnboundedQueue};
 
 // Both siblings are wired into `crate::node`, and intra-crate module cycles
 // are fine in Rust, so import the real shapes instead of mirroring them.
@@ -341,14 +341,14 @@ impl Task {
 
 pub struct ConcurrentTask {
     pub task: Task,
-    pub next: bun_threading::Link<ConcurrentTask>,
+    pub next: bun_sys::threading::Link<ConcurrentTask>,
     pub auto_delete: bool,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
-unsafe impl bun_threading::Linked for ConcurrentTask {
+unsafe impl bun_sys::threading::Linked for ConcurrentTask {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }
@@ -362,7 +362,7 @@ impl ConcurrentTask {
     ) -> &mut ConcurrentTask {
         *this = ConcurrentTask {
             task,
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
             auto_delete,
         };
         this
@@ -504,7 +504,7 @@ impl FSEventsLoop {
                 ctx: ptr::null_mut(),
                 callback: |_| {},
             },
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
             auto_delete: false,
         }));
         // SAFETY: concurrent is a valid freshly-boxed non-null pointer

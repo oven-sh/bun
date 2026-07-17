@@ -5,15 +5,15 @@ use bun_jsc::{
     ComptimeStringMapExt as _, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
 };
 
-use bun_dns::{
+use bun_sys::dns::{
     BACKEND_LABEL, Backend, FAMILY_MAP, Family, GetAddrInfoResult as GaiResult, Options,
     PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
 };
-use bun_dns::{addr_info_count, address_to_string};
+use bun_sys::dns::{addr_info_count, address_to_string};
 // `FromJSError` is the union of all the per-field `Invalid*` variants plus
 // `JSError`. The enum lives in `bun_dns` (which has no `bun_jsc` dep), so the
 // `JsError → JSError` mapping is done locally via the `js()` helper below.
-use bun_dns::OptionsFromJsError as FromJSError;
+use bun_sys::dns::OptionsFromJsError as FromJSError;
 
 #[inline]
 fn js<T>(r: JsResult<T>) -> Result<T, FromJSError> {
@@ -61,7 +61,7 @@ pub(crate) fn options_from_js(
 
             // hints & ~(AI_ADDRCONFIG | AI_ALL | AI_V4MAPPED)) !== 0
             let filter: u32 =
-                !((bun_dns::AI_ALL | bun_dns::AI_ADDRCONFIG | bun_dns::AI_V4MAPPED) as u32);
+                !((bun_sys::dns::AI_ALL | bun_sys::dns::AI_ADDRCONFIG | bun_sys::dns::AI_V4MAPPED) as u32);
             let int: u32 = flags_int as u32;
             if int & filter != 0 {
                 return Err(FromJSError::InvalidFlags);
@@ -93,7 +93,7 @@ pub(crate) fn family_from_js(
 
     if value.is_string() {
         // `Family.map` is a `ComptimeStringMap` ported as
-        // `bun_dns::FAMILY_MAP` (a `comptime_string_map!`); `.from_js` comes
+        // `bun_sys::dns::FAMILY_MAP` (a `comptime_string_map!`); `.from_js` comes
         // from `bun_jsc::ComptimeStringMapExt`.
         return match js(FAMILY_MAP.from_js(global, value))? {
             Some(f) => Ok(f),
@@ -243,8 +243,8 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
 }
 
 pub(crate) fn address_to_js(
-    // `bun_dns::Address` is the `bun_sys::net::Address` sockaddr wrapper.
-    address: &bun_dns::Address,
+    // `bun_sys::dns::Address` is the `bun_sys::net::Address` sockaddr wrapper.
+    address: &bun_sys::dns::Address,
     global: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let mut str = match address_to_string(address) {

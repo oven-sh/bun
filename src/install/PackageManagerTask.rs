@@ -8,7 +8,7 @@ use bun_core::Output;
 use bun_core::StringOrTinyString;
 use bun_core::semver as semver;
 use bun_sys::{Fd, File};
-use bun_threading::thread_pool;
+use bun_sys::threading::thread_pool;
 use bun_core::wyhash::Wyhash11;
 
 use crate::npm;
@@ -42,7 +42,7 @@ pub struct Task<'a> {
     pub apply_patch_task: Option<Box<PatchTask>>,
     /// INTRUSIVE — `bun.UnboundedQueue(Task, .next)`
     /// default: null
-    pub next: bun_threading::Link<Task<'a>>,
+    pub next: bun_sys::threading::Link<Task<'a>>,
 }
 
 /// Callers MUST overwrite `tag`, `request`, `id`, `package_manager` before
@@ -73,15 +73,15 @@ pub(crate) fn uninit() -> Task<'static> {
         },
         err: None,
         apply_patch_task: None,
-        next: bun_threading::Link::new(),
+        next: bun_sys::threading::Link::new(),
     }
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`;
 // `link()` always projects to it.
-unsafe impl<'a> bun_threading::Linked for Task<'a> {
+unsafe impl<'a> bun_sys::threading::Linked for Task<'a> {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }

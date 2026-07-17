@@ -1,7 +1,7 @@
 use crate::mal_prelude::*;
 
 use bun_core::alloc_impl::{Arena as Bump, ArenaVec, ArenaVecExt};
-use bun_threading::thread_pool as ThreadPoolLib;
+use bun_sys::threading::thread_pool as ThreadPoolLib;
 
 use crate::{BundleV2, Chunk, LinkerContext};
 

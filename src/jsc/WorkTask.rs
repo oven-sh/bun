@@ -1,6 +1,6 @@
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
-use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
+use bun_sys::threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::JSGlobalObject;
 use crate::debugger::AsyncTaskTracker;
@@ -46,7 +46,7 @@ pub struct WorkTask<Context: WorkTaskContext> {
     pub ref_: KeepAlive,
 }
 
-bun_threading::intrusive_work_task!([Context: WorkTaskContext] WorkTask<Context>, task);
+bun_sys::intrusive_work_task!([Context: WorkTaskContext] WorkTask<Context>, task);
 
 // SAFETY: `WorkTask` is moved into the thread pool's queue (intrusive `task`
 // node) and back via the concurrent task queue. All access to `ctx` /

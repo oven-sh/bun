@@ -18,7 +18,7 @@ use bun_core::paths::{self, PathBuffer, SEP_STR};
 use bun_resolver::fs;
 use bun_sys as sys;
 use bun_core::url::URL;
-use bun_which::which;
+use bun_sys::which::which;
 use bun_core::wyhash::hash;
 
 use crate::api::bun::process::Status;

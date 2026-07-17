@@ -12,7 +12,7 @@ use bun_core::paths::resolve_path::{join_abs_string_z, platform};
 use bun_core::paths::{AutoAbsPath, EnvPath};
 use bun_core::semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 use crate::bun_fs::FileSystem;
 

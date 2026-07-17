@@ -671,7 +671,7 @@ pub struct ShellRmTask {
     pub pending_main_callbacks: AtomicU32,
     /// First error hit by any worker thread. Mutex-wrapped so [`handle_err`]
     /// can take `&self` without an interior `&mut` cast.
-    pub err: bun_threading::Guarded<Option<bun_sys::Error>>,
+    pub err: bun_sys::threading::Guarded<Option<bun_sys::Error>>,
     pub join_style: JoinStyle,
     pub event_loop: EventLoopHandle,
     pub task: ShellTask,
@@ -749,7 +749,7 @@ impl ShellRmTask {
             error_signal,
             output_count,
             pending_main_callbacks: AtomicU32::new(1),
-            err: bun_threading::Guarded::new(None),
+            err: bun_sys::threading::Guarded::new(None),
             join_style,
             event_loop: evtloop,
             task: ShellTask::new(evtloop),
@@ -769,7 +769,7 @@ impl ShellRmTask {
     /// # Safety
     /// `this` must be a fresh `heap::alloc`'d task (see [`create`]).
     pub unsafe fn schedule(this: *mut ShellRmTask) {
-        use bun_threading::work_pool::WorkPool;
+        use bun_sys::threading::work_pool::WorkPool;
         // SAFETY: `this` is live; `task` is the embedded `ShellTask`. Stay on
         // raw pointers — once `WorkPool::schedule` returns the worker thread
         // may already be running.
@@ -886,7 +886,7 @@ impl ShellRmTask {
         unsafe {
             let count = (*parent).subtask_count.fetch_add(1, Ordering::Relaxed);
             debug_assert!(count > 0);
-            bun_threading::work_pool::WorkPool::schedule(&raw mut (*subtask).work_task);
+            bun_sys::threading::work_pool::WorkPool::schedule(&raw mut (*subtask).work_task);
         }
     }
 

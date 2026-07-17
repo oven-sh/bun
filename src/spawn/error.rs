@@ -10,7 +10,7 @@ pub enum Error {
     Core(#[from] bun_core::Error),
 
     #[error(transparent)]
-    SpawnSys(#[from] bun_spawn_sys::Error),
+    SpawnSys(#[from] bun_sys::spawn_sys::Error),
 
     #[error(transparent)]
     Alloc(#[from] bun_core::alloc_impl::AllocError),

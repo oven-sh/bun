@@ -7,7 +7,7 @@ use bun_core::collections::HashMap;
 use bun_core::collections::VecExt;
 use bun_dotenv as dot_env;
 use bun_js_parser as js_ast;
-use bun_perf::system_timer::Timer as SystemTimer;
+use bun_sys::perf::system_timer::Timer as SystemTimer;
 use bun_resolver::fs as Fs;
 use bun_resolver::{self as resolver, Resolver};
 use bun_router::Router;
@@ -2333,7 +2333,7 @@ impl<'a> Transpiler<'a> {
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
-        // `bun_perf::PerfEvent` has no JSPrinter variants yet.
+        // `bun_sys::perf::PerfEvent` has no JSPrinter variants yet.
         let _trace = bun_core::perf::trace(if ENABLE_SOURCE_MAP {
             "JSPrinter.printWithSourceMap"
         } else {

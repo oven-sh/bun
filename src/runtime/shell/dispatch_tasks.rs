@@ -160,7 +160,7 @@ pub enum ShellGlobErr {
 pub(crate) struct ShellGlobTask {
     pub task: ShellTask,
     pub expansion: NodeId,
-    pub walker: bun_glob::BunGlobWalkerZ,
+    pub walker: bun_sys::glob::BunGlobWalkerZ,
     pub result: Vec<Vec<u8>>,
     pub err: Option<ShellGlobErr>,
 }
@@ -199,7 +199,7 @@ impl ShellGlobTask {
     pub(crate) fn create_and_schedule(
         interp: &Interpreter,
         expansion: NodeId,
-        walker: bun_glob::BunGlobWalkerZ,
+        walker: bun_sys::glob::BunGlobWalkerZ,
     ) {
         let mut task = ShellTask::new(interp.event_loop);
         task.interp = interp.as_ctx_ptr();
@@ -216,10 +216,10 @@ impl ShellGlobTask {
     }
 
     fn walk_impl(
-        walker: &mut bun_glob::BunGlobWalkerZ,
+        walker: &mut bun_sys::glob::BunGlobWalkerZ,
         result: &mut Vec<Vec<u8>>,
     ) -> Result<bun_sys::Result<()>, crate::Error> {
-        let mut iter = bun_glob::walk::Iterator::new(walker);
+        let mut iter = bun_sys::glob::walk::Iterator::new(walker);
         if let Err(e) = iter.init()? {
             return Ok(Err(e));
         }

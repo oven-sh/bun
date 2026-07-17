@@ -6,7 +6,7 @@ use bun_dotenv as dot_env;
 #[allow(unused_imports)]
 use bun_core::paths::{self, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_which::which;
+use bun_sys::which::which;
 
 use crate::api::bun::process::sync;
 

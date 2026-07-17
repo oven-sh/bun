@@ -3248,7 +3248,7 @@ struct Table {
 static TABLE: Once<Table> = <Once<Table>>::new();
 
 fn build_table() -> Table {
-    let decompressed = bun_zstd::decompress_alloc(COMPRESSED_DATA)
+    let decompressed = bun_sys::zstd::decompress_alloc(COMPRESSED_DATA)
         .expect("add_completions: zstd decompress failed");
     debug_assert_eq!(decompressed.len(), UNCOMPRESSED_SIZE);
 

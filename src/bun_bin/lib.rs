@@ -37,9 +37,8 @@ use core::ffi::{c_char, c_int};
 
 mod c_abi_exports;
 
-// Force-link `bun_platform` so its `#[no_mangle]` C exports
-// (`sys_epoll_pwait2`, …) reach the linker.
-use bun_platform as _;
+// `bun_platform`'s `#[no_mangle]` C exports (`sys_epoll_pwait2`, …) now reach
+// the linker via `bun_sys` (Step 4.1 mount); no separate force-link needed.
 
 use bun_core::Global;
 use bun_core::StackCheck;
@@ -158,7 +157,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     unsafe { bun_core::init_argv(argc, argv) };
 
     // 1. Crash handler first so anything below gets a usable trace.
-    bun_crash_handler::init();
+    bun_sys::crash_handler::init();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a

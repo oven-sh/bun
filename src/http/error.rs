@@ -108,11 +108,11 @@ pub enum Error {
     #[error(transparent)]
     Sys(#[from] bun_core::errno::SystemErrno),
     #[error(transparent)]
-    Zlib(bun_zlib::ZlibError),
+    Zlib(bun_sys::zlib::ZlibError),
     #[error(transparent)]
-    Brotli(bun_brotli::Error),
+    Brotli(bun_sys::brotli::Error),
     #[error(transparent)]
-    Zstd(bun_zstd::ZstdError),
+    Zstd(bun_sys::zstd::ZstdError),
     #[error(transparent)]
     Picohttp(bun_core::picohttp::ParseResponseError),
 }
@@ -327,28 +327,28 @@ impl bun_core::output::ErrName for Error {
     }
 }
 
-impl From<bun_zlib::ZlibError> for Error {
-    fn from(e: bun_zlib::ZlibError) -> Self {
+impl From<bun_sys::zlib::ZlibError> for Error {
+    fn from(e: bun_sys::zlib::ZlibError) -> Self {
         match e {
-            bun_zlib::ZlibError::ShortRead => Error::ShortRead,
+            bun_sys::zlib::ZlibError::ShortRead => Error::ShortRead,
             _ => Error::Zlib(e),
         }
     }
 }
 
-impl From<bun_brotli::Error> for Error {
-    fn from(e: bun_brotli::Error) -> Self {
+impl From<bun_sys::brotli::Error> for Error {
+    fn from(e: bun_sys::brotli::Error) -> Self {
         match e {
-            bun_brotli::Error::ShortRead => Error::ShortRead,
+            bun_sys::brotli::Error::ShortRead => Error::ShortRead,
             _ => Error::Brotli(e),
         }
     }
 }
 
-impl From<bun_zstd::ZstdError> for Error {
-    fn from(e: bun_zstd::ZstdError) -> Self {
+impl From<bun_sys::zstd::ZstdError> for Error {
+    fn from(e: bun_sys::zstd::ZstdError) -> Self {
         match e {
-            bun_zstd::ZstdError::ShortRead => Error::ShortRead,
+            bun_sys::zstd::ZstdError::ShortRead => Error::ShortRead,
             _ => Error::Zstd(e),
         }
     }

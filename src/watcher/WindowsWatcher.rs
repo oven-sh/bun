@@ -8,7 +8,7 @@ use bun_core::strings;
 use bun_core::paths::resolve_path::{ParentEqual, is_parent_or_equal};
 use bun_core::paths::{PathBuffer, WPathBuffer};
 use bun_core::ptr::{BackRef, RawSlice};
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 use bun_sys::windows as w;
 use bun_sys::windows::HANDLE;

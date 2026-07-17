@@ -3,8 +3,8 @@
 use core::ffi::c_int;
 
 use bun_core::feature_flag;
-use bun_libdeflate_sys::libdeflate as libdeflate_sys;
-use bun_zlib as zlib;
+use bun_sys::libdeflate_sys::libdeflate as libdeflate_sys;
+use bun_sys::zlib as zlib;
 
 #[repr(C)]
 #[derive(Clone, Copy)]

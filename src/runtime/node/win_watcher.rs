@@ -13,7 +13,7 @@ use bun_sys as sys;
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::UvHandle as _;
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 use super::node_fs_watcher::WatchEventKind;
 // The callbacks are *associated functions* on `FSWatcher`, not free fns.
@@ -152,7 +152,7 @@ pub struct PathWatcher {
 
 #[derive(Clone, Copy)]
 pub(crate) struct ChangeEvent {
-    hash: bun_watcher::HashType,
+    hash: bun_sys::watcher::HashType,
     event_type: WatchEventKind,
     timestamp: u64,
 }
@@ -170,7 +170,7 @@ impl Default for ChangeEvent {
 impl ChangeEvent {
     pub(crate) fn emit(
         &mut self,
-        hash: bun_watcher::HashType,
+        hash: bun_sys::watcher::HashType,
         timestamp: u64,
         event_type: WatchEventKind,
     ) -> bool {
@@ -256,8 +256,8 @@ impl PathWatcher {
         // SAFETY: libuv passes a valid NUL-terminated string when non-null.
         let path = ZStr::from_cstr(unsafe { core::ffi::CStr::from_ptr(filename) });
 
-        // Intentional wrap to bun_watcher::HashType
-        let hash = this.handle.hash(path.as_bytes(), events, status) as bun_watcher::HashType;
+        // Intentional wrap to bun_sys::watcher::HashType
+        let hash = this.handle.hash(path.as_bytes(), events, status) as bun_sys::watcher::HashType;
         let is_file = !this.handle.is_dir();
         this.emit(path.as_bytes(), hash, timestamp, is_file, event_type);
     }
@@ -265,7 +265,7 @@ impl PathWatcher {
     pub(crate) fn emit(
         &mut self,
         path: &[u8],
-        hash: bun_watcher::HashType,
+        hash: bun_sys::watcher::HashType,
         timestamp: u64,
         is_file: bool,
         event_type: WatchEventKind,

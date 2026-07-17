@@ -753,7 +753,7 @@ pub mod fs {
     use bun_core::paths::strings;
     use bun_core::ptr::Interned;
     use bun_sys::Fd;
-    use bun_threading::Mutex;
+    use bun_sys::threading::Mutex;
 
     // `StringOrTinyString::init*_append_if_needed` needs an `Appender`; route the
     // ZST `FilenameStore` handle through to the backing `BSSStringList` singleton.
@@ -1842,18 +1842,18 @@ pub mod fs {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DirEntryAccessor — `bun_glob::walk::Accessor` impl backed by the resolver's
+// DirEntryAccessor — `bun_sys::glob::walk::Accessor` impl backed by the resolver's
 // DirEntry cache.
 //
 // Lives here (not in `bun_glob`) because it needs `fs::DirEntry`/
 // `RealFS::read_directory`, and `bun_resolver` already depends on `bun_glob`.
-// Low-tier crate owns the trait (`bun_glob::walk::Accessor`); high-tier crate
+// Low-tier crate owns the trait (`bun_sys::glob::walk::Accessor`); high-tier crate
 // owns this impl. See PORTING.md §Dispatch.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod dir_entry_accessor {
     use crate::fs::{DirEntry, EntriesOption, Entry, EntryKind, FileSystem as FS, Implementation};
     use bun_core::ZStr;
-    use bun_glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
+    use bun_sys::glob::walk::{Accessor, AccessorDirEntry, AccessorDirIter, AccessorHandle};
     use bun_core::paths::{PathBuffer, Platform, resolve_path};
     use bun_sys::{self as Syscall, Error as SysError, Result as Maybe, Stat};
 

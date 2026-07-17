@@ -690,7 +690,7 @@ impl Progress {
     /// are currently **no callers** of `lock_stderr`/`unlock_stderr`,
     /// so this clears the terminal under a scoped lock
     /// and `unlock_stderr` is a no-op. If a caller materializes, refactor to
-    /// return the guard (or move `update_mutex` to a raw `bun_threading::Mutex`
+    /// return the guard (or move `update_mutex` to a raw `bun_sys::threading::Mutex`
     /// once layering allows) and route stderr through a shared global mutex.
     pub fn lock_stderr(&mut self) {
         let ctx_ptr = std::ptr::from_mut::<Self>(self);

@@ -6,7 +6,7 @@ use std::borrow::Cow;
 use bun_core::collections::MultiArrayList;
 use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr};
 use bun_sys::{self as sys, Fd};
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 use crate::Loader;
 use crate::watcher_trace as WatcherTrace;
@@ -342,7 +342,7 @@ impl Watcher {
         // We do NOT lock here: the only callers are deferred from
         // `WatcherContext::on_file_update`, which is itself invoked while the
         // platform watcher already holds `self.mutex` (KEventWatcher.rs:138,
-        // INotifyWatcher.rs:555, WindowsWatcher.rs). `bun_threading::Mutex` is
+        // INotifyWatcher.rs:555, WindowsWatcher.rs). `bun_sys::threading::Mutex` is
         // non-recursive — re-locking here is `os_unfair_lock` SIGILL on darwin
         // and self-deadlock on Linux/Windows.
         debug_assert!(

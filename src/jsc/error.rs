@@ -71,7 +71,7 @@ pub enum Error {
     #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
-    Watcher(#[from] bun_watcher::Error),
+    Watcher(#[from] bun_sys::watcher::Error),
     #[error(transparent)]
     Install(#[from] bun_install::Error),
     #[error(transparent)]

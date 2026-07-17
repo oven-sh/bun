@@ -6,7 +6,7 @@ use std::time::Instant;
 use bun_core::collections::ArrayHashMap;
 use bun_core::{self, Output};
 
-use bun_threading::{Mutex, UnboundedQueue};
+use bun_sys::threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
@@ -278,8 +278,8 @@ pub struct CertCheckResumeMessage {
 }
 
 pub struct LibdeflateState {
-    pub decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
-    pub compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
+    pub decompressor: Option<bun_sys::libdeflate_sys::libdeflate::OwnedDecompressor>,
+    pub compressor: Option<bun_sys::libdeflate_sys::libdeflate::OwnedCompressor>,
     pub shared_buffer: [u8; 512 * 1024],
 }
 
@@ -294,7 +294,7 @@ impl LibdeflateState {
     /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_sys::libdeflate_sys::libdeflate::Decompressor {
         self.decompressor
             .as_deref_mut()
             .expect("set in HttpThread::deflater()")
@@ -426,7 +426,7 @@ impl HttpThread {
 
     pub fn deflater(&mut self) -> &mut LibdeflateState {
         if self.lazy_libdeflater.is_none() {
-            let decompressor = bun_libdeflate_sys::libdeflate::OwnedDecompressor::new()
+            let decompressor = bun_sys::libdeflate_sys::libdeflate::OwnedDecompressor::new()
                 .unwrap_or_else(|| bun_core::out_of_memory());
             let mut state: Box<LibdeflateState> = bun_core::boxed_zeroed();
             state.decompressor = Some(decompressor);
@@ -1087,7 +1087,7 @@ impl HttpThread {
     /// queue and `wakeup()` (atomic load + raw FFI call). This is the
     /// **only** cross-thread entry point — every other `HttpThread` method
     /// is HTTP-thread-only via [`http_thread()`](crate::http_thread).
-    pub fn schedule(batch: bun_threading::thread_pool::Batch) {
+    pub fn schedule(batch: bun_sys::threading::thread_pool::Batch) {
         if batch.len == 0 {
             return;
         }
@@ -1241,10 +1241,10 @@ mod _event_loop_draft {
             (*crate::HTTP_THREAD.get()).write(HttpThread::new());
         }
         crate::HTTP_THREAD_INIT.store(true, core::sync::atomic::Ordering::Release);
-        bun_libdeflate_sys::libdeflate::load();
+        bun_sys::libdeflate_sys::libdeflate::load();
         let opts_copy = opts.clone();
         let thread = std::thread::Builder::new()
-            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .stack_size(bun_sys::threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
             .spawn(move || on_start(opts_copy));
         match thread {
             // detach — see HTTP_THREAD_HANDLE note above re: LSAN reachability
@@ -1390,9 +1390,9 @@ mod _event_loop_draft {
 }
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
-static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
-    bun_threading::Guarded::new(false),
-    bun_threading::Condvar::new(),
+static SHUTDOWN_DONE: (bun_sys::threading::Guarded<bool>, bun_sys::threading::Condvar) = (
+    bun_sys::threading::Guarded::new(false),
+    bun_sys::threading::Condvar::new(),
 );
 
 struct ShutdownReclaim {
@@ -1404,8 +1404,8 @@ struct ShutdownReclaim {
 // between the two.
 unsafe impl Send for ShutdownReclaim {}
 
-static SHUTDOWN_RECLAIMS: bun_threading::Guarded<Vec<ShutdownReclaim>> =
-    bun_threading::Guarded::new(Vec::new());
+static SHUTDOWN_RECLAIMS: bun_sys::threading::Guarded<Vec<ShutdownReclaim>> =
+    bun_sys::threading::Guarded::new(Vec::new());
 
 /// Park `(ctx, drop_fn)` until [`shutdown_for_exit`] has waited the HTTP
 /// thread out of its loop. The drop is applied on the JS thread once the

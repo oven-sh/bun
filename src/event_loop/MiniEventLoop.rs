@@ -27,7 +27,7 @@ use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
-use bun_threading::UnboundedQueue;
+use bun_sys::threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
@@ -66,9 +66,9 @@ pub type PipeReadBuffer = [u8; PIPE_READ_BUFFER_SIZE];
 pub type ConcurrentTaskQueue = UnboundedQueue<AnyTaskWithExtraContext>;
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<AnyTaskWithExtraContext>`.
-unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
+unsafe impl bun_sys::threading::Linked for AnyTaskWithExtraContext {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }

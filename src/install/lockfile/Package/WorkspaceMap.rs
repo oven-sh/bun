@@ -3,7 +3,7 @@ use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_ast as js_ast;
 use bun_core::collections::StringArrayHashMap;
 use bun_core::{ZStr, strings};
-use bun_glob as glob;
+use bun_sys::glob as glob;
 use bun_core::paths as path;
 use bun_core::paths::resolve_path;
 use bun_core::paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
@@ -567,6 +567,6 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
 }
 
 // The ignore-filter is a runtime fn-pointer field on
-// `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
+// `bun_sys::glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
 // `init_with_cwd(..., Some(ignored_workspace_paths))`.
 type GlobWalker = glob::GlobWalker<glob::walk::SyscallAccessor, false>;

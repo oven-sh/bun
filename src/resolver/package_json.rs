@@ -43,7 +43,7 @@ pub mod install_stubs {
 // resolver never needs); callers here use the map API directly.
 pub type StringMap = StringArrayHashMap<Box<[u8]>>;
 pub use bun_core::collections::StringHashMapUnownedKey;
-use bun_glob as glob;
+use bun_sys::glob as glob;
 
 // Assume they're not going to have hundreds of main fields or browser map
 // so use an array-backed hash table instead of bucketed

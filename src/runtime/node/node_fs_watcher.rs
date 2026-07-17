@@ -21,7 +21,7 @@ use bun_jsc::{
 };
 use bun_core::paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 
 use crate::node::types::{Encoding, PathLikeExt};
 use crate::webcore::encoding as Encoder;

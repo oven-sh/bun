@@ -8,7 +8,7 @@ use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_glob as glob;
+use bun_sys::glob as glob;
 use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -17,10 +17,10 @@ use bun_jsc::{
     WorkPool, WorkPoolTask,
 };
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
-use bun_libarchive as libarchive;
+use bun_sys::libarchive as libarchive;
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
-/// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_libarchive::lib` port
+/// libarchive `AE_IFREG` (== `S_IFREG`). The Rust `bun_sys::libarchive::lib` port
 /// does not yet expose `FileType`, so mirror the constant locally.
 const FILETYPE_REGULAR: u32 = 0o100000;
 
@@ -1346,7 +1346,7 @@ impl From<CompressError> for WriteError {
 }
 
 fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
-    use bun_libdeflate_sys::libdeflate;
+    use bun_sys::libdeflate_sys::libdeflate;
     libdeflate::load();
 
     let mut compressor =

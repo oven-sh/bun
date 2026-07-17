@@ -14,8 +14,7 @@ use bun_jsc::{
     self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
     StrongOptional, WorkPoolTask,
 };
-use bun_threading::work_pool::WorkPool;
-use bun_zlib;
+use bun_sys::threading::work_pool::WorkPool;
 
 bun_core::declare_scope!(zlib, hidden);
 
@@ -81,7 +80,7 @@ fn jsv_to_u32(v: JSValue) -> u32 {
     v.as_number() as u32
 }
 
-/// Checked u32 → `FlushValue` validation — `bun_zlib::FlushValue` has
+/// Checked u32 → `FlushValue` validation — `bun_sys::zlib::FlushValue` has
 /// no `TryFrom<u32>` impl upstream.
 #[inline]
 fn flush_value_is_valid(n: u32) -> bool {
@@ -179,7 +178,7 @@ pub(crate) fn crc32(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         break 'blk valuef as u32;
     };
 
-    let crc = bun_zlib::crc32_bytes(value, data.slice());
+    let crc = bun_sys::zlib::crc32_bytes(value, data.slice());
     Ok(JSValue::js_number(f64::from(crc)))
 }
 

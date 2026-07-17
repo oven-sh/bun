@@ -458,7 +458,7 @@ pub enum Error {
     #[error(transparent)]
     Clap(#[from] bun_clap::Error),
     #[error(transparent)]
-    Zlib(#[from] bun_zlib::ZlibError),
+    Zlib(#[from] bun_sys::zlib::ZlibError),
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]
@@ -500,11 +500,11 @@ impl From<bun_uws::ssl_wrapper::InitError> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_sys::libarchive::Error> for Error {
+    fn from(e: bun_sys::libarchive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_sys::libarchive::Error::Sys(s) => Self::Sys(s),
+            bun_sys::libarchive::Error::Alloc(a) => Self::Alloc(a),
             _ => Self::Unexpected,
         }
     }

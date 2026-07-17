@@ -75,7 +75,7 @@ pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
         .get()
         .unwrap_or(false)
     {
-        bun_crash_handler::suppress_reporting();
+        bun_sys::crash_handler::suppress_reporting();
     }
 }
 

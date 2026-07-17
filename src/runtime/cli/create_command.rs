@@ -11,17 +11,17 @@ use bun_core::{MutableString, strings};
 use bun_dotenv as DotEnv;
 use bun_http as HTTP;
 use bun_js_printer as JSPrinter;
-use bun_libarchive::{Archiver, archiver};
+use bun_sys::libarchive::{Archiver, archiver};
 use bun_parsers::json as JSON;
 use bun_core::paths::{OSPathSlice, PathBuffer};
 use bun_resolver::fs;
 use bun_sys::FdDirExt as _;
 #[cfg(not(windows))]
 use bun_sys::copy_file as CopyFile;
-use bun_threading::Futex;
+use bun_sys::threading::Futex;
 use bun_core::url::URL;
-use bun_which::which;
-use bun_zlib as Zlib;
+use bun_sys::which::which;
+use bun_sys::zlib as Zlib;
 
 use crate::Command;
 use crate::cli::which_npm_client::NPMClient;
@@ -487,8 +487,8 @@ impl CreateCommand {
                     struct OverwriteListAppender {
                         buf: Vec<u8>,
                     }
-                    impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
-                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_libarchive::Error> {
+                    impl bun_sys::libarchive::ArchiveAppender for OverwriteListAppender {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_sys::libarchive::Error> {
                             self.buf.clear();
                             self.buf.extend_from_slice(path);
                             Ok(&self.buf)

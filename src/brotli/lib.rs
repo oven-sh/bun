@@ -3,7 +3,7 @@ use core::ptr;
 pub mod error;
 pub use error::{Error, Result};
 
-pub use bun_brotli_sys::brotli_c as c;
+pub use bun_sys::brotli_sys::brotli_c as c;
 use c::{BrotliDecoder, BrotliEncoder};
 
 // ──────────────────────────────────────────────────────────────────────────

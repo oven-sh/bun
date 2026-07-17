@@ -4,7 +4,7 @@
 //! formatters, dlopen data path, and the JSC host-fn entry points
 //! (`open`/`close`/`compile`/`generate_symbols`) are real. The full TinyCC
 //! compile bodies (`CompileC`, `Function::compile`, `cc`/`linkSymbols`/
-//! `callback`) live in `ffi_body` on top of `bun_tcc_sys::State`.
+//! `callback`) live in `ffi_body` on top of `bun_sys::tcc_sys::State`.
 
 use core::ffi::{c_char, c_void};
 use core::ptr::NonNull;
@@ -106,7 +106,7 @@ mod dom_call_slowpath {
 // `bun_tcc_sys` provides the method-ful `State` (compile_string/relocate/
 // add_symbol/…) with per-target link stubs where TinyCC isn't built — see
 // `tcc_externs!` in `src/tcc_sys/tcc.rs`.
-use bun_tcc_sys as TCC;
+use bun_sys::tcc_sys as TCC;
 
 /// Get the last dynamic-library loading error message in a cross-platform way.
 /// On POSIX systems, this calls `dlerror()`.

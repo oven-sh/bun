@@ -486,10 +486,10 @@ impl Cmd {
         // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
         spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
 
-        // Resolve argv[0] via PATH (`bun_which::which`).
+        // Resolve argv[0] via PATH (`bun_sys::which::which`).
         let resolved: Option<Vec<u8>> = {
             let mut path_buf = bun_core::paths::path_buffer_pool::get();
-            match bun_which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
+            match bun_sys::which::which(&mut *path_buf, spawn_args.path, spawn_args.cwd, &first_arg) {
                 Some(z) => Some(z.as_bytes().to_vec()),
                 None if &first_arg[..] == b"bun" || &first_arg[..] == b"bun-debug" => {
                     bun_core::self_exe_path()
@@ -513,13 +513,13 @@ impl Cmd {
         // re-tokenizes the command line with shell metacharacter rules
         // (BatBadBut). libuv's MSVCRT-style quoting cannot make that safe, so
         // reject arguments that cmd.exe would reinterpret.
-        if cfg!(windows) && bun_which::is_batch_file(&resolved) {
+        if cfg!(windows) && bun_sys::which::is_batch_file(&resolved) {
             let unsafe_arg: Option<Vec<u8>> = interp
                 .as_cmd(this)
                 .args
                 .iter()
                 .skip(1)
-                .find(|a| bun_which::batch_arg_has_cmd_metachars(&a[..a.len() - 1]))
+                .find(|a| bun_sys::which::batch_arg_has_cmd_metachars(&a[..a.len() - 1]))
                 .map(|a| a[..a.len() - 1].to_vec());
             if let Some(arg) = unsafe_arg {
                 drop(spawn_args);

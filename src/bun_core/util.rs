@@ -628,14 +628,14 @@ macro_rules! opaque_extern {
 // get thin newtype wrappers around `std::sync` that strip the poisoning API —
 // Bun aborts on panic, so a poisoned lock is unreachable in practice and the
 // `LockResult` ceremony is pure noise. Higher-tier crates should use
-// `bun_threading::Guarded` / `bun_threading::RwLock` directly.
+// `bun_sys::threading::Guarded` / `bun_sys::threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
 // `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `.get_mut()`,
 // `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
-/// this is not `bun_threading::Guarded<T>`.
+/// this is not `bun_sys::threading::Guarded<T>`.
 pub struct Mutex<T>(std::sync::Mutex<T>);
 
 /// Guard returned by [`Mutex::lock`] / [`Mutex::try_lock`]. Re-exported so
@@ -4403,7 +4403,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
 // ── which ─────────────────────────────────────────────────────────────────
 // `bun.which` lives in the `bun_which` crate (tier-2, full Windows PATHEXT
 // support). bun_core cannot re-export it (bun_which → bun_core dep cycle), so
-// callers import `bun_which::which` directly. See `src/bun.rs` for the
+// callers import `bun_sys::which::which` directly. See `src/bun.rs` for the
 // `bun::which` re-export.
 //
 // A POSIX-only copy is kept here because `spawn_sync_inherit` (below) needs
@@ -5458,7 +5458,7 @@ impl core::fmt::Display for f16 {
 // disabled on macOS. **No functional divergence today**: `bun_perf`'s Darwin
 // arm currently routes through the `bun_sys::darwin::os_log::signpost::Interval`
 // stub whose `end()` is a no-op, so neither tier emits signposts yet. When
-// `Bun__signpost_emit` is wired, callers above T0 use `bun_perf::trace`; T0
+// `Bun__signpost_emit` is wired, callers above T0 use `bun_sys::perf::trace`; T0
 // callsites (audited r5) are bundler/parser hot paths where Linux ftrace is
 // the profiling target. Windows/other platforms are no-ops.
 pub mod perf {

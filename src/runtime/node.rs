@@ -160,7 +160,7 @@ pub mod zlib {
     pub use super::native_brotli_impl as native_brotli;
     pub use super::native_zlib_impl as native_zlib;
     pub use super::native_zstd_impl as native_zstd;
-    pub use bun_zlib::NodeMode;
+    pub use bun_sys::zlib::NodeMode;
 }
 
 // ─── submodule re-exports ─────────────────────────────────────────────────

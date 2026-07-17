@@ -431,8 +431,8 @@ pub enum LazySourceMap {
 }
 
 /// It probably is not possible to run two decoding jobs on the same file
-// PORTING.md §Concurrency: `bun_threading::Guarded` for const-init statics.
-static INIT_LOCK: bun_threading::Guarded<()> = bun_threading::Guarded::new(());
+// PORTING.md §Concurrency: `bun_sys::threading::Guarded` for const-init statics.
+static INIT_LOCK: bun_sys::threading::Guarded<()> = bun_sys::threading::Guarded::new(());
 
 impl LazySourceMap {
     pub fn load(&mut self) -> Option<Arc<SourceMap::ParsedSourceMap>> {
@@ -711,7 +711,7 @@ pub(crate) fn to_bytes(
     flags: Flags,
 ) -> crate::Result<Vec<u8>> {
     // RAII trace handle ends on drop.
-    let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
+    let _serialize_trace = bun_sys::perf::trace(bun_sys::perf::PerfEvent::StandaloneModuleGraphSerialize);
 
     let mut entry_point_id: Option<usize> = None;
     let mut string_builder = bun_core::StringBuilder::default();
@@ -1600,7 +1600,7 @@ pub(crate) fn download_to_path(
                 // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
                 let gunzip_result = (|| -> crate::Result<()> {
-                    let mut gunzip = bun_zlib::ZlibReaderArrayList::init(
+                    let mut gunzip = bun_sys::zlib::ZlibReaderArrayList::init(
                         compressed_archive_bytes.list.as_slice(),
                         &mut tarball_bytes,
                     )
@@ -1627,12 +1627,12 @@ pub(crate) fn download_to_path(
                 scopeguard::defer! {
                     let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name.as_bytes());
                 }
-                let extract_res = bun_libarchive::Archiver::extract_to_dir(
+                let extract_res = bun_sys::libarchive::Archiver::extract_to_dir(
                     tarball_bytes.as_slice(),
                     tmpdir.fd(),
                     None,
                     &mut (),
-                    bun_libarchive::ExtractOptions {
+                    bun_sys::libarchive::ExtractOptions {
                         // "package/bin"
                         depth_to_skip: 2,
                         ..Default::default()
@@ -2298,17 +2298,17 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
         let offset = string_payload.len();
 
-        let bound = bun_zstd::compress_bound(utf8.len());
+        let bound = bun_sys::zstd::compress_bound(utf8.len());
         // `ZSTD_compressBound` returns an *error code* (a value near
         // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
         // feeding that to `Vec::reserve` below would abort with a capacity
         // overflow instead of failing the build.
-        if bun_zstd::is_error(bound) {
+        if bun_sys::zstd::is_error(bound) {
             return Err(crate::Error::SourceMapTooLarge);
         }
         string_payload.reserve(bound);
-        if let bun_zstd::Result::Err(err_msg) =
-            bun_zstd::compress_append(string_payload, utf8, Some(1))
+        if let bun_sys::zstd::Result::Err(err_msg) =
+            bun_sys::zstd::compress_append(string_payload, utf8, Some(1))
         {
             Output::panic(format_args!(
                 "Unexpected error compressing sourcemap: {}",

@@ -51,7 +51,7 @@ use bun_core::paths::resolve_path::{join_string_buf, join_z_buf};
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 use bun_sys::FdExt;
 use bun_sys::{self as sys, E, Fd, Tag};
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 #[cfg(not(windows))]
 use bun_core::wyhash::hash;
 
@@ -1130,7 +1130,7 @@ impl Linux {
 /// The kernel `struct inotify_event` header. Shared with the bundler watcher;
 /// field naming there is `watch_descriptor` / `name_len`.
 #[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_watcher::inotify_watcher::Event as InotifyEvent;
+use bun_sys::watcher::inotify_watcher::Event as InotifyEvent;
 
 // ────────────────────────────────────────────────────────────────────────────────
 // Darwin

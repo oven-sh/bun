@@ -8,7 +8,7 @@ use std::sync::{Arc, Weak};
 
 use bun_uws as uws;
 // Wyhash final4 variant. NOT `Wyhash11`.
-use bun_threading::Guarded as Mutex;
+use bun_sys::threading::Guarded as Mutex;
 use bun_core::wyhash::Wyhash;
 
 /// Owned, NUL-terminated C-string slice. The

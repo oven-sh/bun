@@ -32,7 +32,7 @@ pub mod winsock {
 /// `c_ares` and `c_ares_draft` resolve to the same module.
 pub use c_ares_draft as c_ares;
 
-// Crate-root re-exports for callers that reference `bun_cares_sys::ares_inet_*`
+// Crate-root re-exports for callers that reference `bun_sys::cares::ares_inet_*`
 // directly (e.g. `bun_boringssl`).
 pub use c_ares::{ares_inet_ntop, ares_inet_pton};
 

@@ -11,7 +11,7 @@ use bun_core::ptr::tagged_pointer::TagType;
 use bun_sourcemap::internal_source_map::FindCache;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 use bun_sourcemap::{self as SourceMap, InternalSourceMap, ParsedSourceMap};
-use bun_threading::Mutex;
+use bun_sys::threading::Mutex;
 use bun_core::wyhash::hash;
 
 pub struct SavedSourceMap {

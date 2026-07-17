@@ -19,7 +19,7 @@ use crate::bun_json as JSON;
 use bun_core::zstr;
 use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
-use bun_perf::system_timer::Timer;
+use bun_sys::perf::system_timer::Timer;
 use bun_resolver::fs::{self as Fs, FileSystem};
 use bun_core::semver::{self as Semver, ExternalString, String as SemverString};
 use bun_sha_hmac as Crypto;

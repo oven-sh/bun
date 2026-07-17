@@ -225,7 +225,7 @@ impl BuildCommand {
         this_transpiler.options.allow_unresolved =
             if let Some(a) = ctx.bundler_options.allow_unresolved.as_ref() {
                 options::AllowUnresolved::from_strings(a.clone().into_boxed_slice(), |p, s| {
-                    bun_glob::r#match(p, s).matches()
+                    bun_sys::glob::r#match(p, s).matches()
                 })
             } else {
                 options::AllowUnresolved::All

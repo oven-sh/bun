@@ -9,12 +9,12 @@ mod _impl {
         self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
         WorkPoolTask,
     };
-    use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
+    use bun_sys::zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
     // #[repr(u8)] enum shared by all native-zlib stream types.
-    use bun_zlib::NodeMode;
+    use bun_sys::zlib::NodeMode;
 
     // `jsc.Codegen.JSNativeZstd` cached-property accessors (`mod js`) are emitted
     // by `__impl_compression_stream!` below — wraps the

@@ -7,7 +7,7 @@ use bun_ast::{self as js_ast, Expr, G, LocRef, S, Stmt, Symbol};
 use bun_ast::{ImportRecord, import_record};
 use bun_core::collections::VecExt;
 use bun_core::strings;
-use bun_crash_handler::handle_oom::handle_oom;
+use bun_sys::crash_handler::handle_oom::handle_oom;
 
 // `stmts` is a sub-slice of the input `stmts` argument (in-place compacted),
 // so it borrows from the caller.

@@ -52,7 +52,7 @@ macro_rules! create_source_code_getter {
                                     $code_path,
                                     ".zst"
                                 ));
-                            let bytes = ::bun_zstd::decompress_alloc(compressed)
+                            let bytes = ::bun_sys::zstd::decompress_alloc(compressed)
                                 .expect("embedded node-fallback polyfill: invalid zstd frame");
                             String::from_utf8(bytes)
                                 .expect("embedded node-fallback polyfill: invalid UTF-8")

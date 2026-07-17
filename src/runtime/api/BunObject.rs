@@ -106,7 +106,7 @@ use bun_core::paths::PathBuffer;
 use bun_core::paths::WPathBuffer;
 use bun_shell_parser::braces as Braces;
 use bun_sys::{self as sys, Fd, FdExt as _};
-use bun_zlib as zlib;
+use bun_sys::zlib as zlib;
 
 use crate::api::csrf_jsc;
 use crate::api::{HashObject, JSON5Object, TOMLObject, UnsafeObject, YAMLObject};
@@ -633,7 +633,7 @@ pub(crate) fn which(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
         }
     }
 
-    if let Some(bin_path) = bun_which::which(
+    if let Some(bin_path) = bun_sys::which::which(
         &mut *path_buf,
         path_str.slice(),
         cwd_str.slice(),
@@ -2341,7 +2341,7 @@ pub fn parse_compress_buffer_and_options(
 pub mod JSZlib {
     use super::*;
     use bun_jsc::ComptimeStringMapExt as _;
-    use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+    use bun_sys::libdeflate_sys::libdeflate as bun_libdeflate;
 
     /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
     #[inline]
@@ -2825,16 +2825,16 @@ pub mod JSZstd {
         let input = buffer.slice();
 
         // Calculate max compressed size
-        let max_size = bun_zstd::compress_bound(input.len());
+        let max_size = bun_sys::zstd::compress_bound(input.len());
         // The zero-fill
         // here is output-irrelevant (zstd overwrites the prefix it reports).
         // PERF: use Box::new_uninit_slice — profile if hot.
         let mut output = vec![0u8; max_size];
 
         // Perform compression with context
-        let compressed_size = match bun_zstd::compress(&mut output, input, Some(level)) {
-            bun_zstd::Result::Success(size) => size,
-            bun_zstd::Result::Err(err) => {
+        let compressed_size = match bun_sys::zstd::compress(&mut output, input, Some(level)) {
+            bun_sys::zstd::Result::Success(size) => size,
+            bun_sys::zstd::Result::Err(err) => {
                 drop(output);
                 return Err(global_this
                     .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err)))
@@ -2860,7 +2860,7 @@ pub mod JSZstd {
 
         let input = buffer.slice();
 
-        let output = match bun_zstd::decompress_alloc(input) {
+        let output = match bun_sys::zstd::decompress_alloc(input) {
             Ok(v) => v,
             Err(err) => {
                 return Err(global_this
@@ -2895,7 +2895,7 @@ pub mod JSZstd {
             if self.is_compress {
                 // Compression path
                 // Calculate max compressed size
-                let max_size = bun_zstd::compress_bound(input.len());
+                let max_size = bun_sys::zstd::compress_bound(input.len());
                 // Surface OOM
                 // as a rejected promise instead of aborting. The zero-fill is
                 // output-irrelevant (zstd overwrites the prefix it reports).
@@ -2908,8 +2908,8 @@ pub mod JSZstd {
                 self.output = output;
 
                 // Perform compression
-                self.output = match bun_zstd::compress(&mut self.output, input, Some(self.level)) {
-                    bun_zstd::Result::Success(size) => 'blk: {
+                self.output = match bun_sys::zstd::compress(&mut self.output, input, Some(self.level)) {
+                    bun_sys::zstd::Result::Success(size) => 'blk: {
                         // Resize to actual compressed size
                         if size < self.output.len() {
                             let mut out = core::mem::take(&mut self.output);
@@ -2919,7 +2919,7 @@ pub mod JSZstd {
                         }
                         break 'blk core::mem::take(&mut self.output);
                     }
-                    bun_zstd::Result::Err(err) => {
+                    bun_sys::zstd::Result::Err(err) => {
                         self.output = Vec::new();
                         self.error_message = Some(err);
                         return;
@@ -2927,7 +2927,7 @@ pub mod JSZstd {
                 };
             } else {
                 // Decompression path
-                self.output = match bun_zstd::decompress_alloc(input) {
+                self.output = match bun_sys::zstd::decompress_alloc(input) {
                     Ok(v) => v,
                     Err(_) => {
                         self.error_message = Some(b"Decompression failed");

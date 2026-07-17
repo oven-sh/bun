@@ -408,8 +408,8 @@ pub(crate) fn start_time() -> i128 {
 // Owned `Box<[u8]>` so
 // `process.title = "..."` (set_title) drops the previous value instead of
 // leaking. The mutex provides exclusion between `get_title`/`set_title`.
-pub(crate) static Bun__Node__ProcessTitle: bun_threading::Guarded<Option<Box<[u8]>>> =
-    bun_threading::Guarded::new(None);
+pub(crate) static Bun__Node__ProcessTitle: bun_sys::threading::Guarded<Option<Box<[u8]>>> =
+    bun_sys::threading::Guarded::new(None);
 
 /// Backing storage for [`cli_arena`]. Written exactly once in [`Cli::start`]
 /// during single-threaded process startup (before `Command::start`, hence
@@ -458,8 +458,8 @@ pub(crate) fn cli_dupe(s: &[u8]) -> &'static [u8] {
 /// caller already owns a large buffer (e.g. tarball, request body) so
 /// [`cli_dupe`]'s memcpy + transient double-peak is avoided. Thread-safe.
 pub(crate) fn cli_adopt(b: Box<[u8]>) -> &'static [u8] {
-    static ADOPTED: bun_threading::Guarded<Vec<Box<[u8]>>> =
-        bun_threading::Guarded::new(Vec::new());
+    static ADOPTED: bun_sys::threading::Guarded<Vec<Box<[u8]>>> =
+        bun_sys::threading::Guarded::new(Vec::new());
     let (ptr, len) = (b.as_ptr(), b.len());
     ADOPTED.lock().push(b);
     // SAFETY: `ADOPTED` is never cleared/drained for the process lifetime; the
@@ -552,11 +552,11 @@ pub mod cli {
     pub fn start() {
         IS_MAIN_THREAD.with(|c| c.set(true));
         // Mirror the threadlocal into the crash-handler crate's global so
-        // `bun_crash_handler::cli_state::is_main_thread()` (used to print the
+        // `bun_sys::crash_handler::cli_state::is_main_thread()` (used to print the
         // `panic(main thread): …` header) returns true on this thread. The
         // crash handler lives in a lower tier and can't read `IS_MAIN_THREAD`
         // directly, so it compares against a stored OS tid instead.
-        bun_crash_handler::cli_state::set_main_thread_id(bun_threading::current_thread_id());
+        bun_sys::crash_handler::cli_state::set_main_thread_id(bun_sys::threading::current_thread_id());
         bun_core::set_start_time(bun_core::time::nano_timestamp());
         // SAFETY: single-threaded process startup
         unsafe { (*LOG_.get()).write(bun_ast::Log::init()) };
@@ -567,7 +567,7 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_core::alloc_impl::Arena::new()) };
 
-        // (The panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
+        // (The panic hook is installed by `bun_sys::crash_handler::init()` in bun_bin.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -579,7 +579,7 @@ pub mod cli {
             let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
                 bun_core::Output::error_writer(),
             ));
-            bun_crash_handler::handle_root_error(err, None);
+            bun_sys::crash_handler::handle_root_error(err, None);
         }
     }
 }

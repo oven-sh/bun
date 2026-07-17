@@ -45,4 +45,3 @@ bun_ast.workspace = true
 bun_ptr.workspace = true
 bun_semver.workspace = true
 bun_sys.workspace = true
-bun_zstd.workspace = true

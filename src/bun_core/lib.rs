@@ -1138,7 +1138,7 @@ macro_rules! enum_unwrap {
 
 /// Unwrap a `Result`, calling `outOfMemory()` on
 /// `Err`. The full multi-arm version (which narrows mixed error sets) lives in
-/// `bun_crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
+/// `bun_sys::crash_handler::handle_oom`; that crate sits *above* `bun_core` in the
 /// dep graph, so this tier-0 alias is the OOM-only arm — sufficient for the
 /// `Result<T, AllocError>` / `Result<T, Error>` callers in `js_parser`,
 /// `bake/DevServer`, etc. that spell it `bun_core::handle_oom`.
@@ -1154,12 +1154,12 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 /// Extension-method form of [`handle_oom`]: `.unwrap_or_oom()` on any
 /// `Result<T, E>`. The *loose* idiom
 /// that panics on **any** `Err`, not just OOM-only error sets. For the
-/// narrowing version see `bun_crash_handler::HandleOom`.
+/// narrowing version see `bun_sys::crash_handler::HandleOom`.
 ///
 /// This is intentionally a blanket `impl<T, E>` — it matches the
 /// existing `bun_core::handle_oom` free fn and the two pre-existing local
 /// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
-/// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
+/// `error{OutOfMemory}`-only whitelist should use `bun_sys::crash_handler::HandleOom`
 /// instead.
 pub trait UnwrapOrOom {
     type Output;
@@ -1176,7 +1176,7 @@ impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
 
 /// No-op tier-0 shim that keeps call-site shape (panics already carry a
 /// backtrace); the real reporter lives above in
-/// `bun_crash_handler::handle_error_return_trace`.
+/// `bun_sys::crash_handler::handle_error_return_trace`.
 #[inline(always)]
 pub fn handle_error_return_trace<E>(_err: E) {}
 
@@ -2861,7 +2861,7 @@ pub mod ffi {
     /// bionic spells it `__errno()`, Darwin/BSD spell it `__error()`, and the
     /// Windows CRT spells it `_errno()`. Every higher-tier crate routes through
     /// this — `bun_core::errno::posix::errno`, `bun_sys::last_errno`,
-    /// `bun_sys::c::errno_location`, `bun_platform::linux` — instead of each
+    /// `bun_sys::c::errno_location`, `bun_sys::platform::linux` — instead of each
     /// re-deriving the same target_os→symbol mapping.
     ///
     /// Obtaining the pointer has no preconditions (the per-libc TLS accessor

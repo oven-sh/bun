@@ -7,7 +7,7 @@ use bun_core::{Timespec, TimespecMockMode};
 use bun_core::libuv_sys::UvHandle as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
-use bun_threading::Guarded;
+use bun_sys::threading::Guarded;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).

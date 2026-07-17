@@ -3,7 +3,7 @@
 //! The full implementation lives in `napi_body.rs` and depends on
 //! `bun_jsc::{AnyTask, ConcurrentTask, Debugger, EventLoop, Strong, Task,
 //! VirtualMachine}` method surface, `bun_core::collections::LinearFifo`,
-//! `bun_threading::{Condvar, Mutex, WorkPool}`, `bun_output` macros.
+//! `bun_sys::threading::{Condvar, Mutex, WorkPool}`, `bun_output` macros.
 
 #[path = "napi_body.rs"]
 pub(crate) mod napi_body;
@@ -21,5 +21,5 @@ bun_opaque::opaque_ffi! {
 // ─── opaque type surface ─────────────────────────────────────────────────────
 // TODO(blocked): bun_jsc::EventLoop (method surface)
 // TODO(blocked): bun_core::collections::LinearFifo
-// TODO(blocked): bun_threading::Condvar
+// TODO(blocked): bun_sys::threading::Condvar
 pub struct ThreadsafeFunction(());

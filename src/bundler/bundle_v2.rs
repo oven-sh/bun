@@ -92,7 +92,7 @@ pub struct BundleV2<'a> {
     pub linker: LinkerContext<'a>,
     // The hot reloader (`jsc::hot_reloader::NewHotReloader<BundleV2, …>`) owns the
     // boxed `Watcher`; bundler only ever calls `Watcher::add_file` on it.
-    pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
+    pub bun_watcher: Option<NonNull<bun_sys::watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle>,
     /// CYCLEBREAK GENUINE: erased `bake::DevServer` (see `dispatch::DevServerHandle`).
@@ -222,7 +222,7 @@ impl<'a> BundleV2<'a> {
     /// Centralises the two open-coded `unsafe { ptr.as_mut() }` sites so the
     /// liveness/exclusivity argument lives in one place.
     #[inline]
-    pub fn bun_watcher_mut(&mut self) -> Option<&mut bun_watcher::Watcher> {
+    pub fn bun_watcher_mut(&mut self) -> Option<&mut bun_sys::watcher::Watcher> {
         // SAFETY: BACKREF — heap-owned by hot_reloader / DevServer (set via
         // `install_bun_watcher`), live for the process under `--watch`. The
         // watcher storage is disjoint from `self`; `&mut self` excludes any
@@ -350,7 +350,7 @@ pub mod bv2_impl {
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
-    use bun_threading::ThreadPool as ThreadPoolLib;
+    use bun_sys::threading::ThreadPool as ThreadPoolLib;
 
     /// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs without
     /// depending on the full DevServer. Move-in pass keeps these as the canonical defs;
@@ -3668,7 +3668,7 @@ pub mod bv2_impl {
             self.graph
                 .pool()
                 .worker_pool()
-                .schedule(bun_threading::thread_pool::Batch::from(unsafe {
+                .schedule(bun_sys::threading::thread_pool::Batch::from(unsafe {
                     core::ptr::addr_of_mut!((*task).task)
                 }));
 
@@ -4390,13 +4390,13 @@ pub mod bv2_impl {
                             // TODO: support explicit watchFiles array. this is not done
                             // right now because DevServer requires a table to map
                             // watched files and dirs to their respective dependants.
-                            let fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+                            let fd = if bun_sys::watcher::REQUIRES_FILE_DESCRIPTORS {
                                 let mut buf = bun_core::paths::path_buffer_pool::get();
                                 // On kqueue platforms paths are already
                                 // posix-separated so `z()` alone suffices.
                                 match bun_sys::open(
                                     bun_core::paths::resolve_path::z(load.path.as_ref(), &mut *buf),
-                                    bun_watcher::WATCH_OPEN_FLAGS,
+                                    bun_sys::watcher::WATCH_OPEN_FLAGS,
                                     0,
                                 ) {
                                     bun_sys::Result::Ok(fd) => fd,
@@ -4411,7 +4411,7 @@ pub mod bv2_impl {
                                 fd,
                                 &load.path,
                                 bun_core::wyhash::hash(load.path.as_ref()) as u32,
-                                bun_watcher::Loader(code.loader as u8),
+                                bun_sys::watcher::Loader(code.loader as u8),
                                 bun_sys::Fd::INVALID,
                                 None,
                             );
@@ -6855,7 +6855,7 @@ pub mod bv2_impl {
                                 parse_result.watcher_data.fd,
                                 source_path,
                                 bun_core::wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
+                                bun_sys::watcher::Loader(loader as u8),
                                 parse_result.watcher_data.dir_fd,
                                 None,
                             );

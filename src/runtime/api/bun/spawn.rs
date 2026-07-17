@@ -16,6 +16,6 @@
 #[path = "spawn/stdio.rs"]
 pub mod stdio;
 
-pub use ::bun_spawn::posix_spawn::{BunSpawn, PosixSpawn, bun_spawn, posix_spawn};
+pub use ::bun_spawn::posix_spawn::{BunSpawn, PosixSpawn, bun_spawn_impl as bun_spawn, posix_spawn};
 
 // `process` is re-exported from the `bun_spawn` workspace crate.

@@ -1354,14 +1354,14 @@ impl AsyncModule {
                             .bun_watcher
                             .cast::<crate::hot_reloader::ImportWatcher>()
                     };
-                    // `bun_watcher::PackageJSON` is an opaque
+                    // `bun_sys::watcher::PackageJSON` is an opaque
                     // forward-decl of `bun_resolver::PackageJSON`;
                     // the watcher only stores the pointer, so cast through.
                     // SAFETY: `package_json` (when set) is a VM-lifetime
                     // backref — outlives the watcher entry.
                     let package_json = self
                         .package_json
-                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_watcher::PackageJSON>() });
+                        .map(|p| unsafe { &*p.as_ptr().cast::<bun_sys::watcher::PackageJSON>() });
                     let _ = watcher.add_file::<true>(
                         fd_,
                         path.text,

@@ -341,7 +341,7 @@ impl<'a> Scanner<'a> {
         };
 
         for pattern in self.path_ignore_patterns {
-            if bun_glob::r#match(pattern, rel_path).matches() {
+            if bun_sys::glob::r#match(pattern, rel_path).matches() {
                 return true;
             }
             // Only try trailing separator for ** patterns (e.g. "vendor/**").
@@ -349,7 +349,7 @@ impl<'a> Scanner<'a> {
             // directories because * doesn't cross directory boundaries.
             if let Some(p) = rel_with_slash {
                 if strings::index_of(pattern, b"**").is_some() {
-                    if bun_glob::r#match(pattern, p).matches() {
+                    if bun_sys::glob::r#match(pattern, p).matches() {
                         return true;
                     }
                 }

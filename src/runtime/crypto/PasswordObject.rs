@@ -17,7 +17,7 @@ use bun_jsc::ConcurrentTask::ConcurrentTask;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{JSPromise, JSPromiseStrong};
-use bun_threading::work_pool::WorkPool;
+use bun_sys::threading::work_pool::WorkPool;
 
 use crate::node::StringOrBuffer;
 
@@ -582,7 +582,7 @@ impl<Op: PasswordOp> Drop for PasswordJob<Op> {
     }
 }
 
-bun_threading::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
+bun_sys::owned_task!([Op: PasswordOp] PasswordJob<Op>, task);
 
 impl<Op: PasswordOp> PasswordJob<Op> {
     // `owned_task!` requires `fn run_owned(self: Box<Self>)`; clippy::boxed_local

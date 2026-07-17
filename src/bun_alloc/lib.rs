@@ -702,7 +702,7 @@ pub fn buf_print_len(
 // below), so the pointee always outlives the guard.
 //
 // LAYERING: `bun_alloc` is below `bun_threading` in the crate graph, so the
-// futex-backed `bun_threading::Mutex` is unavailable here; `std::sync` (itself
+// futex-backed `bun_sys::threading::Mutex` is unavailable here; `std::sync` (itself
 // futex-backed since Rust 1.62) is the dependency-free stand-in.
 pub struct Mutex(std::sync::Mutex<()>);
 impl Mutex {

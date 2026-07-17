@@ -7,7 +7,7 @@ use crate::cli::publish_command as Publish;
 use bun_core::alloc_impl::AllocError;
 use bun_core::collections::StringHashMap;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
-use bun_glob as glob;
+use bun_sys::glob as glob;
 use bun_install::package_manager::LogLevel;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
 use bun_install::{Dependency, Lockfile, PackageManager};
@@ -19,7 +19,7 @@ use bun_parsers::json as JSON;
 // lift via `bun_ast::Expr::from(t2_expr)` at the call site.
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+use bun_sys::libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
 use bun_core::paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`, not on the `std::borrow::Cow`
@@ -29,7 +29,7 @@ type CowString = CowSlice<u8>;
 use crate::cli::run_command::RunCommand;
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
-use bun_glob::matcher::MatchResult as GlobMatchResult;
+use bun_sys::glob::matcher::MatchResult as GlobMatchResult;
 use bun_core::paths::resolve_path;
 use bun_core::semver as Semver;
 use bun_sha_hmac::sha;
@@ -1754,7 +1754,7 @@ type BufferedFileReader = bun_core::deprecated::BufferedReader<{ 1024 * 512 }, b
 // Local shims / extension traits for upstream API gaps
 // ───────────────────────────────────────────────────────────────────────────
 
-use bun_libarchive::lib::Result as ArchiveResult;
+use bun_sys::libarchive::lib::Result as ArchiveResult;
 
 /// NUL-terminated literal → `&'static ZStr` (replacement for missing
 /// `ZStr::from_lit`).

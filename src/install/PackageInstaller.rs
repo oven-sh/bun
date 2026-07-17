@@ -2114,7 +2114,7 @@ impl<'a> PackageInstaller<'a> {
                         #[cfg(bun_debug)]
                         {
                             let t = cause.debug_trace;
-                            bun_crash_handler::dump_stack_trace(&t.trace(), Default::default());
+                            bun_sys::crash_handler::dump_stack_trace(&t.trace(), Default::default());
                         }
                         self.summary.fail += 1;
                     }

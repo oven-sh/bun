@@ -27,10 +27,10 @@ use bun_resolver::fs as Fs;
 use bun_resolver::node_fallbacks;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
 use bun_sys::{self, Dir, Fd, FdExt as _, File, OpenDirOptions};
-use bun_threading::Guarded;
-use bun_threading::unbounded_queue::{self, UnboundedQueue};
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
-use bun_watcher::Watcher;
+use bun_sys::threading::Guarded;
+use bun_sys::threading::unbounded_queue::{self, UnboundedQueue};
+use bun_sys::threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_sys::watcher::Watcher;
 
 use crate::async_module::AsyncModule;
 use crate::event_loop::{ConcurrentTask, EventLoop};
@@ -741,7 +741,7 @@ impl TranspilerJob {
         transpiler.linker.resolver = ptr::addr_of_mut!(transpiler.resolver).cast();
 
         let mut fd: Option<Fd> = None;
-        let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
+        let mut package_json: Option<&'static bun_sys::watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
 
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set during VM init

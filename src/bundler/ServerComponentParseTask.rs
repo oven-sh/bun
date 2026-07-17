@@ -9,7 +9,7 @@ use bun_core::alloc_impl::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_core::collections::VecExt;
 
 use bun_ast::{Loc, Log, Source};
-use bun_threading::thread_pool::Task as ThreadPoolTask;
+use bun_sys::threading::thread_pool::Task as ThreadPoolTask;
 
 use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};

@@ -73,8 +73,8 @@ impl GetAddrInfo {
         }
     }
 
-    pub fn to_cares(&self) -> bun_cares_sys::c_ares_draft::AddrInfo_hints {
-        let mut hints: bun_cares_sys::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
+    pub fn to_cares(&self) -> bun_sys::cares::c_ares_draft::AddrInfo_hints {
+        let mut hints: bun_sys::cares::c_ares_draft::AddrInfo_hints = bun_core::ffi::zeroed();
 
         hints.ai_family = self.options.family.to_libc();
         hints.ai_socktype = self.options.socktype.to_libc();
@@ -384,7 +384,7 @@ pub fn address_to_string(address: &Address) -> Result<BunString, AllocError> {
             let mut buf = [0u8; 64]; // >= INET6_ADDRSTRLEN (46) + "%4294967295" (11)
             // SAFETY: sin6_addr is a valid in6_addr; buf len fits INET6_ADDRSTRLEN.
             let n = match unsafe {
-                bun_cares_sys::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
+                bun_sys::cares::ntop(sock::AF_INET6, (&raw const v6.sin6_addr).cast(), &mut buf)
             } {
                 Some(s) => s.len(),
                 None => return Ok(BunString::EMPTY),

@@ -2,7 +2,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bun_core::alloc_impl::Arena;
 use bun_core::String as BunString;
-use bun_glob::BunGlobWalker as GlobWalker;
+use bun_sys::glob::BunGlobWalker as GlobWalker;
 use bun_jsc::bun_string_jsc;
 use bun_jsc::concurrent_promise_task::{ConcurrentPromiseTask, ConcurrentPromiseTaskContext};
 use bun_jsc::{
@@ -505,7 +505,7 @@ impl Glob {
         // `str` drops at scope exit.
 
         Ok(JSValue::from(
-            bun_glob::r#match(&self.pattern, str.slice()).matches(),
+            bun_sys::glob::r#match(&self.pattern, str.slice()).matches(),
         ))
     }
 }

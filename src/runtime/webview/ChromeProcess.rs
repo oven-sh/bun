@@ -43,7 +43,7 @@ use bun_sys::{self, Fd};
 #[cfg(not(windows))]
 use bun_sys::{FdExt as _, O};
 #[cfg(not(windows))]
-use bun_which::which;
+use bun_sys::which::which;
 
 declare_scope!(Chrome, hidden);
 

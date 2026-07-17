@@ -10,8 +10,8 @@ use bun_core::paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_core::semver::String as SemverString;
 use bun_sys::{self as sys, Fd, FdExt};
-use bun_threading::IntrusiveWorkTask as _;
-use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
+use bun_sys::threading::IntrusiveWorkTask as _;
+use bun_sys::threading::thread_pool::{Batch, Node as ThreadPoolNode, Task as ThreadPoolTask};
 use bun_core::wyhash::Wyhash11;
 
 use crate::package_install::PackageInstall;
@@ -50,15 +50,15 @@ pub struct PatchTask {
     pub callback: Callback,
     pub task: ThreadPoolTask,
     pub pre: bool,
-    pub next: bun_threading::Link<PatchTask>,
+    pub next: bun_sys::threading::Link<PatchTask>,
 }
 
-bun_threading::intrusive_work_task!(PatchTask, task);
+bun_sys::intrusive_work_task!(PatchTask, task);
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue(PatchTask, .next)`.
-unsafe impl bun_threading::Linked for PatchTask {
+unsafe impl bun_sys::threading::Linked for PatchTask {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }
@@ -777,7 +777,7 @@ impl PatchTask {
                 callback: Self::run_from_thread_pool,
             },
             pre: false,
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
         });
 
         bun_core::heap::into_raw(pt)
@@ -855,7 +855,7 @@ impl PatchTask {
                 callback: Self::run_from_thread_pool,
             },
             pre: false,
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
         });
 
         bun_core::heap::into_raw(pt)

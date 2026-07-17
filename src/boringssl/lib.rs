@@ -7,7 +7,7 @@ use core::ptr;
 use std::cell::Cell;
 
 pub use bun_boringssl_sys as boring;
-use bun_cares_sys as c_ares;
+use bun_sys::cares as c_ares;
 use bun_core::strings;
 
 // MOVE_DOWN: lives here so `boringssl` does not depend on `bun_runtime`

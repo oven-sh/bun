@@ -3,7 +3,7 @@ use core::mem::MaybeUninit;
 use bun_ast::{self, ExprData, Log};
 use bun_core::Global;
 use bun_core::{ZStr, strings};
-use bun_glob as glob;
+use bun_sys::glob as glob;
 use bun_parsers::json;
 #[allow(unused_imports)]
 use bun_core::paths::{self, PathBuffer, platform, resolve_path};

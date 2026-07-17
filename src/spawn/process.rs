@@ -25,7 +25,7 @@ use uv::{UvHandle as _, UvStream as _};
 
 // posix_spawn(2) wrappers — owned by the `bun_spawn_sys` leaf crate.
 #[cfg(unix)]
-use bun_spawn_sys::posix_spawn::posix_spawn;
+use bun_sys::spawn_sys::posix_spawn::posix_spawn;
 /// `posix_spawn::WaitPidResult` — re-exported from `bun_spawn_sys`. `status`
 /// is `u32` there; `Status::from` casts before matching.
 #[cfg(unix)]
@@ -58,10 +58,10 @@ bun_core::declare_scope!(PROCESS, visible);
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
 // Re-export here so existing `bun_spawn::process::*` paths keep resolving.
-pub use bun_spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
+pub use bun_sys::spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
 #[cfg(windows)]
-pub use bun_spawn_sys::uv_getrusage;
-pub use bun_spawn_sys::{
+pub use bun_sys::spawn_sys::uv_getrusage;
+pub use bun_sys::spawn_sys::{
     Argv, CStrPtr, Dup2, Envp, ExtraPipe, FdT, PidFdType, PidT, PosixSpawnOptions,
     PosixSpawnResult, PosixStdio, Rusage, StdioKind,
 };
@@ -978,7 +978,7 @@ pub mod waiter_thread_posix {
     use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
     use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
     use bun_event_loop::task_tag;
-    use bun_threading::UnboundedQueue;
+    use bun_sys::threading::UnboundedQueue;
 
     pub struct WaiterThreadPosix {
         pub started: AtomicU32,
@@ -1024,13 +1024,13 @@ pub mod waiter_thread_posix {
     /// drained on the waiter thread.
     pub struct TaskQueueEntry<T: 'static> {
         pub process: *mut T,
-        pub next: bun_threading::Link<TaskQueueEntry<T>>,
+        pub next: bun_sys::threading::Link<TaskQueueEntry<T>>,
     }
 
     // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TaskQueueEntry<T>>`.
-    unsafe impl<T: 'static> bun_threading::Linked for TaskQueueEntry<T> {
+    unsafe impl<T: 'static> bun_sys::threading::Linked for TaskQueueEntry<T> {
         #[inline]
-        unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+        unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
             // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
             unsafe { core::ptr::addr_of!((*item).next) }
         }
@@ -1143,7 +1143,7 @@ pub mod waiter_thread_posix {
             // freshly boxed `TaskQueueEntry`; `into_raw` yields a valid owned pointer.
             let entry = bun_core::heap::into_raw(Box::new(TaskQueueEntry {
                 process,
-                next: bun_threading::Link::new(),
+                next: bun_sys::threading::Link::new(),
             }));
             // SAFETY: `entry` was just `into_raw`'d from a live Box (non-null).
             self.queue
@@ -1285,12 +1285,12 @@ pub mod waiter_thread_posix {
     impl WaiterThreadPosix {
         #[inline]
         pub fn set_should_use_waiter_thread() {
-            bun_spawn_sys::waiter_thread_flag::set();
+            bun_sys::spawn_sys::waiter_thread_flag::set();
         }
 
         #[inline]
         pub fn should_use_waiter_thread() -> bool {
-            bun_spawn_sys::waiter_thread_flag::get()
+            bun_sys::spawn_sys::waiter_thread_flag::get()
         }
 
         pub fn append(process: *mut Process) {
@@ -1313,7 +1313,7 @@ pub mod waiter_thread_posix {
         }
 
         pub fn reload_handlers() {
-            if !bun_spawn_sys::waiter_thread_flag::get() {
+            if !bun_sys::spawn_sys::waiter_thread_flag::get() {
                 return;
             }
 
@@ -1337,7 +1337,7 @@ pub mod waiter_thread_posix {
     }
 
     pub fn init() -> Result<(), std::io::Error> {
-        debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
+        debug_assert!(bun_sys::spawn_sys::waiter_thread_flag::get());
 
         if instance_ref().started.fetch_max(1, Ordering::Relaxed) > 0 {
             return Ok(());
@@ -1745,7 +1745,7 @@ mod spawn_process_body {
     use bun_sys::FdExt as _;
 
     #[cfg(unix)]
-    pub use bun_spawn_sys::spawn_process_posix;
+    pub use bun_sys::spawn_sys::spawn_process_posix;
 
     /// RAII fd owner — closes the wrapped [`Fd`] on drop iff it is valid.
     /// Used by `sync::spawn_posix` (no-orphans kqueue, ppid pidfd).
@@ -2859,14 +2859,14 @@ mod spawn_process_body {
         }
 
         // Forward signals from parent to the child process.
-        // FFI decls live in `bun_spawn_sys::ffi` (leaf -sys crate).
+        // FFI decls live in `bun_sys::spawn_sys::ffi` (leaf -sys crate).
         #[cfg(unix)]
-        use bun_spawn_sys::ffi::{
+        use bun_sys::spawn_sys::ffi::{
             Bun__currentSyncPID, Bun__registerSignalsForForwarding,
             Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding,
         };
         #[cfg(target_os = "macos")]
-        use bun_spawn_sys::ffi::{
+        use bun_sys::spawn_sys::ffi::{
             Bun__noOrphans_begin, Bun__noOrphans_onExit, Bun__noOrphans_onFork,
             Bun__noOrphans_releaseKq,
         };
@@ -2888,7 +2888,7 @@ mod spawn_process_body {
         impl Drop for SignalForwarding {
             fn drop(&mut self) {
                 Bun__unregisterSignalsForForwarding();
-                bun_crash_handler::reset_on_posix();
+                bun_sys::crash_handler::reset_on_posix();
             }
         }
 
@@ -3032,7 +3032,7 @@ mod spawn_process_body {
             // `reap_child(pid)` path below; the inherited PDEATHSIG on the main
             // thread still tears the whole process down if our parent dies.
             let no_orphans = ParentDeathWatchdog::is_enabled()
-                && bun_spawn_sys::pdeathsig::is_arming_thread()
+                && bun_sys::spawn_sys::pdeathsig::is_arming_thread()
                 && !(cfg!(target_os = "macos") && options.use_execve_on_macos);
 
             // Snapshot pre-existing direct children so the disarm defer can tell

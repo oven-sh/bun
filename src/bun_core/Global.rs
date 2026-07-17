@@ -43,13 +43,13 @@ pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
 }
 
-/// Set by `bun_crash_handler::init()` once it has installed its segfault
+/// Set by `bun_sys::crash_handler::init()` once it has installed its segfault
 /// handlers. `raise_ignoring_panic_handler` consults this to decide whether
 /// the crash signals need resetting to `SIG_DFL` before re-raising.
 pub static CRASH_HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
 /// VEH handle returned by `AddVectoredExceptionHandler`, written by
-/// `bun_crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
+/// `bun_sys::crash_handler::init()` on Windows. `raise_ignoring_panic_handler`
 /// removes it before re-raising so the signal goes to the OS default.
 #[cfg(windows)]
 pub static WINDOWS_SEGFAULT_HANDLE: core::sync::atomic::AtomicPtr<core::ffi::c_void> =
@@ -163,7 +163,7 @@ pub type WriteStackTraceLimits = DumpStackTraceOptions;
 /// deliberate debug-UX downgrade for the *stored*-trace path
 /// (ref_count leak reports); the *current*-stack path below
 /// uses `std::backtrace` and stays symbolicated. Crash-report paths that need
-/// llvm-symbolizer / pdb-addr2line call `bun_crash_handler::dump_stack_trace`
+/// llvm-symbolizer / pdb-addr2line call `bun_sys::crash_handler::dump_stack_trace`
 /// directly — that crate sits above us so it owns the rich impl without a hook.
 ///
 /// `limits.stop_at_jsc_llint` / `skip_stdlib` / `skip_*_patterns` are accepted
@@ -186,7 +186,7 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
 }
 
 /// Capture and dump the current call stack. Dispatches to
-/// `bun_crash_handler::dump_current_stack_trace`.
+/// `bun_sys::crash_handler::dump_current_stack_trace`.
 /// The upward call is routed through a link-time `extern "Rust"`
 /// symbol defined by `bun_crash_handler` so the function pointer lives in
 /// read-only `.text` instead of a writable `AtomicPtr` slot — memory corruption
@@ -643,7 +643,7 @@ pub fn exit(code: u32) -> ! {
     crate::features::EXITED.fetch_add(1, Ordering::Relaxed);
 
     // If we are crashing, allow the crash handler to finish it's work.
-    // MOVE_DOWN: bun_crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
+    // MOVE_DOWN: bun_sys::crash_handler::sleep_forever_if_another_thread_is_crashing → bun_core.
     crate::sleep_forever_if_another_thread_is_crashing();
 
     #[cfg(debug_assertions)]

@@ -1507,7 +1507,7 @@ impl CommandLineReporter {
                 let rel = resolve_path::relative(relative_dir, entry.source_url.slice());
                 let mut skip = false;
                 for p in &opts.ignore_patterns {
-                    if bun_glob::r#match(p, rel).matches() {
+                    if bun_sys::glob::r#match(p, rel).matches() {
                         skip = true;
                         break;
                     }
@@ -1574,7 +1574,7 @@ impl CommandLineReporter {
                     if !opts.ignore_patterns.is_empty() {
                         let mut should_ignore = false;
                         for pattern in &opts.ignore_patterns {
-                            if bun_glob::r#match(pattern, relative_path).matches() {
+                            if bun_sys::glob::r#match(pattern, relative_path).matches() {
                                 should_ignore = true;
                                 break;
                             }
@@ -1761,7 +1761,7 @@ impl CommandLineReporter {
 
                 let mut should_ignore = false;
                 for pattern in &opts.ignore_patterns {
-                    if bun_glob::r#match(pattern, relative_path).matches() {
+                    if bun_sys::glob::r#match(pattern, relative_path).matches() {
                         should_ignore = true;
                         break;
                     }

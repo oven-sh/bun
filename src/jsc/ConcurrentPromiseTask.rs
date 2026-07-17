@@ -1,6 +1,6 @@
 use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
 use bun_io::{self as Async, KeepAlive};
-use bun_threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
+use bun_sys::threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::event_loop::EventLoop;
 use crate::js_promise::{JSPromise, Strong as JSPromiseStrong};
@@ -43,7 +43,7 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     pub ref_: KeepAlive,
 }
 
-bun_threading::intrusive_work_task!(['a, Context: ConcurrentPromiseTaskContext] ConcurrentPromiseTask<'a, Context>, task);
+bun_sys::intrusive_work_task!(['a, Context: ConcurrentPromiseTaskContext] ConcurrentPromiseTask<'a, Context>, task);
 
 // SAFETY: `ConcurrentPromiseTask` is heap-allocated and only its address crosses
 // threads via the intrusive `task` node and the concurrent queue. All access to

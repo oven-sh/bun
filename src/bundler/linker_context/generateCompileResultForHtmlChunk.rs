@@ -5,7 +5,7 @@ use bstr::BStr;
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags};
 use bun_core::strings;
-use bun_threading::thread_pool::Task as ThreadPoolLibTask;
+use bun_sys::threading::thread_pool::Task as ThreadPoolLibTask;
 use lol_html::HandlerResult;
 use lol_html::html_content::{ContentType, Element, EndTag};
 

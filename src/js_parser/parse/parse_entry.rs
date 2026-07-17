@@ -720,7 +720,7 @@ impl<'a> Parser<'a> {
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
-        let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
+        let _action_guard = bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Parse(
             self.source.path.text,
         ));
 
@@ -854,7 +854,7 @@ impl<'a> Parser<'a> {
 
         // A second guard dropped at end of `_parse` restores the previous action.
         let _visit_action_guard =
-            bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
+            bun_sys::crash_handler::scoped_action(bun_sys::crash_handler::Action::Visit(source.path.text));
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;

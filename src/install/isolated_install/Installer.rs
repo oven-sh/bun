@@ -7,7 +7,7 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_core::paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{Mutex, UnboundedQueue, thread_pool};
+use bun_sys::threading::{Mutex, UnboundedQueue, thread_pool};
 
 use bun_core::semver::String as SemverString;
 use bun_sys::{FdDirExt as _, FdExt as _};
@@ -141,7 +141,7 @@ impl<'a> Installer<'a> {
         // `PackageManager`; `Task::run` / `Task::callback` on the pool read
         // via the raw field, never this accessor). A
         // `debug_assert!(is_main_thread())` is deferred until
-        // `bun_crash_handler::cli_state::set_main_thread_id` is actually
+        // `bun_sys::crash_handler::cli_state::set_main_thread_id` is actually
         // wired at startup — today the sentinel is never set, so the assert
         // would fire unconditionally.
         unsafe { &mut *self.manager }
@@ -633,15 +633,15 @@ pub struct Task {
     pub installer: bun_core::ptr::BackRef<Installer<'static>>,
 
     pub task: thread_pool::Task,
-    pub next: bun_threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
+    pub next: bun_sys::threading::Link<Task>, // INTRUSIVE: bun.UnboundedQueue(Task, .next) link
 
     pub result: Result,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
-unsafe impl bun_threading::Linked for Task {
+unsafe impl bun_sys::threading::Linked for Task {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }

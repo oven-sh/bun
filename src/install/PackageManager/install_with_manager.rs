@@ -5,7 +5,7 @@ use bun_core::{Global, Output};
 
 use crate::bun_fs::FileSystem;
 use bun_core::{ZStr, strings};
-use bun_glob as glob;
+use bun_sys::glob as glob;
 use bun_core::semver::String as SemverString;
 
 use crate::GetJsonResult as WorkspacePackageJsonCacheResult;
@@ -56,7 +56,7 @@ pub fn install_with_manager(
         // And don't try to resolve DNS if it's an IP address.
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
-            bun_dns::internal::prefetch(
+            bun_sys::dns::internal::prefetch(
                 manager.event_loop.loop_(),
                 scope_url.hostname,
                 scope_url.get_port_auto(),

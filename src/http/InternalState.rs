@@ -279,7 +279,7 @@ impl<'a> InternalState<'a> {
             // Fast-path: use libdeflate
 
             'libdeflate: {
-                use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+                use bun_sys::libdeflate_sys::libdeflate as bun_libdeflate;
                 if !(is_final_chunk
                     && !self.flags.is_libdeflate_fast_path_disabled
                     && self.encoding.can_use_lib_deflate()

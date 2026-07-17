@@ -12,7 +12,7 @@ use core::ptr::NonNull;
 
 use bun_event_loop::AnyTask::AnyTask;
 use bun_io::KeepAlive;
-use bun_threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
+use bun_sys::threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 use crate::event_loop::ConcurrentTask;
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
@@ -55,7 +55,7 @@ pub struct AnyTaskJob<C> {
     pub ctx: C,
 }
 
-bun_threading::intrusive_work_task!([C] AnyTaskJob<C>, task);
+bun_sys::intrusive_work_task!([C] AnyTaskJob<C>, task);
 
 impl<C> Drop for AnyTaskJob<C> {
     #[inline]

@@ -5,7 +5,7 @@ use core::ffi::c_char;
 #[cfg(debug_assertions)]
 use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
 #[cfg(debug_assertions)]
-use bun_crash_handler::Error;
+use bun_sys::crash_handler::Error;
 
 // `SelfInfo`, `StackIterator`, plus the symbol-lookup helpers. The
 // frame-pointer unwinder lives in `bun_core::debug`.
@@ -14,10 +14,10 @@ mod zig_std_debug {
     pub(super) use bun_core::debug::{StackIterator, frame_address};
 
     // ── SelfInfo ─────────────────────────────────────────────────────────
-    // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
+    // D104: relocated to `bun_sys::crash_handler::debug` (lower-tier crate, also
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
-    pub(super) use bun_crash_handler::debug::{
+    pub(super) use bun_sys::crash_handler::debug::{
         Module, SelfInfo, SourceLocation, SymbolInfo, get_self_debug_info,
     };
 }
@@ -30,12 +30,12 @@ use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo}
 #[cfg(debug_assertions)]
 mod tty {
     // D089: `Config`/`Color`/`set_color` deduped to the canonical port in
-    // `bun_crash_handler::debug` (lower-tier crate; `Vec<u8>` already impls
+    // `bun_sys::crash_handler::debug` (lower-tier crate; `Vec<u8>` already impls
     // `bun_io::Write` so the generic `set_color` covers btjs's in-memory sink).
     // `detect_config_stdout` stays LOCAL — it implements a *different* detection
     // (stdout with NO_COLOR/CLICOLOR_FORCE/isatty) than crash_handler's
     // `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
-    pub(super) use bun_crash_handler::debug::{Color, TtyConfig as Config};
+    pub(super) use bun_sys::crash_handler::debug::{Color, TtyConfig as Config};
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {

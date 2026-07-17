@@ -21,7 +21,7 @@ use bun_core::paths::resolve_path::{self as Path, platform};
 use bun_core::ptr::{BackRef, ParentRef, RefPtr, ThreadSafeRefCount};
 use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
-use bun_threading::{Guarded, UnboundedQueue};
+use bun_sys::threading::{Guarded, UnboundedQueue};
 
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
@@ -81,9 +81,9 @@ type WatcherQueue = UnboundedQueue<StatWatcher>;
 // SAFETY: all four route through the same `next: *mut StatWatcher` field; the
 // atomic variants reinterpret it as `AtomicPtr<StatWatcher>` (same size/align,
 // `addr_of!` preserves provenance).
-unsafe impl bun_threading::Linked for StatWatcher {
+unsafe impl bun_sys::threading::Linked for StatWatcher {
     #[inline]
-    unsafe fn link(item: *mut Self) -> *const bun_threading::Link<Self> {
+    unsafe fn link(item: *mut Self) -> *const bun_sys::threading::Link<Self> {
         // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
         unsafe { core::ptr::addr_of!((*item).next) }
     }
@@ -538,7 +538,7 @@ impl StatWatcherScheduler {
 #[derive(bun_core::ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct StatWatcher {
-    pub next: bun_threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
+    pub next: bun_sys::threading::Link<StatWatcher>, // INTRUSIVE link for UnboundedQueue
 
     // JSC_BORROW per LIFETIMES.tsv — VM outlives the watcher. `BackRef` gives
     // safe `&VirtualMachine` projection (Deref) at every read site. Constructed
@@ -1029,7 +1029,7 @@ impl StatWatcher {
         // `args.global_this` is a `BackRef` (JSC_BORROW); safe Deref.
         let vm = args.global_this.bun_vm_ptr();
         let this = Box::new(StatWatcher {
-            next: bun_threading::Link::new(),
+            next: bun_sys::threading::Link::new(),
             // JSC_BORROW: `vm` is the live per-thread VM (never null). `From<NonNull>`
             // preserves the FFI write provenance for the `rare_data()` call in `deinit`.
             ctx: BackRef::from(core::ptr::NonNull::new(vm).expect("vm")),
@@ -1190,7 +1190,7 @@ pub(crate) struct InitialStatTask {
     task: WorkPoolTask,
 }
 
-bun_threading::owned_task!(InitialStatTask, task);
+bun_sys::owned_task!(InitialStatTask, task);
 
 impl InitialStatTask {
     /// # Safety

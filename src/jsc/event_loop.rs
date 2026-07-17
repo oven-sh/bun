@@ -35,7 +35,7 @@ pub use bun_event_loop::Task;
 pub use bun_event_loop::any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
-pub use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+pub use bun_sys::threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 pub use crate::concurrent_promise_task::ConcurrentPromiseTask;
 pub use crate::cpp_task::{ConcurrentCppTask, CppTask};
@@ -1187,7 +1187,7 @@ impl EventLoop {
 
     pub fn enqueue_task_concurrent_batch(
         &self,
-        batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
+        batch: bun_sys::threading::unbounded_queue::Batch<ConcurrentTaskItem>,
     ) {
         if cfg!(debug_assertions) {
             if self.vm_ref().has_terminated {

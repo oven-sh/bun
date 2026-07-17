@@ -267,7 +267,7 @@ pub struct VirtualMachine {
     pub after_event_loop_callback_ctx: Option<*mut c_void>,
     pub after_event_loop_callback: Option<OpaqueCallback>,
 
-    pub remap_stack_frames_mutex: bun_threading::Mutex,
+    pub remap_stack_frames_mutex: bun_sys::threading::Mutex,
 
     pub argv: Vec<Box<[u8]>>,
 
@@ -280,7 +280,7 @@ pub struct VirtualMachine {
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
 
     pub ref_strings: crate::ref_string::Map,
-    pub ref_strings_mutex: bun_threading::Mutex,
+    pub ref_strings_mutex: bun_sys::threading::Mutex,
 
     pub active_tasks: usize,
 
@@ -2120,8 +2120,8 @@ impl VirtualMachine {
             addr_of_mut!((*vm).debug_thread_id).write(std::thread::current().id());
             // Mutex fields: zeroed atomics ARE valid-unlocked, but write the
             // canonical value so the invariant is explicit.
-            addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_threading::Mutex::new());
-            addr_of_mut!((*vm).ref_strings_mutex).write(bun_threading::Mutex::new());
+            addr_of_mut!((*vm).remap_stack_frames_mutex).write(bun_sys::threading::Mutex::new());
+            addr_of_mut!((*vm).ref_strings_mutex).write(bun_sys::threading::Mutex::new());
 
             addr_of_mut!((*vm).transpiler_store)
                 .write(crate::runtime_transpiler_store::RuntimeTranspilerStore::init());
@@ -2231,7 +2231,7 @@ impl VirtualMachine {
         // SAFETY: `vm` is the unique live VM on this thread.
         let vm_ref = unsafe { &mut *vm };
         vm_ref.set_main(entry_path);
-        vm_ref.main_hash = bun_watcher::Watcher::get_hash(entry_path);
+        vm_ref.main_hash = bun_sys::watcher::Watcher::get_hash(entry_path);
         Ok(vm)
     }
 
@@ -2305,7 +2305,7 @@ impl VirtualMachine {
         self.set_main(entry_path);
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
-        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
+        self.main_hash = bun_sys::watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
         let hooks = runtime_hooks();
@@ -4570,7 +4570,7 @@ impl VirtualMachine {
         self.set_main(entry_path);
         self.main_resolved_path.deref();
         self.main_resolved_path = bun_core::String::empty();
-        self.main_hash = bun_watcher::Watcher::get_hash(entry_path);
+        self.main_hash = bun_sys::watcher::Watcher::get_hash(entry_path);
         self.overridden_main.deinit();
 
         self.event_loop_mut().ensure_waker();

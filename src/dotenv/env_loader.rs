@@ -9,7 +9,7 @@ use bun_core::{ZStr, strings};
 use bun_core::paths::{MAX_PATH_BYTES, PathBuffer};
 use bun_sys;
 use bun_core::url::URL;
-use bun_which::which;
+use bun_sys::which::which;
 
 use bun_core::analytics;
 

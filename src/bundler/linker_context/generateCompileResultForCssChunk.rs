@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering;
 
 use bun_ast::ImportRecord;
 use bun_core::collections::VecExt;
-use bun_threading::thread_pool as ThreadPoolLib;
+use bun_sys::threading::thread_pool as ThreadPoolLib;
 
 use crate::bun_css::{BundlerStyleSheet, ImportInfo, LocalsResultsMap, PrinterOptions, Targets};
 

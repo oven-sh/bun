@@ -1574,7 +1574,7 @@ pub mod js_bundler {
                 // SAFETY: bv2 backref is valid; pool/worker_pool are live for bundle.
                 unsafe {
                     (*(*(*this.bv2).graph.pool.as_ptr()).worker_pool).schedule(
-                        bun_threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
+                        bun_sys::threading::thread_pool::Batch::from(core::ptr::addr_of_mut!(
                             (*this.parse_task.as_ptr()).task
                         )),
                     );

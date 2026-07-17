@@ -260,7 +260,7 @@ pub enum Error {
     #[error(transparent)]
     Transpiler(#[from] bun_transpiler::Error),
     #[error(transparent)]
-    Zlib(#[from] bun_zlib::ZlibError),
+    Zlib(#[from] bun_sys::zlib::ZlibError),
     #[error(transparent)]
     Paths(#[from] bun_core::paths::Error),
     #[error(transparent)]
@@ -444,14 +444,14 @@ impl From<bun_sys::Error> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_sys::libarchive::Error> for Error {
+    fn from(e: bun_sys::libarchive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Fail => Self::Fail,
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
-            bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
-            bun_libarchive::Error::Paths(p) => Self::Paths(p),
+            bun_sys::libarchive::Error::Fail => Self::Fail,
+            bun_sys::libarchive::Error::Sys(s) => Self::Sys(s),
+            bun_sys::libarchive::Error::Alloc(a) => Self::Alloc(a),
+            bun_sys::libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
+            bun_sys::libarchive::Error::Paths(p) => Self::Paths(p),
         }
     }
 }

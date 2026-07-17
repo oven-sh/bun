@@ -11,7 +11,7 @@ use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
-use bun_threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
+use bun_sys::threading::{IntrusiveWorkTask as _, WorkPool, WorkPoolTask};
 
 use crate::webcore::blob::{
     self, Blob, ClosingState, FileCloser, FileOpener, MkdirpTarget, Retry, SizeType,
@@ -74,7 +74,7 @@ pub struct WriteFile {
     pub mkdirp_if_not_exists: bool,
 }
 
-bun_threading::intrusive_work_task!(WriteFile, task);
+bun_sys::intrusive_work_task!(WriteFile, task);
 bun_io::intrusive_io_request!(WriteFile, io_request);
 
 // ──────────────────────────────────────────────────────────────────────────

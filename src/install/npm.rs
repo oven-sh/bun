@@ -1249,7 +1249,7 @@ pub mod package_manifest {
             tmpdir: Fd,
             cache_dir: Fd,
         ) {
-            use bun_threading::thread_pool::{
+            use bun_sys::threading::thread_pool::{
                 Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
             };
 
@@ -1264,7 +1264,7 @@ pub mod package_manifest {
                 task: PoolTask,
             }
 
-            bun_threading::intrusive_work_task!(SaveTask, task);
+            bun_sys::intrusive_work_task!(SaveTask, task);
 
             impl SaveTask {
                 pub(crate) fn new(init: SaveTask) -> Box<SaveTask> {
@@ -1280,7 +1280,7 @@ pub mod package_manifest {
                 // run_from_thread_pool` in PackageInstall.rs). Safe `fn`
                 // coerces to the `unsafe fn(*mut Task)` field type.
                 pub(crate) fn run(task: *mut PoolTask) {
-                    use bun_threading::IntrusiveWorkTask as _;
+                    use bun_sys::threading::IntrusiveWorkTask as _;
                     let _tracer = bun_core::perf::trace("PackageManifest.Serializer.save");
 
                     // SAFETY: thread-pool callback contract — `task` points to

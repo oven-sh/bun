@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
+use bun_sys::threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
@@ -64,7 +64,7 @@ pub struct ConcurrentCppTask {
     pub workpool_task: WorkPoolTask,
 }
 
-bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
+bun_sys::owned_task!(ConcurrentCppTask, workpool_task);
 
 impl ConcurrentCppTask {
     fn run_owned(self: Box<Self>) {

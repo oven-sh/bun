@@ -409,7 +409,7 @@ pub struct HotReloadEvent {
     /// 1 if referenced, 0 if unreferenced; see `WatcherAtomics`.
     pub contention_indicator: core::sync::atomic::AtomicU32,
     #[cfg(debug_assertions)]
-    pub debug_mutex: bun_threading::Mutex,
+    pub debug_mutex: bun_sys::threading::Mutex,
 }
 
 impl bun_event_loop::Taskable for HotReloadEvent {
@@ -427,7 +427,7 @@ impl HotReloadEvent {
             timer: std::time::Instant::now(),
             contention_indicator: core::sync::atomic::AtomicU32::new(0),
             #[cfg(debug_assertions)]
-            debug_mutex: bun_threading::Mutex::default(),
+            debug_mutex: bun_sys::threading::Mutex::default(),
         }
     }
 
@@ -1019,7 +1019,7 @@ impl DirectoryWatchStore {
     /// `bun_watcher` while holding `&mut self`. The two fields are disjoint,
     /// so the returned `&mut Watcher` does not alias `self`.
     #[inline]
-    fn dev_bun_watcher(&mut self) -> &mut bun_watcher::Watcher {
+    fn dev_bun_watcher(&mut self) -> &mut bun_sys::watcher::Watcher {
         // SAFETY: `owner()` recovers the heap-allocated `DevServer`;
         // `bun_watcher` is field-disjoint from `directory_watchers`, so
         // `&mut self` and the returned borrow cover non-overlapping memory.
@@ -1051,7 +1051,7 @@ impl DirectoryWatchStore {
         );
 
         self.dev_bun_watcher().remove_at_index(
-            bun_watcher::WatchItemKind::File,
+            bun_sys::watcher::WatchItemKind::File,
             entry.watch_index,
             0,
             &[],
@@ -1380,7 +1380,7 @@ impl DirectoryWatchStore {
                 Ok(None) | Err(_) => None,
             };
 
-        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_sys::watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {
                 (fd, false)
             } else {
@@ -1392,7 +1392,7 @@ impl DirectoryWatchStore {
                 let zpath = bun_core::paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
                 match bun_sys::open(
                     zpath,
-                    bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
+                    bun_sys::O::DIRECTORY | bun_sys::watcher::WATCH_OPEN_FLAGS,
                     0,
                 ) {
                     Ok(fd) => (fd, true),
@@ -1413,7 +1413,7 @@ impl DirectoryWatchStore {
             (bun_sys::Fd::INVALID, false)
         };
         let fd_guard = scopeguard::guard(fd, move |fd| {
-            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
+            if bun_sys::watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
                 fd.close();
             }
         });
@@ -1429,7 +1429,7 @@ impl DirectoryWatchStore {
         let watch_index = match self.dev_bun_watcher().add_directory::<true>(
             fd,
             dir_name_to_watch,
-            bun_watcher::Watcher::get_hash(dir_name_to_watch),
+            bun_sys::watcher::Watcher::get_hash(dir_name_to_watch),
         ) {
             Err(_) => return Err(DirectoryWatchInsertError::Ignore),
             Ok(id) => id,

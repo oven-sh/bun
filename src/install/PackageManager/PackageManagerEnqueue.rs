@@ -9,7 +9,7 @@ use bun_core::{StringOrTinyString, strings};
 use bun_core::paths::{self as Path, PathBuffer};
 use bun_core::semver::{self as Semver, String as SemverString};
 use bun_sys::Fd;
-use bun_threading::thread_pool as ThreadPool;
+use bun_sys::threading::thread_pool as ThreadPool;
 
 use crate::_folder_resolver::{
     self as FolderResolution, FolderResolution as FolderResolutionValue, GlobalOrRelative,

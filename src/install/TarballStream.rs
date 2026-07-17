@@ -26,14 +26,14 @@ use bun_core::collections::VecExt;
 #[cfg(windows)]
 use bun_core::strings;
 use bun_core::{self, Output, ZBox, env_var, fmt as bun_fmt};
-use bun_libarchive::lib;
+use bun_sys::libarchive::lib;
 use bun_core::paths::resolve_path::{self, platform};
 #[allow(unused_imports)]
 use bun_core::paths::{self, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
 #[cfg(not(windows))]
 use bun_sys::FdDirExt;
 use bun_sys::{self, Dir, Fd, FdExt, FileKind, Mode, O};
-use bun_threading::{Mutex, thread_pool};
+use bun_sys::threading::{Mutex, thread_pool};
 
 use crate::NetworkTask;
 use crate::bun_fs::FileSystem;
@@ -821,7 +821,7 @@ impl TarballStream {
         // outside the extraction root. Same defense as the buffered extractor
         // in `Archiver::extract_to_dir`.
         #[cfg(unix)]
-        if bun_libarchive::path_traverses_created_symlink(path_slice, &self.created_symlinks) {
+        if bun_sys::libarchive::path_traverses_created_symlink(path_slice, &self.created_symlinks) {
             self.phase = Phase::WantData;
             self.out_fd = None;
             return Ok(());

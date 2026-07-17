@@ -8,7 +8,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_core::{ZStr, env_var, output as Output};
 use bun_core::paths::MAX_PATH_BYTES;
 use bun_sys::{self, Fd};
-use bun_threading::Futex;
+use bun_sys::threading::Futex;
 
 use crate::watcher_impl::{MAX_COUNT as max_count, Op, WatchEvent, WatchItemIndex, Watcher};
 

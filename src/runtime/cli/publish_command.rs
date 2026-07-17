@@ -13,7 +13,7 @@ use bun_dotenv as dotenv;
 use bun_http as http;
 use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
-use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
+use bun_sys::libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
 use bun_core::paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
 use bun_core::paths::{self as path, PathBuffer};

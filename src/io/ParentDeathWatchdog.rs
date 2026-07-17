@@ -186,7 +186,7 @@ unsafe extern "C" {
     safe fn waitpid(pid: libc::pid_t, status: &mut c_int, options: c_int) -> libc::pid_t;
 }
 
-// `should_default_spawn_pdeathsig` moved down to `bun_spawn_sys::pdeathsig::
+// `should_default_spawn_pdeathsig` moved down to `bun_sys::spawn_sys::pdeathsig::
 // should_default()` (lowest tier that reads it). The thread-scoping rationale
 // — `PR_SET_PDEATHSIG` fires on the *thread*'s exit, so defaulting it from a
 // JS Worker would kill children on `worker.terminate()` — is documented there.
@@ -236,10 +236,10 @@ pub fn enable() {
         if ENABLED.swap(true, Ordering::Relaxed) {
             return;
         }
-        // Let `bun_spawn_sys::spawn_process_posix` default `linux_pdeathsig`
+        // Let `bun_sys::spawn_sys::spawn_process_posix` default `linux_pdeathsig`
         // for children spawned from this thread. Storage lives in spawn_sys
         // (lowest tier that reads it); we just flip the flag.
-        bun_spawn_sys::pdeathsig::set_default(true);
+        bun_sys::spawn_sys::pdeathsig::set_default(true);
         // Export the env var so any Bun child we spawn (e.g. `bun run` → script →
         // nested bun) inherits no-orphans mode without the parent having to thread
         // the flag through. No-op if we got here via the env var.

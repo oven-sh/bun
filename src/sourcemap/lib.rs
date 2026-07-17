@@ -738,18 +738,18 @@ pub mod SerializedSourceMap {
             let decompressed = self.decompressed_files[index].get_or_init(|| {
                 let sp = self.map.compressed_source_file_at(index);
                 let compressed_file = sp.slice(self.map.bytes);
-                let size = bun_zstd::get_decompressed_size(compressed_file);
+                let size = bun_sys::zstd::get_decompressed_size(compressed_file);
 
                 let mut bytes = vec![0u8; size];
-                match bun_zstd::decompress(&mut bytes, compressed_file) {
-                    bun_zstd::Result::Err(err) => {
+                match bun_sys::zstd::decompress(&mut bytes, compressed_file) {
+                    bun_sys::zstd::Result::Err(err) => {
                         bun_core::warn!(
                             "Source map decompression error: {}",
                             ::bstr::BStr::new(err.as_bytes()),
                         );
                         Vec::new()
                     }
-                    bun_zstd::Result::Success(n) => {
+                    bun_sys::zstd::Result::Success(n) => {
                         bytes.truncate(n);
                         bytes
                     }

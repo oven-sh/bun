@@ -521,7 +521,7 @@ impl RunCommand {
         #[cfg(not(windows))]
         {
             for shell in Self::SHELLS_TO_SEARCH {
-                if let Some(found) = bun_which::which(buf, path, cwd, shell) {
+                if let Some(found) = bun_sys::which::which(buf, path, cwd, shell) {
                     // `which()` writes a NUL-terminated path into `buf` and
                     // returns a borrow of it; reborrow as `&ZStr`.
                     let len = found.len();

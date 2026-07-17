@@ -76,7 +76,7 @@ const _: () = assert!(
 // ──────────────────────────────────────────────────────────────────────────
 // Signal-forwarding / no-orphans FFI surface — moved down from
 // `bun_spawn::process::sync` so the decls live next to `posix_spawn_bun`.
-// `bun_spawn::sync` consumes these via `bun_spawn_sys::ffi::*`.
+// `bun_spawn::sync` consumes these via `bun_sys::spawn_sys::ffi::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
     use core::ffi::c_int;
@@ -177,7 +177,7 @@ pub mod pdeathsig {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Public surface — flat re-exports so `bun_spawn` can `pub use bun_spawn_sys::*`.
+// Public surface — flat re-exports so `bun_spawn` can `pub use bun_sys::spawn_sys::*`.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(unix)]

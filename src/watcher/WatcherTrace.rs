@@ -2,12 +2,12 @@ use std::io::Write as _;
 
 use bun_core::{env_var, fmt as bun_fmt, output};
 use bun_sys::{Fd, File, O};
-use bun_threading::Guarded;
+use bun_sys::threading::Guarded;
 
 use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
 
 /// Optional trace file for debugging watcher events.
-// Wrapped in `bun_threading::Guarded` (cheap when
+// Wrapped in `bun_sys::threading::Guarded` (cheap when
 // uncontended; only the watcher thread touches this after init).
 static TRACE_FILE: Guarded<Option<File>> = Guarded::new(None);
 

@@ -71,8 +71,8 @@ pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Compr
                         (0, 12, DEFAULT_DEFLATE_LEVEL)
                     }
                     CompressEncoding::Brotli => (
-                        bun_brotli::c::BROTLI_MIN_QUALITY,
-                        bun_brotli::c::BROTLI_MAX_QUALITY,
+                        bun_sys::brotli::c::BROTLI_MIN_QUALITY,
+                        bun_sys::brotli::c::BROTLI_MAX_QUALITY,
                         DEFAULT_BROTLI_QUALITY,
                     ),
                     CompressEncoding::Zstd => (1, 22, DEFAULT_ZSTD_LEVEL),

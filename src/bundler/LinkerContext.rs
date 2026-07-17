@@ -14,7 +14,7 @@ use bun_sourcemap::{
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
 use crate::bake_types as bake;
 use bun_ast::{ImportKind, ImportRecord};
-use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
+use bun_sys::threading::{WaitGroup, thread_pool as ThreadPoolLib};
 
 use crate::BundledAst as JSAst;
 use bun_ast::{
@@ -51,13 +51,13 @@ bun_core::declare_scope!(LinkerCtx, visible);
 bun_core::declare_scope!(TreeShake, hidden);
 
 // ══════════════════════════════════════════════════════════════════════════
-// CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
+// CYCLEBREAK(b0): vtable instance for `bun_sys::crash_handler::BundleGenerateChunkVTable`
 // (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
 // `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
 // the formatter that knows their layout.
 // ══════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "show_crash_trace")]
-bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
+bun_sys::crash_handler::link_impl_BundleGenerateChunkCtx! {
     Linker for LinkerContext => |this| {
         fmt(chunk, part_range, writer) => {
             let ctx = &*this;
@@ -95,12 +95,12 @@ pub(crate) fn bundle_generate_chunk_action(
     ctx: &LinkerContext,
     chunk: &Chunk,
     part_range: &PartRange,
-) -> bun_crash_handler::Action {
-    bun_crash_handler::Action::BundleGenerateChunk(bun_crash_handler::BundleGenerateChunk {
+) -> bun_sys::crash_handler::Action {
+    bun_sys::crash_handler::Action::BundleGenerateChunk(bun_sys::crash_handler::BundleGenerateChunk {
         // SAFETY: `ctx`/`chunk`/`part_range` outlive the crash-trace scope this is held for.
         ctx: unsafe {
-            bun_crash_handler::BundleGenerateChunkCtx::new(
-                bun_crash_handler::BundleGenerateChunkCtxKind::Linker,
+            bun_sys::crash_handler::BundleGenerateChunkCtx::new(
+                bun_sys::crash_handler::BundleGenerateChunkCtxKind::Linker,
                 core::ptr::from_ref(ctx).cast_mut(),
             )
         },
@@ -382,12 +382,12 @@ impl<'a> LinkerContext<'a> {
         unsafe { &mut *self.log }
     }
 
-    /// Safe accessor for the underlying `bun_threading::ThreadPool` driving
+    /// Safe accessor for the underlying `bun_sys::threading::ThreadPool` driving
     /// link-phase parallel work. Chains [`Self::parse_graph`] →
     /// [`Graph::pool`] → [`ThreadPool::worker_pool`](crate::ThreadPool::worker_pool),
     /// keeping the `unsafe` deref centralized in those accessors.
     #[inline]
-    pub fn worker_pool(&self) -> &bun_threading::ThreadPool {
+    pub fn worker_pool(&self) -> &bun_sys::threading::ThreadPool {
         self.parse_graph().pool().worker_pool()
     }
 
@@ -1742,7 +1742,7 @@ pub(crate) unsafe fn pending_part_range_prologue<'a>(
 
 /// `Environment.show_crash_trace` scoped-action guard for the
 /// `generate_compile_result_for_{js,css}_chunk` callbacks. Thin wrapper over
-/// [`bundle_generate_chunk_action`] + [`bun_crash_handler::scoped_action`].
+/// [`bundle_generate_chunk_action`] + [`bun_sys::crash_handler::scoped_action`].
 ///
 /// Callers materialise the `&LinkerContext` / `&Chunk` from the worker-task
 /// raw pointers (see [`pending_part_range_prologue`]); the borrows are only
@@ -1755,8 +1755,8 @@ pub(crate) fn crash_guard_for_part_range(
     c: &LinkerContext<'_>,
     chunk: &Chunk,
     part_range: &PartRange,
-) -> bun_crash_handler::ActionGuard {
-    bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
+) -> bun_sys::crash_handler::ActionGuard {
+    bun_sys::crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
 }
 
 impl<'a> LinkerContext<'a> {

@@ -44,11 +44,11 @@ function breakpointUrlRegex(url: string): string {
   const candidates = new Set([url]);
   if (url.startsWith("file://")) {
     try {
-      candidates.add(fileURLToPath(url));
+      candidates.$add(fileURLToPath(url));
     } catch {}
   } else if (isAbsolute(url)) {
     try {
-      candidates.add(pathToFileURL(url).href);
+      candidates.$add(pathToFileURL(url).href);
     } catch {}
   }
   return Array.from(candidates, candidate => `^${escapeRegex(candidate)}$`).join("|");
@@ -132,9 +132,9 @@ class InspectorCDPAdapter {
     }
     const { id, error, method } = parsed;
     if (id !== undefined) {
-      const pending = this.#pending.get(id);
+      const pending = this.#pending.$get(id);
       if (!pending) return;
-      this.#pending.delete(id);
+      this.#pending.$delete(id);
       const { clientId, onResult } = pending;
       if (onResult) {
         onResult(parsed.result || {}, error);
@@ -176,7 +176,7 @@ class InspectorCDPAdapter {
     onResult?: (result: AnyObject, error?: AnyObject) => void,
   ): void {
     const id = this.#nextBackendId++;
-    this.#pending.set(id, { clientId, method: clientMethod, onResult });
+    this.#pending.$set(id, { clientId, method: clientMethod, onResult });
     this.#writeToBackend(JSON.stringify(params === undefined ? { id, method } : { id, method, params }));
   }
 
@@ -432,7 +432,7 @@ class InspectorCDPAdapter {
         const start = params.start;
         let end = params.end;
         if (!end) {
-          const script = this.#scripts.get(start?.scriptId);
+          const script = this.#scripts.$get(start?.scriptId);
           end = {
             scriptId: start?.scriptId,
             lineNumber: script ? script.endLine : (start?.lineNumber ?? 0) + 1,
@@ -556,7 +556,7 @@ class InspectorCDPAdapter {
       case "Debugger.scriptParsed": {
         const url = params.sourceURL || params.url || "";
         const cdpUrl = toCdpUrl(url);
-        this.#scripts.set(params.scriptId, {
+        this.#scripts.$set(params.scriptId, {
           cdpUrl,
           endLine: params.endLine ?? 0,
           endColumn: params.endColumn ?? 0,
@@ -583,7 +583,7 @@ class InspectorCDPAdapter {
           callFrameId: frame.callFrameId,
           functionName: frame.functionName ?? "",
           location: frame.location,
-          url: this.#scripts.get(frame.location?.scriptId)?.cdpUrl ?? "",
+          url: this.#scripts.$get(frame.location?.scriptId)?.cdpUrl ?? "",
           scopeChain: (frame.scopeChain ?? []).map((scope: AnyObject) => ({
             type: SCOPE_TYPE_MAP[scope.type] ?? "closure",
             object: scope.object,

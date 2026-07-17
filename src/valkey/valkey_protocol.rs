@@ -37,8 +37,6 @@ pub enum RedisError {
 
 bun_core::impl_tag_error!(RedisError);
 
-bun_core::named_error_set!(RedisError);
-
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the
     /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
@@ -311,7 +309,7 @@ impl<'a> ValkeyReader<'a> {
         }
         let len = usize::try_from(len).expect("int cast");
         if self.pos + len > self.buffer.len() {
-            return Err(RedisError::InvalidVerbatimString);
+            return Err(RedisError::InvalidResponse);
         }
 
         let content_with_format = &self.buffer[self.pos..self.pos + len];
@@ -445,7 +443,7 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = usize::try_from(len).expect("int cast");
                 if self.pos + len > self.buffer.len() {
-                    return Err(RedisError::InvalidBlobError);
+                    return Err(RedisError::InvalidResponse);
                 }
                 let str = &self.buffer[self.pos..self.pos + len];
                 self.pos += len;

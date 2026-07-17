@@ -44,9 +44,9 @@ pub mod ssl_wrapper {
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
         handlers: Handlers<T>,
-    ) -> Result<SSLWrapper<T>, bun_core::Error> {
+    ) -> Result<SSLWrapper<T>, crate::Error> {
         SSLWrapper::<T>::init_from_options(&ssl_options.as_usockets(), is_client, handlers)
-            .map_err(bun_core::Error::from)
+            .map_err(crate::Error::from)
     }
 }
 
@@ -68,7 +68,7 @@ pub mod uws_jsc;
 
 #[path = "SSLConfig.rs"]
 pub mod ssl_config;
-pub use ssl_config::{SSLConfig, SSLConfigFromJs};
+pub use ssl_config::{SSLConfig, SSLConfigFromJs, resolve_reject_unauthorized, tls_true_defaults};
 
 // ─── canonical type surface ──────────────────────────────────────────────────
 // These were previously stub-defined inline here; now that the real
@@ -111,7 +111,7 @@ pub use udp_socket::UDPSocket;
 pub mod socket {
     pub use super::socket_body::{
         js_create_socket_pair, js_get_buffered_amount, js_is_named_pipe_socket,
-        js_set_socket_options, js_upgrade_duplex_to_tls, testing_ap_is,
+        js_set_socket_options, js_upgrade_duplex_to_tls, js_upgrade_tls_deferred, testing_ap_is,
     };
 }
 

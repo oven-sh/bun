@@ -29,6 +29,7 @@ bun_collections.workspace = true
 bun_highway.workspace = true
 bun_ast.workspace = true
 bun_wyhash.workspace = true
+bun_simdutf_sys.workspace = true
 
 [dev-dependencies]
 criterion = "0.5"

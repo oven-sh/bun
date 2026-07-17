@@ -160,6 +160,43 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("hello", -3, -1)).toBe("ll");
     });
 
+    test("negative start keeps trailing zero-width and ANSI content", () => {
+      expect(Bun.sliceAnsi("ab\t", -1)).toBe("b\t");
+      expect(Bun.sliceAnsi("ab\u200b", -1)).toBe("b\u200b");
+      expect(Bun.sliceAnsi("ab\x1b[31m", -1)).toBe("b\x1b[31m\x1b[39m");
+      expect(Bun.sliceAnsi("abc\x1b[1m\x1b[31m", -1)).toBe("c\x1b[1m\x1b[31m\x1b[39m\x1b[22m");
+      expect(Bun.sliceAnsi("ab\x1b[0m", -1)).toBe("b\x1b[0m");
+      expect(Bun.sliceAnsi("ab\t", -1, 1000)).toBe("b\t");
+
+      // sliceAnsi(s, -k) must match sliceAnsi(s, totalW - k) byte-for-byte
+      // whenever the positive form goes through the emit walk (start > 0).
+      const cases = [
+        "ab\t",
+        "ab\u200b",
+        "ab\u200b\u200b",
+        "ab\x1b[31m",
+        "abc\x1b[1m\x1b[31m",
+        "\x1b[31mab\x1b[39m\t",
+        "ab\x1b[0m",
+        "ab\t\u200b\x1b[31m",
+      ];
+      for (const s of cases) {
+        const totalW = Bun.stringWidth(s);
+        for (let k = 1; k < totalW; k++) {
+          const pos = Bun.sliceAnsi(s, totalW - k);
+          expect({ s, k, out: Bun.sliceAnsi(s, -k) }).toEqual({ s, k, out: pos });
+          expect({ s, k, out: Bun.sliceAnsi(s, -k, 1000) }).toEqual({ s, k, out: pos });
+        }
+        // -k clamped to 0: visible content must still include the trailing bytes.
+        expect(Bun.stripANSI(Bun.sliceAnsi(s, -1000))).toBe(Bun.stripANSI(s));
+      }
+    });
+
+    test("negative end strictly before total width still cuts", () => {
+      expect(Bun.sliceAnsi("ab\t", 0, -1)).toBe("a");
+      expect(Bun.sliceAnsi("ab\x1b[31m", 0, -1)).toBe("a");
+    });
+
     test("single character slice", () => {
       expect(Bun.sliceAnsi("hello", 0, 1)).toBe("h");
       expect(Bun.sliceAnsi("hello", 4, 5)).toBe("o");

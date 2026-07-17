@@ -58,7 +58,7 @@ pub(crate) fn compress_into(
     input: &[u8],
     opt: &CompressOption,
     spill: &mut Vec<u8>,
-) -> Result<CompressOutput, bun_core::Error> {
+) -> crate::Result<CompressOutput> {
     spill.clear();
     match opt.encoding {
         CompressEncoding::Gzip | CompressEncoding::Deflate => {
@@ -133,7 +133,7 @@ fn compress_zlib_streaming(
     gzip: bool,
     level: Option<i32>,
     out: &mut Vec<u8>,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     use bun_zlib::{DeflateEncoder, FlushValue, ReturnCode};
 
     // gzip wrapper: +16; HTTP "deflate" is the zlib-wrapped stream
@@ -142,7 +142,7 @@ fn compress_zlib_streaming(
     // libdeflate accepts 0..=12; zlib only 0..=9.
     let level = level.unwrap_or(DEFAULT_DEFLATE_LEVEL).min(9);
     let mut encoder = DeflateEncoder::new(level, window_bits, 8, 0)
-        .map_err(|_| bun_core::err!(CompressionFailed))?;
+        .map_err(|_| crate::Error::CompressionFailed)?;
 
     // `avail_in` is `c_uint`; `step()` clamps to u32::MAX per call so a
     // ≥4 GiB body isn't truncated — we loop until `remaining` is empty.
@@ -165,7 +165,7 @@ fn compress_zlib_streaming(
             ReturnCode::Ok => continue,
             _ => {
                 out.clear();
-                return Err(bun_core::err!(CompressionFailed));
+                return Err(crate::Error::CompressionFailed);
             }
         }
     }
@@ -176,7 +176,7 @@ fn compress_brotli(
     input: &[u8],
     level: Option<i32>,
     spill: &mut Vec<u8>,
-) -> Result<CompressOutput, bun_core::Error> {
+) -> crate::Result<CompressOutput> {
     use bun_brotli::c;
     let quality = level.unwrap_or(DEFAULT_BROTLI_QUALITY);
     let window = c::BROTLI_DEFAULT_WINDOW;
@@ -205,7 +205,7 @@ fn compress_brotli(
         }
         None => {
             spill.clear();
-            Err(bun_core::err!(CompressionFailed))
+            Err(crate::Error::CompressionFailed)
         }
     }
 }
@@ -215,15 +215,15 @@ fn compress_zstd(
     input: &[u8],
     level: Option<i32>,
     spill: &mut Vec<u8>,
-) -> Result<CompressOutput, bun_core::Error> {
+) -> crate::Result<CompressOutput> {
     let bound = bun_zstd::compress_bound(input.len());
     if bun_zstd::is_error(bound) {
-        return Err(bun_core::err!(CompressionFailed));
+        return Err(crate::Error::CompressionFailed);
     }
     if bound <= state.shared_buffer.len() {
         return match bun_zstd::compress(&mut state.shared_buffer, input, level) {
             bun_zstd::Result::Success(n) => Ok(CompressOutput::Shared(n)),
-            bun_zstd::Result::Err(_) => Err(bun_core::err!(CompressionFailed)),
+            bun_zstd::Result::Err(_) => Err(crate::Error::CompressionFailed),
         };
     }
 
@@ -235,7 +235,7 @@ fn compress_zstd(
         }
         bun_zstd::Result::Err(_) => {
             spill.clear();
-            Err(bun_core::err!(CompressionFailed))
+            Err(crate::Error::CompressionFailed)
         }
     }
 }

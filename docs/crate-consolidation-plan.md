@@ -519,7 +519,8 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 - **Debug cold-build prefix serialization.** `bun_core` (86k) + `bun_sys` (49k) compile serially before any fan-out, vs today's ~33k + parallel siblings. Estimated ~1.5–2× wall-clock on that prefix. `-Zthreads=8` (`scripts/build/rust.ts:423-438`) partially mitigates. Release unaffected (`lto = "fat"` + `codegen-units = 1` already serialize, per `Cargo.toml:114-131`).
 - **`bun_runtime` at ~392k LOC** (from 331k). Longer incremental rebuild when touching any runtime/VM/console/SQL-driver/WebSocket code. Buys: elimination of all hook tables and `*mut c_void` VM fields.
-- **`OnceLock<fn-struct>` vs link-time.** The `OnceLock` tables + `AtomicUsize` hooks (Appendix B) replace 20 `extern "Rust"` blocks. Each call is now `static.get().unwrap().slot(…)` vs a direct symbol: `OnceLock::get` is an **acquire** load on the init flag (a plain `mov` on x86*64 under TSO; `ldar` on aarch64) plus one indirect call through the stored fn pointer. The current `extern "Rust"` path is already an indirect call (cross-crate, resolved at link time, not inlined without LTO), so the delta is the acquire load + the `Option` null check; benchmark the hot paths (`TIMER_DISPATCH`, `POLL_DISPATCH`, `TASK_DISPATCH`, `__VTABLES_BufferedReaderParentLink`) in the implementation PR rather than asserting equivalence here. `JS_LOOP_VTABLE` calls sit behind an `EventLoopCtx::Js` branch that already exists. The two `\_\_VTABLES*\*`arrays use`Relaxed`(not`Acquire`) loads: the pointed-to `MethodTable`is`const`(fully initialized before`main`), so no release/acquire pair is needed to publish its contents.
+<!-- prettier-ignore -->
+- **`OnceLock<fn-struct>` vs link-time.** The `OnceLock` tables + `AtomicUsize` hooks (Appendix B) replace 20 `extern "Rust"` blocks. Each call is now `static.get().unwrap().slot(…)` vs a direct symbol: `OnceLock::get` is an **acquire** load on the init flag (a plain `mov` on `x86_64` under TSO; `ldar` on `aarch64`) plus one indirect call through the stored fn pointer. The current `extern "Rust"` path is already an indirect call (cross-crate, resolved at link time, not inlined without LTO), so the delta is the acquire load + the `Option` null check; benchmark the hot paths (`TIMER_DISPATCH`, `POLL_DISPATCH`, `TASK_DISPATCH`, `__VTABLES_BufferedReaderParentLink`) in the implementation PR rather than asserting equivalence here. `JS_LOOP_VTABLE` calls sit behind an `EventLoopCtx::Js` branch that already exists. The two `__VTABLES_*` arrays use `Relaxed` (not `Acquire`) loads: the pointed-to `MethodTable` is `const` (fully initialized before `main`), so no release/acquire pair is needed to publish its contents.
 
 ## 8.3 Out of scope
 
@@ -538,20 +539,20 @@ See §2.1. The source-of-truth table (118 files) is derived from scanning each f
 
 ## Appendix B: `OnceLock` registry inventory
 
-| Static                           | Defined in               | Set by                         | Slots  | Hot path?               |
-| -------------------------------- | ------------------------ | ------------------------------ | ------ | ----------------------- |
-| `OUTPUT_SINK`                    | `bun_core`               | `bun_sys::init`                | 11     | No (stderr/logger init) |
-| `PANIC_HOOK`, `STACK_TRACE_HOOK` | `bun_core`               | `bun_sys::crash_handler::init` | 1 each | No                      |
-| `REGEX_ENGINE`                   | `bun_ast`                | `bun_bin::main` (process init) | 3      | No (bunfig parse)       |
-| `PREFETCH_HOOK`                  | `bun_sys::dns`           | `bun_runtime` VM init          | 1      | No                      |
-| `ACTION_FORMATTER`               | `bun_sys::crash_handler` | `bun_bundler` linker init      | 1      | No (crash only)         |
-| `JS_LOOP_VTABLE`                 | `bun_loop`               | `bun_runtime` VM init          | 21     | Yes (event-loop tick)   |
-| `TIMER_DISPATCH`                 | `bun_loop`               | `bun_bin::main` (process init) | 2      | Yes                     |
-| `POLL_DISPATCH`                  | `bun_loop`               | `bun_bin::main` (process init) | 3      | Yes                     |
-| `TASK_DISPATCH`                  | `bun_loop`               | `bun_bin::main` (process init) | 1      | Yes                     |
-| `HOT_RELOAD_HOOK`                | `bun_bundler`            | `bun_runtime` bake init        | 1      | No                      |
-
-| `__VTABLES_BufferedReaderParentLink` | `bun_loop` | `bun_bin::main` (process init) | 13×5 | Yes (pipe read) |
-| `__VTABLES_ProcessExit` | `bun_loop` | `bun_bin::main` (process init) | 12×3 | No (once per process) |
+<!-- prettier-ignore -->
+| Static                               | Defined in               | Set by                         | Slots  | Hot path?               |
+| ------------------------------------ | ------------------------ | ------------------------------ | ------ | ----------------------- |
+| `OUTPUT_SINK`                        | `bun_core`               | `bun_sys::init`                | 11     | No (stderr/logger init) |
+| `PANIC_HOOK`, `STACK_TRACE_HOOK`     | `bun_core`               | `bun_sys::crash_handler::init` | 1 each | No                      |
+| `REGEX_ENGINE`                       | `bun_ast`                | `bun_bin::main` (process init) | 3      | No (bunfig parse)       |
+| `PREFETCH_HOOK`                      | `bun_sys::dns`           | `bun_runtime` VM init          | 1      | No                      |
+| `ACTION_FORMATTER`                   | `bun_sys::crash_handler` | `bun_bundler` linker init      | 1      | No (crash only)         |
+| `JS_LOOP_VTABLE`                     | `bun_loop`               | `bun_runtime` VM init          | 21     | Yes (event-loop tick)   |
+| `TIMER_DISPATCH`                     | `bun_loop`               | `bun_bin::main` (process init) | 2      | Yes                     |
+| `POLL_DISPATCH`                      | `bun_loop`               | `bun_bin::main` (process init) | 3      | Yes                     |
+| `TASK_DISPATCH`                      | `bun_loop`               | `bun_bin::main` (process init) | 1      | Yes                     |
+| `HOT_RELOAD_HOOK`                    | `bun_bundler`            | `bun_runtime` bake init        | 1      | No                      |
+| `__VTABLES_BufferedReaderParentLink` | `bun_loop`               | `bun_bin::main` (process init) | 13×5   | Yes (pipe read)         |
+| `__VTABLES_ProcessExit`              | `bun_loop`               | `bun_bin::main` (process init) | 12×3   | No (once per process)   |
 
 All set-once at init, read-many. `JS_LOOP_VTABLE` is set at VM init and only read behind an `EventLoopCtx::Js` branch, so the `bun_install` / `MiniEventLoop` path (no VM) never reaches its `.get().unwrap()`. `{TIMER,POLL,TASK}_DISPATCH`, `REGEX_ENGINE`, and the two `__VTABLES_*` arrays are **not** guarded that way (`FilePoll::on_update` calls `POLL_DISPATCH` unconditionally and `bun install` creates `FilePoll`s for lifecycle-script pipes on Mini; `create_matcher` is reached from `.npmrc` parsing without a VM), so they are set at process init from `bun_bin::main` via `bun_runtime::register_dispatch_tables()` before any CLI command runs.

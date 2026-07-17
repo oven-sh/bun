@@ -9,8 +9,9 @@ use crate::JsCell;
 use bun_core::ptr::AsCtxPtr;
 use bun_sys::{self as sys, Fd, FdExt};
 
+use crate::vm::EventLoopHandle;
 use crate::webcore::blob;
-use crate::webcore::jsc::{self as jsc, EventLoopHandle, JSValue};
+use crate::webcore::jsc::{self as jsc, JSValue};
 use crate::webcore::jsc::{EnsureStillAlive, strong::Optional as Strong};
 use crate::webcore::node_types::PathOrFileDescriptor;
 use crate::webcore::readable_stream;

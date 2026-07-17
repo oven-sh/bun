@@ -1641,9 +1641,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 
     // Symbol and BigInt wrapper objects are plain ObjectType in JSC, so they are not
     // reachable from the switch above. Like Number and Boolean wrappers, they must be
-    // the same kind of wrapper and hold the same internal value.
-    if (auto* obj1 = c1->getObject()) {
-        if (auto* obj2 = c2->getObject()) {
+    // the same kind of wrapper and hold the same internal value. Everything else --
+    // object literals, arrays -- has its own JSType and skips this.
+    if (c1Type == ObjectType) {
+        JSObject* obj1 = c1->getObject();
+        JSObject* obj2 = c2->getObject();
+        if (obj1 && obj2) {
             const bool isSymbol1 = obj1->inherits<SymbolObject>();
             const bool isBigInt1 = obj1->inherits<BigIntObject>();
             if (isSymbol1 || isBigInt1) {
@@ -1656,8 +1659,6 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 RETURN_IF_EXCEPTION(scope, {});
                 if (!same) return false;
                 // Fall through to check own properties
-            } else if (obj2->inherits<SymbolObject>() || obj2->inherits<BigIntObject>()) {
-                return false;
             }
         }
     }

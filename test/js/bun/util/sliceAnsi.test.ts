@@ -418,13 +418,13 @@ describe("Bun.sliceAnsi", () => {
 
     test("does not split Hangul Jamo grapheme clusters when styles appear inside sequence", () => {
       const input = "\u001B[31m\u1100\u001B[39m\u1161B";
-      // Decomposed L-jamo (U+1100, width 2) + V-jamo (U+1161, width 1) form one
-      // grapheme cluster with accumulated width 3 — matches Bun.stringWidth.
-      expect(Bun.stringWidth("\u1100\u1161")).toBe(3);
-      // [0, 3): the full cluster (normalizes to 가)
-      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 0, 3)).normalize("NFC")).toBe("가");
-      // B is at column 3
-      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 3, 4))).toBe("B");
+      // Decomposed L-jamo (U+1100, wide) + V-jamo (U+1161, zero-width) form one
+      // grapheme cluster of width 2 — matches Bun.stringWidth.
+      expect(Bun.stringWidth("\u1100\u1161")).toBe(2);
+      // [0, 2): the full cluster (normalizes to 가)
+      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 0, 2)).normalize("NFC")).toBe("가");
+      // B is at column 2
+      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 2, 3))).toBe("B");
     });
 
     test("keeps style opens inside grapheme continuation past end boundary", () => {
@@ -508,7 +508,7 @@ describe("Bun.sliceAnsi", () => {
     });
 
     test("can slice a string with unknown ANSI color", () => {
-      expect(Bun.sliceAnsi("\u001B[20mTEST\u001B[49m", 0, 4)).toBe("\u001B[20mTEST\u001B[0m");
+      expect(Bun.sliceAnsi("\u001B[199mTEST\u001B[49m", 0, 4)).toBe("\u001B[199mTEST\u001B[0m");
       expect(Bun.sliceAnsi("\u001B[1001mTEST\u001B[49m", 0, 3)).toBe("\u001B[1001mTES\u001B[0m");
       expect(Bun.sliceAnsi("\u001B[1001mTEST\u001B[49m", 0, 2)).toBe("\u001B[1001mTE\u001B[0m");
     });
@@ -575,6 +575,75 @@ describe("Bun.sliceAnsi", () => {
       const input = `a\u001B[31mb\u001B[39m`;
       expect(Bun.sliceAnsi(input, 0, 1)).toBe("a");
     });
+
+    test("bold and dim are independent attributes that both close with 22", () => {
+      // Both intensity flags must survive re-synthesis at the slice start.
+      const input = "\x1b[1m\x1b[2mLoading dependencies...\x1b[22m";
+      const once = Bun.sliceAnsi(input, 0, 10);
+      expect(once).toBe("\x1b[1m\x1b[2mLoading de\x1b[22m");
+      expect(Bun.sliceAnsi(once, 0, 5)).toBe("\x1b[1m\x1b[2mLoadi\x1b[22m");
+      expect(Bun.sliceAnsi(input, 8, 15)).toBe("\x1b[1m\x1b[2mdepende\x1b[22m");
+      expect(Bun.sliceAnsi("\x1b[1;2mLoading dependencies...\x1b[22m", 0, 10)).toBe("\x1b[1m\x1b[2mLoading de\x1b[22m");
+      // dim then bold: both kept, in order.
+      expect(Bun.sliceAnsi("\x1b[2m\x1b[1mtext\x1b[22m", 1, 3)).toBe("\x1b[2m\x1b[1mex\x1b[22m");
+      // A 22 inside the slice clears both flags.
+      expect(Bun.sliceAnsi("\x1b[1m\x1b[2mAB\x1b[22mCD", 1, 4)).toBe("\x1b[1m\x1b[2mB\x1b[22mCD");
+    });
+
+    test("supports SGR 58 underline color and its reset 59", () => {
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[58;5;196mERROR: file not found\x1b[59m\x1b[24m", 7, 21)).toBe(
+        "\x1b[4m\x1b[58;5;196mfile not found\x1b[59m\x1b[24m",
+      );
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[58;2;255;128;0mwarning text here\x1b[59m\x1b[24m", 0, 7)).toBe(
+        "\x1b[4m\x1b[58;2;255;128;0mwarning\x1b[59m\x1b[24m",
+      );
+      // Colon sub-parameter forms are kept opaque and close with 59.
+      expect(Bun.sliceAnsi("\x1b[58:5:196mERROR text\x1b[59m", 0, 5)).toBe("\x1b[58:5:196mERROR\x1b[59m");
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[58:2::255:128:0mwarning text\x1b[59m\x1b[24m", 0, 7)).toBe(
+        "\x1b[4m\x1b[58:2::255:128:0mwarning\x1b[59m\x1b[24m",
+      );
+      // 59 alone is a close, not an opener.
+      expect(Bun.sliceAnsi("\x1b[59mtext", 1, 3)).toBe("ex");
+    });
+
+    test("underline color is independent of foreground color and survives re-slicing", () => {
+      const input = "\x1b[58;5;196munder\x1b[59mplain";
+      expect(Bun.sliceAnsi(input, 5, 10)).toBe("plain");
+      const once = Bun.sliceAnsi(input, 0, 5);
+      expect(once).toBe("\x1b[58;5;196munder\x1b[59m");
+      expect(Bun.sliceAnsi(once, 0, 2)).toBe("\x1b[58;5;196mun\x1b[59m");
+      expect(Bun.sliceAnsi("\x1b[31m\x1b[58;2;1;2;3mAB\x1b[59m\x1b[39m", 1, 2)).toBe(
+        "\x1b[31m\x1b[58;2;1;2;3mB\x1b[59m\x1b[39m",
+      );
+    });
+
+    test("closes double underline, fraktur, framed/encircled and super/subscript", () => {
+      // 4 single and 21 double underline are independent flags; both close with 24.
+      expect(Bun.sliceAnsi("\x1b[21mdouble\x1b[24m normal", 7, 13)).toBe("normal");
+      expect(Bun.sliceAnsi("\x1b[21mdouble\x1b[24m normal", 0, 6)).toBe("\x1b[21mdouble\x1b[24m");
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[21mtext\x1b[24m", 1, 3)).toBe("\x1b[4m\x1b[21mex\x1b[24m");
+      expect(Bun.sliceAnsi("\x1b[21m\x1b[4mtext\x1b[24m", 1, 3)).toBe("\x1b[21m\x1b[4mex\x1b[24m");
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[21mAB\x1b[24mCD", 1, 4)).toBe("\x1b[4m\x1b[21mB\x1b[24mCD");
+      // 20 fraktur closes with 23, independently of italic.
+      expect(Bun.sliceAnsi("\x1b[20mfraktur\x1b[23m text", 8, 12)).toBe("text");
+      expect(Bun.sliceAnsi("\x1b[3m\x1b[20mtext\x1b[23m", 0, 2)).toBe("\x1b[3m\x1b[20mte\x1b[23m");
+      // 51 framed and 52 encircled are independent flags; both close with 54.
+      expect(Bun.sliceAnsi("\x1b[51mframed\x1b[54m rest", 0, 3)).toBe("\x1b[51mfra\x1b[54m");
+      expect(Bun.sliceAnsi("\x1b[52mcircled\x1b[54m", 1, 4)).toBe("\x1b[52mirc\x1b[54m");
+      expect(Bun.sliceAnsi("\x1b[51m\x1b[52mtext\x1b[54m", 1, 3)).toBe("\x1b[51m\x1b[52mex\x1b[54m");
+      // 73 superscript / 74 subscript close with 75.
+      expect(Bun.sliceAnsi("x\x1b[73m2\x1b[75m + y", 0, 2)).toBe("x\x1b[73m2\x1b[75m");
+      expect(Bun.sliceAnsi("\x1b[74msub\x1b[75m text", 4, 8)).toBe("text");
+    });
+
+    test("empty SGR parameters default to 0 (reset)", () => {
+      expect(Bun.sliceAnsi("\x1b[31;mabc", 1, 3)).toBe("bc");
+      expect(Bun.sliceAnsi("\x1b[31;mabc", 0, 3)).toBe("abc");
+      expect(Bun.sliceAnsi("\x9b31;mabc", 1, 3)).toBe("bc");
+      expect(Bun.sliceAnsi("\x1b[;31mabc", 1, 3)).toBe("\x1b[31mbc\x1b[39m");
+      expect(Bun.sliceAnsi("\x1b[1;;31mabc", 1, 3)).toBe("\x1b[31mbc\x1b[39m");
+      expect(Bun.sliceAnsi("\x1b[31mred\x1b[mplain", 3, 8)).toBe("plain");
+    });
   });
 
   // ======================================================================
@@ -602,22 +671,19 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("\u009B31", 0, 1)).toBe("");
     });
 
-    test("does not swallow visible text after malformed CSI bytes", () => {
-      const input = "\u001B[31\u0100A";
-      expect(Bun.sliceAnsi(input, 0, 1)).toBe("\u0100");
-      expect(Bun.sliceAnsi(input, 1, 2)).toBe("A");
-    });
-
-    test("does not swallow visible text after malformed CSI prefix", () => {
-      const input = "\u001B[\u0100A";
-      expect(Bun.sliceAnsi(input, 0, 1)).toBe("\u0100");
-      expect(Bun.sliceAnsi(input, 1, 2)).toBe("A");
-    });
-
-    test("does not swallow visible text after malformed C1 CSI prefix", () => {
-      const input = "\u009B\u0100A";
-      expect(Bun.sliceAnsi(input, 0, 1)).toBe("\u0100");
-      expect(Bun.sliceAnsi(input, 1, 2)).toBe("A");
+    test("non-ASCII inside a CSI is payload; 'A' is the final byte (matches stringWidth/stripANSI)", () => {
+      // A codepoint outside 0x20-0x7E cannot end a CSI, so the recognizer
+      // scans past it to the first final byte — here the "A" (0x41).
+      for (const input of ["\u001B[31\u0100A", "\u001B[\u0100A", "\u009B\u0100A"]) {
+        expect({ input, slice: Bun.sliceAnsi(input, 0, 5), width: Bun.stringWidth(input) }).toEqual({
+          input,
+          slice: "",
+          width: 0,
+        });
+        expect(Bun.stripANSI(input)).toBe("");
+      }
+      // Visible text after the completed CSI stays visible.
+      expect(Bun.sliceAnsi("\u001B[\u0100Axy", 0, 5)).toBe("xy");
     });
 
     test("treats generic OSC control sequences as non-visible control codes", () => {
@@ -653,6 +719,16 @@ describe("Bun.sliceAnsi", () => {
     test("treats standalone ST control sequences as non-visible control codes", () => {
       expect(Bun.sliceAnsi("\u001B\\A", 0, 1)).toBe("A");
       expect(Bun.sliceAnsi("\u009CA", 0, 1)).toBe("A");
+    });
+
+    test("treats two-byte and nF escape sequences as non-visible control codes", () => {
+      expect(Bun.sliceAnsi("\u001B7A", 0, 1)).toBe("A"); // DECSC
+      expect(Bun.sliceAnsi("\u001BcA", 0, 1)).toBe("A"); // RIS
+      expect(Bun.sliceAnsi("\u001B=A", 0, 1)).toBe("A"); // keypad application mode
+      expect(Bun.sliceAnsi("\u001B(BA", 0, 1)).toBe("A"); // charset designation
+      expect(Bun.sliceAnsi("\u001B#8A", 0, 1)).toBe("A"); // DECALN
+      // ESC restarts the sequence: ESC ESC c is one escape, not a visible 'c'.
+      expect(Bun.sliceAnsi("\u001B\u001BcA", 0, 1)).toBe("A");
     });
 
     test("preserves style state across private CSI m control codes", () => {

@@ -905,7 +905,7 @@ impl String {
             // the UTF-8 byte view.
             return w::utf8(self.as_zig().slice());
         }
-        w::latin1(self.latin1())
+        w::latin1(self.latin1(), ambiguous_as_wide)
     }
 
     /// `bun.String.isGlobal` — true iff this is a `ZigString`

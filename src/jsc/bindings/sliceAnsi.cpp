@@ -10,7 +10,7 @@
 extern "C" uint8_t Bun__codepointWidth(uint32_t cp, bool ambiguous_as_wide);
 extern "C" bool Bun__graphemeBreak(uint32_t cp1, uint32_t cp2, uint8_t* state);
 extern "C" bool Bun__isEmojiPresentation(uint32_t cp);
-extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len);
+extern "C" size_t Bun__visibleWidthExcludeANSI_latin1(const uint8_t* ptr, size_t len, bool ambiguous_as_wide);
 extern "C" size_t Bun__visibleWidthExcludeANSI_utf16(const uint16_t* ptr, size_t len, bool ambiguous_as_wide);
 
 namespace Bun {
@@ -89,17 +89,14 @@ struct GraphemeWidthState {
             return 1; // Single (unpaired) regional indicator is width 1
         if (emojiBase && (skinTone || zwj))
             return 2;
+        // VS16 widens only a base with the Emoji property to emoji
+        // presentation; the fused emoji bit early-outs below U+203C, where
+        // (c) and (R) are the only non-keycap Emoji codepoints. Zero-width
+        // and narrow non-emoji bases keep their own width under VS15/VS16.
         if (vs15 || vs16) {
-            if (baseWidth == 2)
+            if (baseWidth == 2 || (vs16 && (emojiBase || firstCp == 0xA9 || firstCp == 0xAE)))
                 return 2;
-            if (vs16) {
-                if ((firstCp >= 0x30 && firstCp <= 0x39) || firstCp == 0x23 || firstCp == 0x2A)
-                    return 1;
-                if (firstCp < 0x80)
-                    return 1;
-                return 2;
-            }
-            return 1;
+            return baseWidth;
         }
         // Match stringWidth.cpp GraphemeState::width() exactly: return accumulated width
         // (may be 0 for zero-width-only clusters like U+200B ZWSP).
@@ -114,12 +111,19 @@ struct GraphemeWidthState {
 using ANSI::isSgrEndCode;
 using ANSI::sgrCloseCode;
 
-// Style state: maps endCode -> openCode string
-// This matches the upstream approach using a Map<endCode, openCode>
+// Attribute slot for an SGR open code: same-slot styles replace, distinct
+// slots stack. Slot = close code, except closes clearing several independent
+// flags (22 bold+dim, 23 italic+fraktur, 24 under+double, 54 framed+encircled).
+static inline uint32_t sgrSlot(uint32_t openCode)
+{
+    uint32_t close = sgrCloseCode(openCode);
+    return (close == 22 || close == 23 || close == 24 || close == 54) ? openCode : close;
+}
+
+// Style state: an ordered set of active styles, one per attribute slot.
 struct SgrStyleState {
-    // We store entries as (endCode, openCodeString) pairs
-    // where endCode is the SGR code that closes this style
     struct Entry {
+        uint32_t slot; // sgrSlot() of the open code
         String endCode; // e.g. "\x1b[39m"
         String openCode; // e.g. "\x1b[31m"
     };
@@ -140,13 +144,12 @@ struct SgrStyleState {
         });
     }
 
-    void applyStart(const String& openCodeStr, const String& endCodeStr)
+    void applyStart(uint32_t slot, const String& openCodeStr, const String& endCodeStr)
     {
-        // Remove existing entry with same endCode, then add new one
         entries.removeAllMatching([&](const Entry& e) {
-            return e.endCode == endCodeStr;
+            return e.slot == slot;
         });
-        entries.append(Entry { endCodeStr, openCodeStr });
+        entries.append(Entry { slot, endCodeStr, openCodeStr });
     }
 
     void emitOpenCodes(StringBuilder& result) const
@@ -157,9 +160,20 @@ struct SgrStyleState {
 
     void emitCloseCodes(StringBuilder& result) const
     {
-        // Emit in reverse order (matching upstream undoAnsiCodes)
-        for (size_t i = entries.size(); i > 0; --i)
-            result.append(entries[i - 1].endCode);
+        // Reverse order (matching upstream undoAnsiCodes). A close shared by
+        // several slots (22 = bold + dim) is emitted once.
+        for (size_t i = entries.size(); i > 0; --i) {
+            const String& end = entries[i - 1].endCode;
+            bool alreadyEmitted = false;
+            for (size_t j = entries.size(); j > i; --j) {
+                if (entries[j - 1].endCode == end) {
+                    alreadyEmitted = true;
+                    break;
+                }
+            }
+            if (!alreadyEmitted)
+                result.append(end);
+        }
     }
 
     bool isEmpty() const { return entries.isEmpty(); }
@@ -204,7 +218,8 @@ static String makeSgrCodeMulti(bool isC1, std::span<const uint32_t> codes)
 // at 32. Anything beyond that is either corrupt or adversarial — we stop
 // parsing and mark overflow; callers treat overflowed sequences as opaque
 // (no style tracking, just pass-through/skip). Zero heap allocation for all
-// real-world SGR.
+// real-world SGR. An empty parameter takes its default value 0 (ECMA-48
+// 5.4.2): "\e[m" is [0] and "\e[31;m" is [31, 0], so count >= 1.
 struct SgrParams {
     static constexpr size_t kMax = 32;
     uint32_t data[kMax];
@@ -214,7 +229,6 @@ struct SgrParams {
 
     uint32_t operator[](size_t i) const { return data[i]; }
     size_t size() const { return count; }
-    bool isEmpty() const { return count == 0; }
 };
 
 // Parse directly from the input Char buffer — no intermediate UChar copy.
@@ -223,7 +237,6 @@ static SgrParams parseSgrParams(const Char* paramStart, const Char* paramEnd)
 {
     SgrParams out;
     uint32_t current = 0;
-    bool hasDigit = false;
 
     for (const Char* p = paramStart; p < paramEnd; ++p) {
         Char c = *p;
@@ -231,27 +244,23 @@ static SgrParams parseSgrParams(const Char* paramStart, const Char* paramEnd)
             // Clamp to prevent overflow on pathological "99999999999" params.
             // Valid SGR codes are 0-107 plus 256-color indices 0-255.
             if (current < 100000) current = current * 10 + (c - '0');
-            hasDigit = true;
         } else if (c == ';' || c == ':') {
             if (c == ':') out.hasColon = true;
             if (out.count >= SgrParams::kMax) {
                 out.overflow = true;
                 return out;
             }
-            out.data[out.count++] = hasDigit ? current : 0;
+            out.data[out.count++] = current;
             current = 0;
-            hasDigit = false;
         } else {
             break; // non-parameter character
         }
     }
-    if (hasDigit || out.count == 0) {
-        if (out.count >= SgrParams::kMax) {
-            out.overflow = true;
-            return out;
-        }
-        out.data[out.count++] = current;
+    if (out.count >= SgrParams::kMax) {
+        out.overflow = true;
+        return out;
     }
+    out.data[out.count++] = current;
     return out;
 }
 
@@ -283,20 +292,14 @@ static void applySgrToState(SgrStyleState& state, const Char* seqStart, const Ch
 
     if (hasColon) {
         // Treat the whole sequence as opaque - store as a start with appropriate end code
-        uint32_t firstParam = params.isEmpty() ? 0 : params[0];
+        uint32_t firstParam = params[0];
         uint32_t closeCode = sgrCloseCode(firstParam);
         String endStr = closeCode ? makeSgrCode(false, closeCode) : "\x1b[0m"_s;
         // Build open code string from original sequence
         StringBuilder openSb;
         for (const Char* p = seqStart; p < seqEnd; ++p)
             openSb.append(static_cast<UChar>(*p));
-        state.applyStart(openSb.toString(), endStr);
-        return;
-    }
-
-    // Empty params = reset
-    if (params.isEmpty()) {
-        state.applyReset();
+        state.applyStart(sgrSlot(firstParam), openSb.toString(), endStr);
         return;
     }
 
@@ -310,30 +313,30 @@ static void applySgrToState(SgrStyleState& state, const Char* seqStart, const Ch
             continue;
         }
 
-        // Extended foreground (38) or background (48)
-        if (code == 38 || code == 48) {
-            uint32_t defaultClose = (code == 38) ? 39 : 49;
-            String endStr = makeSgrCode(false, defaultClose);
+        // Extended foreground (38), background (48) or underline color (58)
+        if (code == 38 || code == 48 || code == 58) {
+            uint32_t slot = sgrSlot(code);
+            String endStr = makeSgrCode(false, sgrCloseCode(code)); // 39 / 49 / 59
 
             if (i + 1 < params.size()) {
                 uint32_t colorType = params[i + 1];
                 if (colorType == 5 && i + 2 < params.size()) {
                     // 256-color: 38;5;N — 3 params on stack.
                     const uint32_t seq[3] = { code, 5, params[i + 2] };
-                    state.applyStart(makeSgrCodeMulti(isC1, seq), endStr);
+                    state.applyStart(slot, makeSgrCodeMulti(isC1, seq), endStr);
                     i += 3;
                     continue;
                 }
                 if (colorType == 2 && i + 4 < params.size()) {
                     // Truecolor: 38;2;R;G;B — 5 params on stack.
                     const uint32_t seq[5] = { code, 2, params[i + 2], params[i + 3], params[i + 4] };
-                    state.applyStart(makeSgrCodeMulti(isC1, seq), endStr);
+                    state.applyStart(slot, makeSgrCodeMulti(isC1, seq), endStr);
                     i += 5;
                     continue;
                 }
             }
-            // Fallback: just 38 or 48 alone
-            state.applyStart(makeSgrCode(isC1, code), endStr);
+            // Fallback: just 38 / 48 / 58 alone
+            state.applyStart(slot, makeSgrCode(isC1, code), endStr);
             i++;
             continue;
         }
@@ -345,14 +348,10 @@ static void applySgrToState(SgrStyleState& state, const Char* seqStart, const Ch
             continue;
         }
 
-        // It's a start code
+        // It's a start code; unknown codes are closed by a full reset.
         uint32_t closeCode = sgrCloseCode(code);
-        if (closeCode) {
-            state.applyStart(makeSgrCode(isC1, code), makeSgrCode(false, closeCode));
-        } else {
-            // Unknown code - use reset as close
-            state.applyStart(makeSgrCode(isC1, code), "\x1b[0m"_s);
-        }
+        String endStr = closeCode ? makeSgrCode(false, closeCode) : "\x1b[0m"_s;
+        state.applyStart(sgrSlot(code), makeSgrCode(isC1, code), endStr);
         i++;
     }
 }
@@ -386,7 +385,7 @@ static bool shouldIncludeSgrAfterEnd(const SgrParams& params, const SgrStyleStat
         }
 
         // Extended color sequences
-        if (code == 38 || code == 48) {
+        if (code == 38 || code == 48 || code == 58) {
             hasStartFragment = true;
             // Skip sub-parameters
             if (i + 1 < params.size()) {
@@ -472,12 +471,71 @@ static const Char* parseCsi(const Char* start, const Char* end, bool& isSgr, boo
             continue;
         }
 
-        // Invalid byte for CSI - sequence is malformed
-        return it; // Return pointer to the malformed byte (treated as control up to here)
+        // CAN, SUB and C1 ST abort the CSI with the byte consumed (VT500);
+        // ESC aborts it and re-introduces, so it is left for the next token.
+        // Anything else is payload the recognizer scans past (matches
+        // ANSI::consumeANSI's inCsi state) and cannot be canonical SGR.
+        if (c == 0x18 || c == 0x1a || c == 0x9c)
+            return it + 1;
+        if (c == 0x1b)
+            return it;
+        isCanonicalSgr = false;
+        it++;
     }
 
     // Unterminated CSI - consume everything
     return end;
+}
+
+// Parse the escape sequences that aren't CSI, OSC or a control string: the
+// two-byte Fe/Fs/Fp escapes (ESC 7, ESC c, ESC =) and the nF sequences
+// (ESC ( B, ESC # 8). ECMA-48, 5th ed. §5.3: after ESC, 0x20-0x2F is an
+// intermediate byte and 0x30-0x7E is the final byte. Mirrors
+// ANSI::consumeANSI() in ANSIHelpers.h so Bun.sliceAnsi, Bun.stringWidth and
+// Bun.stripANSI agree on which bytes are visible.
+template<typename Char>
+static const Char* parseEscapeSequence(const Char* start, const Char* end)
+{
+    const Char* it = start + 1; // past ESC
+    if (it == end)
+        return end; // trailing ESC
+
+    const Char c = *it;
+    // ESC aborts the sequence in progress and introduces a new one: consume
+    // just this ESC and let the next token start at the one after it.
+    if (c == 0x1b)
+        return it;
+
+    // Introducers owned by parseCsi / parseControlString. Reaching here means
+    // they rejected the input as malformed, and sliceAnsi deliberately keeps
+    // the visible text that follows a malformed sequence.
+    switch (c) {
+    case '[':
+    case ']':
+    case 'P':
+    case 'X':
+    case '^':
+    case '_':
+        return nullptr;
+    default:
+        break;
+    }
+
+    if (c >= 0x20 && c <= 0x2f) { // nF: intermediate byte, then the final byte
+        ++it;
+        if (it == end)
+            return end;
+        // An ESC where the final byte would be aborts the nF sequence and
+        // introduces the next one (VT500), so it is not consumed here.
+        if (*it == 0x1b)
+            return it;
+        return it + 1;
+    }
+    if (c >= 0x30 && c <= 0x7e) // final byte of a two-byte escape
+        return it + 1;
+
+    // Not part of a sequence; only the ESC itself is a control character.
+    return nullptr;
 }
 
 // Parse hyperlink: ESC]8;...;url TERMINATOR
@@ -496,12 +554,17 @@ static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOp
         return nullptr;
     }
 
-    // Find the semicolon separating params from URI
+    // Find the semicolon separating params from URI. A terminator or an
+    // aborting byte (ESC, CAN, SUB) inside the params ends the OSC early, so
+    // it is not a hyperlink; parseControlString() consumes it.
     const Char* uriStart = nullptr;
     {
         const Char* p = it;
-        while (p < end && *p != ';')
+        while (p < end && *p != ';') {
+            if (*p == 0x07 || *p == 0x9c || *p == 0x1b || *p == 0x18 || *p == 0x1a)
+                return nullptr;
             p++;
+        }
         if (p >= end)
             return nullptr; // no semicolon found - not a valid hyperlink
         uriStart = p + 1;
@@ -564,6 +627,10 @@ static const Char* parseHyperlink(const Char* start, const Char* end, bool& isOp
             }
             return p + 1;
         }
+        // An inner ESC (not ESC \), CAN or SUB aborts the OSC (VT500), so this
+        // is not a hyperlink; parseControlString() consumes the aborted prefix.
+        if (*p == 0x1b || *p == 0x18 || *p == 0x1a)
+            return nullptr;
         p++;
     }
 
@@ -619,18 +686,25 @@ static const Char* parseControlString(const Char* start, const Char* end)
         while (it < end) {
             if (supportsBel && *it == 0x07)
                 return it + 1;
-            if (*it == 0x1b && it + 1 < end && *(it + 1) == '\\')
-                return it + 2;
+            // ESC \ terminates; any other ESC aborts the payload and starts the
+            // next token; CAN/SUB abort with the byte consumed (VT500).
+            if (*it == 0x1b) {
+                if (it + 1 < end && *(it + 1) == '\\')
+                    return it + 2;
+                return it;
+            }
+            if (*it == 0x18 || *it == 0x1a)
+                return it + 1;
             if (*it == 0x9c)
                 return it + 1;
             it++;
         }
         // Unterminated control string — DO NOT consume to EOF. A single C1
         // byte (0x90, 0x98, 0x9E, 0x9F) or malformed ESC-sequence should not
-        // swallow the rest of the string (DoS vector; also inconsistent with
-        // Bun.stringWidth which treats these as standalone width-0 controls).
-        // Instead, return nullptr so the caller treats the introducer as a
-        // single visible char (which will be width 0 via codepointWidth).
+        // swallow the rest of the string when slicing. Instead, return nullptr
+        // so the caller treats the introducer as a single visible char (which
+        // will be width 0 via codepointWidth). Note: Bun.stringWidth and
+        // Bun.stripANSI do consume unterminated control strings to EOF.
         return nullptr;
     }
 
@@ -671,6 +745,15 @@ static const Char* tryParseAnsi(const Char* start, const Char* end, TokenType& t
                 type = TokenType::Control;
             }
             return csiEnd;
+        }
+    }
+
+    // Try the two-byte and nF escape sequences
+    if (c == 0x1b) {
+        const Char* escEnd = parseEscapeSequence(start, end);
+        if (escEnd) {
+            type = TokenType::Control;
+            return escEnd;
         }
     }
 
@@ -1415,7 +1498,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionBunSliceAnsi, (JSC::JSGlobalObject * globalOb
     size_t ellipsisWidth = 0;
     if (!ellipsis.isEmpty()) {
         ellipsisWidth = ellipsis.is8Bit()
-            ? Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(ellipsis.span8().data()), ellipsis.length())
+            ? Bun__visibleWidthExcludeANSI_latin1(reinterpret_cast<const uint8_t*>(ellipsis.span8().data()), ellipsis.length(), ambiguousIsWide)
             : Bun__visibleWidthExcludeANSI_utf16(reinterpret_cast<const uint16_t*>(ellipsis.span16().data()), ellipsis.length(), ambiguousIsWide);
     }
 

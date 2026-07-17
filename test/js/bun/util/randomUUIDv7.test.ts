@@ -212,13 +212,14 @@ describe("randomUUIDv7", () => {
   });
 
   // https://github.com/oven-sh/WebKit/pull/304
-  test("default timestamp is bracketed by Date.now()", async () => {
+  test("default timestamp is never behind Date.now()", async () => {
     // Before oven-sh/WebKit#304, Windows Date.now() (WTF QPC-interpolated) ran
     // up to ~1ms ahead of the native precise clock the runtime read for default
-    // timestamps, so before > embedded-timestamp in ~80% of samples. With that
-    // fixed, Bun.randomUUIDv7 / crypto.randomUUIDv7 / File.lastModified all
-    // default to global.js_date_now(), which is Date.now() exactly.
-    // Subprocess keeps the process-global UUIDv7 last-timestamp untouched.
+    // timestamps, so before > embedded-timestamp in ~80% of samples. All three
+    // now default to js_date_now() which is Date.now() exactly. UUID7::init may
+    // bump the embedded timestamp on 12-bit counter rollover (RFC 9562 §6.2),
+    // so only the lower bound is asserted for the UUID paths; File.lastModified
+    // has no counter and is fully bracketed.
     const N = isWindows ? 50_000 : 5_000;
     await using proc = Bun.spawn({
       cmd: [
@@ -235,8 +236,8 @@ describe("randomUUIDv7", () => {
             const c = tsOfHex(crypto.randomUUIDv7());
             const f = new File([], "x").lastModified;
             const after = Date.now();
-            if (bad.bun  === null && !(before <= b && b <= after)) bad.bun  = { i, before, b, after };
-            if (bad.node === null && !(before <= c && c <= after)) bad.node = { i, before, c, after };
+            if (bad.bun  === null && !(before <= b)) bad.bun  = { i, before, b };
+            if (bad.node === null && !(before <= c)) bad.node = { i, before, c };
             if (bad.file === null && !(before <= f && f <= after)) bad.file = { i, before, f, after };
             if (bad.bun && bad.node && bad.file) break;
           }

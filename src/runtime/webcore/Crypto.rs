@@ -247,11 +247,9 @@ pub(crate) fn bun_random_uuid_v7(
             .unwrap();
         }
 
-        // jsDateNow() is the exact value JS Date.now() would return (same
-        // precise system clock as milli_timestamp() on every platform since
-        // oven-sh/WebKit#304, plus any setSystemTime() override), so a caller
-        // bracketing this call with Date.now() always observes
-        // before <= embedded-timestamp <= after.
+        // js_date_now() is exactly Date.now() (same precise clock + any
+        // setSystemTime() override), so the input timestamp is never behind a
+        // caller's Date.now() sample. UUID7::init may bump it on rollover.
         break 'brk global.js_date_now().max(0.0) as u64;
     };
 

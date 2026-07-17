@@ -13,9 +13,9 @@ import http2utils from "./helpers";
 import { nodeEchoServer, TLS_CERT, TLS_OPTIONS } from "./http2-helpers";
 const { describe, expect, it, beforeAll, afterAll, createCallCheckCtx } = createTest(import.meta.path);
 // bun-debug ships with ASAN but isn't named bun-asan, so isASAN is false
-// there; the 10k-request maxSessionMemory stress test takes ~90s under
+// there; the 10k-request maxSessionMemory stress test takes ~105s under
 // debug+ASAN vs ~2s release, so scale for either.
-const ASAN_MULTIPLIER = isDebug ? 10 : isASAN ? 3 : 1;
+const ASAN_MULTIPLIER = isDebug ? 15 : isASAN ? 3 : 1;
 
 function invalidArgTypeHelper(input) {
   if (input === null) return " Received null";
@@ -1693,6 +1693,61 @@ it("client stream events observe the request-time async context, not the session
   }
 });
 
+// Like Node, session.destroy(err) tears open streams down synchronously from the caller's
+// stack: their 'error'/'close' run in the destroy() caller's async context (not the
+// request()-time one), while the session's own 'error'/'close' keep the connect-time context.
+it("client session.destroy() emits open streams' error/close in the caller's async context", async () => {
+  const als = new AsyncLocalStorage();
+  const CONNECT = { id: "connect" };
+  const REQUEST = { id: "request" };
+  const DESTROY = { id: "destroy" };
+  const server = http2.createServer();
+  let client;
+  try {
+    const { promise: streamsOpened, resolve: onStreamsOpened } = Promise.withResolvers();
+    let openStreams = 0;
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      if (++openStreams === 2) onStreamsOpened();
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    const { promise: connected, resolve: onConnect } = Promise.withResolvers();
+    client = als.run(CONNECT, () => http2.connect(`http://localhost:${server.address().port}`));
+    client.on("connect", onConnect);
+    const sessionEvents = { error: null, close: null };
+    const { promise: sessionClosed, resolve: onSessionClose } = Promise.withResolvers();
+    client.on("error", () => (sessionEvents.error = als.getStore()));
+    client.on("close", () => {
+      sessionEvents.close = als.getStore();
+      onSessionClose();
+    });
+    await connected;
+    const streamEvents = [];
+    als.run(REQUEST, () => {
+      for (let i = 0; i < 2; i++) {
+        const req = client.request({ ":path": `/${i}` });
+        req.on("error", () => streamEvents.push({ i, event: "error", store: als.getStore() }));
+        req.on("close", () => streamEvents.push({ i, event: "close", store: als.getStore() }));
+      }
+    });
+    await streamsOpened;
+    als.run(DESTROY, () => client.destroy(new Error("boom")));
+    await sessionClosed;
+    // Emission order across the two streams is not the contract; the context each ran in is.
+    streamEvents.sort((a, b) => a.i - b.i || a.event.localeCompare(b.event));
+    expect(streamEvents).toEqual([
+      { i: 0, event: "close", store: DESTROY },
+      { i: 0, event: "error", store: DESTROY },
+      { i: 1, event: "close", store: DESTROY },
+      { i: 1, event: "error", store: DESTROY },
+    ]);
+    expect(sessionEvents).toEqual({ error: CONNECT, close: CONNECT });
+  } finally {
+    client?.destroy?.();
+    server.close();
+  }
+});
+
 it("sensitive headers should work", async () => {
   const server = http2.createServer();
   let client;
@@ -3365,6 +3420,72 @@ it("Http2Stream pull-mode read() after pause() replenishes the receive window", 
     expect(received).toBe(PAYLOAD);
   } finally {
     client.close();
+    server.close();
+  }
+});
+
+// The outbound cork buffer is thread-local across every Http2Session. Interleaving
+// respond()/write() across two sessions used to let the second session's corked
+// HEADERS be prepended to the first session's multi-frame DATA batch and sent to
+// the wrong peer: one client saw a foreign HEADERS frame, the other never saw its
+// own (test/js/web/fetch/fetch-backpressure.test.ts went intermittently red on
+// Windows CI once #32488 widened the interleaving window).
+it("http2 server sends each session's frames to its own peer under interleaved respond()/write()", async () => {
+  const BIG = Buffer.alloc(64 * 1024, 65);
+  const N = 10;
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: false });
+  const streams = [];
+  const bothStreams = Promise.withResolvers();
+  server.on("error", bothStreams.reject);
+  server.on("stream", stream => {
+    stream.on("error", () => {});
+    streams.push(stream);
+    if (streams.length === 2) bothStreams.resolve();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  try {
+    const results = Promise.all(
+      [0, 1].map(
+        i =>
+          new Promise(resolve => {
+            let total = 0;
+            let status;
+            const fail = e => {
+              bothStreams.reject(e);
+              resolve({ i, status, total, err: String(e) });
+            };
+            const client = http2.connect(`https://127.0.0.1:${server.address().port}`, TLS_OPTIONS);
+            client.on("error", fail);
+            const req = client.request({ ":path": "/" });
+            req.on("response", h => (status = h[":status"]));
+            req.on("data", c => (total += c.length));
+            req.on("end", () => {
+              client.close();
+              resolve({ i, status, total });
+            });
+            req.on("error", fail);
+            req.end();
+          }),
+      ),
+    );
+    await bothStreams.promise;
+    // A.respond() corks A's HEADERS; B.respond() force-uncorks A (to A's socket)
+    // then corks B's HEADERS. A.write(64KB) takes the multi-frame DATA path,
+    // which drains the thread-local cork: without the ownership check it pulls
+    // B's HEADERS into A's batch.
+    streams[0].respond({ ":status": 200 });
+    streams[1].respond({ ":status": 200 });
+    for (let k = 0; k < N; k++) {
+      streams[0].write(BIG);
+      streams[1].write(BIG);
+    }
+    streams[0].end();
+    streams[1].end();
+    expect(await results).toEqual([
+      { i: 0, status: 200, total: BIG.length * N },
+      { i: 1, status: 200, total: BIG.length * N },
+    ]);
+  } finally {
     server.close();
   }
 });

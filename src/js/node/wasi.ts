@@ -670,6 +670,9 @@ var require_wasi = __commonJS({
           if (e instanceof types_1.WASIError) {
             return e.errno;
           }
+          if (e instanceof RangeError) {
+            return constants_1.WASI_EOVERFLOW;
+          }
           throw e;
         }
       };
@@ -860,26 +863,19 @@ var require_wasi = __commonJS({
           const { buffer } = memory;
           const { byteLength } = buffer;
 
+          if (iovs >>> 0 !== iovs || iovsLen >>> 0 !== iovsLen || iovs + iovsLen * 8 > byteLength) {
+            throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
+          }
+
           if (iovsLen === 1) {
             const ptr = iovs;
             const buf = view.getUint32(ptr, true);
-            let bufLen = view.getUint32(ptr + 4, true);
+            const bufLen = view.getUint32(ptr + 4, true);
 
-            if (bufLen > byteLength - buf) {
-              console.log({
-                buf,
-                bufLen,
-                total_memory: byteLength,
-              });
-              log("getiovs: warning -- truncating buffer to fit in memory");
-              bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
+            if (buf + bufLen > byteLength) {
+              throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
             }
-            try {
-              return [new Uint8Array(buffer, buf, bufLen)];
-            } catch (err) {
-              console.warn("WASI.getiovs -- invalid buffer", err);
-              throw new types_1.WASIError(constants_1.WASI_EINVAL);
-            }
+            return [new Uint8Array(buffer, buf, bufLen)];
           }
 
           // Avoid referencing Array because materializing the Array constructor can show up in profiling
@@ -888,23 +884,12 @@ var require_wasi = __commonJS({
 
           for (let i = 0, ptr = iovs; i < iovsLen; i++, ptr += 8) {
             const buf = view.getUint32(ptr, true);
-            let bufLen = view.getUint32(ptr + 4, true);
+            const bufLen = view.getUint32(ptr + 4, true);
 
-            if (bufLen > byteLength - buf) {
-              console.log({
-                buf,
-                bufLen,
-                total_memory: byteLength,
-              });
-              log("getiovs: warning -- truncating buffer to fit in memory");
-              bufLen = Math.min(bufLen, Math.max(0, byteLength - buf));
+            if (buf + bufLen > byteLength) {
+              throw new types_1.WASIError(constants_1.WASI_EOVERFLOW);
             }
-            try {
-              buffers[i] = new Uint8Array(buffer, buf, bufLen);
-            } catch (err) {
-              console.warn("WASI.getiovs -- invalid buffer", err);
-              throw new types_1.WASIError(constants_1.WASI_EINVAL);
-            }
+            buffers[i] = new Uint8Array(buffer, buf, bufLen);
           }
           return buffers;
         };

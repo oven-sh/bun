@@ -37,7 +37,7 @@ type Readers = Vec<ChildPtr>;
 // IOReader
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) type ReaderImpl = bun_io::BufferedReader;
+pub(crate) type ReaderImpl = bun_loop::BufferedReader;
 
 struct State {
     fd: Fd,
@@ -133,11 +133,11 @@ impl IOReader {
         {
             reader
                 .flags
-                .remove(bun_io::pipe_reader::PosixFlags::CLOSE_HANDLE);
+                .remove(bun_loop::pipe_reader::PosixFlags::CLOSE_HANDLE);
         }
         #[cfg(windows)]
         {
-            reader.source = Some(bun_io::Source::File(bun_io::Source::open_file(fd)));
+            reader.source = Some(bun_loop::Source::File(bun_loop::Source::open_file(fd)));
         }
         let this = std::sync::Arc::new_cyclic(|w| IOReader {
             reader: UnsafeCell::new(reader),
@@ -199,13 +199,13 @@ impl IOReader {
             + s.readers.capacity() * core::mem::size_of::<ChildPtr>()
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
+    /// `bun_loop::io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_event_loop::EventLoopHandle` so the (runtime-registered)
+    /// the stored `bun_loop::EventLoopHandle` so the (runtime-registered)
     /// vtable can recover it.
     #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
+    fn io_evtloop(&self) -> bun_loop::io::EventLoopHandle {
+        // SAFETY: `bun_loop::io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; vtable consumers treat the pointee as read-only
         self.state().evtloop.as_event_loop_ctx()
     }
@@ -227,9 +227,9 @@ impl IOReader {
         {
             let r = self.reader();
             let need_start = match &r.handle {
-                bun_io::pipes::PollOrFd::Closed => true,
-                bun_io::pipes::PollOrFd::Poll(p) => !p.is_registered(),
-                bun_io::pipes::PollOrFd::Fd(_) => true,
+                bun_loop::pipes::PollOrFd::Closed => true,
+                bun_loop::pipes::PollOrFd::Poll(p) => !p.is_registered(),
+                bun_loop::pipes::PollOrFd::Fd(_) => true,
             };
             if need_start {
                 let fd = self.state().fd;
@@ -271,7 +271,7 @@ impl IOReader {
     }
 
     /// The `BufferedReader.onReadChunk` hook.
-    fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
+    fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_loop::ReadState) -> bool {
         // `dispatch_read_chunk` → `Cat::on_io_reader_chunk` may drop the last
         // external Arc; hold one across the whole body so the trailing
         // `state()` accesses (and `run_yield`'s re-read of `interp`) see live
@@ -296,7 +296,7 @@ impl IOReader {
             }
         }
 
-        let should_continue = has_more != bun_io::ReadState::Eof;
+        let should_continue = has_more != bun_loop::ReadState::Eof;
         if should_continue && !self.state().readers.is_empty() {
             self.set_reading(true);
             // NOTE: no explicit re-arm (`registerPoll()` on posix /
@@ -380,7 +380,7 @@ impl IOReader {
 // invariant. Aliasing with the caller's live `&mut ReaderImpl` is handled by
 // the state/reader UnsafeCell split — callbacks touch only `state`, never
 // `reader()`.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     ShellIoReader for IOReader;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(chunk, has_more);
@@ -417,7 +417,7 @@ impl Drop for IOReader {
                 // We cleared CLOSE_HANDLE in init(), so reader Drop will not
                 // return the FilePoll to its pool. Do it explicitly (without
                 // closing the fd — we own that and close it ourselves below).
-                if matches!(r.handle, bun_io::pipes::PollOrFd::Poll(_)) {
+                if matches!(r.handle, bun_loop::pipes::PollOrFd::Poll(_)) {
                     r.handle.close_impl(None, None::<fn(*mut c_void)>, false);
                 }
                 let _ = sys::close(s.fd);

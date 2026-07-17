@@ -2,14 +2,14 @@ use core::ffi::c_void;
 
 use bun_core::MutableString;
 use bun_core::strings;
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_http::async_http::Options as HttpOptions;
 use bun_http::{
     AsyncHTTP, FetchRedirect, HTTPClientResult, HTTPClientResultCallback, Headers, HeadersExt,
     Method,
 };
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::picohttp as picohttp;
 use bun_s3_signing::acl::ACL;
@@ -509,8 +509,8 @@ impl Drop for S3HttpSimpleTask {
         // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
         // the global hook (registered by crate::init) — same pattern as
         // `event_loop_handle_to_ctx` in process.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
+        self.poll_ref.unref(bun_loop::posix_event_loop::get_vm_ctx(
+            bun_loop::AllocatorType::Js,
         ));
         // SAFETY: `http` is always initialised before the task pointer escapes (see
         // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
@@ -644,8 +644,8 @@ pub(crate) fn execute_simple_s3_request(
     });
     // SAFETY: `task_ptr` is a freshly heap-allocated pointer; exclusive access here.
     let task = unsafe { &mut *task_ptr };
-    task.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
-        bun_io::AllocatorType::Js,
+    task.poll_ref.ref_(bun_loop::posix_event_loop::get_vm_ctx(
+        bun_loop::AllocatorType::Js,
     ));
 
     let proxy = options.proxy_url.unwrap_or(b"");

@@ -43,7 +43,7 @@ declare_scope!(ParseTask, hidden);
 
 #[allow(non_snake_case)]
 mod EventLoop {
-    pub(super) type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
+    pub(super) type Task = bun_loop::ConcurrentTask::ConcurrentTask;
 }
 
 // the per-file parse arena is held as `bump: &'static Bump` (the
@@ -2811,9 +2811,9 @@ pub mod parse_worker {
             .any_loop_mut()
             .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
         {
-            bun_event_loop::AnyEventLoop::Js { owner } => {
+            bun_loop::AnyEventLoop::Js { owner } => {
                 owner.enqueue_task_concurrent(
-                    bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
+                    bun_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                         // SAFETY: `p` is the `result` Box leaked above; ownership
                         // transfers to `on_complete`, which deallocates it.
                         unsafe { on_complete(p) };
@@ -2821,7 +2821,7 @@ pub mod parse_worker {
                     }),
                 );
             }
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
+            bun_loop::AnyEventLoop::Mini(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
                 // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
                 unsafe {

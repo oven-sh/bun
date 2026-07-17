@@ -12,9 +12,9 @@ use crate::cli::run_command::RunCommand;
 use bun_core::collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
-use bun_event_loop::EventLoopHandle;
-use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
-use bun_io::{BufferedReader, ReadState};
+use bun_loop::EventLoopHandle;
+use bun_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
+use bun_loop::{BufferedReader, ReadState};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
@@ -142,10 +142,10 @@ impl<'a> ProcessHandle<'a> {
         #[cfg(windows)]
         {
             if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.source = Some(bun_io::Source::Pipe(pipe));
+                handle.stdout.source = Some(bun_loop::Source::Pipe(pipe));
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.source = Some(bun_io::Source::Pipe(pipe));
+                handle.stderr.source = Some(bun_loop::Source::Pipe(pipe));
             }
         }
 
@@ -176,8 +176,8 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: `handle` is the live `ProcessHandle` slot in `State.handles`;
         // it owns `process` and outlives it.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::FilterRunHandle,
+            bun_loop::ProcessExit::new(
+                bun_loop::ProcessExitKind::FilterRunHandle,
                 std::ptr::from_mut::<ProcessHandle<'a>>(handle),
             )
         });
@@ -211,7 +211,7 @@ impl<'a> ProcessHandle<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         on_process_exit(process, status, rusage) =>
             (*this).on_process_exit(&mut *process, status, rusage),
@@ -230,16 +230,16 @@ impl<'a> ProcessHandle<'a> {
         let _ = state.process_exit(self);
     }
 
-    pub(crate) fn loop_(&self) -> *mut bun_io::Loop {
+    pub(crate) fn loop_(&self) -> *mut bun_loop::Loop {
         // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-        bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
+        bun_loop::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
     }
 }
 
 // The reader holds no `&mut ProcessHandle` across the callback (it only holds a
 // `&mut` to the embedded `BufferedReader` field, which is disjoint from the
 // fields touched here). `state` backref valid for the lifetime of the run loop.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     FilterRunHandle for ProcessHandle<'a>;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
@@ -262,7 +262,7 @@ struct State<'a> {
     // thread-local singleton pointer; aliasing &mut would be UB.
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     // buffer for batched output
@@ -877,7 +877,7 @@ pub(crate) fn run_scripts_with_filter(
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
     // SAFETY: `event_loop` is the live per-thread `MiniEventLoop` (init'd above);
     // `as_event_loop_ctx` only stores it as a tagged backref.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
+    bun_loop::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
         &mut *event_loop
     }));
     let shell_bin: &'static ZStr = {

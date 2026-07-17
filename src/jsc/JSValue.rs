@@ -2629,22 +2629,6 @@ impl JSValue {
         }
     }
 
-    /// `JSValue.toFmt(formatter)` — reset `formatter` for a
-    /// fresh top-level format of `self` and return a `Display` adapter.
-    ///
-    /// The `Formatter` releases any owned `map_node` in `Drop`, so reusing a
-    /// formatter that already owns a `map_node` is handled at end-of-scope.
-    /// All current callers pass a freshly-constructed formatter
-    /// (`map_node == None`).
-    pub fn to_fmt<'a, 'b>(
-        self,
-        formatter: &'a mut crate::console_object::Formatter<'b>,
-    ) -> crate::console_object::formatter::ZigFormatter<'a, 'b> {
-        formatter.remaining_values = bun_core::ptr::RawSlice::EMPTY;
-        formatter.stack_check.update();
-        crate::console_object::formatter::ZigFormatter::new(formatter, self)
-    }
-
     // ── Next-tick scheduling. ───────────────────────────
     /// `JSValue.callNextTick(global, .{arg})` for the 1-arg case.
     pub fn call_next_tick_1(

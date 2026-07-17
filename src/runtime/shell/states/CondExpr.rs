@@ -351,8 +351,8 @@ impl CondExpr {
 
 // `runtime::dispatch::run_task`'s `task_tag::ShellCondExprStatTask` arm casts
 // the enqueued pointer back to `ShellCondExprStatTask`; both sides MUST agree.
-impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprStatTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCondExprStatTask;
+impl bun_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprStatTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellCondExprStatTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx

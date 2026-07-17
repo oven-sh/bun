@@ -2396,8 +2396,8 @@ pub fn format_ip<'a>(
 // One type subsumes a pure discarding sink and a counting forwarding
 // wrapper. Implements
 // `core::fmt::Write` so it can replace the per-crate private `CountingWriter`
-// reinventions (clap). The byte-level `bun_io::Write` counting sink stays in
-// `bun_io::DiscardingWriter` (different trait, sits above bun_core).
+// reinventions (clap). The byte-level `bun_loop::Write` counting sink stays in
+// `bun_loop::DiscardingWriter` (different trait, sits above bun_core).
 
 /// Zero-sized `fmt::Write` no-op — default type param for [`CountingWriter`].
 pub struct Null;

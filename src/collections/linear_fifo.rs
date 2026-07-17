@@ -202,7 +202,7 @@ pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
 
 // Reader/Writer access is via the impls on `LinearFifo<u8, B>` after the
 // inherent impl below: `bun_core::write::Write` (the canonical byte sink,
-// re-exported as `bun_io::Write`), plus `std::io::Read`, `std::io::Write`,
+// re-exported as `bun_loop::Write`), plus `std::io::Read`, `std::io::Write`,
 // and `core::fmt::Write` for std interop.
 
 impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
@@ -803,8 +803,8 @@ impl<B: LinearFifoBuffer<u8>> core::fmt::Write for LinearFifo<u8, B> {
 }
 
 /// Canonical in-tree byte sink (re-exported as
-/// `bun_io::Write`), so a `LinearFifo<u8, _>` can be passed to every
-/// `impl bun_io::Write` consumer. `written_len` keeps its panicking default:
+/// `bun_loop::Write`), so a `LinearFifo<u8, _>` can be passed to every
+/// `impl bun_loop::Write` consumer. `written_len` keeps its panicking default:
 /// a fifo drains, so it does not track total bytes written.
 impl<B: LinearFifoBuffer<u8>> bun_core::write::Write for LinearFifo<u8, B> {
     /// Appends the whole buffer, growing if `.Dynamic`.

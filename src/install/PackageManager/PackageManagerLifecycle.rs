@@ -284,7 +284,7 @@ impl PackageManager {
         // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
         // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
         unsafe {
-            bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
+            bun_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
                 // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
                 // for the duration of `sleep`.
                 let this = bun_core::ptr::callback_ctx::<PackageManager>(ctx);

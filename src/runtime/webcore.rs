@@ -109,11 +109,11 @@ pub mod node_types {
 pub use crate::jsc::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
-// The lower-tier `bun_event_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
+// The lower-tier `bun_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
 // directly to avoid an event_loop→jsc upward dependency. This tier takes a
 // `&VirtualMachine` and reaches the queue via `vm.event_loop().deferred_tasks`.
-pub use bun_event_loop::auto_flusher;
-use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
+pub use bun_loop::auto_flusher;
+use bun_loop::deferred_task_queue::DeferredRepeatingTask;
 
 #[derive(Debug, Default)]
 pub struct AutoFlusher {

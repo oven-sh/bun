@@ -703,13 +703,13 @@ impl Cmd {
         let Some(redirect) = &node.redirect_file else {
             if flags.duplicate_out() {
                 if flags.stdout() {
-                    stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
+                    stdio[STDERR_NO] = Stdio::Dup2(crate::api::bun_loop::stdio::Dup2 {
                         out: StdioKind::Stderr,
                         to: StdioKind::Stdout,
                     });
                 }
                 if flags.stderr() {
-                    stdio[STDOUT_NO] = Stdio::Dup2(crate::api::bun_spawn::stdio::Dup2 {
+                    stdio[STDOUT_NO] = Stdio::Dup2(crate::api::bun_loop::stdio::Dup2 {
                         out: StdioKind::Stdout,
                         to: StdioKind::Stderr,
                     });

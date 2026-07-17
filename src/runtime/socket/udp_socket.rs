@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 
 use bun_core::{String as BunString, ZigStringSlice};
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -772,7 +772,7 @@ impl UDPSocket {
         // Disarm the error-path guard.
         scopeguard::ScopeGuard::into_inner(guard);
 
-        this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        this.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
         Ok(bun_jsc::JSPromise::resolved_promise_value(
             global_this,
             this_value,
@@ -1685,7 +1685,7 @@ impl UDPSocket {
     pub fn ref_(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_this;
         if !this.closed.get() {
-            this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+            this.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
         }
 
         Ok(JSValue::UNDEFINED)
@@ -1704,7 +1704,7 @@ impl UDPSocket {
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &Self, global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let _ = global_this;
-        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
 
         Ok(JSValue::UNDEFINED)
     }

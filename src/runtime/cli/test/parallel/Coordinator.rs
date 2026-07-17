@@ -28,14 +28,14 @@ use crate::api::bun::process::Status as SpawnStatus;
 pub struct Coordinator<'a> {
     pub vm: &'a VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
     pub reporter: &'a mut CommandLineReporter,
     pub files: Vec<Interned>,
     pub cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
-    pub argv: Box<[bun_spawn::CStrPtr]>,
+    pub argv: Box<[bun_loop::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
     pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,

@@ -10,8 +10,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_event_loop::AnyTask::AnyTask;
-use bun_io::KeepAlive;
+use bun_loop::AnyTask::AnyTask;
+use bun_loop::KeepAlive;
 use bun_sys::threading::work_pool::{IntrusiveWorkTask as _, Task as WorkPoolTask, WorkPool};
 
 use crate::event_loop::ConcurrentTask;
@@ -61,7 +61,7 @@ impl<C> Drop for AnyTaskJob<C> {
     #[inline]
     fn drop(&mut self) {
         // No-op while inactive (init-failure path never `ref_`ed).
-        self.poll.unref(bun_io::js_vm_ctx());
+        self.poll.unref(bun_loop::js_vm_ctx());
         // `ctx: C` drops after this via field drop glue.
     }
 }
@@ -114,7 +114,7 @@ impl<C: AnyTaskJobCtx> AnyTaskJob<C> {
     pub unsafe fn schedule(this: *mut Self) {
         // SAFETY: caller contract.
         let this = unsafe { &mut *this };
-        this.poll.ref_(bun_io::js_vm_ctx());
+        this.poll.ref_(bun_loop::js_vm_ctx());
         WorkPool::schedule(&raw mut this.task);
     }
 

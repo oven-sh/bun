@@ -268,7 +268,7 @@ impl Handlers {
         // closed and it's not listening anymore.
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
-                listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                listener.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
                 listener.this_value.with_mut(|r| r.downgrade());
             }
         }

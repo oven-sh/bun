@@ -5,7 +5,7 @@ pub enum Error {
     #[error(transparent)]
     Parse(#[from] crate::ParseErr),
     #[error(transparent)]
-    Spawn(#[from] bun_spawn::Error),
+    Spawn(#[from] crate::spawn::Error),
 }
 
 impl Error {

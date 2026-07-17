@@ -31,7 +31,7 @@ use bun_core::strings;
 use bun_core::{FeatureFlags, ZBox};
 use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_http::{HeaderValueIterator, Headers};
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_core::picohttp as picohttp;
 use bun_core::ptr::ThisPtr;
@@ -60,7 +60,7 @@ bun_core::declare_scope!(alloc, hidden);
 /// # Safety
 /// `vm` must be the live per-thread VM singleton.
 #[inline]
-unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
+unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_loop::EventLoopCtx {
     // SAFETY: caller contract above.
     unsafe { bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) }
 }

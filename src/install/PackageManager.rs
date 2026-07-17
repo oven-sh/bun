@@ -15,9 +15,9 @@ use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
-use bun_event_loop::MiniEventLoop as mini_event_loop;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
+use bun_loop::MiniEventLoop as mini_event_loop;
+use bun_loop::MiniEventLoop::MiniEventLoop;
+use bun_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_core::paths::resolve_path::{self, PosixToWinNormalizer, platform};
@@ -59,10 +59,10 @@ impl LazyBool<fn(&PackageManager) -> bool> {
 }
 
 // `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
-// down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
+// down into `bun_loop::process` (MOVE_DOWN b0); install just flips it during
 // init. The full waiter-thread machinery (queue, signalfd, loop) lives in
 // `bun_runtime::api::bun::process` and *reads* the same flag.
-use bun_spawn::process::WaiterThread;
+use bun_loop::process::WaiterThread;
 
 use crate::RunCommand;
 
@@ -2097,7 +2097,7 @@ pub fn init(
     }
 
     // Set the thread-local global to point at the embedded mini loop
-    // (`bun_event_loop::mini_event_loop::GLOBAL`).
+    // (`bun_loop::mini_event_loop::GLOBAL`).
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let evl = unsafe { &mut (*manager_ptr).event_loop };
@@ -2418,7 +2418,7 @@ pub(crate) fn init_with_runtime_once(
             bun_sys::File::from_fd(Fd::invalid())
         );
         // erased *mut () set by tier-6; `js_current()` resolves the per-thread JS
-        // event loop via `bun_io::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
+        // event loop via `bun_loop::__bun_get_vm_ctx` (link-time, definer in bun_runtime).
         wr!(event_loop, AnyEventLoop::js_current());
         wr!(
             original_package_json_path,

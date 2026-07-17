@@ -310,7 +310,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // outlives the call (process-lifetime in `configure_env_for_run`).
             // Erase the loader's borrowed lifetime to `'static` for the
             // singleton handoff.
-            let mini = bun_event_loop::MiniEventLoop::init_global(
+            let mini = bun_loop::MiniEventLoop::init_global(
                 Some(unsafe {
                     &mut *std::ptr::from_mut::<DotEnv::Loader<'_>>(env)
                         .cast::<DotEnv::Loader<'static>>()
@@ -395,7 +395,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
+                    bun_loop::MiniEventLoop::init_global(
                         // SAFETY: same lifetime erasure as the `!use_system_shell`
                         // branch above — `env` outlives the mini event loop.
                         Some(unsafe {
@@ -689,7 +689,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::ParentDeathWatchdog::is_enabled() {
+        if bun_loop::ParentDeathWatchdog::is_enabled() {
             env_loader
                 .map
                 .put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1")
@@ -897,7 +897,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         bundle.run_env_loader(bundle.options.env.disable_default_env_files)?;
 
         let top_level_dir: &[u8] = ctx.args.absolute_working_dir.as_deref().unwrap_or(b"");
-        let mini = bun_event_loop::MiniEventLoop::init_global(
+        let mini = bun_loop::MiniEventLoop::init_global(
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
             // singleton (set by `Transpiler::init`); erasing the borrowed
             // lifetime mirrors the `run_package_script_foreground` handoff.
@@ -2167,7 +2167,7 @@ impl RunCommand {
             #[cfg(windows)]
             windows: crate::api::bun_process::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
+                    bun_loop::MiniEventLoop::init_global(
                         Some(unsafe {
                             // SAFETY: env loader is process-lifetime; erase
                             // borrowed lifetime for the singleton handoff.

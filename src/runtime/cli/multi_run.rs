@@ -7,9 +7,9 @@ use crate::Error;
 use bun_core::collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
 use bun_core::{self as bun, Global, Output, UnwrapOrOom};
-use bun_event_loop::EventLoopHandle;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_io::BufferedReader;
+use bun_loop::EventLoopHandle;
+use bun_loop::MiniEventLoop::MiniEventLoop;
+use bun_loop::BufferedReader;
 use bun_core::paths::{self as path, PathBuffer};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 
@@ -75,7 +75,7 @@ impl<'a> PipeReader<'a> {
 // Callbacks here touch only `line_buffer` / `handle` / the State backref,
 // never `reader`. Backrefs set in `ProcessHandle::start()`; `State` outlives
 // all handles (lives on `run`'s stack frame for the whole event loop).
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     MultiRunPipeReader for PipeReader<'a>;
     has_on_read_chunk = true;
     on_read_chunk = |this, chunk, _has_more| {
@@ -85,7 +85,7 @@ bun_io::impl_buffered_reader_parent! {
     };
     on_reader_done  = |_this| {};
     on_reader_error = |_this, _err| {};
-    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
+    loop_           = |this| bun_loop::uws_to_native((*(*this).event_loop_ptr()).loop_);
     event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -196,10 +196,10 @@ impl<'a> ProcessHandle<'a> {
             // the Box out of the spawn *result* — `WindowsStdioResult::take()`
             // leaves `Unavailable` behind so `spawned`'s drop is a no-op.
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
-                self.stdout_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
+                self.stdout_reader.reader.source = Some(bun_loop::Source::Pipe(pipe));
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
-                self.stderr_reader.reader.source = Some(bun_io::Source::Pipe(pipe));
+                self.stderr_reader.reader.source = Some(bun_loop::Source::Pipe(pipe));
             }
         }
 
@@ -242,8 +242,8 @@ impl<'a> ProcessHandle<'a> {
         // SAFETY: `self` is the live `ProcessHandle` slot in `State.handles`;
         // it lives for the whole event loop and outlives `process`.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::MultiRunHandle,
+            bun_loop::ProcessExit::new(
+                bun_loop::ProcessExitKind::MultiRunHandle,
                 std::ptr::from_mut::<Self>(self),
             )
         });
@@ -263,7 +263,7 @@ impl<'a> ProcessHandle<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     MultiRunHandle for ProcessHandle<'static> => |this| {
         on_process_exit(_process, status, _rusage) => {
             (*this).process.as_mut().unwrap().status = status;
@@ -289,7 +289,7 @@ struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     remaining_scripts: usize,
     max_label_len: usize,
@@ -802,7 +802,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // SAFETY: transpiler.env is a process-lifetime *mut Loader set in init.
     let env_ptr: *mut DotEnvLoader<'static> = this_transpiler.env;
-    let event_loop = bun_event_loop::MiniEventLoop::init_global(
+    let event_loop = bun_loop::MiniEventLoop::init_global(
         // SAFETY: env_ptr is the process-lifetime DotEnv loader; no other borrow of it is live yet.
         Some(unsafe { &mut *env_ptr }),
         None,
@@ -810,7 +810,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --parallel). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
+    bun_loop::ParentDeathWatchdog::install_on_event_loop(event_loop_handle_to_ctx(
         EventLoopHandle::init_mini(event_loop),
     ));
     // shell_bin is NUL-terminated ([:0]const u8) for argv use.

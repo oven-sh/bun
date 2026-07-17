@@ -1289,7 +1289,7 @@ impl BunxCommand {
             #[cfg(windows)]
             windows: proc_sync::WindowsOptions {
                 loop_: bun_jsc::EventLoopHandle::init_mini(
-                    bun_event_loop::MiniEventLoop::init_global(
+                    bun_loop::MiniEventLoop::init_global(
                         // `this_transpiler.env` is the process-lifetime loader
                         // singleton populated during transpiler init.
                         //

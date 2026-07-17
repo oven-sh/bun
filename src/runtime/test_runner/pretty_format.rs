@@ -152,7 +152,7 @@ pub struct FormatOptions {
 }
 
 impl JestPrettyFormat {
-    pub fn format<W: bun_io::Write>(
+    pub fn format<W: bun_loop::Write>(
         level: MessageLevel,
         global: &JSGlobalObject,
         vals: &[JSValue],
@@ -441,7 +441,7 @@ impl core::fmt::Display for ZigFormatter<'_, '_> {
 
         let result = (|| {
             let tag = Tag::get(self.value, self.global).map_err(|_| core::fmt::Error)?;
-            let mut adapter = bun_io::FmtAdapter::new(f);
+            let mut adapter = bun_loop::FmtAdapter::new(f);
             formatter
                 .format::<_, false>(tag, &mut adapter, self.value, self.global)
                 .map_err(|_| core::fmt::Error)
@@ -669,7 +669,7 @@ thread_local! {
 }
 
 impl<'a> Formatter<'a> {
-    fn write_with_formatting<W: bun_io::Write, S, const ENABLE_ANSI_COLORS: bool>(
+    fn write_with_formatting<W: bun_loop::Write, S, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
         slice_: S,
@@ -763,13 +763,13 @@ impl<'a> Formatter<'a> {
     }
 }
 
-pub struct WrappedWriter<'w, W: bun_io::Write> {
+pub struct WrappedWriter<'w, W: bun_loop::Write> {
     pub ctx: &'w mut W,
     pub failed: bool,
     pub estimated_line_length: Option<&'w mut usize>,
 }
 
-impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
+impl<'w, W: bun_loop::Write> WrappedWriter<'w, W> {
     pub fn new(ctx: &'w mut W) -> Self {
         Self { ctx, failed: false, estimated_line_length: None }
     }
@@ -811,7 +811,7 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 
     #[inline]
-    fn write_all_raw(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+    fn write_all_raw(&mut self, buf: &[u8]) -> bun_loop::io::Result<()> {
         self.ctx.write_all(buf)
     }
 
@@ -824,7 +824,7 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     pub fn write_16_bit(&mut self, input: &[u16]) {
         // `format_utf16_type` writes through `fmt::Write`; buffer to a `String`
         // and forward bytes (UTF-16 → UTF-8 conversion is the point, so the
-        // intermediate allocation is unavoidable without a `bun_io::Write` overload).
+        // intermediate allocation is unavoidable without a `bun_loop::Write` overload).
         let mut buf = String::new();
         if bun_fmt::format_utf16_type(input, &mut buf).is_err() {
             self.failed = true;
@@ -836,10 +836,10 @@ impl<'w, W: bun_io::Write> WrappedWriter<'w, W> {
     }
 }
 
-use bun_io::AsFmt;
+use bun_loop::AsFmt;
 
 impl<'a> Formatter<'a> {
-    pub fn write_indent<W: bun_io::Write>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub fn write_indent<W: bun_loop::Write>(&self, writer: &mut W) -> bun_loop::io::Result<()> {
         let indent = self.indent.min(32);
         let buf = [b' '; 64];
         let mut total_remain: usize = indent as usize;
@@ -851,10 +851,10 @@ impl<'a> Formatter<'a> {
         Ok(())
     }
 
-    pub fn print_comma<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+    pub fn print_comma<W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer: &mut W,
-    ) -> bun_io::Result<()> {
+    ) -> bun_loop::io::Result<()> {
         writer.write_all(&pretty_fmt_const::<ENABLE_ANSI_COLORS>("<r><d>,<r>"))?;
         self.estimated_line_length += 1;
         Ok(())
@@ -865,12 +865,12 @@ impl<'a> Formatter<'a> {
 // the borrow of `self` at the call site to outlive `'a`, cascading into bogus
 // borrowck errors throughout `print_as`. Using a distinct `'f` for the
 // Formatter's own lifetime keeps the iter borrow local.
-pub struct MapIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
+pub struct MapIterator<'a, 'f, W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool> {
     pub formatter: &'a mut Formatter<'f>,
     pub writer: &'a mut W,
 }
 
-impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
+impl<'a, 'f, W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool>
     MapIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub extern "C" fn for_each(
@@ -916,12 +916,12 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     }
 }
 
-pub struct SetIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
+pub struct SetIterator<'a, 'f, W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool> {
     pub formatter: &'a mut Formatter<'f>,
     pub writer: &'a mut W,
 }
 
-impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
+impl<'a, 'f, W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool>
     SetIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub extern "C" fn for_each(
@@ -958,7 +958,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
     }
 }
 
-pub struct PropertyIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool> {
+pub struct PropertyIterator<'a, 'f, W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool> {
     pub formatter: &'a mut Formatter<'f>,
     pub writer: &'a mut W,
     pub i: usize,
@@ -966,7 +966,7 @@ pub struct PropertyIterator<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: 
     pub parent: JSValue,
 }
 
-impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
+impl<'a, 'f, W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool>
     PropertyIterator<'a, 'f, W, ENABLE_ANSI_COLORS>
 {
     pub fn handle_first_property(
@@ -1147,7 +1147,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
 }
 
 impl<'a> Formatter<'a> {
-    pub fn print_as<W: bun_io::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
+    pub fn print_as<W: bun_loop::Write, const FORMAT: Tag, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer_: &mut W,
         value: JSValue,
@@ -2602,7 +2602,7 @@ impl<'a> Formatter<'a> {
         result
     }
 
-    pub fn format<W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>(
+    pub fn format<W: bun_loop::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         result: TagResult,
         writer: &mut W,
@@ -2710,14 +2710,14 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     #[inline]
     fn reset_line(&mut self) { Formatter::reset_line(self) }
     fn write_indent<W: core::fmt::Write>(&self, writer: &mut W) -> core::fmt::Result {
-        let mut sink = bun_io::FmtAdapter::new(writer);
+        let mut sink = bun_loop::FmtAdapter::new(writer);
         Formatter::write_indent(self, &mut sink).map_err(|_| core::fmt::Error)
     }
     fn print_comma<W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer: &mut W,
     ) -> core::fmt::Result {
-        let mut sink = bun_io::FmtAdapter::new(writer);
+        let mut sink = bun_loop::FmtAdapter::new(writer);
         Formatter::print_comma::<_, ENABLE_ANSI_COLORS>(self, &mut sink)
             .map_err(|_| core::fmt::Error)
     }
@@ -2768,7 +2768,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
             | Ft::Proxy
             | Ft::RevokedProxy => Tag::Object,
         };
-        let mut sink = bun_io::FmtAdapter::new(writer);
+        let mut sink = bun_loop::FmtAdapter::new(writer);
         let global = self.global_this;
         self.format::<_, ENABLE_ANSI_COLORS>(
             TagResult { tag: local, cell },
@@ -2794,7 +2794,7 @@ pub trait AsymmetricMatcherFormatter {
     fn amf_print_as<const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        w: &mut dyn bun_io::Write,
+        w: &mut dyn bun_loop::Write,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()>;
@@ -2810,12 +2810,12 @@ impl AsymmetricMatcherFormatter for Formatter<'_> {
     fn amf_print_as<const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        w: &mut dyn bun_io::Write,
+        w: &mut dyn bun_loop::Write,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
         // Reuse the `ConsoleFormatter` bridge above (FormatTag → local `Tag`
-        // mapping + `format` dispatch). `AsFmt` adapts `dyn bun_io::Write` →
+        // mapping + `format` dispatch). `AsFmt` adapts `dyn bun_loop::Write` →
         // `core::fmt::Write` for the trait method's signature.
         let mut bridge = AsFmt::new(w);
         <Self as bun_jsc::ConsoleFormatter>::print_as::<_, C>(self, tag, &mut bridge, v, cell)
@@ -2832,7 +2832,7 @@ impl AsymmetricMatcherFormatter for bun_jsc::console_object::Formatter<'_> {
     fn amf_print_as<const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,
-        w: &mut dyn bun_io::Write,
+        w: &mut dyn bun_loop::Write,
         v: JSValue,
         cell: JSType,
     ) -> JsResult<()> {
@@ -2853,7 +2853,7 @@ impl JestPrettyFormat {
         writer: &mut WrappedWriter<'_, W>,
     ) where
         M: AsymmetricMatcherFormatter,
-        W: bun_io::Write,
+        W: bun_loop::Write,
     {
         match flags.promise() {
             expect::Promise::Resolves => {
@@ -2879,7 +2879,7 @@ impl JestPrettyFormat {
     ) -> JsResult<bool>
     where
         M: AsymmetricMatcherFormatter,
-        W: bun_io::Write,
+        W: bun_loop::Write,
     {
         // Passing both the `WrappedWriter` and the raw inner writer
         // would be two live `&mut W` to the same target

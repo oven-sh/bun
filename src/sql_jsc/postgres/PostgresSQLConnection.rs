@@ -14,7 +14,7 @@ use bun_boringssl as BoringSSL;
 use bun_core::collections::{OffsetByteList, StringHashMap, StringMap};
 use bun_core::strings;
 use bun_core::{self};
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_core::ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_uws as uws;
 use core::ptr::NonNull;
@@ -178,7 +178,7 @@ pub struct PostgresSQLConnection {
     pub auto_flusher: JsCell<AutoFlusher>,
 }
 
-bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
+bun_loop::impl_timer_owner!(PostgresSQLConnection;
     from_timer_ptr => timer,
     from_max_lifetime_timer_ptr => max_lifetime_timer,
 );
@@ -238,8 +238,8 @@ impl PostgresSQLConnection {
     /// direct conversion; route through the global hook (`get_vm_ctx(.Js)`) which
     /// resolves to the same singleton VM stored in `self.vm`.
     #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
+    fn vm_ctx(&self) -> bun_loop::EventLoopCtx {
+        bun_loop::posix_event_loop::get_vm_ctx(bun_loop::AllocatorType::Js)
     }
 
     // ---- self-referential connection-string slices ----------------------------
@@ -3062,14 +3062,14 @@ impl PostgresSQLConnection {
         self.update_has_pending_activity();
         if self.pending_activity_count.load(Ordering::Relaxed) > 0 {
             self.poll_ref.with_mut(|r| {
-                r.r#ref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
+                r.r#ref(bun_loop::posix_event_loop::get_vm_ctx(
+                    bun_loop::AllocatorType::Js,
                 ))
             });
         } else {
             self.poll_ref.with_mut(|r| {
-                r.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
+                r.unref(bun_loop::posix_event_loop::get_vm_ctx(
+                    bun_loop::AllocatorType::Js,
                 ))
             });
         }

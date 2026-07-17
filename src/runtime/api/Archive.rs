@@ -7,9 +7,9 @@ use crate::webcore::BlobExt as _;
 use crate::webcore::blob::{Store as BlobStore, StoreRef};
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_core::{self, Output, ZBox};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_sys::glob as glob;
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::ConcurrentTask::{AutoDeinit, ConcurrentTask};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -713,7 +713,7 @@ impl<C: TaskContext> AsyncTask<C> {
         let raw = bun_core::heap::into_raw(this);
         // SAFETY: raw was just produced by heap::alloc; not yet shared. Keep the event
         // loop alive until `run_from_js` unrefs after the threadpool work completes.
-        unsafe { (*raw).keep_alive.ref_(bun_io::js_vm_ctx()) };
+        unsafe { (*raw).keep_alive.ref_(bun_loop::js_vm_ctx()) };
         Ok(raw)
     }
 
@@ -765,7 +765,7 @@ impl<C: TaskContext> AsyncTask<C> {
     pub fn run_from_js(this: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
         // SAFETY: see fn-level safety contract.
         let mut owned = unsafe { bun_core::heap::take(this) };
-        owned.keep_alive.unref(bun_io::js_vm_ctx());
+        owned.keep_alive.unref(bun_loop::js_vm_ctx());
 
         // `defer { ctx.deinit; destroy(this) }` — handled by `owned: Box<Self>` dropping at scope
         // exit (ctx implements Drop).

@@ -178,7 +178,7 @@ impl<'a> BundleV2<'a> {
     /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
     /// `AnyEventLoop` that owns this bundle pass and outlives it.
     #[inline]
-    pub fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop<'static> {
+    pub fn any_loop_mut(&mut self) -> &mut bun_loop::AnyEventLoop<'static> {
         // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
         self.linker
             .any_loop_mut()
@@ -1116,9 +1116,9 @@ pub mod bv2_impl {
                 pub bv2: *mut BundleV2<'static>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
-                pub js_task: bun_event_loop::AnyTask::AnyTask,
+                pub js_task: bun_loop::AnyTask::AnyTask,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
-                pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+                pub task: bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
             impl Default for Resolve {
                 fn default() -> Self {
@@ -1126,8 +1126,8 @@ pub mod bv2_impl {
                     bv2: core::ptr::null_mut(),
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
-                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
+                    js_task: bun_loop::AnyTask::AnyTask::default(),
+                    task: bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
             }
@@ -1139,20 +1139,20 @@ pub mod bv2_impl {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
                     import_record: record,
                     value: ResolveValue::Pending,
-                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
+                    js_task: bun_loop::AnyTask::AnyTask::default(),
+                    task: bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
                 /// Hops to the JS thread to call the `onResolve` plugin chain.
                 pub fn dispatch(&mut self) {
-                    self.js_task = bun_event_loop::AnyTask::AnyTask {
+                    self.js_task = bun_loop::AnyTask::AnyTask {
                         ctx: core::ptr::NonNull::new(
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
                         ),
                         callback: Self::run_on_js_thread_wrap,
                     };
                     let task =
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
+                        bun_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
                     // SAFETY: `bv2` is a valid backref set by `init`; plugins is
                     // Some (asserted by `enqueue_on_js_loop_for_plugins`).
                     unsafe { (*self.bv2).enqueue_on_js_loop_for_plugins(task) };
@@ -1179,7 +1179,7 @@ pub mod bv2_impl {
                 }
                 fn run_on_js_thread_wrap(
                     ctx: *mut core::ffi::c_void,
-                ) -> bun_event_loop::JsResult<()> {
+                ) -> bun_loop::JsResult<()> {
                     // SAFETY: ctx was stored from `*mut Resolve` in `dispatch`.
                     unsafe { bun_core::ptr::callback_ctx::<Resolve>(ctx) }.run_on_js_thread();
                     Ok(())
@@ -1222,11 +1222,11 @@ pub mod bv2_impl {
                 pub was_file: bool,
                 /// Defer may only be called once.
                 pub called_defer: bool,
-                pub js_task: bun_event_loop::AnyTask::AnyTask,
+                pub js_task: bun_loop::AnyTask::AnyTask,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue
                 /// (used by `onDefer` to notify the bundler thread when it runs
                 /// under a `MiniEventLoop`).
-                pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
+                pub task: bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
             }
             impl Load {
                 pub fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
@@ -1244,8 +1244,8 @@ pub mod bv2_impl {
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     was_file: false,
                     called_defer: false,
-                    js_task: bun_event_loop::AnyTask::AnyTask::default(),
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
+                    js_task: bun_loop::AnyTask::AnyTask::default(),
+                    task: bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                 }
                 }
                 /// Raw backref to the owning `BundleV2`.
@@ -1287,14 +1287,14 @@ pub mod bv2_impl {
                 }
                 /// Hops to the JS thread to call the `onLoad` plugin chain.
                 pub fn dispatch(&mut self) {
-                    self.js_task = bun_event_loop::AnyTask::AnyTask {
+                    self.js_task = bun_loop::AnyTask::AnyTask {
                         ctx: core::ptr::NonNull::new(
                             std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>(),
                         ),
                         callback: Self::run_on_js_thread_wrap,
                     };
                     let concurrent_task =
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
+                        bun_loop::ConcurrentTask::ConcurrentTask::create(self.js_task.task());
                     // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
                     // by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
@@ -1324,7 +1324,7 @@ pub mod bv2_impl {
                 }
                 fn run_on_js_thread_wrap(
                     ctx: *mut core::ffi::c_void,
-                ) -> bun_event_loop::JsResult<()> {
+                ) -> bun_loop::JsResult<()> {
                     // SAFETY: ctx was stored from `*mut Load` in `dispatch`.
                     unsafe { bun_core::ptr::callback_ctx::<Load>(ctx) }.run_on_js_thread();
                     Ok(())
@@ -1466,7 +1466,7 @@ pub mod bv2_impl {
             /// needn't name the JSC event-loop type.
             pub enqueue_task_concurrent: unsafe fn(
                 core::ptr::NonNull<super::JSBundleCompletionTask>,
-                *mut bun_event_loop::ConcurrentTask::ConcurrentTask,
+                *mut bun_loop::ConcurrentTask::ConcurrentTask,
             ),
         }
         #[derive(Copy, Clone)]
@@ -1494,7 +1494,7 @@ pub mod bv2_impl {
             #[inline]
             pub fn enqueue_task_concurrent(
                 &self,
-                task: core::ptr::NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+                task: core::ptr::NonNull<bun_loop::ConcurrentTask::ConcurrentTask>,
             ) {
                 // SAFETY: vtable contract.
                 unsafe { (self.vtable.enqueue_task_concurrent)(self.owner, task.as_ptr()) }
@@ -1503,7 +1503,7 @@ pub mod bv2_impl {
     }
 
     /// `bun.jsc.AnyEventLoop` — re-export the linker's alias
-    /// (`Option<NonNull<bun_event_loop::AnyEventLoop>>`).
+    /// (`Option<NonNull<bun_loop::AnyEventLoop>>`).
     pub use crate::linker_context_mod::EventLoop;
 
     // `JSBundleCompletionTask` — typed-ptr marker for
@@ -1554,7 +1554,7 @@ pub mod bv2_impl {
         /// `completion` handle carries the `&'static` vtable.
         pub fn enqueue_on_js_loop_for_plugins(
             &mut self,
-            task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+            task: NonNull<bun_loop::ConcurrentTask::ConcurrentTask>,
         ) {
             debug_assert!(self.plugins.is_some());
             if let Some(completion) = self.completion {
@@ -1566,10 +1566,10 @@ pub mod bv2_impl {
             // the plugins.
             // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
             match &*self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
+                bun_loop::AnyEventLoop::Js { owner } => {
                     owner.enqueue_task_concurrent(task);
                 }
-                bun_event_loop::AnyEventLoop::Mini(_) => {
+                bun_loop::AnyEventLoop::Mini(_) => {
                     panic!("No JavaScript event loop for transpiler plugins to run on");
                 }
             }
@@ -2036,7 +2036,7 @@ pub mod bv2_impl {
             // callback's `'static` lifetime erasure is storage-only —
             // `is_done` only touches by-value fields.
             unsafe {
-                bun_event_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
+                bun_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
                     (*ctx.cast::<BundleV2<'static>>()).is_done()
                 });
             }
@@ -4205,15 +4205,15 @@ pub mod bv2_impl {
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
+                bun_loop::AnyEventLoop::Js { owner } => {
                     owner.enqueue_task_concurrent(
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        bun_loop::ConcurrentTask::ConcurrentTask::from_callback(
                             std::ptr::from_mut(load),
                             on_load_from_js_loop_raw,
                         ),
                     );
                 }
-                bun_event_loop::AnyEventLoop::Mini(mini) => {
+                bun_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_load_mini` on the bundler thread.
                     unsafe {
@@ -4230,15 +4230,15 @@ pub mod bv2_impl {
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
             match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { owner } => {
+                bun_loop::AnyEventLoop::Js { owner } => {
                     owner.enqueue_task_concurrent(
-                        bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(
+                        bun_loop::ConcurrentTask::ConcurrentTask::from_callback(
                             std::ptr::from_mut(resolve),
                             on_resolve_from_js_loop_raw,
                         ),
                     );
                 }
-                bun_event_loop::AnyEventLoop::Mini(mini) => {
+                bun_loop::AnyEventLoop::Mini(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_resolve_mini` on the bundler thread.
                     unsafe {
@@ -4273,7 +4273,7 @@ pub mod bv2_impl {
 
     fn on_load_from_js_loop_raw(
         load: *mut jsc_api::JSBundler::Load,
-    ) -> bun_event_loop::JsResult<()> {
+    ) -> bun_loop::JsResult<()> {
         // SAFETY: `load` is a valid pointer set up by `from_callback`.
         on_load_from_js_loop(unsafe { &mut *load });
         Ok(())
@@ -4463,7 +4463,7 @@ pub mod bv2_impl {
 
     fn on_resolve_from_js_loop_raw(
         resolve: *mut jsc_api::JSBundler::Resolve,
-    ) -> bun_event_loop::JsResult<()> {
+    ) -> bun_loop::JsResult<()> {
         // SAFETY: `resolve` is a valid pointer set up by `from_callback`.
         on_resolve_from_js_loop(unsafe { &mut *resolve });
         Ok(())
@@ -7506,7 +7506,7 @@ pub mod bv2_impl {
     ) -> crate::Result<bun_core::paths::fs::Path<'static>> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
-        use bun_io::Write as _;
+        use bun_loop::Write as _;
 
         let mut buf = bun_core::paths::path_buffer_pool::get();
 
@@ -7526,7 +7526,7 @@ pub mod bv2_impl {
             >(&mut **buf2, top_level_dir, path.text);
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             if target == options::Target::ServerComponentsSsr {
-                let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
+                let mut fbs = bun_loop::FixedBufferStream::new_mut(&mut buf.0[..]);
                 let _ = fbs.write_all(b"ssr:");
                 let _ = fbs.write_all(rel);
                 let written = fbs.pos;
@@ -7537,7 +7537,7 @@ pub mod bv2_impl {
             path_clone.dupe_alloc_fix_pretty(bump).map_err(Into::into)
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
-            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
+            let mut fbs = bun_loop::FixedBufferStream::new_mut(&mut buf.0[..]);
             if target == options::Target::ServerComponentsSsr {
                 let _ = fbs.write_all(b"ssr:");
             }
@@ -7550,10 +7550,10 @@ pub mod bv2_impl {
         }
     }
 
-    fn write_escaped_namespace<W: bun_io::Write + ?Sized>(
+    fn write_escaped_namespace<W: bun_loop::Write + ?Sized>(
         w: &mut W,
         slice: &[u8],
-    ) -> bun_io::Result {
+    ) -> bun_loop::io::Result {
         let mut rest = slice;
         while let Some(i) = strings::index_of_char(rest, b':') {
             w.write_all(&rest[..i as usize])?;

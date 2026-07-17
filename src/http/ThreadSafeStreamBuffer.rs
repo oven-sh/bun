@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_io::StreamBuffer;
+use bun_loop::StreamBuffer;
 use bun_sys::threading::Mutex;
 
 #[derive(bun_core::ptr::ThreadSafeRefCounted)]

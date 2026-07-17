@@ -6,7 +6,7 @@ use crate::{
     CommonAbortReason, CommonAbortReasonExt as _, JSGlobalObject, JSValue,
     VirtualMachineRef as VirtualMachine,
 };
-use bun_event_loop::EventLoopTimer::{
+use bun_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as TimerState, Tag as TimerTag, TimerFlags,
     Timespec as ElTimespec,
 };
@@ -305,7 +305,7 @@ pub struct Timeout {
     pub generation: u32,
 }
 
-bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: *mut VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {

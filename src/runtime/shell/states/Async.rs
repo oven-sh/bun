@@ -152,7 +152,7 @@ impl Async {
     /// Bounce `run_from_main_thread` through the event loop so the async body runs on subsequent ticks while the
     /// parent proceeds.
     fn enqueue_self(interp: &Interpreter, this: NodeId) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
+        use bun_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
         let me = interp.as_async_mut(this);
         let task = me.task;
         debug_assert!(!task.is_null());
@@ -213,8 +213,8 @@ enum NextAction {
 
 // `runtime::dispatch::run_task`'s `task_tag::ShellAsync` arm casts the
 // enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
-impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
+impl bun_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellAsync;
 }
 
 /// Mini-loop trampoline.

@@ -278,6 +278,30 @@ pub use self::top_exception_scope::{
 /// is reachable as `bun_jsc::cpp::Name(...)` with a properly-scoped exception
 /// check (no `global.has_exception()` after-the-fact).
 pub mod cpp;
+
+/// Group-A opaque stub for the generated `cpp.rs` FFI signature. The full
+/// `CppTask` impl (with `run()`, `ConcurrentCppTask`, etc.) is group-B and
+/// lives in `src/jsc/CppTask.rs`, mounted into `bun_runtime` at Step 7.5.
+pub mod cpp_task {
+    bun_opaque::opaque_ffi! { pub struct CppTask; }
+}
+
+#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
+pub enum JsTerminated {
+    #[error("JSTerminated")]
+    JSTerminated,
+}
+
+/// Short alias for `Result<T, JsTerminated>`.
+pub type JsTerminatedResult<T> = Result<T, JsTerminated>;
+
+impl From<JsTerminated> for crate::CrateError {
+    fn from(_: JsTerminated) -> Self {
+        crate::CrateError::JSTerminated
+    }
+}
+
+pub use self::cached_bytecode::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE;
 pub use self::common_strings::CommonStrings;
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
@@ -455,10 +479,10 @@ pub type JsResult<T> = core::result::Result<T, JsError>;
 
 bun_core::oom_from_alloc!(JsError);
 
-impl From<bun_event_loop::ErasedJsError> for JsError {
+impl From<bun_loop::ErasedJsError> for JsError {
     #[inline]
-    fn from(e: bun_event_loop::ErasedJsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+    fn from(e: bun_loop::ErasedJsError) -> Self {
+        use bun_loop::ErasedJsError as E;
         match e {
             E::Thrown => JsError::Thrown,
             E::OutOfMemory => JsError::OutOfMemory,
@@ -467,17 +491,17 @@ impl From<bun_event_loop::ErasedJsError> for JsError {
     }
 }
 
-impl From<JsTerminated> for bun_event_loop::ErasedJsError {
+impl From<JsTerminated> for bun_loop::ErasedJsError {
     #[inline]
     fn from(_: JsTerminated) -> Self {
-        bun_event_loop::ErasedJsError::Terminated
+        bun_loop::ErasedJsError::Terminated
     }
 }
 
-impl From<JsError> for bun_event_loop::ErasedJsError {
+impl From<JsError> for bun_loop::ErasedJsError {
     #[inline]
     fn from(e: JsError) -> Self {
-        use bun_event_loop::ErasedJsError as E;
+        use bun_loop::ErasedJsError as E;
         match e {
             JsError::Thrown => E::Thrown,
             JsError::OutOfMemory => E::OutOfMemory,
@@ -504,34 +528,6 @@ pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
 impl From<JsTerminated> for JsError {
     fn from(_: JsTerminated) -> Self {
         JsError::Terminated
-    }
-}
-
-/// Extension surface for [`JsResult`]. Gives every `JsResult` a terminal sink
-/// so the `unused_must_use` lint can be satisfied without `let _ =` at call
-/// sites that legitimately cannot `?`-propagate (FFI thunks, drop glue,
-/// fire-and-forget callbacks).
-pub trait JsResultExt {
-    /// Consume the result; if `Err`, take the pending exception off `global`
-    /// and route it through the VM's uncaught-exception handler. Returns the
-    /// `Ok` payload (or its `Default`) so callers can chain.
-    ///
-    /// Use this when an error has nowhere left to bubble — never to paper over
-    /// a missing `?`.
-    fn report_unhandled(self, global: &JSGlobalObject);
-}
-
-impl<T> JsResultExt for JsResult<T> {
-    #[inline]
-    fn report_unhandled(self, global: &JSGlobalObject) {
-        if let Err(e) = self {
-            // `Terminated` carries no exception value to report — the VM is
-            // already unwinding. `OutOfMemory`/`Thrown` both leave a pending
-            // exception that `report_uncaught_exception_from_error` will take.
-            if e != JsError::Terminated {
-                global.report_uncaught_exception_from_error(e);
-            }
-        }
     }
 }
 
@@ -1192,7 +1188,7 @@ pub use self::js_object::{ExternColumnIdentifier, ExternColumnIdentifierValue, J
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "CallFrame.rs"]
 pub mod call_frame;
-pub use self::call_frame::{ArgumentsSlice, CallFrame};
+pub use self::call_frame::CallFrame;
 
 /// Lives here (not in `bun_sys_jsc`) because the orphan
 /// rule requires either the trait or the type to be local; `FromJsEnum` is.
@@ -1817,21 +1813,6 @@ impl Ref {
         Ref::default()
     }
 
-    pub fn unref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if !self.has {
-            return;
-        }
-        self.has = false;
-        vm.active_tasks -= 1;
-    }
-
-    pub fn r#ref(&mut self, vm: &mut virtual_machine::VirtualMachine) {
-        if self.has {
-            return;
-        }
-        self.has = true;
-        vm.active_tasks += 1;
-    }
 }
 
 pub type OpaqueCallback = unsafe extern "C" fn(current: *mut c_void);

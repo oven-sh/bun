@@ -21,7 +21,7 @@ use bun_core::alloc_impl::Arena; // bumpalo::Bump re-export
 use bun_core::collections::ArrayHashMap;
 use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
-use bun_io::Write as _;
+use bun_loop::Write as _;
 use bun_jsc::{
     JSErrorCode, JSRuntimeType, ZigException, ZigStackFrame, ZigStackFrameCode,
     ZigStackFramePosition, ZigStackTrace,
@@ -108,7 +108,7 @@ impl ErrorReportRequest {
         // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
         // here we simply call `finalize` directly at the success tail.
 
-        let mut reader = bun_io::FixedBufferStream::new(body);
+        let mut reader = bun_loop::FixedBufferStream::new(body);
 
         let arena = Arena::new();
 
@@ -503,7 +503,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
 /// reader (the canonical allocating version lives in the gated `DevServer.rs`
 /// draft and is not yet re-exported from `super`).
 #[inline]
-fn read_string32<'a>(r: &mut bun_io::FixedBufferStream<&'a [u8]>) -> crate::Result<&'a [u8]> {
+fn read_string32<'a>(r: &mut bun_loop::FixedBufferStream<&'a [u8]>) -> crate::Result<&'a [u8]> {
     let len = r.read_int_le::<u32>()? as usize;
     let buf: &'a [u8] = r.buffer;
     let end = r

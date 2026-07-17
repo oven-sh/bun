@@ -11,9 +11,9 @@ use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
 use bun_core::{String as BunString, ZStr, ZigString};
-use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_io::KeepAlive;
+use bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
+use bun_loop::MiniEventLoop::MiniEventLoop;
+use bun_loop::KeepAlive;
 use bun_jsc::AbortSignal;
 use bun_jsc::EventLoopTaskPtr;
 use bun_jsc::debugger::AsyncTaskTracker;
@@ -148,14 +148,14 @@ fn to_sys_time_like(t: super::time_like::TimeLike) -> sys::TimeLike {
 // inside a same-named module, so re-export the free constructors here under the
 // module name the call sites expect.
 mod ConcurrentTask {
-    pub(super) use bun_event_loop::ConcurrentTask::ConcurrentTask;
+    pub(super) use bun_loop::ConcurrentTask::ConcurrentTask;
     use core::ptr::NonNull;
     #[inline]
     pub(super) fn create(task: bun_jsc::Task) -> NonNull<ConcurrentTask> {
         ConcurrentTask::create(task)
     }
     #[inline]
-    pub(super) fn create_from<T: bun_event_loop::Taskable>(
+    pub(super) fn create_from<T: bun_loop::Taskable>(
         task: *mut T,
     ) -> NonNull<ConcurrentTask> {
         ConcurrentTask::create_from(task)
@@ -163,7 +163,7 @@ mod ConcurrentTask {
     #[inline]
     pub(super) fn from_callback<T>(
         ptr: *mut T,
-        cb: fn(*mut T) -> bun_event_loop::JsResult<()>,
+        cb: fn(*mut T) -> bun_loop::JsResult<()>,
     ) -> NonNull<ConcurrentTask> {
         ConcurrentTask::from_callback(ptr, cb)
     }
@@ -726,7 +726,7 @@ mod _async_tasks {
             let task: &mut Self = bun_core::heap::release(task);
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
-            task.r#ref.ref_(bun_io::js_vm_ctx());
+            task.r#ref.ref_(bun_loop::js_vm_ctx());
             let _ = vm;
             task.tracker.did_schedule(global_object);
 
@@ -1022,7 +1022,7 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is a live Box-leaked allocation
             let this_ref = unsafe { &mut *this };
             // `bun_sys::Error` frees its path on Drop.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
+            this_ref.r#ref.unref(bun_loop::js_vm_ctx());
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1238,16 +1238,16 @@ mod _async_tasks {
     /// generic `AsyncFSTask<R, A, F>`. The const-
     /// generic `F` carries the task tag and `NodeFSFunctionEnum::task_tag()`
     /// is `const fn`, so the per-`F` tag is computed at monomorphisation time.
-    impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
+    impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_loop::Taskable
         for AsyncFSTask<R, A, F>
     {
-        const TAG: bun_event_loop::TaskTag = F.task_tag();
+        const TAG: bun_loop::TaskTag = F.task_tag();
     }
     #[cfg(windows)]
-    impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_event_loop::Taskable
+    impl<R, A: Unprotect, const F: NodeFSFunctionEnum> bun_loop::Taskable
         for UVFSRequest<R, A, F>
     {
-        const TAG: bun_event_loop::TaskTag = F.task_tag();
+        const TAG: bun_loop::TaskTag = F.task_tag();
     }
 
     pub struct AsyncFSTask<R, A: Unprotect, const F: NodeFSFunctionEnum> {
@@ -1305,7 +1305,7 @@ mod _async_tasks {
             });
             // KeepAlive::ref_ now takes the type-erased aio EventLoopCtx; the JS
             // event loop is the only one that owns AsyncFSTask/UVFSRequest.
-            task.r#ref.ref_(bun_io::js_vm_ctx());
+            task.r#ref.ref_(bun_loop::js_vm_ctx());
             let _ = vm;
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
@@ -1388,7 +1388,7 @@ mod _async_tasks {
             let this_ref = unsafe { &mut *this };
             // `bun_sys::Error` frees its path on Drop.
             // SAFETY: global_object outlives task; JSC_BORROW per LIFETIMES.tsv.
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
+            this_ref.r#ref.unref(bun_loop::js_vm_ctx());
             // `args: ThreadSafe<A>` unprotects + drops via `heap::take` below.
             this_ref.promise = JSPromiseStrong::default();
             // SAFETY: paired with Box::leak in create()
@@ -1629,7 +1629,7 @@ mod _async_tasks {
         pub fn create_mini(
             cp_args: args::Cp,
             // `EventLoopHandle::Mini` stores `*mut MiniEventLoop<'static>` (a
-            // non-owning erased backref, see `bun_event_loop::AnyEventLoop`). Taking the
+            // non-owning erased backref, see `bun_loop::AnyEventLoop`). Taking the
             // raw pointer here avoids forcing every caller's `MiniEventLoop` borrow to be
             // `'static`; the task never outlives the loop.
             mini: *mut MiniEventLoop<'static>,
@@ -2398,7 +2398,7 @@ mod _async_tasks {
                 pending_err: None,
                 pending_err_mutex: bun_sys::threading::Mutex::default(),
             });
-            task.r#ref.ref_(bun_io::js_vm_ctx());
+            task.r#ref.ref_(bun_loop::js_vm_ctx());
             task.tracker.did_schedule(global_object);
             let promise = task.promise.value();
             WorkPool::schedule(&raw mut bun_core::heap::release(task).task);
@@ -2668,7 +2668,7 @@ mod _async_tasks {
             let _ = this_ref.pending_err.take();
             // `KeepAlive::unref` takes the type-erased
             // `EventLoopCtx`. Resolve via the global JS-loop hook (single JS thread).
-            this_ref.r#ref.unref(bun_io::js_vm_ctx());
+            this_ref.r#ref.unref(bun_loop::js_vm_ctx());
             // `args.deinit()` → `Drop` on `args::Readdir` (via `heap::take` below).
             this_ref.free_root_path();
             this_ref.clear_result_list();
@@ -2704,8 +2704,8 @@ mod _async_tasks {
     // Route `Task::init(self)` in `finish_concurrently` to the event-loop dispatch
     // table. The `task_tag::ReaddirRecursive` arm is wired in
     // `crate::dispatch::run_task` to call `run_from_js_thread`.
-    impl bun_event_loop::Taskable for AsyncReaddirRecursiveTask {
-        const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReaddirRecursive;
+    impl bun_loop::Taskable for AsyncReaddirRecursiveTask {
+        const TAG: bun_loop::TaskTag = bun_loop::task_tag::ReaddirRecursive;
     }
 
     impl ResultListEntryValue {
@@ -6096,7 +6096,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_mkdtemp(
-                    bun_io::Loop::get(),
+                    bun_loop::Loop::get(),
                     &mut *req,
                     prefix_buf.as_ptr().cast(),
                     None,
@@ -7700,7 +7700,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_realpath(
-                    bun_io::Loop::get(),
+                    bun_loop::Loop::get(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     None,
@@ -8198,7 +8198,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_utime(
-                    bun_io::Loop::get(),
+                    bun_loop::Loop::get(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
@@ -8235,7 +8235,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_lutime(
-                    bun_io::Loop::get(),
+                    bun_loop::Loop::get(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
@@ -10243,9 +10243,9 @@ pub enum NodeFSFunctionEnum {
 
 impl NodeFSFunctionEnum {
     /// Maps each async-FS function to its event-loop [`TaskTag`] (the `tags!`
-    /// macro in `bun_event_loop::task_tag` declares one constant per variant).
-    pub const fn task_tag(self) -> bun_event_loop::TaskTag {
-        use bun_event_loop::task_tag;
+    /// macro in `bun_loop::task_tag` declares one constant per variant).
+    pub const fn task_tag(self) -> bun_loop::TaskTag {
+        use bun_loop::task_tag;
         match self {
             Self::Access => task_tag::Access,
             Self::AppendFile => task_tag::AppendFile,

@@ -430,7 +430,7 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-        let patchfile = match bun_patch::parse_patch_file(&patchfile_txt) {
+        let patchfile = match bun_loop::parse_patch_file(&patchfile_txt) {
             Ok(p) => p,
             Err(e) => {
                 log.add_error_fmt_opts(

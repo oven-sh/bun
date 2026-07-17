@@ -8,7 +8,7 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use bun_bundler::Transpiler;
-use bun_io as Async;
+use bun_loop as Async;
 use bun_uws as uws;
 
 use crate::counters::Counters;
@@ -469,8 +469,7 @@ impl VMHolder {
     }
 }
 
-#[thread_local]
-pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
+pub use crate::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE;
 #[thread_local]
 pub static IS_MAIN_THREAD_VM: Cell<bool> = Cell::new(false);
 
@@ -1185,7 +1184,7 @@ impl VirtualMachine {
         self.platform_loop_opt().expect("event_loop_handle").run();
     }
 
-    pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {
+    pub fn enqueue_task(&mut self, task: bun_loop::Task) {
         // accessed here (no overlapping `&mut EventLoop`).
         self.event_loop_mut().enqueue_task(task);
     }
@@ -1696,12 +1695,12 @@ pub struct RuntimeHooks {
     /// (`AbortSignal::Timeout`) reach it through this slot.
     pub timer_insert: unsafe fn(
         vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        timer: *mut bun_loop::EventLoopTimer::EventLoopTimer,
     ),
     /// `vm.timer.remove(&mut event_loop_timer)` — see `timer_insert`.
     pub timer_remove: unsafe fn(
         vm: *mut VirtualMachine,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        timer: *mut bun_loop::EventLoopTimer::EventLoopTimer,
     ),
     /// `RareData.defaultClientSslCtx()` — lazy default-trust-store client
     /// `SSL_CTX*`, shared by every `tls: true` outbound connection that didn't
@@ -1757,7 +1756,7 @@ pub struct RuntimeHooks {
     /// generic object printer.
     pub console_print_runtime_object: for<'a, 'f> fn(
         formatter: &'a mut crate::console_object::Formatter<'f>,
-        writer: &'a mut dyn bun_io::Write,
+        writer: &'a mut dyn bun_loop::Write,
         value: JSValue,
         name_buf: &'a [u8; 512],
         enable_ansi_colors: bool,
@@ -1842,12 +1841,12 @@ fn vm_from_owner<'a>(owner: *mut ()) -> &'a mut VirtualMachine {
     unsafe { &mut *owner.cast::<VirtualMachine>() }
 }
 
-bun_io::link_impl_EventLoopCtx! {
+bun_loop::link_impl_EventLoopCtx! {
     Js for VirtualMachine => |this| {
         platform_event_loop_ptr() => vm_from_owner(this.cast()).uws_loop(),
         file_polls_ptr() => {
             let rare = vm_from_owner(this.cast()).rare_data();
-            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_io::Store::init()))
+            &raw mut **rare.file_polls_.get_or_insert_with(|| Box::new(bun_loop::Store::init()))
         },
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
@@ -1880,16 +1879,16 @@ impl VirtualMachine {
     /// `this` must be a live VM (per-thread or a worker's parent ref) that
     /// outlives every dispatch through the returned ctx.
     #[inline]
-    pub unsafe fn event_loop_ctx(this: *mut Self) -> bun_io::EventLoopCtx {
+    pub unsafe fn event_loop_ctx(this: *mut Self) -> bun_loop::EventLoopCtx {
         // SAFETY: caller contract above.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, this) }
+        unsafe { bun_loop::EventLoopCtx::new(bun_loop::EventLoopCtxKind::Js, this) }
     }
 
     /// `&self` overload of [`event_loop_ctx`]. Routes through
     /// [`Self::get_mut_ptr`] for write provenance (the vtable callbacks
     /// dereference `owner` as `*mut VirtualMachine`).
     #[inline]
-    pub fn loop_ctx(&self) -> bun_io::EventLoopCtx {
+    pub fn loop_ctx(&self) -> bun_loop::EventLoopCtx {
         debug_assert!(core::ptr::eq(self, Self::get_mut_ptr()));
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
         unsafe { Self::event_loop_ctx(Self::get_mut_ptr()) }
@@ -1906,7 +1905,7 @@ impl VirtualMachine {
     #[inline]
     pub unsafe fn timer_insert(
         vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        timer: *mut bun_loop::EventLoopTimer::EventLoopTimer,
     ) {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract; `vm` is the live per-thread VM.
@@ -1921,7 +1920,7 @@ impl VirtualMachine {
     #[inline]
     pub unsafe fn timer_remove(
         vm: *mut Self,
-        timer: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+        timer: *mut bun_loop::EventLoopTimer::EventLoopTimer,
     ) {
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         // SAFETY: per fn contract; `vm` is the live per-thread VM.
@@ -2210,7 +2209,7 @@ impl VirtualMachine {
         // `false` so workers never arm the watchdog.
         if opts.is_main_thread {
             // SAFETY: `vm` is the freshly-initialised per-thread VM singleton.
-            bun_io::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
+            bun_loop::ParentDeathWatchdog::install_on_event_loop(unsafe { Self::event_loop_ctx(vm) });
         }
 
         if opts.smol {
@@ -3192,12 +3191,12 @@ impl VirtualMachine {
     }
 
     /// Registers a spawned subprocess with the auto-killer.
-    pub fn on_subprocess_spawn(&mut self, process: core::ptr::NonNull<bun_spawn::Process>) {
+    pub fn on_subprocess_spawn(&mut self, process: core::ptr::NonNull<bun_loop::Process>) {
         self.auto_killer.on_subprocess_spawn(process);
     }
 
     /// Unregisters an exited subprocess from the auto-killer.
-    pub fn on_subprocess_exit(&mut self, process: core::ptr::NonNull<bun_spawn::Process>) {
+    pub fn on_subprocess_exit(&mut self, process: core::ptr::NonNull<bun_loop::Process>) {
         self.auto_killer.on_subprocess_exit(process);
     }
 
@@ -3290,7 +3289,7 @@ impl VirtualMachine {
             // lookups on start for obscure flags which we do not want others to
             // depend on.
             if map.get(b"BUN_FEATURE_FLAG_FORCE_WAITER_THREAD").is_some() {
-                bun_spawn::process::WaiterThread::set_should_use_waiter_thread();
+                bun_loop::process::WaiterThread::set_should_use_waiter_thread();
             }
             // Only allowed for testing
             if map.get(b"BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING").is_some() {
@@ -4950,9 +4949,9 @@ impl VirtualMachine {
         macro_rules! write_msg {
             ($msg:expr, $w:expr, $color:expr) => {
                 if $color {
-                    let _ = $msg.write_format::<true>(&mut bun_io::AsFmt::new($w));
+                    let _ = $msg.write_format::<true>(&mut bun_loop::AsFmt::new($w));
                 } else {
-                    let _ = $msg.write_format::<false>(&mut bun_io::AsFmt::new($w));
+                    let _ = $msg.write_format::<false>(&mut bun_loop::AsFmt::new($w));
                 }
             };
         }

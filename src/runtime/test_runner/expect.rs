@@ -1122,7 +1122,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         value: JSValue,
         property_matchers: Option<JSValue>,
-        pretty_value: &mut impl bun_io::Write,
+        pretty_value: &mut impl bun_loop::Write,
         fn_name: &'static str,
     ) -> JsResult<()> {
         if let Some(_prop_matchers) = property_matchers {
@@ -2665,7 +2665,7 @@ impl ExpectCustomAsymmetricMatcher {
         &self,
         this_value: JSValue,
         global_this: &JSGlobalObject,
-        writer: &mut (impl bun_io::Write + ?Sized),
+        writer: &mut (impl bun_loop::Write + ?Sized),
         dont_throw: bool,
     ) -> crate::Result<bool> {
         let Some(matcher_fn) = expect_custom_asymmetric_matcher_js::matcher_fn_get_cached(this_value) else { return Ok(false) };

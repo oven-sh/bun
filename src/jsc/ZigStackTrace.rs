@@ -153,6 +153,7 @@ impl<'a> SourceLineIterator<'a> {
         count
     }
 
+    #[allow(dead_code)]
     pub(crate) fn until_last(&mut self) -> Option<SourceLine> {
         if self.i < 1 {
             return None;

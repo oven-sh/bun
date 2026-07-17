@@ -80,8 +80,8 @@ fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslCo
     unsafe { (*CUSTOM_SSL_CONTEXT_MAP.get()).get_or_insert_with(ArrayHashMap::new) }
 }
 
-use bun_event_loop::MiniEventLoop as mini_event_loop;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
+use bun_loop::MiniEventLoop as mini_event_loop;
+use bun_loop::MiniEventLoop::MiniEventLoop;
 
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
@@ -1203,7 +1203,7 @@ fn assert_abort_tracker_sockets_alive() {
 use core::cell::Cell;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// init / on_start / process_events — uses `bun_event_loop::MiniEventLoop`
+// init / on_start / process_events — uses `bun_loop::MiniEventLoop`
 // for `loop_.loop_.{tick,inc,dec,num_polls}` (`on_start` calls
 // `mini_event_loop::init_global` and drives the thread's event loop). The
 // wakeup path above still uses the raw `*mut uws::Loop` directly.
@@ -1480,7 +1480,7 @@ pub fn shutdown_for_exit() {
 // h3_client/ClientContext.rs (abort_by_http_id / stream_body_by_http_id).
 
 /// Module-level bridge for `HTTPThread::init`. The real body lives in
-/// `_event_loop_draft` below (depends on `bun_event_loop::MiniEventLoop`,
+/// `_event_loop_draft` below (depends on `bun_loop::MiniEventLoop`,
 /// which is outside this crate's dep set). Call sites in AsyncHTTP.rs hit
 /// this until that tier boundary is resolved.
 pub fn init(opts: &InitOpts) {

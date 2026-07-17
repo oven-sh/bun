@@ -34,9 +34,9 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::{declare_scope, scoped_log};
 #[allow(unused_imports)]
 use bun_core::paths::{self, path_buffer_pool, platform, resolve_path};
-use bun_spawn::{self, Process};
+use bun_loop::{self, Process};
 #[cfg(not(windows))]
-use bun_spawn::{
+use bun_loop::{
     EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
 };
 use bun_sys::{self, Fd};
@@ -167,7 +167,7 @@ pub(crate) unsafe extern "C" fn Bun__Chrome__ensure(
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     ChromeProcess for ChromeProcess => |this| {
         on_process_exit(_process, status, _rusage) => {
             scoped_log!(Chrome, "chrome exited: {}", status);
@@ -531,7 +531,7 @@ fn spawn(
         // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
         // argv[0] non-null; valid for this call.
         let spawned =
-            unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
+            unsafe { bun_loop::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
         // Disarm the cleanup guard here and close each fd exactly once on the
         // WatchFailed path below; keeping it armed would re-close the

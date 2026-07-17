@@ -13,9 +13,9 @@ struct StructuredCloneWriter {
     impl_: crate::generated_classes::WriteBytesFn,
 }
 
-impl bun_io::Write for StructuredCloneWriter {
+impl bun_loop::Write for StructuredCloneWriter {
     #[inline]
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_loop::io::Result<()> {
         // SAFETY: `ctx` and `impl_` were supplied together by the C++
         // SerializedScriptValue writer; the callback only reads `len` bytes
         // from `ptr`, both of which we derive from a single `&[u8]`.
@@ -403,7 +403,7 @@ impl BlockList {
         // codegen `WriteBytesFn` typedef (jsc.conv).
         write_bytes: crate::generated_classes::WriteBytesFn,
     ) {
-        use bun_io::Write as _;
+        use bun_loop::Write as _;
         let _guard = this.mutex.lock_guard();
         this.ref_();
         let addr = std::ptr::from_ref::<Self>(this) as usize;
@@ -437,7 +437,7 @@ impl BlockList {
         // buffer (see above); `total_length = end - *ptr`, so the resulting slice
         // is exactly that buffer and stays valid for the lifetime of `r`.
         let mut r =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
+            bun_loop::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*ptr, total_length) });
 
         let nonce = match r.read_int_le::<u64>() {
             Ok(n) => n,

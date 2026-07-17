@@ -15,11 +15,11 @@
 //!     `print()`/`format()` impls can drive `Display`.
 //!
 //! Error type is `crate::Error` so `?` composes with the rest of the
-//! codebase. [`Result`] is exported as `bun_io::Result` for downstream sigs.
+//! codebase. [`Result`] is exported as `bun_loop::io::Result` for downstream sigs.
 
 use core::fmt;
 
-/// `bun_io::Result<T>` — alias over `bun_core::Error` (the `Write` trait's
+/// `bun_loop::io::Result<T>` — alias over `bun_core::Error` (the `Write` trait's
 /// error type) so byte-writer fallible paths compose with the trait via `?`.
 pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 
@@ -27,7 +27,7 @@ pub type Result<T = ()> = core::result::Result<T, bun_core::Error>;
 // trait Write — canonical definition lives in `bun_core::io` so leaf crates
 // (`bun_core`, `bun_collections`, `bun_url`) can implement it without an
 // upward dep on this crate. Re-exported here so downstream keeps spelling it
-// `bun_io::Write` / `bun_io::IntLe`.
+// `bun_loop::Write` / `bun_loop::IntLe`.
 // ════════════════════════════════════════════════════════════════════════════
 pub use bun_core::util::io::Writer;
 pub use bun_core::write::{IntBe, IntLe, Write};
@@ -302,7 +302,7 @@ impl<'a, W: Write> Write for BufWriter<'a, W> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// FmtAdapter — core::fmt::Write → bun_io::Write bridge
+// FmtAdapter — core::fmt::Write → bun_loop::Write bridge
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Wrap a `core::fmt::Write` sink (typically `&mut core::fmt::Formatter`) so it
@@ -369,14 +369,14 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// AsFmt — bun_io::Write → core::fmt::Write bridge
+// AsFmt — bun_loop::Write → core::fmt::Write bridge
 // ════════════════════════════════════════════════════════════════════════════
 
-/// View a byte sink (`W: bun_io::Write`) as a `core::fmt::Write`.
+/// View a byte sink (`W: bun_loop::Write`) as a `core::fmt::Write`.
 ///
 /// Inverse of [`FmtAdapter`]. Use this when a callee is typed against
 /// `impl core::fmt::Write` (e.g. `Display`, const-generic colour formatters,
-/// `Msg::write_format`) but you hold a `bun_io::Write` byte sink — `Vec<u8>`,
+/// `Msg::write_format`) but you hold a `bun_loop::Write` byte sink — `Vec<u8>`,
 /// `bun_core::io::Writer`, `&mut dyn Write`, etc.
 ///
 /// `write_str` routes through `write_all(s.as_bytes())`; the underlying I/O
@@ -394,7 +394,7 @@ pub struct AsFmt<'a> {
 }
 
 impl<'a> AsFmt<'a> {
-    /// Wrap any `bun_io::Write` sink. Takes `&mut dyn Write` directly so the
+    /// Wrap any `bun_loop::Write` sink. Takes `&mut dyn Write` directly so the
     /// unsize coercion happens at the call site (where the concrete `W` is
     /// known) rather than inside a `?Sized` generic — that lets both `&mut Vec`
     /// (auto-coerced) and an existing `&mut dyn Write` pass with one signature.

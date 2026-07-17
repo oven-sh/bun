@@ -56,7 +56,7 @@ pub struct ClientSession {
 
     /// Queued bytes for the socket; whole frames are written here and
     /// `flush()` drains as much as the socket accepts.
-    pub write_buffer: bun_io::StreamBuffer,
+    pub write_buffer: bun_loop::StreamBuffer,
 
     /// Inbound bytes until a full 9-byte header + declared payload is
     /// available, so frame handlers always see complete frames.
@@ -240,7 +240,7 @@ impl ClientSession {
             did_have_handshaking_error: client.flags.did_have_handshaking_error,
             established_with_reject_unauthorized: client.flags.reject_unauthorized,
             host_header_hash: client.proxy_auth_hash(),
-            write_buffer: bun_io::StreamBuffer::default(),
+            write_buffer: bun_loop::StreamBuffer::default(),
             read_buffer: Vec::new(),
             streams: ArrayHashMap::default(),
             next_stream_id: 1,

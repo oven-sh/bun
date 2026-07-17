@@ -21,7 +21,7 @@ pub use error::Error;
 // scaffolding now lives here. The two crates were at the same dependency tier
 // (both T2, neither reachable from `bun_event_loop`'s upward direction) and
 // shared every dep; the only effect of the split was forcing the
-// `bun_io::EventLoopHandle = *mut c_void` type-erasure seam between
+// `bun_loop::io::EventLoopHandle = *mut c_void` type-erasure seam between
 // `BufferedReader` and `FilePoll`, which let callers smuggle a pointer to the
 // wrong enum (`&AnyEventLoop` instead of `&EventLoopHandle`) and reinterpret
 // the discriminant — a SIGABRT-at-best bug class. With both halves in one
@@ -83,7 +83,7 @@ pub use windows_event_loop::{FilePoll, Loop};
 /// `WindowsLoop`) to the platform-native [`Loop`] (`us_loop_t*` on POSIX,
 /// `uv_loop_t*` on Windows).
 ///
-/// On POSIX `bun_io::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
+/// On POSIX `bun_loop::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
 /// this is the identity. On Windows the wrapper stores the libuv loop in its
 /// `uv_loop` field — set once in C at `us_create_loop` and immutable
 /// thereafter — which we project here so callers needn't open an `unsafe`
@@ -308,8 +308,8 @@ pub use bun_core::io::*;
 
 // ── re-exports for higher tiers ─────────────────────────────────────────────
 // Byte-level `Write` trait + helpers. Downstream
-// crates name these as `bun_io::Write` / `bun_io::BufWriter` /
-// `bun_io::FmtAdapter` / `bun_io::Result`.
+// crates name these as `bun_loop::Write` / `bun_loop::BufWriter` /
+// `bun_loop::FmtAdapter` / `bun_loop::io::Result`.
 pub use bun_core::fmt::SliceCursor;
 
 pub use max_buf as MaxBuf;
@@ -354,7 +354,7 @@ bun_macros::link_interface! {
 /// ## Shape
 ///
 /// ```ignore
-/// bun_io::impl_buffered_reader_parent! {
+/// bun_loop::impl_buffered_reader_parent! {
 ///     Variant for Ty;                 // or `Ty<'a>` (link uses `'static`)
 ///     has_on_read_chunk = true|false;
 ///     // ↓ omit when has_on_read_chunk = false (trait default fires)
@@ -439,7 +439,7 @@ macro_rules! __impl_buffered_reader_parent_body {
                 unsafe { $lp }
             }
             #[allow(unused_unsafe, clippy::macro_metavars_in_unsafe)]
-            unsafe fn event_loop($e_this: *mut Self) -> $crate::EventLoopHandle {
+            unsafe fn event_loop($e_this: *mut Self) -> $crate::io::EventLoopHandle {
                 unsafe { $ev }
             }
             $(

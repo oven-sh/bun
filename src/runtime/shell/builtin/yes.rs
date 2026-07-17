@@ -5,8 +5,8 @@ use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::states::cmd::Exec;
 use crate::shell::yield_::Yield;
 
-use bun_event_loop::ConcurrentTask::AutoDeinit;
-use bun_event_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
+use bun_loop::ConcurrentTask::AutoDeinit;
+use bun_loop::{EventLoopTask, TaskTag, Taskable, task_tag};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum State {
@@ -252,7 +252,7 @@ impl YesTask {
     }
 
     /// Signature matches
-    /// [`AnyTaskWithExtraContext::from`](bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
+    /// [`AnyTaskWithExtraContext::from`](bun_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
     /// callback shape (`fn(*mut T, *mut ())`).
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
         // SAFETY: dispatch contract — `this` is the live task previously passed

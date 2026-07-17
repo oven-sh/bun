@@ -36,9 +36,9 @@ pub enum Encoding {
 }
 
 /// Byte-sink trait used by the string-escape helpers and `StdWriterAdapter`.
-/// Re-exported from `bun_io` (canonical in `bun_core::io`); any `bun_io::Write`
-/// — `Vec<u8>`, `MutableString`, `&mut dyn bun_io::Write` — satisfies this.
-pub use bun_io::Write;
+/// Re-exported from `bun_io` (canonical in `bun_core::io`); any `bun_loop::Write`
+/// — `Vec<u8>`, `MutableString`, `&mut dyn bun_loop::Write` — satisfies this.
+pub use bun_loop::Write;
 
 use bun_ast as js_ast;
 use js_ast::Ref;
@@ -7343,7 +7343,7 @@ pub trait WriterTrait {
 
 pub struct StdWriterAdapter<'a, W: ?Sized>(&'a mut W);
 impl<'a, W: WriterTrait + ?Sized> Write for StdWriterAdapter<'a, W> {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_loop::io::Result<()> {
         self.0.print_slice(bytes);
         Ok(())
     }

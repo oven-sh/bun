@@ -1,5 +1,5 @@
 use bun_core::collections::{DynamicBitSet, HashMap};
-use bun_io::Write;
+use bun_loop::Write;
 use bun_core::semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;

@@ -188,7 +188,7 @@ impl JSGlobalObjectSqlExt for JSGlobalObject {
 // as the [VirtualMachineSqlExt] extension trait.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_io::KeepAlive;
+pub use bun_loop::KeepAlive;
 pub use bun_jsc::event_loop::{EventLoop, EventLoopEnterGuard as EventLoopGuard};
 pub use bun_jsc::virtual_machine::VirtualMachine;
 
@@ -278,8 +278,8 @@ pub(crate) trait VirtualMachineSqlExt {
     fn timer(&mut self) -> &mut TimerHeap;
     /// RareData.ssl_ctx_cache — owned by RuntimeState.
     fn ssl_ctx_cache(&mut self) -> &mut SslCtxCache;
-    /// bun_io::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx;
+    /// bun_loop::EventLoopCtx for the JS-thread VM, for KeepAlive::{ref_,unref}.
+    fn vm_ctx(&self) -> bun_loop::EventLoopCtx;
     /// Lazy-init `RareData`'s per-protocol uws [`bun_uws::SocketGroup`].
     /// Encapsulates the `rare_data(&mut self)` / `*_group(.., &VirtualMachine)`
     /// borrowck conflict (the two borrows touch field-disjoint state) so the
@@ -313,8 +313,8 @@ impl VirtualMachineSqlExt for VirtualMachine {
         unsafe { &mut *(hooks().ssl_ctx_cache)(self).cast::<SslCtxCache>() }
     }
     #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::js_vm_ctx()
+    fn vm_ctx(&self) -> bun_loop::EventLoopCtx {
+        bun_loop::js_vm_ctx()
     }
     #[inline]
     fn postgres_socket_group<const SSL: bool>(&mut self) -> &mut bun_uws::SocketGroup {
@@ -364,7 +364,7 @@ impl EventLoopSqlExt for EventLoop {
 // reached via [`SqlRuntimeHooks::timer_heap`] / `timer_insert` / `timer_remove`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_event_loop::EventLoopTimer::{
+pub use bun_loop::EventLoopTimer::{
     EventLoopTimer, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 

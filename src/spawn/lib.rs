@@ -21,7 +21,7 @@ use core::ffi::c_char;
 /// posix_spawn(2) FFI wrappers (Actions / Attr / spawn_z / wait4).
 /// MOVE_DOWN: implementation now lives in `bun_spawn_sys`; re-exported here
 /// with the higher-tier `process::*` glue (`Process`/`Status`/`spawn_process`/
-/// `sync`) restored so existing `bun_spawn::posix_spawn::bun_spawn::*` paths
+/// `sync`) restored so existing `bun_loop::posix_spawn::bun_loop::*` paths
 /// keep resolving.
 pub mod posix_spawn {
     pub use bun_sys::spawn_sys::posix_spawn::*;
@@ -55,7 +55,7 @@ pub use error::{Error, Result};
 // Public surface — re-exports under the names mid-tier callers already use.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_event_loop::EventLoopHandle;
+pub use bun_loop::EventLoopHandle;
 
 // Raw OS-spawn types from the leaf -sys crate.
 pub use bun_sys::spawn_sys::{Argv, CStrPtr, Envp, ffi};
@@ -67,7 +67,7 @@ pub use process::{
 };
 
 // Variant types live in `bun_runtime`/`bun_install`; each provides its body
-// via `bun_spawn::link_impl_ProcessExit!`. Adding a handler kind = add a
+// via `bun_loop::link_impl_ProcessExit!`. Adding a handler kind = add a
 // variant here + one `link_impl_ProcessExit!` in the owning crate.
 bun_macros::link_interface! {
     pub ProcessExit[
@@ -410,7 +410,7 @@ pub fn run(opts: RunOptions<'_>) -> crate::spawn::Result<RunResult> {
         // sync-spawn callers pass.
         #[cfg(windows)]
         windows: process::sync::WindowsOptions {
-            loop_: EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+            loop_: EventLoopHandle::init_mini(bun_loop::MiniEventLoop::init_global(
                 None, None,
             )),
             ..Default::default()

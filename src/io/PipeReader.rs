@@ -4,9 +4,10 @@ use core::ptr::NonNull;
 
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::io::EventLoopHandle;
+use crate::{FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
 // `bun.Async.Loop` — on POSIX the uws `us_loop_t`, on Windows the embedded
-// `uv_loop_t` (`bun_io::Loop` is the cfg-aliased nominal that picks the
+// `uv_loop_t` (`bun_loop::Loop` is the cfg-aliased nominal that picks the
 // right one). `BufferedReaderParent::loop_` returns this so callers in T3+
 // can hand it to libuv/uws without a cross-crate cast.
 //
@@ -17,7 +18,7 @@ pub type Loop = bun_uws_sys::Loop;
 #[cfg(windows)]
 pub type Loop = bun_sys::windows::libuv::Loop;
 
-/// `bun_io::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
+/// `bun_loop::poll_tag::BUFFERED_READER` — every `FilePoll` allocated by this
 /// module stores a `*mut BufferedReader` (erased) as its owner; the per-tag
 /// dispatch in `bun_runtime::dispatch::__bun_run_file_poll` recovers the type
 /// from this constant. T2 cannot name `bun_io`, so the value is mirrored.
@@ -68,7 +69,7 @@ pub struct BufferedReaderVTable {
 ///   be done with `self` (e.g. tail-position `on_reader_done`).
 pub trait BufferedReaderParent {
     /// `link_interface!` variant for this type. Each impl pairs this with a
-    /// `bun_io::buffered_reader_parent_link!(KIND for Self)` at module scope.
+    /// `bun_loop::buffered_reader_parent_link!(KIND for Self)` at module scope.
     const KIND: crate::BufferedReaderParentLinkKind;
     /// Mirrors `@hasDecl(Type, "onReadChunk")`.
     const HAS_ON_READ_CHUNK: bool = true;

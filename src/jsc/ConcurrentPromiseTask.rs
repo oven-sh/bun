@@ -1,5 +1,5 @@
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
-use bun_io::{self as Async, KeepAlive};
+use bun_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask, TaskTag, Taskable};
+use bun_loop::{self as Async, KeepAlive};
 use bun_sys::threading::{IntrusiveWorkTask as _, WorkPoolTask, work_pool::WorkPool};
 
 use crate::event_loop::EventLoop;

@@ -656,7 +656,7 @@ pub struct BunTest {
     pub execution: Execution::Execution,
 }
 
-bun_event_loop::impl_timer_owner!(BunTest; from_timer_ptr => timer);
+bun_loop::impl_timer_owner!(BunTest; from_timer_ptr => timer);
 
 impl BunTest {
     /// `bun_test_root` must point at the stable global `BunTestRoot` storage
@@ -913,7 +913,7 @@ impl BunTest {
             global_this: GlobalRef::from(global_this),
             phase,
         }));
-        fn call_erased(this: *mut RunTestsTask) -> bun_event_loop::JsResult<()> {
+        fn call_erased(this: *mut RunTestsTask) -> bun_loop::JsResult<()> {
             // `this` was `heap::into_raw`'d above (always non-null) and is
             // invoked exactly once by `ManagedTask`.
             RunTestsTask::call(NonNull::new(this).unwrap()).map_err(Into::into)

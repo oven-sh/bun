@@ -13,7 +13,7 @@
 //! that own BOTH halves of the round-trip:
 //!
 //!   - `bun_sys::threading::WorkPool::schedule_owned` / `OwnedTask`
-//!   - `bun_event_loop::Task::from_boxed` / `ConcurrentTask::create_boxed`
+//!   - `bun_loop::Task::from_boxed` / `ConcurrentTask::create_boxed`
 //!   - `#[js_class]`-generated `T::to_js_boxed`
 //!   - `bun_core::libuv_sys::UvHandle::set_owned_data` / `take_owned_data`
 //!

@@ -4,7 +4,7 @@
 //! on the file or route it came from so the bundler can dismiss/update stale
 //! failures by index instead of resending the whole payload.
 
-use bun_io::Write as _;
+use bun_loop::Write as _;
 
 use super::incremental_graph::{ClientFileIndex, ServerFileIndex};
 use super::route_bundle;

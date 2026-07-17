@@ -1790,12 +1790,12 @@ where
 
         let mode = stat.st_mode as bun_sys::Mode;
         let is_regular = bun_sys::S::ISREG(mode);
-        let (file_type, pollable): (bun_io::FileType, bool) = 'brk: {
+        let (file_type, pollable): (bun_loop::FileType, bool) = 'brk: {
             if bun_sys::S::ISFIFO(mode) || bun_sys::S::ISCHR(mode) {
-                break 'brk (bun_io::FileType::Pipe, true);
+                break 'brk (bun_loop::FileType::Pipe, true);
             }
             if bun_sys::S::ISSOCK(mode) {
-                break 'brk (bun_io::FileType::Socket, true);
+                break 'brk (bun_loop::FileType::Socket, true);
             }
             if bun_sys::S::ISDIR(mode) {
                 if auto_close {
@@ -1819,7 +1819,7 @@ where
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
-            (bun_io::FileType::File, false)
+            (bun_loop::FileType::File, false)
         };
 
         let original_size = match &self.blob {

@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use crate::{JSValue, VM};
+use crate::{JSGlobalObject, JSValue, VM};
 use bun_core::{self as bstr, ZigString};
 
 bun_opaque::opaque_ffi! {
@@ -39,12 +39,8 @@ impl DOMURL {
         (!p.is_null()).then(|| DOMURL::opaque_mut(p))
     }
 
-    pub fn cast<'a>(value: JSValue) -> Option<&'a mut DOMURL> {
-        // SAFETY: VirtualMachine::get() returns the per-thread singleton; caller is on the JS thread.
-        Self::cast_(
-            value,
-            crate::virtual_machine::VirtualMachine::get().global().vm(),
-        )
+    pub fn cast<'a>(value: JSValue, global: &'a JSGlobalObject) -> Option<&'a mut DOMURL> {
+        Self::cast_(value, global.vm())
     }
 
     pub fn href_(&mut self, out: &mut ZigString) {

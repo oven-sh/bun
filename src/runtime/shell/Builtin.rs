@@ -602,7 +602,7 @@ impl Builtin {
                         Ok(f) => f,
                     }
                 } else {
-                    let result = bun_io::open_for_writing_impl(
+                    let result = bun_loop::open_for_writing_impl(
                         cwd_fd,
                         &path,
                         redirect.to_flags(),

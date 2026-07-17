@@ -1436,7 +1436,7 @@ fn write_to_socket<const IS_SSL: bool>(
 /// Write data to the socket and buffer the unwritten data if there is backpressure
 fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
     socket: HttpSocket<IS_SSL>,
-    buffer: &mut bun_io::StreamBuffer,
+    buffer: &mut bun_loop::StreamBuffer,
     data: &[u8],
 ) -> crate::Result<usize> {
     let amount = write_to_socket::<IS_SSL>(socket, data)?;
@@ -2989,7 +2989,7 @@ impl<'a> HTTPClient<'a> {
         let mut temporary_send_buffer = request_body_buffer.to_array_list();
         // temporary_send_buffer drops at scope exit
 
-        let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
+        let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_loop::Write
 
         let request = self.build_request(self.body_len_for_send());
 
@@ -3090,7 +3090,7 @@ impl<'a> HTTPClient<'a> {
     fn write_to_stream_using_buffer<const IS_SSL: bool>(
         &mut self,
         socket: HttpSocket<IS_SSL>,
-        buffer: &mut bun_io::StreamBuffer,
+        buffer: &mut bun_loop::StreamBuffer,
         data: &[u8],
     ) -> crate::Result<bool> {
         // Through a proxy tunnel the stream body goes via the inner TLS,

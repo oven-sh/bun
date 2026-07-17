@@ -40,7 +40,7 @@ use bun_ast::Source;
 use bun_core::collections::AutoBitSet;
 use bun_core::collections::VecExt;
 use bun_core::strings;
-use bun_io::{FmtAdapter, Write};
+use bun_loop::{FmtAdapter, Write};
 use bun_js_printer::Encoding;
 use bun_core::paths::resolve_path::relative_normalized;
 use bun_resolver::fs::FileSystem;
@@ -371,10 +371,10 @@ pub mod html_import_manifest {
         w: &mut &mut [u8],
     ) -> Result<(), core::fmt::Error> {
         let taken = core::mem::take(w);
-        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
+        let mut fbs = bun_loop::FixedBufferStream::new_mut(taken);
         super::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
             .map_err(|_| core::fmt::Error)?;
-        let bun_io::FixedBufferStream { buffer, pos } = fbs;
+        let bun_loop::FixedBufferStream { buffer, pos } = fbs;
         *w = &mut buffer[pos..];
         Ok(())
     }

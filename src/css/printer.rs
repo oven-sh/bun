@@ -16,7 +16,7 @@ use css_values::ident::DashedIdent;
 pub use css::Error;
 
 // Byte-oriented writer (writeAll/writeByte/print equivalents).
-use bun_io::Write;
+use bun_loop::Write;
 
 /// Options that control how CSS is serialized to a string.
 pub struct PrinterOptions<'a> {
@@ -467,15 +467,15 @@ impl<'a> Printer<'a> {
     }
 }
 
-/// `Printer` participates in `serializer::serialize_*<W: bun_io::Write>` so
+/// `Printer` participates in `serializer::serialize_*<W: bun_loop::Write>` so
 /// `Token::to_css` and friends can write through it generically.
-impl<'a> bun_io::Write for Printer<'a> {
+impl<'a> bun_loop::Write for Printer<'a> {
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> bun_loop::io::Result<()> {
         Printer::write_str(self, buf).map_err(|_| bun_core::Error::WriteFailed)
     }
     #[inline]
-    fn write_byte(&mut self, b: u8) -> bun_io::Result<()> {
+    fn write_byte(&mut self, b: u8) -> bun_loop::io::Result<()> {
         Printer::write_char(self, b).map_err(|_| bun_core::Error::WriteFailed)
     }
 }
@@ -484,7 +484,7 @@ impl<'a> Printer<'a> {
     /// Serialize a CSS identifier through this printer.
     ///
     /// Thin wrapper over `css::serializer::serialize_identifier`. The
-    /// serializer returns `bun_io::Result<()>`; `write_str`/`write_char` have
+    /// serializer returns `bun_loop::io::Result<()>`; `write_str`/`write_char` have
     /// already recorded `add_fmt_error()` on failure, so the error payload is
     /// just remapped to `PrintErr::CSSPrintError`.
     #[inline]

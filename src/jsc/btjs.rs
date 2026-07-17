@@ -1,5 +1,5 @@
 #[cfg(debug_assertions)]
-use bun_io::Write as _;
+use bun_loop::Write as _;
 use core::ffi::c_char;
 
 #[cfg(debug_assertions)]
@@ -31,7 +31,7 @@ use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo}
 mod tty {
     // D089: `Config`/`Color`/`set_color` deduped to the canonical port in
     // `bun_sys::crash_handler::debug` (lower-tier crate; `Vec<u8>` already impls
-    // `bun_io::Write` so the generic `set_color` covers btjs's in-memory sink).
+    // `bun_loop::Write` so the generic `set_color` covers btjs's in-memory sink).
     // `detect_config_stdout` stays LOCAL — it implements a *different* detection
     // (stdout with NO_COLOR/CLICOLOR_FORCE/isatty) than crash_handler's
     // `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).

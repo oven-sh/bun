@@ -152,7 +152,7 @@ pub mod expect {
         fn jest_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
         fn jest_strict_deep_equals(self, other: JSValue, global: &JSGlobalObject) -> JsResult<bool>;
         fn jest_deep_match(self, other: JSValue, global: &JSGlobalObject, replace_props: bool) -> JsResult<bool>;
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
+        fn jest_snapshot_pretty_format<W: bun_loop::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()>;
         fn is_reg_exp(self) -> bool;
         fn as_big_int_compare(self, other: JSValue, global: &JSGlobalObject) -> BigIntCompare;
         // ── forwarders to `bun_jsc::JSValue` inherents (kept on the trait so
@@ -197,7 +197,7 @@ pub mod expect {
             JSValue::jest_deep_match(self, other, global, replace_props)
         }
         #[inline]
-        fn jest_snapshot_pretty_format<W: bun_io::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
+        fn jest_snapshot_pretty_format<W: bun_loop::Write>(self, out: &mut W, global: &JSGlobalObject) -> JsResult<()> {
             use super::pretty_format::{JestPrettyFormat, FormatOptions, MessageLevel};
             let fmt_options = FormatOptions {
                 enable_colors: false,

@@ -17,7 +17,7 @@ use bun_core::collections::LinearFifo;
 use bun_core::collections::linear_fifo::DynamicBuffer;
 use bun_core::{ZigString, strings};
 use bun_http::websocket::{Opcode, WebsocketHeader};
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, GlobalRef, JSGlobalObject, JSValue};
 use bun_core::ptr::{AsCtxPtr, ThisPtr};
@@ -137,7 +137,7 @@ impl<const SSL: bool> WebSocket<SSL> {
     };
 
     #[inline]
-    fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_io::EventLoopCtx {
+    fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_loop::EventLoopCtx {
         // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
         // it from `bun_vm_ptr()` (the FFI `*mut VirtualMachine`) rather than
         // `bun_vm()`'s `&VirtualMachine`, so the stored pointer carries write

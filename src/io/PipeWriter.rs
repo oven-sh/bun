@@ -14,7 +14,8 @@ use bun_sys::windows::libuv as uv;
 use bun_sys::windows::libuv::UvHandle as _;
 use bun_sys::{self as sys, Fd};
 
-use crate::{EventLoopHandle, FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
+use crate::io::EventLoopHandle;
+use crate::{FilePollFlag, FilePollKind, FilePollRef, Owner, PollTag};
 
 use crate::pipes::{FileType, PollOrFd};
 #[cfg(windows)]
@@ -254,7 +255,7 @@ fn write_to_blocking_pipe(fd: Fd, buf: &[u8]) -> sys::Result<usize> {
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixBufferedWriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
+    /// `bun_loop::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixBufferedWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
@@ -602,7 +603,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
 /// Stacked Borrows, so we use raw
 /// pointers and never form a `&mut Parent` inside the writer.
 pub trait PosixStreamingWriterParent {
-    /// `bun_io::poll_tag` constant for this writer's `FilePoll` owner. The
+    /// `bun_loop::poll_tag` constant for this writer's `FilePoll` owner. The
     /// per-tag dispatch in `bun_runtime::dispatch::__bun_run_file_poll`
     /// recovers `*mut PosixStreamingWriter<Self>` from this.
     const POLL_OWNER_TAG: PollTag;
@@ -2659,7 +2660,7 @@ macro_rules! impl_streaming_writer_parent {
                 unsafe { $crate::impl_streaming_writer_parent!(@call $borrow this; $on_close()) }
             }
             #[inline]
-            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
+            unsafe fn event_loop(this: *mut Self) -> $crate::io::EventLoopHandle {
                 // SAFETY: see on_write. Shared-only read.
                 let $el_this = this;
                 #[allow(unused_unsafe)]
@@ -2795,7 +2796,7 @@ macro_rules! impl_buffered_writer_parent {
             }
             const HAS_ON_WRITABLE: bool = false;
             #[inline]
-            unsafe fn event_loop(this: *mut Self) -> $crate::EventLoopHandle {
+            unsafe fn event_loop(this: *mut Self) -> $crate::io::EventLoopHandle {
                 // SAFETY: see on_write.
                 let $el_this = this;
                 #[allow(unused_unsafe)]

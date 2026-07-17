@@ -16,16 +16,16 @@ use crate::shell::{self as sh, Yield};
 use crate::webcore::{self, FileSink, ReadableStream, blob};
 use bun_core::alloc_impl::Arena;
 use bun_core::collections::VecExt;
-use bun_io::Loop as AsyncLoop;
+use bun_loop::Loop as AsyncLoop;
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{BufferedReader, ReadState};
+use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_loop::{BufferedReader, ReadState};
 use bun_jsc::{self as jsc, EventLoopHandle, JSGlobalObject, JSValue, MarkedArrayBuffer};
 use bun_core::ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt, SystemError};
 use enumset::EnumSet;
 
-use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::api::bun_loop::stdio::{self, Stdio};
 use crate::shell::util::OutKind;
 
 /// Local helper: `OutKind` → tag-name string for logs.
@@ -115,7 +115,7 @@ fn read_state_str(s: ReadState) -> &'static str {
     }
 }
 
-pub use crate::api::bun_spawn::stdio::Stdio as StdioReexport;
+pub use crate::api::bun_loop::stdio::Stdio as StdioReexport;
 pub use JscSubprocess::StdioKind;
 
 use crate::shell::ShellErr;
@@ -305,8 +305,8 @@ impl Drop for ShellSubprocess {
 pub type StaticPipeWriter = JscSubprocess::NewStaticPipeWriter<ShellSubprocess>;
 
 impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubprocess {
-    const POLL_OWNER_TAG: bun_io::PollTag =
-        bun_io::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_loop::PollTag =
+        bun_loop::posix_event_loop::poll_tag::SHELL_STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -315,7 +315,7 @@ impl JscSubprocess::static_pipe_writer::StaticPipeWriterProcess for ShellSubproc
 
 pub type WatchFd = Fd;
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     Shell for ShellSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
             (*this).on_process_exit(&*process, &status, rusage),
@@ -818,7 +818,7 @@ impl ShellSubprocess {
         // SAFETY: `subprocess` is the just-allocated `ShellSubprocess`; the
         // owning `Cmd` outlives the `Process` exit callback.
         subproc.proc().set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Shell, subprocess)
+            bun_loop::ProcessExit::new(bun_loop::ProcessExitKind::Shell, subprocess)
         });
         let _ = scopeguard::ScopeGuard::into_inner(stdio_guard);
 
@@ -1974,12 +1974,12 @@ impl PipeReader {
             // transfers to `reader.source` (`stdio_result` is never read again
             // on Windows — `start()` goes through `start_with_current_pipe`).
             this.reader.source = match core::mem::take(&mut this.stdio_result) {
-                StdioResult::Buffer(buf) => Some(bun_io::Source::Pipe(buf)),
+                StdioResult::Buffer(buf) => Some(bun_loop::Source::Pipe(buf)),
                 StdioResult::BufferFd(fd) => {
                     // `Fd` is Copy; restore so `stdio_result` keeps reflecting
                     // the spawn outcome.
                     this.stdio_result = StdioResult::BufferFd(fd);
-                    Some(bun_io::Source::File(bun_io::Source::open_file(fd)))
+                    Some(bun_loop::Source::File(bun_loop::Source::open_file(fd)))
                 }
                 StdioResult::Unavailable => panic!("Shouldn't happen."),
             };
@@ -2023,11 +2023,11 @@ impl PipeReader {
                 {
                     // TODO: are these flags correct
                     if let Some(poll) = self.reader.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
+                        poll.set_flag(bun_loop::FilePollFlag::Socket);
                     }
                     self.reader
                         .flags
-                        .insert(bun_io::pipe_reader::PosixFlags::SOCKET);
+                        .insert(bun_loop::pipe_reader::PosixFlags::SOCKET);
                 }
 
                 Ok(())
@@ -2444,7 +2444,7 @@ impl Drop for PipeReader {
 // `on_reader_done`/`on_reader_error` forward the raw `*mut Self` (NOT
 // autoref) — see their doc-comments: the body builds an `Arc` keepalive that
 // may free `this` on drop, so a `&mut self` protector would be UB.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     ShellPipeReader for PipeReader;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);

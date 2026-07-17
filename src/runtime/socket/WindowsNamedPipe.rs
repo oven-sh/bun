@@ -26,10 +26,10 @@ use bun_boringssl_sys as boringssl;
 #[cfg(windows)]
 use bun_core::collections::ByteVecExt;
 use bun_core::timespec;
-use bun_io::Loop as AsyncLoop;
+use bun_loop::Loop as AsyncLoop;
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{StreamingWriter, WriteStatus};
+use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_loop::{StreamingWriter, WriteStatus};
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(windows)]
 use bun_core::libuv_sys::{UvHandle as _, UvStream as _};
@@ -69,7 +69,7 @@ pub struct WindowsNamedPipe {
     /// honest model here rather than a threaded lifetime.
     pub vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
 
     pub writer: StreamingWriter<WindowsNamedPipe>,
@@ -87,7 +87,7 @@ pub struct WindowsNamedPipe {
     pub flags: Flags,
 }
 
-bun_event_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(WindowsNamedPipe; from_timer_ptr => event_loop_timer);
 
 bitflags::bitflags! {
     #[repr(transparent)]
@@ -1425,9 +1425,9 @@ pub extern "C" fn WindowsNamedPipe__ssl(this: *const c_void) -> *mut boringssl::
 // Windows-only at runtime; the POSIX impl exists purely so the
 // `StreamingWriter<Self>` field type-checks (poll_tag::NULL keeps the
 // dispatch table from being silently wrong if a poll is ever created).
-bun_io::impl_streaming_writer_parent! {
+bun_loop::impl_streaming_writer_parent! {
     WindowsNamedPipe;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::NULL,
+    poll_tag   = bun_loop::posix_event_loop::poll_tag::NULL,
     borrow     = mut,
     on_write   = on_write,
     on_error   = on_error,

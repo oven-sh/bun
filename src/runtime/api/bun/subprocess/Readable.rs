@@ -6,10 +6,10 @@ use bun_sys::{self, Fd, FdExt as _};
 
 use crate::node::types::FdJsc as _;
 
-use crate::api::bun_spawn::stdio::Stdio;
+use crate::api::bun_loop::stdio::Stdio;
 use crate::webcore::ReadableStream;
 use crate::webcore::blob::SizeType as BlobSizeType;
-use bun_io::max_buf::MaxBuf;
+use bun_loop::max_buf::MaxBuf;
 use bun_core::ptr::IntrusiveRc;
 use bun_core::ptr::cow_slice::CowSlice;
 

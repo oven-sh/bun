@@ -317,7 +317,7 @@ pub struct Interpreter {
 
     pub has_pending_activity: AtomicU32,
     pub started: AtomicBool,
-    pub keep_alive: JsCell<bun_io::KeepAlive>,
+    pub keep_alive: JsCell<bun_loop::KeepAlive>,
 
     pub async_commands_executing: Cell<u32>,
 
@@ -600,7 +600,7 @@ impl Interpreter {
             }),
             has_pending_activity: AtomicU32::new(0),
             started: AtomicBool::new(false),
-            keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            keep_alive: JsCell::new(bun_loop::KeepAlive::default()),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
@@ -663,7 +663,7 @@ impl Interpreter {
     /// not bumping `standalone_shell` analytics.
     pub fn init_and_run_from_file(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        mini: &'static mut bun_loop::MiniEventLoop::MiniEventLoop<'static>,
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
@@ -680,7 +680,7 @@ impl Interpreter {
     /// without a diagnostic.
     pub fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        mini: &'static mut bun_loop::MiniEventLoop::MiniEventLoop<'static>,
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -694,7 +694,7 @@ impl Interpreter {
     /// the two entrypoints.
     fn init_and_run_impl(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop<'static>,
+        mini: &'static mut bun_loop::MiniEventLoop::MiniEventLoop<'static>,
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -2188,7 +2188,7 @@ pub struct ShellArgs {
 /// *MiniEventLoop }`. The real type lives in
 /// `bun_event_loop` and re-exported through `bun_jsc`; shell re-exports it
 /// here so `IOReader`/`IOWriter`/builtin tasks keep their existing import path.
-pub use bun_event_loop::EventLoopHandle;
+pub use bun_loop::EventLoopHandle;
 
 // ────────────────────────────────────────────────────────────────────────────
 // CowFd
@@ -2786,7 +2786,7 @@ impl<P: OutputTaskVTable> OutputTask<P> {
 ///
 /// `Taskable` is a supertrait so [`ShellTask::on_finish`] can build the
 /// JS-side `ConcurrentTask`.
-pub trait ShellTaskCtx: Sized + bun_event_loop::Taskable {
+pub trait ShellTaskCtx: Sized + bun_loop::Taskable {
     /// Byte offset of the embedded `task: ShellTask` field within `Self`.
     /// Implementors define this as `core::mem::offset_of!(Self, task)`.
     const TASK_OFFSET: usize;
@@ -2829,16 +2829,16 @@ pub struct ShellTask {
     /// no-op`).
     pub task: WorkPoolTask,
     pub event_loop: EventLoopHandle,
-    pub keep_alive: bun_io::KeepAlive,
+    pub keep_alive: bun_loop::KeepAlive,
     /// Back-ref to the owning [`Interpreter`]. The high-tier dispatch
     /// (`runtime::dispatch::run_task`) recovers `&mut Interpreter` from this
     /// field. Set at `ShellTask::new`; cleared (raw-ptr) only when the task
     /// is freed.
     pub interp: *mut Interpreter,
     /// Intrusive concurrent-task node for the worker→main bounce. JS arm holds
-    /// a [`ConcurrentTask`](bun_event_loop::ConcurrentTask::ConcurrentTask),
+    /// a [`ConcurrentTask`](bun_loop::ConcurrentTask::ConcurrentTask),
     /// mini arm holds an `AnyTaskWithExtraContext`.
-    pub concurrent_task: bun_event_loop::EventLoopTask,
+    pub concurrent_task: bun_loop::EventLoopTask,
 }
 
 impl ShellTask {
@@ -2853,7 +2853,7 @@ impl ShellTask {
             event_loop,
             keep_alive: Default::default(),
             interp: core::ptr::null_mut(),
-            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(event_loop),
+            concurrent_task: bun_loop::EventLoopTask::from_event_loop(event_loop),
         }
     }
 
@@ -2904,7 +2904,7 @@ impl ShellTask {
     /// [`schedule`](Self::schedule); not touched again on the worker thread
     /// after this returns.
     pub unsafe fn on_finish<C: ShellTaskCtx>(ctx: *mut C) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
+        use bun_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
         log!("ShellTask onFinish");
         // SAFETY: caller contract — `ctx` embeds `ShellTask` at `TASK_OFFSET`.
         // Stay on raw pointers: once `enqueue_task_concurrent` returns, the

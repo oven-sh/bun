@@ -363,8 +363,8 @@ impl ShellMkdirTask {
     }
 }
 
-impl bun_event_loop::Taskable for ShellMkdirTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMkdirTask;
+impl bun_loop::Taskable for ShellMkdirTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellMkdirTask;
 }
 
 /// Collects each created directory into

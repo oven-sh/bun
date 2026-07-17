@@ -1317,8 +1317,8 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             updates: &[],
         };
         // `bun_sys::File`
-        // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
-        // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
+        // has no `bun_loop::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
+        // entire output in a `Vec<u8>` (impls `bun_loop::Write`) and flush once.
         let mut buf: Vec<u8> = Vec::with_capacity(4096);
         crate::lockfile_real::printer::Yarn::print(&mut printer, &mut buf)?;
         file.write_all(&buf).map_err(Error::from)?;

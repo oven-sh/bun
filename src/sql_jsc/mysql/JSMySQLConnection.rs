@@ -84,7 +84,7 @@ pub struct JSMySQLConnection {
     max_lifetime_timer: JsCell<EventLoopTimer>,
 }
 
-bun_event_loop::impl_timer_owner!(JSMySQLConnection;
+bun_loop::impl_timer_owner!(JSMySQLConnection;
     from_timer_ptr => timer,
     from_max_lifetime_timer_ptr => max_lifetime_timer,
 );
@@ -144,8 +144,8 @@ impl JSMySQLConnection {
     }
 
     #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
-        bun_io::js_vm_ctx()
+    fn vm_ctx(&self) -> bun_loop::EventLoopCtx {
+        bun_loop::js_vm_ctx()
     }
 }
 

@@ -552,11 +552,11 @@ impl ShellMvBatchedTask {
     }
 }
 
-impl bun_event_loop::Taskable for ShellMvCheckTargetTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvCheckTargetTask;
+impl bun_loop::Taskable for ShellMvCheckTargetTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellMvCheckTargetTask;
 }
-impl bun_event_loop::Taskable for ShellMvBatchedTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellMvBatchedTask;
+impl bun_loop::Taskable for ShellMvBatchedTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellMvBatchedTask;
 }
 
 // `*mut Self` sig is forced by the `ShellTaskCtx` trait contract; the body's

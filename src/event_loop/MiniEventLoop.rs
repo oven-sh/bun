@@ -25,7 +25,7 @@ use core::ptr::NonNull;
 use bun_core::collections::linear_fifo::{DynamicBuffer, LinearFifo};
 use bun_core::Output;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
-use bun_io::file_poll::Store as FilePollStore;
+use bun_loop::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
 use bun_sys::threading::UnboundedQueue;
 use bun_uws::Loop as UwsLoop;
@@ -502,12 +502,12 @@ impl<'a> MiniEventLoop<'a> {
 }
 
 // ───────────── EventLoopCtx adapter (bun_io cycle-break) ─────────────────
-// `bun_io::file_poll::Store::put` and friends take an erased `EventLoopCtx`
+// `bun_loop::file_poll::Store::put` and friends take an erased `EventLoopCtx`
 // instead of naming `MiniEventLoop`/`VirtualMachine` directly. This crate owns
 // `MiniEventLoop`, so the Mini-side vtable lives here. The Js-side vtable lives
 // in `bun_runtime` (it must name `jsc::VirtualMachine`).
 
-bun_io::link_impl_EventLoopCtx! {
+bun_loop::link_impl_EventLoopCtx! {
     Mini for MiniEventLoop<'static> => |this| {
         platform_event_loop_ptr() => (*this).loop_ptr(),
         // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
@@ -534,10 +534,10 @@ impl<'a> MiniEventLoop<'a> {
     /// `this` is the per-thread `MiniEventLoop` singleton; the returned ctx
     /// must not outlive it.
     #[inline]
-    pub fn as_event_loop_ctx(this: &mut MiniEventLoop<'a>) -> bun_io::EventLoopCtx {
+    pub fn as_event_loop_ctx(this: &mut MiniEventLoop<'a>) -> bun_loop::EventLoopCtx {
         // SAFETY: `this` is a live `&mut`, so the pointer handed to `new` is
         // non-null and exclusively borrowed for the call's duration.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
+        unsafe { bun_loop::EventLoopCtx::new(bun_loop::EventLoopCtxKind::Mini, this) }
     }
 }
 
@@ -570,7 +570,7 @@ impl<'a> MiniVM<'a> {
 
     #[inline]
     pub fn platform_event_loop(&self) -> *mut PlatformEventLoop {
-        bun_io::uws_to_native(self.mini.loop_ptr())
+        bun_loop::uws_to_native(self.mini.loop_ptr())
     }
 
     #[inline]

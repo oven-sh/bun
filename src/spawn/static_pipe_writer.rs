@@ -1,10 +1,10 @@
 use core::mem::size_of;
 
-use bun_event_loop::EventLoopHandle;
-use bun_io::Loop as AsyncLoop;
+use bun_loop::EventLoopHandle;
+use bun_loop::Loop as AsyncLoop;
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{BufferedWriter, WriteStatus};
+use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_loop::{BufferedWriter, WriteStatus};
 use bun_core::ptr::{IntrusiveRc, RawSlice, RefCount};
 use bun_sys;
 
@@ -22,7 +22,7 @@ bun_core::declare_scope!(StaticPipeWriter, hidden);
 /// Method takes `*mut Self` (not `&mut self`) because the writer is a field of
 /// the process — materializing `&mut P` while `&mut writer` is live would alias.
 pub trait StaticPipeWriterProcess {
-    const POLL_OWNER_TAG: bun_io::PollTag;
+    const POLL_OWNER_TAG: bun_loop::PollTag;
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind);
@@ -64,7 +64,7 @@ pub type Poll<P> = IOWriter<P>;
 // BufferedWriter parent vtable — wires bun_io callbacks to inherent methods
 // ──────────────────────────────────────────────────────────────────────────
 
-bun_io::impl_buffered_writer_parent! {
+bun_loop::impl_buffered_writer_parent! {
     for<P: StaticPipeWriterProcess> StaticPipeWriter<P>;
     poll_tag   = P::POLL_OWNER_TAG,
     borrow     = mut,
@@ -82,7 +82,7 @@ bun_io::impl_buffered_writer_parent! {
 
 impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
     #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
+    fn io_evtloop(&self) -> crate::io::EventLoopHandle {
         self.event_loop.as_event_loop_ctx()
     }
 
@@ -201,7 +201,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
                         // `handle` is `PollOrFd` (enum); flag mutation goes
                         // through the FilePoll vtable shim.
                         if let Some(poll) = self.writer.handle.get_poll() {
-                            poll.set_flag(bun_io::FilePollFlag::Socket);
+                            poll.set_flag(bun_loop::FilePollFlag::Socket);
                         }
                     }
                     bun_sys::Result::Ok(())

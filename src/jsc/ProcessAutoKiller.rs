@@ -1,5 +1,5 @@
 use bun_core::collections::ArrayHashMap;
-use bun_spawn::Process;
+use bun_loop::Process;
 use bun_sys::SignalCode;
 use core::ptr::NonNull;
 

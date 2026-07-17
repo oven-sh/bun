@@ -18,13 +18,13 @@ use core::ptr::{self, NonNull};
 
 use bun_jsc::JSGlobalObject;
 use bun_core::{declare_scope, scoped_log};
-use bun_spawn::{self, Process};
+use bun_loop::{self, Process};
 
 #[cfg(target_os = "macos")]
 use {
     crate::Error,
     bun_jsc::virtual_machine::VirtualMachine,
-    bun_spawn::{
+    bun_loop::{
         EventLoopHandle, ProcessExit, ProcessExitKind, SpawnOptions, SpawnResultExt as _, Stdio,
     },
     bun_sys::{self, Fd, FdExt as _},
@@ -109,7 +109,7 @@ pub(crate) extern "C" fn Bun__WebViewHost__ensure(
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     HostProcess for HostProcess => |this| {
         // Child died (EVFILT_PROC). Socket onClose may or may not have fired
         // already (clean FIN vs SIGKILL/SIGSEGV). Tell C++ to reject any
@@ -190,7 +190,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
 
         // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
         // argv[0] non-null; valid for this call.
-        let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
+        let spawned = unsafe { bun_loop::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
         // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
         // per-thread `jsc::EventLoop`.

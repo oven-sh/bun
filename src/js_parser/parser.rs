@@ -498,8 +498,8 @@ pub mod Runtime {
             msg: &api::FallbackMessageContainer,
             preload: &[u8],
             entry_point: &[u8],
-            writer: &mut impl bun_io::Write,
-        ) -> bun_io::Result<()> {
+            writer: &mut impl bun_loop::Write,
+        ) -> bun_loop::io::Result<()> {
             // The embedded template uses `{[name]s}`-style named placeholders;
             // substitute by scanning it byte-for-byte.
             let blob = Base64FallbackMessage { msg };
@@ -515,8 +515,8 @@ pub mod Runtime {
 
         pub fn render_backend(
             msg: &api::FallbackMessageContainer,
-            writer: &mut impl bun_io::Write,
-        ) -> bun_io::Result<()> {
+            writer: &mut impl bun_loop::Write,
+        ) -> bun_loop::io::Result<()> {
             let blob = Base64FallbackMessage { msg };
             let bun_error_css = Self::error_css();
             let bun_error = Self::error_js();
@@ -539,11 +539,11 @@ pub mod Runtime {
 
     /// Tiny substitutor for `{[name]s}` / `{[name]f}` named placeholders
     /// (the only specifiers used in fallback.html / fallback-backend.html).
-    fn render_named_template<W: bun_io::Write>(
+    fn render_named_template<W: bun_loop::Write>(
         writer: &mut W,
         template: &'static [u8],
-        subst: &mut dyn FnMut(&mut W, &[u8]) -> bun_io::Result<()>,
-    ) -> bun_io::Result<()> {
+        subst: &mut dyn FnMut(&mut W, &[u8]) -> bun_loop::io::Result<()>,
+    ) -> bun_loop::io::Result<()> {
         let mut i = 0usize;
         let mut last = 0usize;
         let bytes = template;

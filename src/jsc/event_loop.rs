@@ -12,7 +12,7 @@
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
 
-use bun_io::{self as Async, Waker};
+use bun_loop::{self as Async, Waker};
 use bun_uws as uws;
 
 use crate::js_promise::Status as PromiseStatus;
@@ -23,16 +23,16 @@ use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 // Re-exports (thin re-exports of sibling/neighbor modules — do NOT inline
 // bodies). Kept so downstream `bun_jsc::event_loop::Foo` paths resolve.
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::AnyTask;
-pub use bun_event_loop::AnyTaskWithExtraContext;
-pub use bun_event_loop::ConcurrentTask::{
+pub use bun_loop::AnyTask;
+pub use bun_loop::AnyTaskWithExtraContext;
+pub use bun_loop::ConcurrentTask::{
     self, ConcurrentTask as ConcurrentTaskItem, Queue as ConcurrentQueue,
 };
-pub use bun_event_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
-pub use bun_event_loop::ManagedTask;
-pub use bun_event_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, MiniVM};
-pub use bun_event_loop::Task;
-pub use bun_event_loop::any_event_loop::{
+pub use bun_loop::DeferredTaskQueue::{self, DeferredRepeatingTask};
+pub use bun_loop::ManagedTask;
+pub use bun_loop::MiniEventLoop::{self, AbstractVM, EventLoopKind, MiniVM};
+pub use bun_loop::Task;
+pub use bun_loop::any_event_loop::{
     AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoopTaskPtr,
 };
 pub use bun_sys::threading::work_pool::{Task as WorkPoolTask, WorkPool};
@@ -149,20 +149,7 @@ unsafe extern "C" {
     safe fn JSC__JSGlobalObject__drainMicrotasks(global: &JSGlobalObject) -> u8;
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum JsTerminated {
-    #[error("JSTerminated")]
-    JSTerminated,
-}
-
-/// Short alias for `Result<T, JsTerminated>`.
-pub type JsTerminatedResult<T> = Result<T, JsTerminated>;
-
-impl From<JsTerminated> for crate::CrateError {
-    fn from(_: JsTerminated) -> Self {
-        crate::CrateError::JSTerminated
-    }
-}
+pub use crate::{JsTerminated, JsTerminatedResult};
 
 // ──────────────────────────────────────────────────────────────────────────
 // §Dispatch hot-path — `tick_queue_with_count` is the per-tick dispatch over
@@ -199,7 +186,7 @@ unsafe extern "Rust" {
     /// VM box, which is the pre-`532a5411961b` behaviour for tags that don't
     /// own JSC handles or whose callback isn't safe to no-op-dispatch).
     /// Defined in `bun_runtime::dispatch`. Link-time resolved.
-    fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool;
+    fn __bun_release_task_at_shutdown(task: bun_loop::Task) -> bool;
 }
 
 #[inline]
@@ -709,7 +696,7 @@ impl EventLoop {
             // iterator advanced past it before returning, so reading then
             // freeing here is sound.
             let (task, auto_delete) = unsafe { ((*node).task, (*node).auto_delete()) };
-            if task.tag == bun_event_loop::task_tag::CppTask {
+            if task.tag == bun_loop::task_tag::CppTask {
                 // SAFETY: every `CppTask` payload is a heap
                 // `WebCore::EventLoopTask*` (`ScriptExecutionContext::postTask*`
                 // → `new EventLoopTask`); we own it once popped.
@@ -752,12 +739,12 @@ impl EventLoop {
     /// definer can't safely dispatch every `AnyTask` callback at shutdown.
     pub fn release_queued_tasks_for_shutdown(&mut self) {
         self.drop_concurrent_cpp_tasks();
-        let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
+        let mut requeue: Vec<bun_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             // SAFETY: tag-specific release (drops JSC handles while the VM is
             // still live); definer in `bun_runtime::dispatch` matches the same
             // tag set `tick_queue_with_count` does. `false` ⇒ not handled.
-            let consumed = task.tag != bun_event_loop::task_tag::ManagedTask
+            let consumed = task.tag != bun_loop::task_tag::ManagedTask
                 && unsafe { __bun_release_task_at_shutdown(task) };
             if !consumed {
                 requeue.push(task);
@@ -782,9 +769,9 @@ impl EventLoop {
         // and a Worker dispatchExit task's `~Ref<Worker>` would walk freed
         // WeakBlock storage via `~JSEventListener`. They are reclaimed before
         // teardown by `release_queued_tasks_for_shutdown`'s CppTask arm.
-        let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
+        let mut requeue: Vec<bun_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
-            if task.tag == bun_event_loop::task_tag::ManagedTask {
+            if task.tag == bun_loop::task_tag::ManagedTask {
                 // SAFETY: every ManagedTask is heap_owned (ManagedTask::new -> heap::into_raw).
                 let managed =
                     unsafe { bun_core::heap::take(task.ptr.cast::<ManagedTask::ManagedTask>()) };
@@ -1305,7 +1292,7 @@ pub fn event_loop_exit(global: &JSGlobalObject) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::any_event_loop::js` extern impls
+// `bun_loop::any_event_loop::js` extern impls
 //
 // `AnyEventLoop` / `EventLoopHandle` live in the lower-tier `bun_event_loop`
 // crate and cannot name `jsc::EventLoop`.
@@ -1325,7 +1312,7 @@ fn el_ref<'a>(owner: *mut ()) -> &'a mut EventLoop {
 // `this: *mut EventLoop` — owner was erased from a live `*mut EventLoop` in
 // `__bun_js_event_loop_current` / `EventLoopHandle::js`. All calls run on the
 // JS thread.
-bun_event_loop::link_impl_JsEventLoop! {
+bun_loop::link_impl_JsEventLoop! {
     Jsc for EventLoop => |this| {
         // Reads the EventLoop's own `uws_loop` field; on
         // Windows that and `VM::uws_loop()` (= `uws::Loop::get()`) are different
@@ -1387,7 +1374,7 @@ pub(crate) fn __bun_js_event_loop_current() -> *mut () {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun_event_loop::SpawnSyncEventLoop` extern impls
+// `bun_loop::SpawnSyncEventLoop` extern impls
 //
 // `SpawnSyncEventLoop` lives in the lower-tier `bun_event_loop` crate and
 // cannot name `jsc::EventLoop` / `jsc::VirtualMachine`. The bodies live here as
@@ -1447,14 +1434,14 @@ pub(crate) fn __bun_spawn_sync_event_loop_tick_tasks_only(el: *mut ()) {
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_get_event_loop_handle(
     vm: *mut (),
-) -> bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle {
+) -> bun_loop::SpawnSyncEventLoop::VmEventLoopHandle {
     vm_from_ptr(vm).event_loop_handle.and_then(NonNull::new)
 }
 
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_spawn_sync_vm_set_event_loop_handle(
     vm: *mut (),
-    h: bun_event_loop::SpawnSyncEventLoop::VmEventLoopHandle,
+    h: bun_loop::SpawnSyncEventLoop::VmEventLoopHandle,
 ) {
     vm_from_ptr(vm).event_loop_handle = h.map(NonNull::as_ptr);
 }

@@ -1216,12 +1216,12 @@ fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::zig_string::S
     ))
 }
 
-pub fn append_source_mapping_url_remote<W: bun_io::Write + ?Sized>(
+pub fn append_source_mapping_url_remote<W: bun_loop::Write + ?Sized>(
     origin: &bun_core::url::URL<'_>,
     source: &bun_ast::Source,
     asset_prefix_path: &[u8],
     writer: &mut W,
-) -> bun_io::Result<()> {
+) -> bun_loop::io::Result<()> {
     writer.write_all(b"\n//# sourceMappingURL=")?;
     writer.write_all(bun_core::strings::without_trailing_slash(origin.href))?;
     if !asset_prefix_path.is_empty() {

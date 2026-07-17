@@ -330,8 +330,8 @@ impl ShellTouchTask {
     }
 }
 
-impl bun_event_loop::Taskable for ShellTouchTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellTouchTask;
+impl bun_loop::Taskable for ShellTouchTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellTouchTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellTouchTask {

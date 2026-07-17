@@ -707,9 +707,9 @@ impl ErrorDeferred {
             global_this: bun_core::ptr::BackRef<JSGlobalObject>,
         }
         impl Context {
-            // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
-            fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
+            // `bun_loop::ManagedTask::new` expects
+            // `fn(*mut T) -> bun_loop::JsResult<()>` (low-tier `ErasedJsError`).
+            fn callback(this: *mut Context) -> bun_loop::JsResult<()> {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };

@@ -36,7 +36,7 @@ use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_core::strings;
-use bun_io::StreamBuffer;
+use bun_loop::StreamBuffer;
 use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
 use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
 

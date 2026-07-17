@@ -7,9 +7,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use bun_core::Output;
 use bun_core::ZigString;
 use bun_core::strings;
-use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
-use bun_io::KeepAlive;
+use bun_loop::ConcurrentTask::ConcurrentTask;
+use bun_loop::{Task, TaskTag, Taskable, task_tag};
+use bun_loop::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::abort_signal::AbortListener;
 use bun_jsc::event_loop::EventLoop;
@@ -84,7 +84,7 @@ impl FSWatcher {
     }
 
     #[inline]
-    fn vm_ctx(&self) -> bun_io::EventLoopCtx {
+    fn vm_ctx(&self) -> bun_loop::EventLoopCtx {
         // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
         unsafe { VirtualMachine::event_loop_ctx(self.ctx) }
     }

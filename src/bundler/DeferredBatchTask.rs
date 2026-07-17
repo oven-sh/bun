@@ -7,8 +7,8 @@
 use crate::BundleV2;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
-use bun_event_loop::ConcurrentTask::ConcurrentTask;
-use bun_event_loop::{Task, task_tag};
+use bun_loop::ConcurrentTask::ConcurrentTask;
+use bun_loop::{Task, task_tag};
 
 /// Re-export for callers that previously named
 /// `crate::DeferredBatchTask::CompletionDispatch` — the struct now lives in
@@ -53,7 +53,7 @@ impl DeferredBatchTask {
             self.running = false;
         }
         // PORTING.md §Dispatch: tag+ptr, not TaggedPointer. Tag constant lives in
-        // `bun_event_loop::task_tag::BundleV2DeferredBatchTask`.
+        // `bun_loop::task_tag::BundleV2DeferredBatchTask`.
         let task = ConcurrentTask::create(Task::new(
             task_tag::BundleV2DeferredBatchTask,
             std::ptr::from_mut::<Self>(self).cast::<()>(),

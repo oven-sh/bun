@@ -453,7 +453,7 @@ pub struct SourceMapStore {
     pub weak_ref_sweep_timer: EventLoopTimer,
 }
 
-bun_event_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
+bun_loop::impl_timer_owner!(SourceMapStore; from_timer_ptr => weak_ref_sweep_timer);
 
 impl Default for SourceMapStore {
     fn default() -> Self {
@@ -644,7 +644,7 @@ impl SourceMapStore {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
-        now_ts: &bun_event_loop::EventLoopTimer::Timespec,
+        now_ts: &bun_loop::EventLoopTimer::Timespec,
     ) {
         map_log!("sweepWeakRefs");
         // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.

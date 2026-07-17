@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JsResult, VirtualMachineRef as VirtualMachine};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_sys::threading::work_pool::{Task as WorkPoolTask, WorkPool};
 
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`

@@ -75,8 +75,8 @@ const _: () = assert!(
 
 // ──────────────────────────────────────────────────────────────────────────
 // Signal-forwarding / no-orphans FFI surface — moved down from
-// `bun_spawn::process::sync` so the decls live next to `posix_spawn_bun`.
-// `bun_spawn::sync` consumes these via `bun_sys::spawn_sys::ffi::*`.
+// `bun_loop::process::sync` so the decls live next to `posix_spawn_bun`.
+// `bun_loop::sync` consumes these via `bun_sys::spawn_sys::ffi::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ffi {
     use core::ffi::c_int;
@@ -114,7 +114,7 @@ pub mod ffi {
 // ──────────────────────────────────────────────────────────────────────────
 // Waiter-thread fallback flag — owned here so `spawn_process_posix` /
 // `PosixSpawnResult::pifd_from_pid` can flip it without depending on
-// `bun_threading`. `bun_spawn::WaiterThread` reads/writes through these.
+// `bun_threading`. `bun_loop::WaiterThread` reads/writes through these.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod waiter_thread_flag {
     use core::sync::atomic::{AtomicBool, Ordering};
@@ -135,7 +135,7 @@ pub mod waiter_thread_flag {
 // ──────────────────────────────────────────────────────────────────────────
 // `PR_SET_PDEATHSIG` default — `spawn_process_posix` consults this when
 // `PosixSpawnOptions::linux_pdeathsig` is `None`. Storage lives here (lowest
-// tier that reads it); `bun_io::ParentDeathWatchdog::enable()` flips it on
+// tier that reads it); `bun_loop::ParentDeathWatchdog::enable()` flips it on
 // from the main thread. `PR_SET_PDEATHSIG` is *thread*-scoped in the kernel,
 // so the default only applies when spawning from the same thread that armed
 // the watchdog (a `Bun.spawn` from a JS Worker would otherwise kill the child

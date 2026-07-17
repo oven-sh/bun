@@ -626,8 +626,8 @@ impl Default for us_socket_stream_buffer_t {
     }
 }
 
-/// Minimal structural mirror of `bun_io::StreamBuffer` for tier-0 interop.
-/// The higher-tier `bun_io::StreamBuffer` is field-identical and converts via
+/// Minimal structural mirror of `bun_loop::StreamBuffer` for tier-0 interop.
+/// The higher-tier `bun_loop::StreamBuffer` is field-identical and converts via
 /// `From`/`Into` (added in the move-in pass).
 pub struct StreamBuffer {
     pub list: Vec<u8>,

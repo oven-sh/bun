@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 use std::rc::Rc;
 
 use bun_boringssl_sys as boring_sys;
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -283,7 +283,7 @@ impl Listener {
                 this_ref
                     .this_value
                     .with_mut(|r| r.set_strong(this_value, global));
-                this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                this_ref.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
                 return Ok(this_value);
             }
         }
@@ -533,7 +533,7 @@ impl Listener {
         this_ref
             .this_value
             .with_mut(|r| r.set_strong(this_value, global));
-        this_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        this_ref.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
 
         Ok(this_value)
     }
@@ -767,7 +767,7 @@ impl Listener {
         }
 
         if this.handlers.active_connections.get() == 0 {
-            this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+            this.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
             this.this_value.with_mut(|r| r.downgrade());
             this.strong_data
                 .with_mut(|s| s.clear_without_deallocation());
@@ -838,7 +838,7 @@ impl Listener {
         let this_ref = unsafe { &mut *this };
         this_ref.this_value.with_mut(|r| r.finalize());
         this_ref.strong_data.with_mut(|s| s.deinit());
-        this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this_ref.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
         debug_assert!(matches!(this_ref.listener.get(), ListenerType::None));
 
         // Clear the back-pointer before force-closing: this listener is already
@@ -916,7 +916,7 @@ impl Listener {
         if matches!(this.listener.get(), ListenerType::None) {
             return Ok(JSValue::UNDEFINED);
         }
-        this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        this.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
         this.this_value
             .with_mut(|r| r.set_strong(this_value, global));
         Ok(JSValue::UNDEFINED)
@@ -932,7 +932,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        this.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
         if this.handlers.active_connections.get() == 0 {
             this.this_value.with_mut(|r| r.downgrade());
         }
@@ -1149,7 +1149,7 @@ impl Listener {
                         global,
                         default_data,
                     );
-                    tls_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                    tls_ref.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
                     tls_ref.ref_();
 
                     // Transfer the borrowed CTX into the pipe's SSLWrapper. From
@@ -1231,7 +1231,7 @@ impl Listener {
                         global,
                         default_data,
                     );
-                    tcp_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+                    tcp_ref.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
 
                     let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
@@ -1538,7 +1538,7 @@ fn connect_finish<const IS_SSL: bool>(
     if socket_ref.ref_pollref_on_connect.get() {
         socket_ref
             .poll_ref
-            .with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+            .with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
     }
 
     Ok(promise_value)
@@ -1653,7 +1653,7 @@ impl WindowsNamedPipeListeningContext {
     /// Only ever invoked by libuv (coerces to the `uv_connection_cb` fn-pointer
     /// type at the `Pipe::listen_named_pipe` call site); body wraps its derefs
     /// explicitly — matches the `extern "C" fn` callback convention used in
-    /// `udp_socket.rs` / `bun_io::PipeReader`.
+    /// `udp_socket.rs` / `bun_loop::PipeReader`.
     extern "C" fn uv_on_client_connect(handle: *mut uv::uv_stream_t, status: uv::ReturnCode) {
         // SAFETY: `data` was set to `*mut Self` by `Pipe::listen` below.
         let this = unsafe { (*handle).data.cast::<WindowsNamedPipeListeningContext>() };

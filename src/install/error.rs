@@ -246,7 +246,7 @@ pub enum Error {
     #[error(transparent)]
     Resolver(#[from] bun_resolver::Error),
     #[error(transparent)]
-    Spawn(#[from] bun_spawn::Error),
+    Spawn(#[from] bun_loop::spawn::Error),
     #[error(transparent)]
     Http(#[from] bun_http::Error),
     #[error(transparent)]

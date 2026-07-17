@@ -84,7 +84,8 @@ fn deregistration_already_gone(errno: sys::E) -> bool {
     matches!(errno, sys::E::ENOENT | sys::E::EBADF)
 }
 
-pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
+pub use crate::io::EventLoopKind;
+pub use crate::{EventLoopCtx, EventLoopCtxKind, OpaqueCallback};
 
 unsafe extern "Rust" {
     /// Defined `#[no_mangle]` in `bun_runtime::jsc_hooks`.
@@ -96,7 +97,7 @@ unsafe extern "Rust" {
 
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
 /// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
-/// one definition; `bun_io::pipes` re-exports it for downstream callers.
+/// one definition; `bun_loop::pipes` re-exports it for downstream callers.
 // Note: sunk one tier to break the
 // io↔aio cycle (FilePoll::file_type was the only aio→io edge).
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -1631,7 +1632,7 @@ const INVALID_FD: Fd = Fd::INVALID;
 // own copy (this file was bun_io's, lib.rs was bun_io's, kept apart so
 // `Loop::load` had no aio→io edge). With the merge there is one definition;
 // re-export here so `posix_event_loop::Waker` / `::Closer` (and therefore
-// the `bun_io::*` shim) keep resolving for downstream callers.
+// the `bun_loop::*` shim) keep resolving for downstream callers.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use crate::closer::Closer;

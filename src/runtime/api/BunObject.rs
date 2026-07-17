@@ -14,7 +14,7 @@ pub(crate) fn get_public_path_with_asset_prefix<W: core::fmt::Write>(
     use bun_core::strings;
     use bun_core::paths::{Platform, resolve_path};
 
-    // bun_core::url::URL::join_write wants a `bun_io::Write`; route all
+    // bun_core::url::URL::join_write wants a `bun_loop::Write`; route all
     // byte output through a Vec<u8> then forward to the caller's fmt::Write.
     // POSIX paths are arbitrary byte sequences — so use
     // a lossy conversion rather than silently dropping the whole component.

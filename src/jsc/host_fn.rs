@@ -130,20 +130,15 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
     // `func` is the fn name string (the proc-macro supplies `stringify!(fn_name)`).
     if Environment::IS_DEBUG {
         if !value.is_empty() && global_this.has_exception() {
-            let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
             Output::err(
                 "Assertion failed",
                 "Native function returned a non-zero JSValue while an exception is pending\n\
                  \n\
                  \x20   fn: {s}\n\
                  \x20value: {}\n",
-                (
-                    func,
-                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
-                ),
+                (func, value.0),
             );
             Output::flush();
-            // `formatter` drops here.
         }
     }
     let _ = func;

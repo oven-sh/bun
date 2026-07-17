@@ -38,7 +38,7 @@ mod JSPrinter {
     #[inline]
     pub(super) fn write_json_string(
         input: &[u8],
-        writer: &mut (impl bun_io::Write + ?Sized),
+        writer: &mut (impl bun_loop::Write + ?Sized),
         encoding: Encoding,
     ) -> bun_js_printer::Result<()> {
         match encoding {
@@ -373,7 +373,7 @@ impl Drop for ConsoleStreamLock {
     }
 }
 
-/// RAII flush of a borrowed `bun_io::Write` at scope exit when `enabled`.
+/// RAII flush of a borrowed `bun_loop::Write` at scope exit when `enabled`.
 ///
 /// Owns the `&mut dyn Write` for its lifetime; the body of the scope must
 /// reborrow through `&mut *guard.writer` so that all body accesses are
@@ -381,7 +381,7 @@ impl Drop for ConsoleStreamLock {
 /// pointer here while the body kept using the parent `&mut` would invalidate
 /// the raw pointer's tag before `Drop` runs.
 struct FlushOnDrop<'a> {
-    writer: &'a mut (dyn bun_io::Write + 'a),
+    writer: &'a mut (dyn bun_loop::Write + 'a),
     enabled: bool,
 }
 
@@ -502,8 +502,8 @@ fn message_with_type_and_level_(
             (*console).writer()
         }
     };
-    // `bun_core::io::Writer: bun_io::Write` — `&mut Writer` unsize-coerces directly.
-    let writer: &mut dyn bun_io::Write = raw_writer;
+    // `bun_core::io::Writer: bun_loop::Write` — `&mut Writer` unsize-coerces directly.
+    let writer: &mut dyn bun_loop::Write = raw_writer;
 
     // LAYERING: `Jest::runner()` lives in `bun_runtime::test_runner` (forward
     // dep on the high tier). Dispatch through `RuntimeHooks` instead — the
@@ -863,10 +863,10 @@ impl<'a> TablePrinter<'a> {
     }
 
     fn write_string_n_times(
-        writer: &mut dyn bun_io::Write,
+        writer: &mut dyn bun_loop::Write,
         s: &'static [u8],
         n: usize,
-    ) -> bun_io::Result<()> {
+    ) -> bun_loop::io::Result<()> {
         if s.len() == 1 {
             return writer.splat_byte_all(s[0], n);
         }
@@ -878,7 +878,7 @@ impl<'a> TablePrinter<'a> {
 
     fn print_row(
         &self,
-        writer: &mut dyn bun_io::Write,
+        writer: &mut dyn bun_loop::Write,
         columns: &[Column],
         row: &CollectedRow,
         cell_text: &[u8],
@@ -934,7 +934,7 @@ impl<'a> TablePrinter<'a> {
 
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
         &mut self,
-        writer: &mut dyn bun_io::Write,
+        writer: &mut dyn bun_loop::Write,
     ) -> JsResult<()> {
         let global_object = self.global_object;
 
@@ -1154,7 +1154,7 @@ impl<'a> TablePrinter<'a> {
 // writeTrace
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Adapter: erase a `&mut dyn bun_io::Write` behind the `bun_core::io::Writer`
+/// Adapter: erase a `&mut dyn bun_loop::Write` behind the `bun_core::io::Writer`
 /// vtable header so it can be handed to `VirtualMachine::print_stack_trace` /
 /// `print_errorlike_object`, which take the concrete `io::Writer` type.
 ///
@@ -1164,11 +1164,11 @@ impl<'a> TablePrinter<'a> {
 #[repr(C)]
 pub(crate) struct DynWriteAdapter<'a> {
     head: bun_core::io::Writer,
-    inner: &'a mut dyn bun_io::Write,
+    inner: &'a mut dyn bun_loop::Write,
 }
 
 impl<'a> DynWriteAdapter<'a> {
-    pub(crate) fn new(inner: &'a mut dyn bun_io::Write) -> Self {
+    pub(crate) fn new(inner: &'a mut dyn bun_loop::Write) -> Self {
         Self {
             head: bun_core::io::Writer {
                 write_all: Self::thunk_write_all,
@@ -1204,7 +1204,7 @@ impl<'a> DynWriteAdapter<'a> {
     }
 }
 
-pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
+pub fn write_trace(writer: &mut dyn bun_loop::Write, global: &JSGlobalObject) {
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
@@ -1418,7 +1418,7 @@ pub fn format2(
     level: MessageLevel,
     global: &JSGlobalObject,
     vals: &[JSValue],
-    writer: &mut dyn bun_io::Write,
+    writer: &mut dyn bun_loop::Write,
     options: FormatOptions,
 ) -> JsResult<()> {
     let len = vals.len();
@@ -1468,7 +1468,7 @@ pub fn format2(
                 writer,
                 enabled: options.flush,
             };
-            let writer: &mut dyn bun_io::Write = &mut *_flush.writer;
+            let writer: &mut dyn bun_loop::Write = &mut *_flush.writer;
             if options.enable_colors {
                 fmt.format::<true>(tag, writer, vals[0], global)?;
             } else {
@@ -1488,7 +1488,7 @@ pub fn format2(
         writer,
         enabled: options.flush,
     };
-    let writer: &mut dyn bun_io::Write = &mut *_flush.writer;
+    let writer: &mut dyn bun_loop::Write = &mut *_flush.writer;
 
     let mut this_value: JSValue = vals[0];
     // see E0509 note above.
@@ -1872,7 +1872,7 @@ pub mod formatter {
             let result = (|| {
                 let tag =
                     Tag::get(self.value, formatter.global_this).map_err(|_| core::fmt::Error)?;
-                let mut sink = bun_io::FmtAdapter::new(f);
+                let mut sink = bun_loop::FmtAdapter::new(f);
                 let global = formatter.global_this;
                 formatter
                     .format::<false>(tag, &mut sink, self.value, global)
@@ -2456,7 +2456,7 @@ pub mod formatter {
     impl<'a> Formatter<'a> {
         fn write_with_formatting<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             slice_: &[u8],
             global: &'a JSGlobalObject,
         ) -> JsResult<()> {
@@ -2731,10 +2731,10 @@ pub mod formatter {
         }
     }
 
-    /// Failure-tracking writer wrapper over `&mut dyn bun_io::Write`.
+    /// Failure-tracking writer wrapper over `&mut dyn bun_loop::Write`.
     // PERF: dynamic dispatch rather than monomorphization — profile if hot.
     pub struct WrappedWriter<'w> {
-        pub ctx: &'w mut dyn bun_io::Write,
+        pub ctx: &'w mut dyn bun_loop::Write,
         pub failed: bool,
         pub estimated_line_length: &'w mut usize,
     }
@@ -2867,7 +2867,7 @@ pub mod formatter {
         #[inline]
         pub fn write_16_bit(&mut self, input: &[u16]) {
             // `format_utf16_type` requires `impl fmt::Write + Sized`; route through
-            // the `Display` adapter so we go via `bun_io::Write::write_fmt` instead.
+            // the `Display` adapter so we go via `bun_loop::Write::write_fmt` instead.
             self.print(format_args!(
                 "{}",
                 bun_core::fmt::FormatUTF16 {
@@ -2887,8 +2887,8 @@ pub mod formatter {
     /// keeps the borrow checker happy.
     pub(super) fn write_indent_n(
         indent: u32,
-        writer: &mut dyn bun_io::Write,
-    ) -> bun_io::Result<()> {
+        writer: &mut dyn bun_loop::Write,
+    ) -> bun_loop::io::Result<()> {
         let mut total_remain: u32 = indent;
         while total_remain > 0 {
             let written: u8 = total_remain.min(32) as u8;
@@ -2899,14 +2899,14 @@ pub mod formatter {
     }
 
     impl Formatter<'_> {
-        pub fn write_indent(&self, writer: &mut dyn bun_io::Write) -> bun_io::Result<()> {
+        pub fn write_indent(&self, writer: &mut dyn bun_loop::Write) -> bun_loop::io::Result<()> {
             write_indent_n(self.indent, writer)
         }
 
         pub fn print_comma<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
-            writer: &mut dyn bun_io::Write,
-        ) -> bun_io::Result<()> {
+            writer: &mut dyn bun_loop::Write,
+        ) -> bun_loop::io::Result<()> {
             writer.write_all(pfmt!("<r><d>,<r>", ENABLE_ANSI_COLORS).as_bytes())?;
             self.estimated_line_length += 1;
             Ok(())
@@ -2925,7 +2925,7 @@ pub mod formatter {
         const SINGLE_LINE: bool,
     > {
         pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
+        pub writer: &'a mut dyn bun_loop::Write,
         pub count: usize,
     }
 
@@ -3024,7 +3024,7 @@ pub mod formatter {
 
     pub struct SetIteratorCtx<'a, 'b, const C: bool, const SINGLE_LINE: bool> {
         pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
+        pub writer: &'a mut dyn bun_loop::Write,
         pub is_first: bool,
     }
 
@@ -3078,7 +3078,7 @@ pub mod formatter {
 
     pub struct PropertyIteratorCtx<'a, 'b, const C: bool> {
         pub formatter: &'a mut Formatter<'b>,
-        pub writer: &'a mut dyn bun_io::Write,
+        pub writer: &'a mut dyn bun_loop::Write,
         pub i: usize,
         pub single_line: bool,
         pub always_newline: bool,
@@ -3376,7 +3376,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_as_prelude<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             can_circ: bool,
             remove_before_recurse: &mut bool,
@@ -3426,7 +3426,7 @@ pub mod formatter {
         pub fn print_as<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             format: Tag,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
@@ -3541,7 +3541,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_undefined<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
                 ctx: writer_,
@@ -3561,7 +3561,7 @@ pub mod formatter {
         }
 
         #[inline(never)]
-        fn print_null<const C: bool>(&mut self, writer_: &mut dyn bun_io::Write) -> JsResult<()> {
+        fn print_null<const C: bool>(&mut self, writer_: &mut dyn bun_loop::Write) -> JsResult<()> {
             let mut writer = WrappedWriter {
                 ctx: writer_,
                 failed: false,
@@ -3582,7 +3582,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_native_code(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -3608,7 +3608,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_global_object<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
                 ctx: writer_,
@@ -3627,7 +3627,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_revoked_proxy<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
                 ctx: writer_,
@@ -3649,7 +3649,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_proxy<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let target = value.get_proxy_internal_field(jsc::ProxyField::Target);
@@ -3669,7 +3669,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_string_possibly_formatted<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let str = value.to_slice(self.global_this)?;
@@ -3681,7 +3681,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_string<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
@@ -3796,7 +3796,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_integer<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -3821,7 +3821,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_bigint<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -3847,7 +3847,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_double<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -3933,7 +3933,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_custom_formatted_object<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
         ) -> JsResult<()> {
             // Call custom inspect function. Will return the error if there is
             // one; we'll need to pass the callback through to the "this" value
@@ -3973,7 +3973,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_symbol<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -4008,7 +4008,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_error<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             // Temporarily remove from the visited map to allow
@@ -4040,7 +4040,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_class<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -4118,7 +4118,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_function<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -4173,7 +4173,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_getter_setter<const C: bool, const CUSTOM: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -4219,7 +4219,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_promise<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -4255,7 +4255,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_boolean<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let mut writer = WrappedWriter {
@@ -4317,7 +4317,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_to_json<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             if let Some(func) = value.get(self.global_this, "toJSON")? {
@@ -4344,7 +4344,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_json<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
@@ -4398,7 +4398,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_array<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
@@ -4675,7 +4675,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_private<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
             remove_before_recurse: &mut bool,
@@ -4748,7 +4748,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_map_like<const C: bool, const _UNUSED: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let length_value = value
@@ -4826,7 +4826,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_map_iterator_like<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             label: &'static str,
         ) -> JsResult<()> {
@@ -4890,7 +4890,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_set<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             let length_value = value
@@ -4968,7 +4968,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_event<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             remove_before_recurse: &mut bool,
         ) -> JsResult<()> {
@@ -5149,7 +5149,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_jsx<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             macro_rules! pf {
@@ -5491,7 +5491,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_object<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
@@ -5572,7 +5572,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_object_depth_exceeded<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
         ) -> JsResult<()> {
             macro_rules! pf {
@@ -5605,7 +5605,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_object_tail<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
             iter_i: usize,
@@ -5643,7 +5643,7 @@ pub mod formatter {
         #[inline(never)]
         fn print_typed_array<const C: bool>(
             &mut self,
-            writer_: &mut dyn bun_io::Write,
+            writer_: &mut dyn bun_loop::Write,
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
@@ -5782,7 +5782,7 @@ pub mod formatter {
         pub fn format<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             result: TagResult,
-            writer: &mut dyn bun_io::Write,
+            writer: &mut dyn bun_loop::Write,
             value: JSValue,
             global_this: &'a JSGlobalObject,
         ) -> JsResult<()> {
@@ -6028,15 +6028,15 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
         let Ok(tag) = formatter::Tag::get(arg, global) else {
             return;
         };
-        let _ = bun_io::Write::write_all(&mut writer, b" ");
+        let _ = bun_loop::Write::write_all(&mut writer, b" ");
         if Output::enable_ansi_colors_stderr() {
             let _ = fmt.format::<true>(tag, &mut writer, arg, global);
         } else {
             let _ = fmt.format::<false>(tag, &mut writer, arg, global);
         }
     }
-    let _ = bun_io::Write::write_all(&mut writer, b"\n");
-    let _ = bun_io::Write::flush(&mut writer);
+    let _ = bun_loop::Write::write_all(&mut writer, b"\n");
+    let _ = bun_loop::Write::flush(&mut writer);
 }
 
 /// Stamp out the empty `Bun__ConsoleObject__*` C-ABI hooks that JSC's

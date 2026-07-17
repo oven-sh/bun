@@ -1,5 +1,5 @@
 //! Raw `spawn_process_posix` + option/result types — split out of
-//! `bun_spawn::process` so the fd/action plumbing has no event-loop
+//! `bun_loop::process` so the fd/action plumbing has no event-loop
 //! dependency. `Process`/`Poller`/`WaiterThread`/`sync` stay in `bun_spawn`.
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -381,7 +381,7 @@ impl PosixSpawnOptions {
 }
 
 /// `bun.jsc.Subprocess.StdioKind` — defined here (not in `subprocess`) to keep
-/// the spawn-sys layer leaf. Re-exported up through `bun_spawn::process` →
+/// the spawn-sys layer leaf. Re-exported up through `bun_loop::process` →
 /// `bun_runtime::api::{bun_process, JscSubprocess}` → `shell::subproc`.
 ///
 /// `EnumSetType` is load-bearing for `closed: EnumSet<StdioKind>` on both

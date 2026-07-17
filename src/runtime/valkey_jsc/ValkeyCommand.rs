@@ -56,7 +56,7 @@ impl<'a> Args<'a> {
 }
 
 impl<'a> Command<'a> {
-    pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
+    pub fn write(&self, writer: &mut impl bun_loop::Write) -> Result<(), crate::Error> {
         // Serialize as RESP array format directly
         write!(writer, "*{}\r\n", 1 + self.args.len())?;
         write!(writer, "${}\r\n", self.command.len())?;
@@ -92,7 +92,7 @@ impl<'a> Command<'a> {
 
     pub fn byte_length(&self) -> usize {
         // DiscardingWriter is bun_io's byte-counting null sink.
-        let mut counter = bun_io::DiscardingWriter::default();
+        let mut counter = bun_loop::DiscardingWriter::default();
         self.write(&mut counter).expect("unreachable");
         counter.count
     }

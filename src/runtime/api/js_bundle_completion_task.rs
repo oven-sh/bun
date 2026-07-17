@@ -22,7 +22,7 @@ use bun_bundler::output_file::Value as OutputFileValue;
 use bun_bundler::transpiler::Transpiler;
 use bun_core::String as BunString;
 use bun_core::env::OperatingSystem;
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::AnyTask::AnyTask;
 use bun_jsc::WorkPool;
 use bun_jsc::event_loop::EventLoop;
@@ -539,7 +539,7 @@ impl JSBundleCompletionTask {
 
     /// AnyTask trampoline: `onComplete` runs on the JS thread once the bundle
     /// thread posts back via `complete_on_bundle_thread`.
-    fn on_complete_anytask(ctx: *mut Self) -> bun_event_loop::JsResult<()> {
+    fn on_complete_anytask(ctx: *mut Self) -> bun_loop::JsResult<()> {
         // SAFETY: `ctx` is the heap::alloc allocation registered in `task`.
         let this = unsafe { &mut *ctx };
         // For the +1 taken by `complete_on_bundle_thread` enqueue.
@@ -1102,9 +1102,9 @@ impl CompletionStruct for JSBundleCompletionTask {
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so
         // it outlives the BACKREF in `linker.loop`.
-        let mut any_loop = bun_event_loop::AnyEventLoop::default();
+        let mut any_loop = bun_loop::AnyEventLoop::default();
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop<'static>>());
+            Some(NonNull::from(&mut any_loop).cast::<bun_loop::AnyEventLoop<'static>>());
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT

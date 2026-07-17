@@ -18,7 +18,7 @@ workspace = true
 
 [dependencies]
 bstr.workspace = true
-bun_io.workspace = true
+bun_loop.workspace = true
 libc.workspace = true
 
 # Core crates that currently compile green and contain extern-"C" surface

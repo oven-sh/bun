@@ -10,7 +10,7 @@ use bun_uws::{
 use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
 // ── local extension: StreamBuffer accessors (upstream `bun_uws_sys::us_socket::StreamBuffer`
-// is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_io::StreamBuffer` API here) ──
+// is a bare `{ list: Vec<u8>, cursor: usize }`; mirror `bun_loop::StreamBuffer` API here) ──
 trait StreamBufferExt {
     fn is_not_empty(&self) -> bool;
     fn slice(&self) -> &[u8];

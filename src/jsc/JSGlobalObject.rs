@@ -6,14 +6,13 @@ use crate::ErrorCode as NodeErrorCode;
 use crate::StringJsc as _; // .to_js() / .to_error_instance() on bun_core::String
 use crate::ZigStringJsc as _;
 use crate::error_code::ErrorBuilder;
-use crate::virtual_machine::VirtualMachine;
 use crate::zig_string::ZigString;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
+    CommonStrings, DOMExceptionCode, JSValue, JsError, JsResult,
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 
-use bun_core::{Output, StackCheck, fmt as bun_fmt, perf};
+use bun_core::{Output, fmt as bun_fmt};
 use bun_core::{OwnedString, String as BunString, strings};
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -1046,16 +1045,6 @@ impl JSGlobalObject {
     ///         Err(err) => return global.report_active_exception_as_unhandled(err),
     ///     };
     ///
-    pub fn report_active_exception_as_unhandled(&self, err: JsError) {
-        let exception = self.take_exception(err);
-        if !exception.is_termination_exception() {
-            let _ = self
-                .bun_vm()
-                .as_mut()
-                .uncaught_exception(self, exception, false);
-        }
-    }
-
     pub fn vm(&self) -> &VM {
         // JSC guarantees the VM outlives the global object; `VM` is an opaque
         // ZST handle so the deref is the centralised `opaque_ref` proof.
@@ -1075,89 +1064,9 @@ impl JSGlobalObject {
         })
     }
 
-    fn bun_vm_unsafe(&self) -> *mut c_void {
+    #[doc(hidden)]
+    pub fn bun_vm_unsafe(&self) -> *mut c_void {
         JSC__JSGlobalObject__bunVM(self)
-    }
-
-    /// Raw-pointer variant of [`Self::bun_vm`]. Returns the per-thread
-    /// `*mut VirtualMachine` so callers that need to mutate VM fields don't
-    /// launder provenance through `&VirtualMachine -> *mut` (UB under Stacked
-    /// Borrows).
-    ///
-    /// Reads the thread-local directly (one `mov fs:[OFF]`) instead of calling
-    /// `JSC__JSGlobalObject__bunVM`: cross-language LTO does not inline that
-    /// C++ shim into Rust callers (905 out-of-line `callq` sites in the
-    /// release binary), and
-    /// the FFI result is provably the same singleton — debug-asserted below
-    /// and in [`Self::bun_vm`]. Same-thread callers only; cross-thread paths
-    /// must use [`Self::bun_vm_concurrently`].
-    #[inline]
-    pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
-        debug_assert!(
-            self.bun_vm_unsafe() == VirtualMachine::get_mut_ptr().cast::<c_void>(),
-            "bun_vm_ptr called off the JS thread; use bun_vm_concurrently",
-        );
-        VirtualMachine::get_mut_ptr()
-    }
-
-    /// Shared-reference accessor for the Bun `VirtualMachine`. Alias of
-    /// [`bun_vm`](Self::bun_vm) kept for call-site compatibility.
-    #[inline]
-    pub fn bun_vm_ref(&self) -> &'static VirtualMachine {
-        self.bun_vm()
-    }
-
-    /// Returns the Bun `VirtualMachine` owning this global as a safe
-    /// `&'static`. The VM is a per-thread singleton allocated once in
-    /// `VirtualMachine::init` and never freed while a global exists, so the
-    /// `'static` lifetime is sound. Mutation goes through
-    /// [`JsCell`](crate::JsCell)-wrapped fields or
-    /// [`VirtualMachine::as_mut`]; legacy raw-pointer paths use
-    /// [`Self::bun_vm_ptr`].
-    ///
-    /// Reads the thread-local directly instead of calling
-    /// `JSC__JSGlobalObject__bunVM` — cross-language LTO does not inline the
-    /// C++ shim, and the two are address-equal by construction (asserted in
-    /// debug builds). Same-thread callers only; cross-thread paths must use
-    /// [`Self::bun_vm_concurrently`].
-    #[inline]
-    pub fn bun_vm(&self) -> &'static VirtualMachine {
-        #[cfg(debug_assertions)]
-        {
-            // if this fails
-            // you most likely need to run
-            //   make clean-jsc-bindings
-            //   make bindings -j10
-            if let Some(vm_) = VirtualMachine::get_or_null() {
-                // SAFETY: address-equality only — neither pointer is dereferenced.
-                debug_assert!(self.bun_vm_unsafe() == vm_.cast::<c_void>());
-            } else {
-                panic!("This thread lacks a Bun VM");
-            }
-        }
-        VirtualMachine::get()
-    }
-
-    pub fn try_bun_vm(&self) -> (*mut VirtualMachine, ThreadKind) {
-        let vm_ptr = self.bun_vm_unsafe().cast::<VirtualMachine>();
-
-        if let Some(vm_) = VirtualMachine::get_or_null() {
-            #[cfg(debug_assertions)]
-            {
-                // SAFETY: address-equality only — neither pointer is dereferenced.
-                debug_assert!(self.bun_vm_unsafe() == vm_.cast::<c_void>());
-            }
-            let _ = vm_;
-        } else {
-            return (vm_ptr, ThreadKind::Other);
-        }
-
-        (vm_ptr, ThreadKind::Main)
-    }
-
-    /// We can't do the threadlocal check when queued from another thread
-    pub fn bun_vm_concurrently(&self) -> *mut VirtualMachine {
-        self.bun_vm_unsafe().cast::<VirtualMachine>()
     }
 
     pub fn handle_rejected_promises(&self) {
@@ -1200,13 +1109,6 @@ impl JSGlobalObject {
     /// callers in `bun_runtime` cast to `*mut NapiEnv`.
     pub fn make_napi_env_for_ffi(&self) -> *mut c_void {
         ZigGlobalObject__makeNapiEnvForFFI(self)
-    }
-
-    #[inline]
-    pub fn assert_on_js_thread(&self) {
-        if cfg!(debug_assertions) {
-            self.bun_vm().assert_on_js_thread();
-        }
     }
 
     // returns false if it throws
@@ -1405,33 +1307,6 @@ impl JSGlobalObject {
         }
     }
 
-    pub fn create(
-        v: &mut VirtualMachine,
-        console: *mut c_void,
-        context_id: i32,
-        mini_mode: bool,
-        eval_mode: bool,
-        worker_ptr: Option<*mut c_void>,
-    ) -> *mut JSGlobalObject {
-        let _trace = perf::trace("JSGlobalObject.create");
-
-        v.event_loop_mut().ensure_waker();
-        // C++ creates and returns a non-null global object; `console`/`worker_ptr`
-        // are opaque round-trip pointers C++ stores into the new global.
-        let global = Zig__GlobalObject__create(
-            console,
-            context_id,
-            mini_mode,
-            eval_mode,
-            worker_ptr.unwrap_or(core::ptr::null_mut()),
-        );
-
-        // JSC might mess with the stack size.
-        StackCheck::configure_thread();
-
-        global
-    }
-
     pub fn create_for_test_isolation(
         old_global: &JSGlobalObject,
         console: *mut c_void,
@@ -1447,17 +1322,6 @@ impl JSGlobalObject {
         // `map` is an opaque round-trip pointer previously returned by
         // `get_module_registry_map` (C++ owns it; never dereferenced as Rust data).
         Zig__GlobalObject__resetModuleRegistryMap(global, map)
-    }
-
-    pub fn report_uncaught_exception_from_error(&self, proof: JsError) {
-        crate::mark_binding();
-        let exc = self
-            .take_exception(proof)
-            .as_exception(std::ptr::from_ref::<VM>(self.vm()).cast_mut())
-            .expect("exception value must be an Exception cell");
-        // `as_exception` returned a non-null cell pointer rooted on the VM;
-        // `Exception` is an opaque ZST handle — safe deref (panics on null).
-        let _ = report_uncaught_exception(self, crate::Exception::opaque_ref(exc));
     }
 
     pub fn create_error(&self, args: Arguments<'_>) -> JSValue {
@@ -1556,46 +1420,6 @@ use bun_core::fmt::VecWriter as WriteVec;
 // ──────────────────────────────────────────────────────────────────────────────
 // Exported `extern "C"` functions.
 // ──────────────────────────────────────────────────────────────────────────────
-
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__resolve(
-    res: *mut ErrorableString,
-    global: *const JSGlobalObject,
-    specifier: *mut BunString,
-    source: *mut BunString,
-    query: *mut BunString,
-) {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers. `BunString` is `Copy`, so
-    // `*specifier` / `*source` is a bitwise load — no refcount bump (the
-    // caller still owns the ref).
-    let (global, specifier, source) = unsafe { (&*global, *specifier, *source) };
-    // SAFETY: C++ passes valid non-null pointers.
-    let (res, query) = unsafe { (&mut *res, &mut *query) };
-    match VirtualMachine::resolve(res, global, specifier, source, Some(query), true) {
-        Ok(()) => {}
-        Err(_) => {
-            debug_assert!(!res.success);
-        }
-    }
-}
-
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
-}
-
-// Safe wrapper used internally.
-#[inline]
-pub(crate) fn report_uncaught_exception(global: &JSGlobalObject, exception: &Exception) -> JSValue {
-    crate::mark_binding();
-    VirtualMachine::report_uncaught_exception(global, exception)
-}
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Zig__GlobalObject__onCrash() {
@@ -1729,18 +1553,6 @@ unsafe extern "C" {
     safe fn JSGlobalObject__tryTakeException(this: &JSGlobalObject) -> JSValue;
     safe fn JSGlobalObject__requestTermination(this: &JSGlobalObject);
 
-    // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
-    // the new ZigGlobalObject (never dereferenced as Rust data here — same
-    // contract as `Zig__GlobalObject__createForTestIsolation` below); remaining
-    // args are by-value scalars.
-    safe fn Zig__GlobalObject__create(
-        console: *mut c_void,
-        context_id: i32,
-        mini_mode: bool,
-        eval_mode: bool,
-        worker_ptr: *mut c_void,
-    ) -> *mut JSGlobalObject;
-
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
     // ABI-identical to non-null `*const`); `console` is an opaque pointer C++
     // stores into the new global (never dereferenced as Rust data here).
@@ -1769,13 +1581,6 @@ impl ScriptExecutionContextIdentifier {
         // centralised `opaque_ref` proof.
         let p = ScriptExecutionContextIdentifier__getGlobalObject(self.0);
         (!p.is_null()).then(|| GlobalRef::from(JSGlobalObject::opaque_ref(p)))
-    }
-
-    /// Returns `None` if the context referred to by `self` no longer exists.
-    /// Concurrently-safe (`bun_vm_concurrently`) because identifiers are mostly
-    /// used from off-thread tasks.
-    pub fn bun_vm(self) -> Option<*mut VirtualMachine> {
-        Some(self.global_object()?.bun_vm_concurrently())
     }
 
     pub fn valid(self) -> bool {

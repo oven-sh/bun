@@ -1,7 +1,11 @@
+use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_core::String as BunString;
 use bun_options_types::Format;
+
+#[thread_local]
+pub static IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE: Cell<bool> = Cell::new(false);
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle to JSC cached bytecode (a C++ `RefPtr<CachedBytecode>` payload).
@@ -146,7 +150,7 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     source: &[u8],
     source_provider_url: &mut BunString,
 ) -> Option<Box<[u8]>> {
-    crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
+    IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(false);
     let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);

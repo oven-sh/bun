@@ -341,7 +341,7 @@ impl ModuleInfoDeserialized {
         Self::create(source).ok()
     }
 
-    pub fn serialize(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
+    pub fn serialize(&self, writer: &mut impl bun_loop::Write) -> crate::Result<()> {
         let record_kinds = self.record_kinds();
         writer.write_all(&(record_kinds.len() as u32).to_le_bytes())?;
         writer.write_all(slice_as_bytes(record_kinds))?;

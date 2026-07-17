@@ -3082,8 +3082,8 @@ pub mod serializer {
         // A separate `stream` and `writer` over the same buffer would be two
         // `&mut` to one object — UB regardless of access order — so both
         // roles collapse onto one type: `Serializer::StreamType` impls both
-        // `PositionalStream` and `bun_io::Write`.
-        S: PositionalStream + bun_io::Write,
+        // `PositionalStream` and `bun_loop::Write`.
+        S: PositionalStream + bun_loop::Write,
     {
         stream.write_int_le::<u64>(list.len() as u64)?;
         // The on-disk format records the alignment of the MultiArrayList

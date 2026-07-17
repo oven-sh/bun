@@ -10,11 +10,11 @@ use core::sync::atomic::Ordering;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
 use bun_core::Global;
 use bun_core::Output;
-use bun_event_loop::EventLoopHandle;
+use bun_loop::EventLoopHandle;
 #[cfg(unix)]
-use bun_io::ParentDeathWatchdog;
+use bun_loop::ParentDeathWatchdog;
 #[cfg(unix)]
-use bun_io::{FilePoll, KeepAlive};
+use bun_loop::{FilePoll, KeepAlive};
 #[cfg(windows)]
 use bun_sys::ReturnCodeExt as _;
 #[cfg(windows)]
@@ -40,7 +40,7 @@ pub struct WaitPidResult {
 /// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
 /// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
 /// higher-tier callers (`bun_runtime::api::bun::spawn::stdio`, `Terminal`)
-/// keep their `bun_spawn::process::spawn_sys::*` import path.
+/// keep their `bun_loop::process::spawn_sys::*` import path.
 pub mod spawn_sys {
     // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
     // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
@@ -57,7 +57,7 @@ bun_core::declare_scope!(PROCESS, visible);
 // ─── Re-exports from `bun_spawn_sys` ─────────────────────────────────────────
 // The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
 // moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
-// Re-export here so existing `bun_spawn::process::*` paths keep resolving.
+// Re-export here so existing `bun_loop::process::*` paths keep resolving.
 pub use bun_sys::spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
 #[cfg(windows)]
 pub use bun_sys::spawn_sys::uv_getrusage;
@@ -192,16 +192,16 @@ impl Process {
         unsafe { bun_core::ptr::ThreadSafeRefCount::<Process>::deref(this) };
     }
 
-    /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_io::EventLoopCtx`
+    /// Bridge `self.event_loop` (`EventLoopHandle`) to `bun_loop::EventLoopCtx`
     /// for FilePoll/KeepAlive calls; reconstitutes the aio-level ctx here.
     #[inline]
-    fn event_loop_ctx(&self) -> bun_io::EventLoopCtx {
+    fn event_loop_ctx(&self) -> bun_loop::EventLoopCtx {
         event_loop_handle_to_ctx(self.event_loop)
     }
 }
 
 #[inline]
-pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_io::EventLoopCtx {
+pub fn event_loop_handle_to_ctx(handle: EventLoopHandle) -> bun_loop::EventLoopCtx {
     handle.as_event_loop_ctx()
 }
 
@@ -427,9 +427,9 @@ impl Process {
                 FilePoll::init(
                     ctx,
                     Fd::from_native(watchfd),
-                    bun_io::file_poll::FlagsSet::default(),
-                    bun_io::Owner::new(
-                        bun_io::posix_event_loop::poll_tag::PROCESS,
+                    bun_loop::file_poll::FlagsSet::default(),
+                    bun_loop::Owner::new(
+                        bun_loop::posix_event_loop::poll_tag::PROCESS,
                         std::ptr::from_mut::<Process>(self).cast(),
                     ),
                 )
@@ -444,7 +444,7 @@ impl Process {
 
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            match fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
+            match fd.register(loop_, bun_loop::PollKind::Process, PROCESS_POLL_ONE_SHOT) {
                 Ok(()) => {
                     self.ref_();
                     Ok(())
@@ -475,7 +475,7 @@ impl Process {
         if let Some(fd) = self.poller.fd_poll_mut() {
             // SAFETY: `platform_event_loop` returns the live uws loop.
             let loop_ = unsafe { &mut *self.event_loop.platform_event_loop() };
-            let maybe = fd.register(loop_, bun_io::PollKind::Process, PROCESS_POLL_ONE_SHOT);
+            let maybe = fd.register(loop_, bun_loop::PollKind::Process, PROCESS_POLL_ONE_SHOT);
             if maybe.is_ok() {
                 self.ref_();
             }
@@ -826,7 +826,7 @@ impl core::fmt::Display for Status {
 
 #[cfg(unix)]
 pub enum PollerPosix {
-    /// Hive-allocated `bun_io::FilePoll` slot. Pointer (not `Box`) because the
+    /// Hive-allocated `bun_loop::FilePoll` slot. Pointer (not `Box`) because the
     /// poll lives in `Store`; freed via `FilePoll::deinit`,
     /// never via Rust `drop`.
     Fd(core::ptr::NonNull<FilePoll>),
@@ -889,7 +889,7 @@ impl PollerPosix {
         }
     }
 
-    pub fn enable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+    pub fn enable_keeping_event_loop_alive(&mut self, ctx: bun_loop::EventLoopCtx) {
         if let Some(poll) = self.fd_poll_mut() {
             poll.enable_keeping_process_alive(ctx);
         } else if let PollerPosix::WaiterThread(waiter) = self {
@@ -897,7 +897,7 @@ impl PollerPosix {
         }
     }
 
-    pub fn disable_keeping_event_loop_alive(&mut self, ctx: bun_io::EventLoopCtx) {
+    pub fn disable_keeping_event_loop_alive(&mut self, ctx: bun_loop::EventLoopCtx) {
         if let Some(poll) = self.fd_poll_mut() {
             poll.disable_keeping_process_alive(ctx);
         } else if let PollerPosix::WaiterThread(waiter) = self {
@@ -936,7 +936,7 @@ impl PollerWindows {
         }
     }
 
-    pub fn enable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
+    pub fn enable_keeping_event_loop_alive(&mut self, _event_loop: bun_loop::EventLoopCtx) {
         match self {
             PollerWindows::Uv(process) => {
                 process.ref_();
@@ -945,7 +945,7 @@ impl PollerWindows {
         }
     }
 
-    pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
+    pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_loop::EventLoopCtx) {
         // This is disabled on Windows
         // uv_unref() causes the onExitUV callback to *never* be called
         // This breaks a lot of stuff...
@@ -975,9 +975,9 @@ pub use waiter_thread_posix::WaiterThreadPosix as WaiterThread;
 #[cfg(unix)]
 pub mod waiter_thread_posix {
     use super::*;
-    use bun_event_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
-    use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
-    use bun_event_loop::task_tag;
+    use bun_loop::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New as AnyTaskNew};
+    use bun_loop::ConcurrentTask::{ConcurrentTask, Task, TaskTag};
+    use bun_loop::task_tag;
     use bun_sys::threading::UnboundedQueue;
 
     pub struct WaiterThreadPosix {
@@ -2242,7 +2242,7 @@ mod spawn_process_body {
     #[cfg(windows)]
     fn cleanup_uv_files(files: &[uv::uv_file], loop_: *mut uv::uv_loop_t) {
         for &fd in files {
-            bun_io::Closer::close(Fd::from_uv(fd), loop_);
+            bun_loop::Closer::close(Fd::from_uv(fd), loop_);
         }
     }
 

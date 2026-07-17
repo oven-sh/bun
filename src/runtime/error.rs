@@ -438,7 +438,7 @@ pub enum Error {
     #[error(transparent)]
     Bundler(#[from] bun_bundler::Error),
     #[error(transparent)]
-    Spawn(#[from] bun_spawn::Error),
+    Spawn(#[from] bun_loop::spawn::Error),
     #[error(transparent)]
     Install(#[from] bun_install::Error),
     #[error(transparent)]

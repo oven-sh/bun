@@ -707,7 +707,7 @@ pub mod posix_spawn {
 
         // Windows path (uses different mechanism)
         // Gated not(unix) because `actions`/`attr` here are PosixSpawnActions/PosixSpawnAttr
-        // fields; on unix the Actions/Attr aliases resolve to bun_spawn::* which lack `.attr`.
+        // fields; on unix the Actions/Attr aliases resolve to bun_loop::* which lack `.attr`.
         #[cfg(not(unix))]
         {
             let mut pid: pid_t = 0;
@@ -787,7 +787,7 @@ pub mod posix_spawn {
     }
 
     // Higher-tier re-exports (`Process`/`Status`/`spawn_process`/`sync`/
-    // `Windows*`) live in `bun_spawn::posix_spawn::bun_spawn`, which augments
+    // `Windows*`) live in `bun_loop::posix_spawn::bun_spawn`, which augments
     // this module — they need event-loop types this `-sys` crate cannot name.
     pub use crate::spawn_process::{PosixSpawnResult, Rusage};
 }

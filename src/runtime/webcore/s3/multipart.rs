@@ -99,8 +99,8 @@ use bun_core::alloc_impl::AllocError;
 use bun_core::collections::IntegerBitSet;
 use bun_core::{MutableString, strings};
 use bun_core::{declare_scope, scoped_log};
-use bun_io::KeepAlive;
-use bun_io::StreamBuffer;
+use bun_loop::KeepAlive;
+use bun_loop::StreamBuffer;
 use bun_jsc::GlobalRef;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::acl::ACL;
@@ -399,8 +399,8 @@ impl Drop for MultiPartUpload {
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
+        self.poll_ref.unref(bun_loop::posix_event_loop::get_vm_ctx(
+            bun_loop::AllocatorType::Js,
         ));
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
         // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the

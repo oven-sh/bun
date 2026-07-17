@@ -2495,7 +2495,7 @@ pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool 
 
 // Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
-pub(crate) fn path_template_print<W: bun_io::Write>(
+pub(crate) fn path_template_print<W: bun_loop::Write>(
     writer: &mut W,
     data: &[u8],
     dir: &[u8],
@@ -2504,7 +2504,7 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
     hash: Option<u64>,
     target: &[u8],
     sanitize_parent_dirs: bool,
-) -> bun_io::Result<()> {
+) -> bun_loop::io::Result<()> {
     let mut remain: &[u8] = data;
     while let Some(j) = strings::index_of_char(remain, b'[') {
         let j = j as usize;
@@ -2575,10 +2575,10 @@ pub(crate) fn path_template_print<W: bun_io::Write>(
 /// Rewrite every `..` path segment to `_.._` so the path cannot traverse above
 /// its base directory on disk. Separators become native on Windows, matching
 /// the rest of the path template output.
-pub fn write_sanitized_parent_dirs<W: bun_io::Write>(
+pub fn write_sanitized_parent_dirs<W: bun_loop::Write>(
     writer: &mut W,
     dir: &[u8],
-) -> bun_io::Result<()> {
+) -> bun_loop::io::Result<()> {
     let mut rest: &[u8] = dir;
     loop {
         // On POSIX `\` is a legal filename byte, not a separator, so only split
@@ -2624,10 +2624,10 @@ impl PathTemplate {
     }
 
     #[inline]
-    pub(crate) fn write_replacing_slashes_on_windows<W: bun_io::Write>(
+    pub(crate) fn write_replacing_slashes_on_windows<W: bun_loop::Write>(
         w: &mut W,
         slice: &[u8],
-    ) -> bun_io::Result<()> {
+    ) -> bun_loop::io::Result<()> {
         #[cfg(windows)]
         {
             let mut remain = slice;
@@ -2687,11 +2687,11 @@ impl PathTemplate {
         placeholder: PlaceholderConst::DEFAULT,
     };
 
-    pub fn print<W: bun_io::Write>(
+    pub fn print<W: bun_loop::Write>(
         &self,
         writer: &mut W,
         sanitize_parent_dirs: bool,
-    ) -> bun_io::Result<()> {
+    ) -> bun_loop::io::Result<()> {
         path_template_print(
             writer,
             &self.data,
@@ -2756,11 +2756,11 @@ impl PathTemplateConst {
     /// Kept as an inherent method so callers writing
     /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
     /// blanket [`core::fmt::Display`] impl below.
-    pub fn print<W: bun_io::Write>(
+    pub fn print<W: bun_loop::Write>(
         &self,
         writer: &mut W,
         sanitize_parent_dirs: bool,
-    ) -> bun_io::Result<()> {
+    ) -> bun_loop::io::Result<()> {
         path_template_print(
             writer,
             self.data,

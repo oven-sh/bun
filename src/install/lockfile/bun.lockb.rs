@@ -4,7 +4,7 @@ use crate::lockfile::package::PackageColumns as _;
 use core::mem::{align_of, size_of};
 
 use crate::Error;
-use bun_io::Write as _;
+use bun_loop::Write as _;
 // `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
 // `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
 // `bun_install::lockfile::*` path is the stub surface and lacks these items.
@@ -70,9 +70,9 @@ impl<'a> StreamType<'a> {
     }
 }
 
-impl<'a> bun_io::Write for StreamType<'a> {
+impl<'a> bun_loop::Write for StreamType<'a> {
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> bun_loop::io::Result<()> {
         self.bytes.extend_from_slice(buf);
         Ok(())
     }
@@ -221,7 +221,7 @@ pub fn save(
         }
     }
 
-    // The callees take a single `&mut S: PositionalStream + bun_io::Write` (both
+    // The callees take a single `&mut S: PositionalStream + bun_loop::Write` (both
     // roles collapsed onto `StreamType`) — two `&mut` aliases of one object would
     // be UB regardless of access order.
     // turbofish — `this.packages` is `PackageList = List<u64>`, but

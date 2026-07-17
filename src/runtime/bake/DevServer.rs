@@ -447,7 +447,7 @@ pub struct DevServer {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-bun_event_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
+bun_loop::impl_timer_owner!(DevServer; from_timer_ptr => memory_visualizer_timer);
 
 pub(super) const INTERNAL_PREFIX: &str = "/_bun";
 /// Assets which are routed to the `Assets` storage.
@@ -3316,7 +3316,7 @@ impl DevServer {
         let event_loop: bun_bundler::linker_context_mod::EventLoop =
             // SAFETY: `self.vm().event_loop()` is the live per-thread `jsc::EventLoop`.
             Some(::core::ptr::NonNull::from(heap.alloc(
-                bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
+                bun_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
             )));
 
         // SAFETY: `heap` is `Box`-allocated above and moved into
@@ -5744,7 +5744,7 @@ impl DevServer {
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
         dev.emit_memory_visualizer_message();
-        timer.state = bun_event_loop::EventLoopTimer::State::FIRED;
+        timer.state = bun_loop::EventLoopTimer::State::FIRED;
         dev.timer_heap().insert(timer);
     }
 

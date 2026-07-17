@@ -5,14 +5,14 @@ use bun_jsc::{JSGlobalObject, JSValue, event_loop::EventLoop};
 use bun_core::ptr::RefPtr;
 use bun_sys::{self, Fd, FdExt};
 
-use crate::api::bun_spawn::stdio::Stdio;
+use crate::api::bun_loop::stdio::Stdio;
 use crate::node::types::FdJsc;
 use crate::webcore::blob::SizeType as BlobSizeType;
 use crate::webcore::file_sink::{self, FileSink};
 use crate::webcore::sink;
 use crate::webcore::streams::SignalHandler;
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
 
 use super::{Flags, StaticPipeWriter, StdioResult, Subprocess, js};
 
@@ -183,11 +183,11 @@ impl<'a> Writable<'a> {
         let global = event_loop.global_ref();
 
         // `FileSink::create` / `StaticPipeWriter::create` take
-        // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
+        // `bun_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
         // the vtable-backed handle once and reuse for all arms (both platforms).
         // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
         // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
-        let evtloop = bun_event_loop::EventLoopHandle::init(
+        let evtloop = bun_loop::EventLoopHandle::init(
             std::ptr::from_ref::<EventLoop>(event_loop)
                 .cast_mut()
                 .cast::<()>(),
@@ -323,7 +323,7 @@ impl<'a> Writable<'a> {
                 // through the FilePoll vtable shim.
                 pipe.writer.with_mut(|w| {
                     if let Some(poll) = w.handle.get_poll() {
-                        poll.set_flag(bun_io::FilePollFlag::Socket);
+                        poll.set_flag(bun_loop::FilePollFlag::Socket);
                     }
                 });
 

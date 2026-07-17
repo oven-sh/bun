@@ -27,7 +27,7 @@ pub(crate) fn server_js_create(
     }
 }
 
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_uws as uws;
 use bun_uws_sys as uws_sys;
 use bun_uws_sys::app::c as uws_app_c;
@@ -1712,14 +1712,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // Therefore, we split it into two tasks.
             self.flags.insert(ServerFlags::TERMINATED);
             let app = self.app.unwrap();
-            vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
+            vm.enqueue_task(bun_loop::ManagedTask::ManagedTask::new(app, |app| {
                 // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 bun_opaque::opaque_deref_mut(app).close();
                 Ok(())
             }));
         }
 
-        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
+        vm.enqueue_task(bun_loop::ManagedTask::ManagedTask::new(
             std::ptr::from_mut::<Self>(self),
             |this| {
                 // SAFETY: `this` is the unique owning server pointer enqueued
@@ -1737,7 +1737,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener = Some(socket);
         // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
         // for the server's lifetime); single-threaded JS context.
-        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_io::Loop::get()) };
+        unsafe { (*self.vm_mut()).event_loop_handle = Some(bun_loop::Loop::get()) };
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
@@ -2840,7 +2840,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !this_ref.config.http1 {
                                 // SAFETY: per-thread VM singleton; no aliasing `&mut`.
                                 jsc::VirtualMachine::get().as_mut().event_loop_handle =
-                                    Some(bun_io::Loop::get());
+                                    Some(bun_loop::Loop::get());
                             }
                         }
                     }
@@ -3811,8 +3811,8 @@ pub struct ServerAllConnectionsClosedTask {
     pub tracker: jsc::AsyncTaskTracker,
 }
 
-impl bun_event_loop::Taskable for ServerAllConnectionsClosedTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ServerAllConnectionsClosedTask;
+impl bun_loop::Taskable for ServerAllConnectionsClosedTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ServerAllConnectionsClosedTask;
 }
 
 impl Drop for ServerAllConnectionsClosedTask {
@@ -3838,14 +3838,14 @@ impl ServerAllConnectionsClosedTask {
     /// that races `process.exit()`. The custom `Drop` impl above keeps the
     /// late free from UAFing the freed `HandleSet`.
     pub fn schedule(this: Self, vm: &mut jsc::VirtualMachine) {
-        fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_event_loop::JsResult<()> {
+        fn call_erased(this: *mut ServerAllConnectionsClosedTask) -> bun_loop::JsResult<()> {
             // `this` is the unique owning pointer heap-allocated below
             // in `schedule()`; `ManagedTask::new_owned` invokes this exactly once.
             ServerAllConnectionsClosedTask::run_from_js_thread(this, jsc::VirtualMachine::get_mut())
                 .map_err(Into::into)
         }
         let ptr = bun_core::heap::into_raw(Box::new(this));
-        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new_owned(
+        vm.enqueue_task(bun_loop::ManagedTask::ManagedTask::new_owned(
             ptr,
             call_erased,
         ));

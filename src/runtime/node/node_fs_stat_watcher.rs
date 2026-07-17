@@ -7,9 +7,9 @@ use std::time::Instant;
 
 use bun_core::strings;
 use bun_core::{Timespec, TimespecMockMode, ZBox, ZStr};
-use bun_event_loop::AnyTask::AnyTask;
-use bun_event_loop::ConcurrentTask::{ConcurrentTask, Task};
-use bun_io::KeepAlive;
+use bun_loop::AnyTask::AnyTask;
+use bun_loop::ConcurrentTask::{ConcurrentTask, Task};
+use bun_loop::KeepAlive;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::node::PathLike;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -72,7 +72,7 @@ pub struct StatWatcherScheduler {
     ref_count: ThreadSafeRefCount<StatWatcherScheduler>,
 }
 
-bun_event_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_loop_timer);
 
 type WatcherQueue = UnboundedQueue<StatWatcher>;
 
@@ -300,7 +300,7 @@ impl StatWatcherScheduler {
             task: AnyTask,
         }
 
-        fn update_timer(self_: *mut c_void) -> bun_event_loop::JsResult<()> {
+        fn update_timer(self_: *mut c_void) -> bun_loop::JsResult<()> {
             // SAFETY: `self_` was heap-allocated below; reclaim and drop at end of scope.
             let self_ = unsafe { bun_core::heap::take(self_.cast::<Holder>()) };
             // `scheduler` is the refcounted singleton, kept alive across the
@@ -684,7 +684,7 @@ impl StatWatcher {
     }
 
     #[inline]
-    fn ctx_el_ctx(&self) -> bun_io::EventLoopCtx {
+    fn ctx_el_ctx(&self) -> bun_loop::EventLoopCtx {
         // SAFETY: `self.ctx` is the live per-thread VM singleton backref.
         unsafe { VirtualMachine::event_loop_ctx(self.ctx.as_ptr()) }
     }
@@ -703,7 +703,7 @@ impl StatWatcher {
     /// elsewhere; the queue takes ownership of it.
     pub(crate) fn enqueue_task_concurrent(
         &self,
-        task: NonNull<bun_event_loop::ConcurrentTask::ConcurrentTask>,
+        task: NonNull<bun_loop::ConcurrentTask::ConcurrentTask>,
     ) {
         self.ctx.event_loop_shared().enqueue_task_concurrent(task);
     }
@@ -849,7 +849,7 @@ impl StatWatcher {
         Self::deref(this_ptr);
     }
 
-    fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_success_on_main_thread(this: *mut StatWatcher) -> bun_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
@@ -871,7 +871,7 @@ impl StatWatcher {
         // the next queued task re-enters JS under a
         // `scope.assertNoException()` RELEASE_ASSERT.
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+            .map_err(Into::<bun_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
@@ -879,7 +879,7 @@ impl StatWatcher {
         Ok(())
     }
 
-    fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_event_loop::JsResult<()> {
+    fn initial_stat_error_on_main_thread(this: *mut StatWatcher) -> bun_loop::JsResult<()> {
         // SAFETY: balance the ref from createAndSchedule(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in
@@ -897,7 +897,7 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-            .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+            .map_err(Into::<bun_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
@@ -970,7 +970,7 @@ impl StatWatcher {
     /// After a restat found the file changed, this calls the listener function.
     fn swap_and_call_listener_on_main_thread(
         this: *mut StatWatcher,
-    ) -> bun_event_loop::JsResult<()> {
+    ) -> bun_loop::JsResult<()> {
         // SAFETY: balance the ref from restat(); raw ptr captured (not `&self`).
         let _ref_guard = unsafe { WatcherRefGuard::adopt(this) };
         // BACKREF — `this` is alive (ref'd in restat()). R-2: `cb.call()`
@@ -986,7 +986,7 @@ impl StatWatcher {
         let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
             stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)
-                .map_err(Into::<bun_event_loop::ErasedJsError>::into)?;
+                .map_err(Into::<bun_loop::ErasedJsError>::into)?;
         js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a

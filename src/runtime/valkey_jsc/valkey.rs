@@ -322,7 +322,7 @@ impl DeferredFailure {
     pub(crate) fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
         // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
-        fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
+        fn run_raw(ptr: *mut DeferredFailure) -> bun_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
             let this = unsafe { bun_core::heap::take(ptr) };
             DeferredFailure::run(*this).map_err(Into::into)
@@ -1572,10 +1572,10 @@ impl HasAutoFlusher for ValkeyClient {
     }
 }
 
-// `bun_io::Write` impl so `Command::write(self.writer())` type-checks.
-impl bun_io::Write for ValkeyClient {
+// `bun_loop::Write` impl so `Command::write(self.writer())` type-checks.
+impl bun_loop::Write for ValkeyClient {
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> bun_loop::io::Result<()> {
         self.write_buffer
             .write(buf)
             .map_err(|_| bun_core::Error::Alloc(bun_core::alloc_impl::AllocError))
@@ -1588,9 +1588,9 @@ impl bun_io::Write for ValkeyClient {
 /// `&mut self.write_buffer`, but not `&self.username` + `&mut self`.
 struct WriteBufWriter<'a>(&'a mut OffsetByteList);
 
-impl bun_io::Write for WriteBufWriter<'_> {
+impl bun_loop::Write for WriteBufWriter<'_> {
     #[inline]
-    fn write_all(&mut self, buf: &[u8]) -> bun_io::Result<()> {
+    fn write_all(&mut self, buf: &[u8]) -> bun_loop::io::Result<()> {
         self.0
             .write(buf)
             .map_err(|_| bun_core::Error::Alloc(bun_core::alloc_impl::AllocError))

@@ -8,7 +8,7 @@ use crate::{
 };
 use bun_bundler::transpiler::PluginResolver;
 use bun_core::String as BunString;
-use bun_event_loop::ManagedTask::ManagedTask;
+use bun_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::SourceProviderMap;
 use bun_sourcemap::parsed_source_map::AnySourceProvider;
 
@@ -167,7 +167,7 @@ struct HandledPromiseContext {
 }
 
 impl HandledPromiseContext {
-    fn callback(context: *mut Self) -> bun_event_loop::JsResult<()> {
+    fn callback(context: *mut Self) -> bun_loop::JsResult<()> {
         // SAFETY: `context` was produced by `heap::alloc` below; we are the
         // sole owner and reconstitute the Box to drop it at end of scope.
         let context = unsafe { bun_core::heap::take(context) };

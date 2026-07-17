@@ -131,9 +131,9 @@ pub mod text {
         vals: Fraction,
         failing: Fraction,
         failed: bool,
-        writer: &mut impl bun_io::Write,
+        writer: &mut impl bun_loop::Write,
         indent_name: bool,
-    ) -> bun_io::Result<()> {
+    ) -> bun_loop::io::Result<()> {
         if ENABLE_COLORS {
             if failed {
                 writer.write_all(&pretty_fmt::<true>("<r><b><red>"))?;
@@ -190,8 +190,8 @@ pub mod text {
         max_filename_length: usize,
         fraction: &mut Fraction,
         base_path: &[u8],
-        writer: &mut impl bun_io::Write,
-    ) -> bun_io::Result<()> {
+        writer: &mut impl bun_loop::Write,
+    ) -> bun_loop::io::Result<()> {
         let failing = *fraction;
         let fns = report.function_coverage_fraction();
         let lines = report.lines_coverage_fraction();
@@ -292,8 +292,8 @@ pub mod lcov {
     pub fn write_format(
         report: &Report,
         base_path: &[u8],
-        writer: &mut impl bun_io::Write,
-    ) -> bun_io::Result<()> {
+        writer: &mut impl bun_loop::Write,
+    ) -> bun_loop::io::Result<()> {
         let mut filename = report.source_url.slice();
         if !base_path.is_empty() {
             filename = bun_core::paths::resolve_path::relative(base_path, filename);
@@ -916,7 +916,7 @@ pub(crate) extern "C" fn ByteRangeMapping__findExecutedLines(
 
     let mut coverage_fraction = Fraction::default();
 
-    // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_io::Write target).
+    // std.Io.Writer.Allocating → Vec<u8> byte buffer (bun_loop::Write target).
     let mut buf: Vec<u8> = Vec::new();
 
     if text::write_format::<false>(

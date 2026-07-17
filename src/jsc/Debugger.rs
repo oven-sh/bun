@@ -12,8 +12,8 @@ use core::ffi::{c_int, c_void};
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::String as BunString;
-use bun_io::KeepAlive;
-use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
+use bun_loop::KeepAlive;
+use bun_loop::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
 use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};

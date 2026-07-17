@@ -11,7 +11,7 @@ workspace = true
 
 [dependencies]
 bun_opaque.workspace = true
-bun_io.workspace = true
+bun_loop.workspace = true
 strum.workspace = true
 bstr.workspace = true
 scopeguard.workspace = true

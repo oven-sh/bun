@@ -6,7 +6,7 @@ use core::sync::atomic::Ordering;
 
 use crate::Error;
 use bun_core::ZigString;
-use bun_io::{self as io, IntrusiveIoRequest as _};
+use bun_loop::{self as io, IntrusiveIoRequest as _};
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
@@ -41,7 +41,7 @@ pub type WriteFileTask = bun_jsc::work_task::WorkTask<WriteFile>;
 // and are guaranteed live (see SAFETY notes below).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl bun_jsc::work_task::WorkTaskContext for WriteFile {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::WriteFileTask;
+    const TASK_TAG: bun_loop::TaskTag = bun_loop::task_tag::WriteFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
         // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
         unsafe { (*this).run(task) }
@@ -75,7 +75,7 @@ pub struct WriteFile {
 }
 
 bun_sys::intrusive_work_task!(WriteFile, task);
-bun_io::intrusive_io_request!(WriteFile, io_request);
+bun_loop::intrusive_io_request!(WriteFile, io_request);
 
 // ──────────────────────────────────────────────────────────────────────────
 // FileOpener / FileCloser
@@ -607,7 +607,7 @@ mod windows_impl {
     use super::*;
     use core::ptr::null_mut;
 
-    use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
+    use bun_loop::{self as aio, IntrusiveUvFs as _, KeepAlive};
     // `bun_jsc::EventLoop`/`ManagedTask` are *modules* (namespace
     // re-exports); the structs live one level deeper.
     use bun_jsc::{ConcurrentTask, ManagedTask::ManagedTask, event_loop::EventLoop};
@@ -632,7 +632,7 @@ mod windows_impl {
         pub owned_fd: bool,
     }
 
-    bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
+    bun_loop::intrusive_uv_fs!(WriteFileWindows, io_request);
 
     #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
     pub enum WriteFileWindowsError {
@@ -1010,7 +1010,7 @@ mod windows_impl {
         /// `ManagedTask`-shaped trampoline for [`on_mkdirp_complete`]: takes
         /// `*mut Self` and returns the event-loop `JsResult<()>` (always `Ok`;
         /// the inner body already swallows `JSTerminated`).
-        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_event_loop::JsResult<()> {
+        fn on_mkdirp_complete_task(this: *mut WriteFileWindows) -> bun_loop::JsResult<()> {
             // SAFETY: `this` is the live Box-allocated `WriteFileWindows` whose
             // pointer was stashed in `on_mkdirp_complete_concurrent` below;
             // the JS thread is the sole accessor at this point. `*this` may be

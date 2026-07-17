@@ -177,8 +177,8 @@ pub struct Task {
 /// enqueued; the impl lives in whatever crate owns the type.
 ///
 /// ```ignore
-/// impl bun_event_loop::Taskable for FetchTasklet {
-///     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
+/// impl bun_loop::Taskable for FetchTasklet {
+///     const TAG: bun_loop::TaskTag = bun_loop::task_tag::FetchTasklet;
 /// }
 /// ```
 ///

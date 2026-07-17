@@ -134,7 +134,7 @@ pub enum Cleaned<'a> {
 // The stream owns its backing `Vec<u8>` — every load path hands the file
 // contents to the stream anyway,
 // which avoids threading a `&mut [u8]` lifetime through the load call graph.
-pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
+pub type Stream = bun_loop::FixedBufferStream<Vec<u8>>;
 
 /// Duck-typed surface that `Buffers::write_array`/`save` and
 /// `Package::Serializer::save` expect of their `stream` parameter. Expressed
@@ -1821,7 +1821,7 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    pub fn print_with_lockfile<W: bun_io::Write>(
+    pub fn print_with_lockfile<W: bun_loop::Write>(
         lockfile: &Lockfile,
         format: PrinterFormat,
         writer: W,

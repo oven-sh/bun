@@ -369,17 +369,17 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     let mut env = bun_core::handle_oom(env.clone_with_allocator());
     let std_map = env.std_env_map()?;
 
-    // `bun_spawn::run` does POSIX argv/envp marshalling
+    // `bun_loop::run` does POSIX argv/envp marshalling
     // + `process::sync::spawn`. On Windows it supplies the thread's
     // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
     // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
-    let result = bun_spawn::run(bun_spawn::RunOptions {
+    let result = bun_loop::run(bun_loop::RunOptions {
         argv,
         env_map: std_map.get(),
     })?;
 
     match result.term {
-        bun_spawn::Term::Exited(sig) => {
+        bun_loop::Term::Exited(sig) => {
             if sig == 0 {
                 return Ok(result.stdout);
             } else if
@@ -403,10 +403,10 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     // termination kind so the actual cause is visible.
     {
         let term = match result.term {
-            bun_spawn::Term::Exited(code) => format!("exit code {code}"),
-            bun_spawn::Term::Signal(sig) => format!("signal {sig}"),
-            bun_spawn::Term::Stopped(sig) => format!("stopped (signal {sig})"),
-            bun_spawn::Term::Unknown(_) => "unknown status".to_string(),
+            bun_loop::Term::Exited(code) => format!("exit code {code}"),
+            bun_loop::Term::Signal(sig) => format!("signal {sig}"),
+            bun_loop::Term::Stopped(sig) => format!("stopped (signal {sig})"),
+            bun_loop::Term::Unknown(_) => "unknown status".to_string(),
         };
         Output::err_generic("{} failed with {}", (BStr::new(argv[0]), term.as_str()));
         if !result.stderr.is_empty() {

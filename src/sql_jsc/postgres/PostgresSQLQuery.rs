@@ -563,8 +563,8 @@ impl PostgresSQLQuery {
             // earlier would leave it stuck Active on the synchronous-error
             // returns above.
             connection.poll_ref.with_mut(|r| {
-                r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
+                r.ref_(bun_loop::posix_event_loop::get_vm_ctx(
+                    bun_loop::AllocatorType::Js,
                 ))
             });
 
@@ -841,8 +841,8 @@ impl PostgresSQLQuery {
         // responds. See the matching call in the simple-query branch above
         // for why this must come after every fallible step.
         connection.poll_ref.with_mut(|r| {
-            r.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
+            r.ref_(bun_loop::posix_event_loop::get_vm_ctx(
+                bun_loop::AllocatorType::Js,
             ))
         });
 

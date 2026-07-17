@@ -9,10 +9,10 @@ use Timespec as timespec;
 pub use bun_core::Timespec;
 
 // Re-export so higher tiers see the *same* type they pass to
-// `bun_io::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
+// `bun_loop::heap::Intrusive<EventLoopTimer, _>` (a zero-sized local stub
 // would make the real pairing-heap unusable — orphan rule blocks
 // `impl HeapNode for EventLoopTimer` anywhere but here).
-pub use bun_io::heap::IntrusiveField;
+pub use bun_loop::heap::IntrusiveField;
 
 const NS_PER_MS: i64 = bun_core::time::NS_PER_MS as i64;
 
@@ -58,10 +58,10 @@ pub struct EventLoopTimer {
     pub in_heap: InHeap,
 }
 
-// Duck-typed `.heap` field access for `bun_io::heap::Intrusive`. Implemented
+// Duck-typed `.heap` field access for `bun_loop::heap::Intrusive`. Implemented
 // here (the defining crate) so higher tiers can instantiate
 // `Intrusive<EventLoopTimer, _>` without hitting the orphan rule.
-impl bun_io::heap::HeapNode for EventLoopTimer {
+impl bun_loop::heap::HeapNode for EventLoopTimer {
     #[inline]
     fn heap(&mut self) -> &mut IntrusiveField<Self> {
         &mut self.heap
@@ -241,7 +241,7 @@ pub struct TimerCallback {
 /// underlying `from_field_ptr!` infers the field type.
 ///
 /// ```ignore
-/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
+/// bun_loop::impl_timer_owner!(JSValkeyClient;
 ///     from_timer_ptr => timer,
 ///     from_reconnect_timer_ptr => reconnect_timer,
 /// );

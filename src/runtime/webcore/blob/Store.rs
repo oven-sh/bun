@@ -69,7 +69,7 @@ pub trait StoreExt {
     fn init_mmap(slice: &'static mut [u8]) -> StoreRef
     where
         Self: Sized;
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error>;
+    fn serialize(&self, writer: &mut impl bun_loop::Write) -> Result<(), crate::Error>;
     fn from_array_list(list: Vec<u8>) -> Result<StoreRef, crate::Error>
     where
         Self: Sized;
@@ -216,7 +216,7 @@ impl StoreExt for Store {
         }))
     }
 
-    fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), crate::Error> {
+    fn serialize(&self, writer: &mut impl bun_loop::Write) -> Result<(), crate::Error> {
         match &self.data {
             Data::File(file) => {
                 let pathlike_tag: PathOrFileDescriptorSerializeTag =

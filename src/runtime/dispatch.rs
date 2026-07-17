@@ -6,15 +6,15 @@
 //! loop lives here, and LLVM inlines the per-arm direct calls.
 //!
 //! Three dispatchers are defined:
-//!   1. [`run_task`] — `bun_event_loop::Task` (~96 variants).
-//!   2. [`run_file_poll`] — `bun_io::FilePoll::Owner` (~13 variants).
+//!   1. [`run_task`] — `bun_loop::Task` (~96 variants).
+//!   2. [`run_file_poll`] — `bun_loop::FilePoll::Owner` (~13 variants).
 //!
 //! Low-tier crates declare these as `extern "Rust"`; this crate defines them
 //! `#[no_mangle]` so the linker resolves the call directly — no runtime
 //! registration, no `AtomicPtr`, no init-order hazard.
 //!
 //! **Adding a variant** (do all three):
-//!   1. tag constant in `bun_event_loop::task_tag` (or `bun_io::poll_tag`);
+//!   1. tag constant in `bun_loop::task_tag` (or `bun_loop::poll_tag`);
 //!   2. `impl bun_jsc::Taskable for YourType { const TAG = task_tag::YourType; }`;
 //!   3. a match arm here.
 
@@ -24,17 +24,17 @@
 #[path = "dispatch_js2native.rs"]
 pub mod js2native;
 
-use bun_event_loop::AnyTask::AnyTask;
-use bun_event_loop::ManagedTask::ManagedTask;
-use bun_event_loop::{Task, task_tag};
+use bun_loop::AnyTask::AnyTask;
+use bun_loop::ManagedTask::ManagedTask;
+use bun_loop::{Task, task_tag};
 
 // `FilePoll::on_update` dispatch is POSIX-only (the symbol is declared
 // `extern "Rust"` in `aio::posix_event_loop` and never referenced on Windows,
 // where libuv drives I/O readiness directly).
 #[cfg(not(windows))]
-use bun_io::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
+use bun_loop::posix_event_loop::{FilePoll, Flags as PollFlag, poll_tag};
 
-use bun_event_loop::EventLoopTimer::{
+use bun_loop::EventLoopTimer::{
     EventLoopTimer, Tag as EventLoopTimerTag, TimerCallback, Timespec as ElTimespec,
 };
 
@@ -45,7 +45,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 
 /// X-macro: the 42 `node:fs` async ops dispatched via `run_from_js_thread`.
 ///
-/// Row shape: `$tag $ty;` — `$tag` is the `bun_event_loop::task_tag::*` const,
+/// Row shape: `$tag $ty;` — `$tag` is the `bun_loop::task_tag::*` const,
 /// `$ty` is the `fs_async::*` alias. They differ in exactly three rows
 /// (`FTruncate`/`Ftruncate`, `FChown`/`Fchown`, `StatFS`/`Statfs`), so the
 /// macro carries both idents. `ReaddirRecursive` is the bespoke
@@ -119,7 +119,7 @@ use crate::api::glob::AsyncGlobWalkTask;
 use crate::api::native_promise_context::DeferredDerefTask as NativePromiseContextDeferredDerefTask;
 use crate::image::AsyncImageTask;
 #[cfg(not(windows))]
-use bun_spawn::static_pipe_writer::Poll as StaticPipeWriterPoll;
+use bun_loop::static_pipe_writer::Poll as StaticPipeWriterPoll;
 
 use crate::napi::{NapiFinalizerTask, ThreadSafeFunction, napi_async_work};
 
@@ -167,7 +167,7 @@ use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
-use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
+use bun_loop::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
 
 // ════════════════════════════════════════════════════════════════════════════
 // Task dispatch
@@ -253,7 +253,7 @@ pub fn run_task(
         // ── erased-callback tasks (low-tier types — real) ────────────────
         task_tag::AnyTask => {
             let any = cast!(AnyTask);
-            // `bun_event_loop::ErasedJsError` carries the discriminant; recover
+            // `bun_loop::ErasedJsError` carries the discriminant; recover
             // the real `JsError` so `Terminated` short-circuits correctly.
             if let Err(err) = any.run() {
                 report_error_or_terminate(global, bun_jsc::JsError::from(err))?;
@@ -582,10 +582,10 @@ fn run_task_cold(task: Task) {
 }
 
 /// Compile-time guard that the arm count above tracks
-/// `bun_event_loop::task_tag::COUNT`. Bump when adding a variant.
+/// `bun_loop::task_tag::COUNT`. Bump when adding a variant.
 const _: () = assert!(
     task_tag::COUNT == 97,
-    "dispatch::run_task arm count out of sync with bun_event_loop::task_tag",
+    "dispatch::run_task arm count out of sync with bun_loop::task_tag",
 );
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -626,8 +626,8 @@ pub fn tick_queue_with_count(
 // FilePoll dispatch
 // ════════════════════════════════════════════════════════════════════════════
 
-/// Hot-path dispatcher for `bun_io::FilePoll::on_update`. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`; the low-tier `FilePoll`
+/// Hot-path dispatcher for `bun_loop::FilePoll::on_update`. Declared
+/// `extern "Rust"` in `bun_loop::posix_event_loop`; the low-tier `FilePoll`
 /// calls this directly (link-time resolved) so it never names `Subprocess` /
 /// `FileSink` / `DNSResolver` / etc.
 ///
@@ -672,10 +672,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
     }
 
     match owner.tag() {
-        poll_tag::BUFFERED_READER => poll_arm!(bun_io::BufferedReader, |h| {
+        poll_tag::BUFFERED_READER => poll_arm!(bun_loop::BufferedReader, |h| {
             // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
             // set at `FilePoll::init`; exclusive for this dispatch.
-            unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
+            unsafe { bun_loop::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
         }),
         poll_tag::PROCESS => {
             // Bypass `owner_as!` (which yields `&mut`) — `Process` may be freed
@@ -689,10 +689,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
             crate::node::memory_pressure::on_poll(unsafe { &mut *poll }, size_or_offset);
         }
         poll_tag::PARENT_DEATH_WATCHDOG => {
-            let wd = owner_as!(bun_io::parent_death_watchdog::ParentDeathWatchdog);
+            let wd = owner_as!(bun_loop::parent_death_watchdog::ParentDeathWatchdog);
             // Mac-only — debug-assert elsewhere (Linux uses prctl(PR_SET_PDEATHSIG)).
             #[cfg(target_os = "macos")]
-            bun_io::parent_death_watchdog::on_parent_exit(wd);
+            bun_loop::parent_death_watchdog::on_parent_exit(wd);
             #[cfg(not(target_os = "macos"))]
             {
                 debug_assert!(false, "ParentDeathWatchdog poll on non-mac");
@@ -747,10 +747,10 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
         poll_tag::TERMINAL_POLL => poll_arm!(TerminalPoll),
         // `OutputReader = BufferedReader` in install crate — separate tag for ownership.
         poll_tag::LIFECYCLE_SCRIPT_SUBPROCESS_OUTPUT_READER => {
-            poll_arm!(bun_io::BufferedReader, |h| {
+            poll_arm!(bun_loop::BufferedReader, |h| {
                 // SAFETY: tag matched, so `owner.ptr` is a live `*mut BufferedReader`
                 // set at `FilePoll::init`; exclusive for this dispatch.
-                unsafe { bun_io::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
+                unsafe { bun_loop::BufferedReader::on_poll(&mut *h, size_or_offset as isize, hup) }
             })
         }
 
@@ -769,49 +769,49 @@ pub unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i64) {
 use crate::webcore::blob::read_file::ReadFile;
 use crate::webcore::blob::write_file::WriteFile;
 
-/// `bun_io::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
+/// `bun_loop::__bun_io_pollable_on_ready` body — declared `extern "Rust"` in
 /// `bun_io`. The owner is recovered from the embedded `io_poll` field.
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
-pub(crate) unsafe fn __bun_io_pollable_on_ready(tag: bun_io::PollableTag, poll: *mut bun_io::Poll) {
+pub(crate) unsafe fn __bun_io_pollable_on_ready(tag: bun_loop::PollableTag, poll: *mut bun_loop::Poll) {
     match tag {
-        bun_io::PollableTag::ReadFile => {
+        bun_loop::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
             let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
             this.on_ready();
         }
-        bun_io::PollableTag::WriteFile => {
+        bun_loop::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
             let this = unsafe { &mut *bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
             this.on_ready();
         }
-        bun_io::PollableTag::Empty => {
+        bun_loop::PollableTag::Empty => {
             // Waker / unblock-only — caller already filtered this out.
             debug_assert!(false, "io::Poll on_ready with Empty tag");
         }
     }
 }
 
-/// `bun_io::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
+/// `bun_loop::__bun_io_pollable_on_io_error` body — declared `extern "Rust"` in
 /// `bun_io`.
 ///
 /// # Safety
 /// `poll` is the `io_poll` field of a live owner of type `tag`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_io_pollable_on_io_error(
-    tag: bun_io::PollableTag,
-    poll: *mut bun_io::Poll,
+    tag: bun_loop::PollableTag,
+    poll: *mut bun_loop::Poll,
     err: &bun_sys::Error,
 ) {
     match tag {
-        bun_io::PollableTag::ReadFile => {
+        bun_loop::PollableTag::ReadFile => {
             // SAFETY: per fn contract.
             let this = unsafe { &mut *bun_core::from_field_ptr!(ReadFile, io_poll, poll) };
             this.on_io_error(err);
         }
-        bun_io::PollableTag::WriteFile => {
+        bun_loop::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
             let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
             // WriteFile::on_io_error already takes `*mut ()` (it
@@ -819,7 +819,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_io_error(
             // shape rather than reborrowing `&mut`.
             WriteFile::on_io_error(this.cast(), err);
         }
-        bun_io::PollableTag::Empty => {
+        bun_loop::PollableTag::Empty => {
             debug_assert!(false, "io::Poll on_io_error with Empty tag");
             let _ = err;
         }
@@ -1156,8 +1156,8 @@ pub(crate) unsafe fn __bun_tick_queue_with_count(
 /// would have dropped. Tags not yet listed leak their box at exit; add them
 /// as LSan surfaces them.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
-    use bun_event_loop::task_tag;
+pub(crate) fn __bun_release_task_at_shutdown(task: bun_loop::Task) -> bool {
+    use bun_loop::task_tag;
     match task.tag {
         // `callback` (HTTP thread) won the `has_schedule_callback` CAS and
         // posted this entry, then deref'd its own +1 if final; the JS-side

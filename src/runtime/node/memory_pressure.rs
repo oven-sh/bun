@@ -25,7 +25,7 @@
 //! `onDidChangeListeners` in `BunProcess.cpp`, matching how signal handlers
 //! are wired. The watcher does not keep the event loop alive.
 
-use bun_event_loop::ConcurrentTask::{Task, task_tag};
+use bun_loop::ConcurrentTask::{Task, task_tag};
 use bun_jsc::JSGlobalObject;
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -73,9 +73,9 @@ fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<core::ffi::c_void>> {
 mod posix {
     use core::ptr::NonNull;
 
-    use bun_io::posix_event_loop::FilePoll;
+    use bun_loop::posix_event_loop::FilePoll;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
-    use bun_io::posix_event_loop::{Flags, Owner, poll_tag};
+    use bun_loop::posix_event_loop::{Flags, Owner, poll_tag};
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
     #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
@@ -255,7 +255,7 @@ mod windows {
     use core::ffi::c_void;
     use core::ptr::{self, NonNull};
 
-    use bun_event_loop::ConcurrentTask::ConcurrentTask;
+    use bun_loop::ConcurrentTask::ConcurrentTask;
     use bun_jsc::JSGlobalObject;
     use bun_jsc::virtual_machine::VirtualMachine;
 

@@ -43,7 +43,7 @@ pub(crate) struct UpgradedDuplex {
     pub current_timeout: u32,
 }
 
-bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
 
 #[derive(Default)]
 pub struct CertError {

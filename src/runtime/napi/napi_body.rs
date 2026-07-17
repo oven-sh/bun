@@ -6,9 +6,9 @@ use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU8, AtomicU32, AtomicUsize
 
 use bun_core::collections::LinearFifo;
 use bun_core::collections::linear_fifo::DynamicBuffer;
-use bun_event_loop::ConcurrentTask::AutoDeinit;
-use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_io::KeepAlive;
+use bun_loop::ConcurrentTask::AutoDeinit;
+use bun_loop::{TaskTag, Taskable, task_tag};
+use bun_loop::KeepAlive;
 use bun_jsc::StringJsc;
 use bun_jsc::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -1823,7 +1823,7 @@ impl napi_async_work {
             return;
         }
         self.scheduled = true;
-        self.poll_ref.ref_(bun_io::js_vm_ctx());
+        self.poll_ref.ref_(bun_loop::js_vm_ctx());
         WorkPool::schedule(&raw mut self.task);
     }
 
@@ -1883,7 +1883,7 @@ impl napi_async_work {
         let mut poll_ref = core::mem::take(&mut self.poll_ref);
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
         // generically; this is a genuine one-off cleanup.
-        scopeguard::defer! { poll_ref.unref(bun_io::js_vm_ctx()); }
+        scopeguard::defer! { poll_ref.unref(bun_loop::js_vm_ctx()); }
 
         // https://github.com/nodejs/node/blob/a2de5b9150da60c77144bb5333371eaca3fab936/src/node_api.cc#L1201
         let Some(complete) = self.complete else {
@@ -2973,12 +2973,12 @@ impl ThreadSafeFunction {
 
     pub fn ref_(&mut self) {
         self.poll_ref
-            .ref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+            .ref_concurrently_from_event_loop(bun_loop::js_vm_ctx());
     }
 
     pub fn unref(&mut self) {
         self.poll_ref
-            .unref_concurrently_from_event_loop(bun_io::js_vm_ctx());
+            .unref_concurrently_from_event_loop(bun_loop::js_vm_ctx());
     }
 
     pub fn acquire(&mut self) -> napi_status {

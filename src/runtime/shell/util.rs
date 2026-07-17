@@ -5,7 +5,7 @@ pub enum OutKind {
     Stderr,
 }
 
-// The user-facing stdio type from `crate::api::bun_spawn::stdio`, NOT the
+// The user-facing stdio type from `crate::api::bun_loop::stdio`, NOT the
 // low-level `PosixStdio`/`WindowsStdio` spawn-option shape that the
 // `bun_spawn` *crate* re-exports under the same name.
-pub use crate::api::bun_spawn::stdio::Stdio;
+pub use crate::api::bun_loop::stdio::Stdio;

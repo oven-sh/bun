@@ -800,7 +800,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::TransformO
         CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::TestCommand
     ) {
         if args.flag(b"--no-orphans") {
-            bun_io::parent_death_watchdog::enable();
+            bun_loop::parent_death_watchdog::enable();
         }
     }
 

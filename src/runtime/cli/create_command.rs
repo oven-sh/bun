@@ -117,8 +117,8 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
         // in `spawn_process_windows`), so populate it.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            loop_: bun_event_loop::EventLoopHandle::init_mini(
-                bun_event_loop::MiniEventLoop::init_global(None, None),
+            loop_: bun_loop::EventLoopHandle::init_mini(
+                bun_loop::MiniEventLoop::init_global(None, None),
             ),
             ..Default::default()
         },
@@ -1496,8 +1496,8 @@ impl CreateCommand {
                 // Default would zero `loop_` → UB.
                 #[cfg(windows)]
                 windows: spawn_sync::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::init_mini(
-                        bun_event_loop::MiniEventLoop::init_global(None, None),
+                    loop_: bun_loop::EventLoopHandle::init_mini(
+                        bun_loop::MiniEventLoop::init_global(None, None),
                     ),
                     ..Default::default()
                 },
@@ -1620,8 +1620,8 @@ impl CreateCommand {
                     // `bun.spawnSync` on Windows requires a live `loop_` — supply it.
                     #[cfg(windows)]
                     windows: spawn_sync::WindowsOptions {
-                        loop_: bun_event_loop::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
+                        loop_: bun_loop::EventLoopHandle::init_mini(
+                            bun_loop::MiniEventLoop::init_global(None, None),
                         ),
                         ..Default::default()
                     },
@@ -2818,8 +2818,8 @@ impl GitHandler {
         // *thread-local* `MiniEventLoop` singleton — `init_global` is `thread_local!`-backed,
         // so the main thread's loop is not touched (driving it cross-thread would be libuv UB).
         #[cfg(windows)]
-        let win_loop = bun_event_loop::EventLoopHandle::init_mini(
-            bun_event_loop::MiniEventLoop::init_global(None, None),
+        let win_loop = bun_loop::EventLoopHandle::init_mini(
+            bun_loop::MiniEventLoop::init_global(None, None),
         );
         if let Some(git) = which(bun_path_buf, path, destination, b"git") {
             let git: &[u8] = git.as_bytes();

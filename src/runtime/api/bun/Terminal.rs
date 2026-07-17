@@ -20,11 +20,11 @@ use crate::node::StringOrBuffer;
 use crate::webcore::blob::ZigStringBlobExt;
 use bun_core::SignalCode;
 use bun_core::ZigString;
-use bun_io::Loop as AsyncLoop;
-use bun_io::pipe_reader::BufferedReaderParent;
+use bun_loop::Loop as AsyncLoop;
+use bun_loop::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
-use bun_io::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
+use bun_loop::pipe_reader::PosixFlags;
+use bun_loop::{BufferedReader, ReadState, StreamingWriter, WriteStatus};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, SysErrorJsc, ZigStringSlice,
@@ -32,7 +32,7 @@ use bun_jsc::{
 use bun_sys::{self as sys, Fd, FdExt};
 
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
 #[cfg(windows)]
 use bun_sys::windows;
 
@@ -538,7 +538,7 @@ impl Terminal {
                             // PTY behaves like a pipe, not a socket
                             r.flags
                                 .insert(PosixFlags::NONBLOCKING | PosixFlags::POLLABLE);
-                            poll.set_flag(bun_io::FilePollFlag::Nonblocking);
+                            poll.set_flag(bun_loop::FilePollFlag::Nonblocking);
                         }
                     });
                 }
@@ -1467,7 +1467,7 @@ impl Terminal {
         // writer can even exceed `input_len` when prior data drains), so
         // returning them would make callers re-send an already-queued tail.
         match write_result {
-            bun_io::WriteResult::Err(err) => {
+            bun_loop::WriteResult::Err(err) => {
                 Err(global_object.throw_value(err.to_js(global_object)))
             }
             _ => Ok(JSValue::js_number(input_len as f64)),
@@ -1936,10 +1936,10 @@ fn deinit_and_destroy(this: *mut Terminal) {
 
 // BufferedReader vtable parent: Terminal declares
 // `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop`.
-bun_io::buffered_reader_parent_link!(Terminal for Terminal);
+bun_loop::buffered_reader_parent_link!(Terminal for Terminal);
 impl BufferedReaderParent for Terminal {
-    const KIND: bun_io::BufferedReaderParentLinkKind =
-        bun_io::BufferedReaderParentLinkKind::Terminal;
+    const KIND: bun_loop::BufferedReaderParentLinkKind =
+        bun_loop::BufferedReaderParentLinkKind::Terminal;
     const HAS_ON_READ_CHUNK: bool = true;
 
     unsafe fn on_read_chunk(this: *mut Self, chunk: &[u8], has_more: ReadState) -> bool {
@@ -1951,13 +1951,13 @@ impl BufferedReaderParent for Terminal {
     unsafe fn on_reader_error(this: *mut Self, err: sys::Error) {
         Self::from_parent_ptr(this).on_reader_error(&err)
     }
-    unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
+    unsafe fn loop_(this: *mut Self) -> *mut bun_loop::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
         // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
         // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
         Self::from_parent_ptr(this).loop_().cast()
     }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_loop::io::EventLoopHandle {
         Self::from_parent_ptr(this)
             .event_loop_handle
             .as_event_loop_ctx()
@@ -1968,8 +1968,8 @@ impl BufferedReaderParent for Terminal {
 // → trait impl on `Terminal`. All methods take `*mut Self` because the writer
 // is an intrusive *field of* the parent — see PipeWriter.rs PosixStreamingWriterParent.
 #[cfg(unix)]
-impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::TERMINAL_POLL;
+impl bun_loop::pipe_writer::PosixStreamingWriterParent for Terminal {
+    const POLL_OWNER_TAG: bun_loop::PollTag = bun_loop::posix_event_loop::poll_tag::TERMINAL_POLL;
     const HAS_ON_READY: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status)
@@ -1983,7 +1983,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
     unsafe fn on_close(this: *mut Self) {
         Self::from_parent_ptr(this).on_writer_close()
     }
-    unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
+    unsafe fn event_loop(this: *mut Self) -> bun_loop::io::EventLoopHandle {
         Self::from_parent_ptr(this)
             .event_loop_handle
             .as_event_loop_ctx()
@@ -1994,7 +1994,7 @@ impl bun_io::pipe_writer::PosixStreamingWriterParent for Terminal {
 }
 
 #[cfg(windows)]
-impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
+impl bun_loop::pipe_writer::WindowsWriterParent for Terminal {
     unsafe fn loop_(this: *mut Self) -> *mut bun_core::libuv_sys::Loop {
         // SAFETY: BACKREF set via writer.parent; shared-only read.
         unsafe { (*this).event_loop_handle.uv_loop() }
@@ -2013,7 +2013,7 @@ impl bun_io::pipe_writer::WindowsWriterParent for Terminal {
 }
 
 #[cfg(windows)]
-impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
+impl bun_loop::pipe_writer::WindowsStreamingWriterParent for Terminal {
     const HAS_ON_WRITABLE: bool = true;
     unsafe fn on_write(this: *mut Self, amount: usize, status: WriteStatus) {
         Self::from_parent_ptr(this).on_write(amount, status)

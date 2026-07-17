@@ -4,7 +4,7 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_uint, c_void};
 use core::ptr::{self, NonNull};
 
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::ZigStringJsc as _;
 use bun_jsc::zig_string::ZigString;
@@ -29,7 +29,7 @@ use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
 use bun_sys::cares::c_ares_draft as c_ares;
 use bun_core::String as BunString;
-use bun_event_loop::AnyTask::AnyTask;
+use bun_loop::AnyTask::AnyTask;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys as sys;
 use bun_uws as uws;
@@ -46,8 +46,8 @@ fn from_duplex<const SSL: bool>(duplex: &mut UpgradedDuplex) -> uws::NewSocketHa
 /// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
 /// `KeepAlive::ref_/unref` — `bun_io` no longer accepts `&VirtualMachine`).
 #[inline]
-fn js_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::posix_event_loop::AllocatorType::Js)
+fn js_loop_ctx() -> bun_loop::EventLoopCtx {
+    bun_loop::posix_event_loop::get_vm_ctx(bun_loop::posix_event_loop::AllocatorType::Js)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -3025,8 +3025,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.close_and_detach(uws::CloseCode::Failure);
         if is_semi_connect {
             this.poll_ref.with_mut(|p| {
-                p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
+                p.unref(bun_loop::posix_event_loop::get_vm_ctx(
+                    bun_loop::AllocatorType::Js,
                 ))
             });
             if !matches!(this.this_value.get(), JsRef::Finalized) {
@@ -3090,8 +3090,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;
         this.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
+            p.unref(bun_loop::posix_event_loop::get_vm_ctx(
+                bun_loop::AllocatorType::Js,
             ))
         });
         if is_semi_connect {
@@ -3143,8 +3143,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let _ = global;
         this.poll_ref.with_mut(|p| {
-            p.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
+            p.ref_(bun_loop::posix_event_loop::get_vm_ctx(
+                bun_loop::AllocatorType::Js,
             ))
         });
         Ok(JSValue::UNDEFINED)
@@ -3158,8 +3158,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
         let _ = global;
         this.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
+            p.unref(bun_loop::posix_event_loop::get_vm_ctx(
+                bun_loop::AllocatorType::Js,
             ))
         });
         Ok(JSValue::UNDEFINED)
@@ -3184,8 +3184,8 @@ impl<const SSL: bool> NewSocket<SSL> {
             .with_mut(|b| b.clear_and_free());
 
         this_ref.poll_ref.with_mut(|p| {
-            p.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
+            p.unref(bun_loop::posix_event_loop::get_vm_ctx(
+                bun_loop::AllocatorType::Js,
             ))
         });
         // need to deinit event without being attached
@@ -3625,8 +3625,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         tls.mark_active();
         if was_reffed {
             tls.poll_ref.with_mut(|p| {
-                p.ref_(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
+                p.ref_(bun_loop::posix_event_loop::get_vm_ctx(
+                    bun_loop::AllocatorType::Js,
                 ))
             });
         }

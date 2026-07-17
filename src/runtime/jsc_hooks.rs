@@ -1221,7 +1221,7 @@ fn print_exception(
 /// `EventLoopTimer`.
 unsafe fn timer_insert(
     vm: *mut VirtualMachine,
-    t: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+    t: *mut bun_loop::EventLoopTimer::EventLoopTimer,
 ) {
     // SAFETY: per fn contract.
     let state = unsafe { runtime_state_of(vm) };
@@ -1237,7 +1237,7 @@ unsafe fn timer_insert(
 /// `t` points at a live `EventLoopTimer` currently linked into the heap.
 unsafe fn timer_remove(
     vm: *mut VirtualMachine,
-    t: *mut bun_event_loop::EventLoopTimer::EventLoopTimer,
+    t: *mut bun_loop::EventLoopTimer::EventLoopTimer,
 ) {
     // SAFETY: per fn contract.
     let state = unsafe { runtime_state_of(vm) };
@@ -1772,14 +1772,14 @@ fn console_on_before_print() {
     }
 }
 
-use bun_io::AsFmt;
+use bun_loop::AsFmt;
 
 /// `ConsoleObject.Formatter.printAs(.Private, …)` runtime-type chain — see
 /// [`RuntimeHooks::console_print_runtime_object`]. Returns `true` when `value`
 /// matched one of the high-tier types and was fully formatted.
 fn console_print_runtime_object<'a, 'f>(
     formatter: &'a mut bun_jsc::Formatter<'f>,
-    writer: &'a mut dyn bun_io::Write,
+    writer: &'a mut dyn bun_loop::Write,
     value: JSValue,
     name_buf: &'a [u8; 512],
     enable_ansi_colors: bool,
@@ -1793,7 +1793,7 @@ fn console_print_runtime_object<'a, 'f>(
 
 fn console_print_runtime_object_inner<const C: bool>(
     formatter: &mut bun_jsc::Formatter<'_>,
-    writer_: &mut dyn bun_io::Write,
+    writer_: &mut dyn bun_loop::Write,
     value: JSValue,
     name_buf: &[u8; 512],
 ) -> JsResult<bool> {
@@ -1856,7 +1856,7 @@ fn console_print_runtime_object_inner<const C: bool>(
     if bun_jsc::FetchHeaders::cast_(value, formatter.global_this.vm()).is_some() {
         if let Some(to_json_function) = value.get(formatter.global_this, "toJSON")? {
             formatter.add_for_new_line("Headers ".len());
-            let _ = bun_io::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());
+            let _ = bun_loop::Write::write_all(writer_, pf!("<r>Headers ").as_bytes());
             let prev_quote_keys = formatter.quote_keys;
             formatter.quote_keys = true;
             let result = to_json_function
@@ -1864,7 +1864,7 @@ fn console_print_runtime_object_inner<const C: bool>(
                 .unwrap_or_else(|err| formatter.global_this.take_exception(err));
             let mut w = AsFmt::new(writer_);
             // UFCS — `Formatter` has an inherent `print_as` (const-generic
-            // `FORMAT`, `&mut dyn bun_io::Write`); we need the trait's
+            // `FORMAT`, `&mut dyn bun_loop::Write`); we need the trait's
             // runtime-tag overload that accepts our `core::fmt::Write` adapter.
             let r = bun_jsc::ConsoleFormatter::print_as::<_, C>(
                 formatter,
@@ -1944,10 +1944,10 @@ fn console_print_runtime_object_inner<const C: bool>(
     }
     {
         use crate::test_runner::pretty_format::{JestPrettyFormat, WrappedWriter};
-        // `writer_` is `&mut dyn bun_io::Write`; wrap once more so the
-        // (sized) `&mut dyn bun_io::Write` satisfies `WrappedWriter<W>`'s
-        // `W: bun_io::Write` bound via the blanket `impl Write for &mut W`.
-        let mut sink: &mut dyn bun_io::Write = &mut *writer_;
+        // `writer_` is `&mut dyn bun_loop::Write`; wrap once more so the
+        // (sized) `&mut dyn bun_loop::Write` satisfies `WrappedWriter<W>`'s
+        // `W: bun_loop::Write` bound via the blanket `impl Write for &mut W`.
+        let mut sink: &mut dyn bun_loop::Write = &mut *writer_;
         let mut wrapped = WrappedWriter::new(&mut sink);
         if JestPrettyFormat::print_asymmetric_matcher::<_, _, C>(
             formatter,
@@ -5271,27 +5271,27 @@ pub(crate) static __BUN_LOADER_HOOKS: LoaderHooks = LoaderHooks {
 // `__bun_run_wtf_timer`) live in [`crate::dispatch`] alongside the other
 // §Dispatch hot-path bodies (`__bun_tick_queue_with_count` / `__bun_run_file_poll`).
 
-/// `bun_io::__bun_get_vm_ctx` body — recover the global event-loop context
+/// `bun_loop::__bun_get_vm_ctx` body — recover the global event-loop context
 /// for the requested arm. Declared
-/// `extern "Rust"` in `bun_io::posix_event_loop`; link-time resolved.
+/// `extern "Rust"` in `bun_loop::posix_event_loop`; link-time resolved.
 #[unsafe(no_mangle)]
-pub(crate) fn __bun_get_vm_ctx(kind: bun_io::AllocatorType) -> bun_io::EventLoopCtx {
+pub(crate) fn __bun_get_vm_ctx(kind: bun_loop::AllocatorType) -> bun_loop::EventLoopCtx {
     match kind {
         // SAFETY: `get_mut_ptr()` is the live per-thread VM singleton.
-        bun_io::AllocatorType::Js => unsafe {
+        bun_loop::AllocatorType::Js => unsafe {
             bun_jsc::virtual_machine::VirtualMachine::event_loop_ctx(
                 bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr(),
             )
         },
-        bun_io::AllocatorType::Mini => {
+        bun_loop::AllocatorType::Mini => {
             // SAFETY: `GLOBAL` is set by `MiniEventLoop::init_global` before
             // any caller asks for `AllocatorType::Mini` (the global mini loop
             // is the only one and is init-once); `mini` is live
             // for the process and `as_event_loop_ctx` only stores it as a tagged
             // backref.
-            let mini = bun_event_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
+            let mini = bun_loop::MiniEventLoop::GLOBAL.with(|g| g.get());
             // SAFETY: `mini` is the live process-global `MiniEventLoop` (see above).
-            bun_event_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(unsafe { &mut *mini })
+            bun_loop::MiniEventLoop::MiniEventLoop::as_event_loop_ctx(unsafe { &mut *mini })
         }
     }
 }
@@ -5326,19 +5326,19 @@ pub fn parse_http_date(value: &[u8]) -> Option<u64> {
     }
 }
 
-/// `bun_event_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
+/// `bun_loop::__bun_js_vm_get` body — erased `VirtualMachine::get()` for
 /// `AbstractVM::JsKind`'s `get_vm()`.
-/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
+/// Declared `extern "Rust"` in `bun_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_js_vm_get() -> *mut () {
     bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr().cast()
 }
 
-/// `bun_event_loop::__bun_stdio_blob_store_new` body.
+/// `bun_loop::__bun_stdio_blob_store_new` body.
 /// Returns an erased `*mut webcore::blob::Store` with intrusive `ref_count = 2`
 /// (one for `RareData`/`MiniEventLoop`, one for the eventual `Blob` consumer).
-/// Declared `extern "Rust"` in `bun_event_loop::MiniEventLoop`; link-time
+/// Declared `extern "Rust"` in `bun_loop::MiniEventLoop`; link-time
 /// resolved.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_stdio_blob_store_new(

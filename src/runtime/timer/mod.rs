@@ -11,14 +11,14 @@ use bun_sys::threading::Guarded;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
-pub use bun_event_loop::EventLoopTimer::{
+pub use bun_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
 // bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
 // `fire()`/`next` accesses type-check without a transmute.
 // TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
-pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
+pub(crate) use bun_loop::EventLoopTimer::Timespec as ElTimespec;
 
 use crate::jsc::JSValue;
 
@@ -42,7 +42,7 @@ pub mod timer;
 // same extern symbol names as before — `Timeout__create`, `TimeoutPrototype__*`,
 // `ImmediateClass__construct`, …):
 //   - `#[bun_jsc::JsClass(name = $js_name)] pub struct $T { … }`
-//   - `bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
+//   - `bun_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer)`
 //   - `impl RefCounted for $T` (intrusive `ref_count` field, `deinit` destructor)
 //   - `impl Default for $T` (`EventLoopTimer::init_paused(EventLoopTimerTag::$tag)`)
 //   - `impl $T`: `ref_`/`deref`/`deinit`/`init_with`/`constructor`/`finalize`
@@ -64,7 +64,7 @@ macro_rules! impl_timer_object {
             pub internals: super::TimerObjectInternals,
         }
 
-        ::bun_event_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
+        ::bun_loop::impl_timer_owner!($T; from_timer_ptr => event_loop_timer);
 
         // Intrusive single-thread refcount mixin.
         impl ::bun_core::ptr::RefCounted for $T {
@@ -273,8 +273,8 @@ mod event_loop_delay_monitor_draft;
 
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
-// `bun_io::heap::Intrusive`. `EventLoopTimer` now embeds the real
-// `bun_io::heap::IntrusiveField` and impls `HeapNode` in its defining crate
+// `bun_loop::heap::Intrusive`. `EventLoopTimer` now embeds the real
+// `bun_loop::heap::IntrusiveField` and impls `HeapNode` in its defining crate
 // (`bun_event_loop`), so the orphan-rule block is gone. `TimerHeap` is a thin
 // newtype that adapts `*mut T` ↔ `Option<*mut T>` for the existing call-sites
 // (`All::insert/remove/next/get_timeout`).
@@ -283,7 +283,7 @@ mod event_loop_delay_monitor_draft;
 #[derive(Default)]
 pub(crate) struct TimerHeapCtx;
 
-impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
+impl bun_loop::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     #[inline]
     unsafe fn less(&self, a: *mut EventLoopTimer, b: *mut EventLoopTimer) -> bool {
         // SAFETY: `Intrusive` only ever calls `less` with non-null nodes that
@@ -293,7 +293,7 @@ impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
 }
 
 #[derive(Default)]
-pub struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
+pub struct TimerHeap(bun_loop::heap::Intrusive<EventLoopTimer, TimerHeapCtx>);
 
 impl TimerHeap {
     #[inline]
@@ -496,7 +496,7 @@ impl EventLoopDelayMonitor {
     pub(crate) fn on_fire(
         &mut self,
         _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
-        now: &bun_event_loop::EventLoopTimer::Timespec,
+        now: &bun_loop::EventLoopTimer::Timespec,
     ) {
         if !self.enabled || self.js_histogram.is_empty() {
             return;
@@ -1287,7 +1287,7 @@ pub(crate) enum CountdownOverflowBehavior {
 // (also moved down) can name them without a `bun_runtime` dep — needed by
 // `bun_jsc::abort_signal::Timeout.flags`. `Kind::big()` lives next to the
 // type so `TimeoutObject`/`TimerObjectInternals` can call it as a method.
-pub use bun_event_loop::EventLoopTimer::{Kind, KindBig};
+pub use bun_loop::EventLoopTimer::{Kind, KindBig};
 
 /// Sized to be the same as one pointer.
 #[repr(C)]

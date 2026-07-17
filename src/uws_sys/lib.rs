@@ -382,7 +382,7 @@ pub mod socket_group;
 pub mod socket_kind;
 #[path = "thunk.rs"]
 pub mod thunk;
-// libuv only — use `bun_event_loop::EventLoopTimer` elsewhere.
+// libuv only — use `bun_loop::EventLoopTimer` elsewhere.
 #[cfg(windows)]
 #[path = "Timer.rs"]
 pub mod timer;

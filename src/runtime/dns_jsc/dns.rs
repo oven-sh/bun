@@ -17,7 +17,7 @@ use bun_sys::dns::{
     Backend as GetAddrInfoBackend, GetAddrInfo, GetAddrInfoResult,
     Options as GetAddrInfoOptions, ResultAny as GetAddrInfoResultAny,
 };
-use bun_io::{self as Async, FilePoll, KeepAlive};
+use bun_loop::{self as Async, FilePoll, KeepAlive};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsCell, JsResult,
@@ -1344,8 +1344,8 @@ pub mod get_addr_info_request {
 // and are guaranteed live (see SAFETY notes below).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl jsc::work_task::WorkTaskContext for GetAddrInfoRequest {
-    const TASK_TAG: bun_event_loop::ConcurrentTask::TaskTag =
-        bun_event_loop::ConcurrentTask::task_tag::GetAddrInfoRequestTask;
+    const TASK_TAG: bun_loop::ConcurrentTask::TaskTag =
+        bun_loop::ConcurrentTask::task_tag::GetAddrInfoRequestTask;
 
     #[inline]
     fn run(this: *mut Self, task: *mut get_addr_info_request::Task) {
@@ -3683,7 +3683,7 @@ pub struct Resolver {
     pub pending_nameinfo_cache_cares: JsCell<NameInfoPendingCache>,
 }
 
-bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
 /// RAII owner for a scoped `Resolver` refcount bump.
 /// Constructed via [`Resolver::ref_scope`]; releases the ref on Drop.

@@ -173,7 +173,7 @@ pub fn close_child_ipc(global: &JSGlobalObject) {
 
 pub(crate) mod sql_hooks {
     use super::*;
-    use bun_event_loop::EventLoopTimer::EventLoopTimer;
+    use bun_loop::EventLoopTimer::EventLoopTimer;
     use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
 
     unsafe fn sql_rare(_vm: *mut VirtualMachine) -> *mut SqlRareData {

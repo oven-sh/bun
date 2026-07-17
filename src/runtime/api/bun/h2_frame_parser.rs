@@ -622,7 +622,7 @@ impl FullSettingsPayload {
 
 /// Writer trait used for generic wire-serialization writer params.
 /// All call sites use either a `FixedBufferStream` cursor or `DirectWriterStruct`.
-use bun_io::Write as WireWriter;
+use bun_loop::Write as WireWriter;
 
 // ──────────────────────────────────────────────────────────────────────────
 // Static header maps
@@ -1237,7 +1237,7 @@ pub use JSH2FrameParser::get_constructor as H2FrameParserConstructor;
 /// thunk in `generated_js2native.rs` (the generator snake-cases the export name).
 pub use JSH2FrameParser::get_constructor as h2_frame_parser_constructor;
 
-use bun_io::FixedBufferStream;
+use bun_loop::FixedBufferStream;
 
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser
@@ -6322,8 +6322,8 @@ impl crate::api::h2::connection::Sink for H2FrameParser {
 struct DirectWriterStruct {
     writer: bun_core::ptr::BackRef<H2FrameParser>,
 }
-impl bun_io::Write for DirectWriterStruct {
-    fn write_all(&mut self, data: &[u8]) -> bun_io::Result<()> {
+impl bun_loop::Write for DirectWriterStruct {
+    fn write_all(&mut self, data: &[u8]) -> bun_loop::io::Result<()> {
         if self.writer.write(data) {
             Ok(())
         } else {

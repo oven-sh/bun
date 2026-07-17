@@ -286,7 +286,7 @@ impl ParsedSourceMap {
             + self.external_source_names.len() * core::mem::size_of::<Box<[u8]>>()
     }
 
-    pub fn write_vlqs<W: bun_io::Write + ?Sized>(&self, writer: &mut W) -> bun_io::Result<()> {
+    pub fn write_vlqs<W: bun_loop::Write + ?Sized>(&self, writer: &mut W) -> bun_loop::io::Result<()> {
         if let Some(ism) = &self.internal {
             let mut buf = bun_core::MutableString::init_empty();
             ism.append_vlq_to(&mut buf);
@@ -344,7 +344,7 @@ pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
 
 impl<'a> fmt::Display for VlqsFmt<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = bun_io::FmtAdapter::new(f);
+        let mut adapter = bun_loop::FmtAdapter::new(f);
         self.0.write_vlqs(&mut adapter).map_err(|_| fmt::Error)
     }
 }

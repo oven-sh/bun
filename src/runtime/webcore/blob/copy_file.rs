@@ -5,7 +5,7 @@ use crate::node::types::PathLikeExt as _;
 use crate::webcore::blob::{self, MAX_SIZE, MkdirpTarget, Retry, SizeType, StoreRef, store};
 use crate::webcore::node_types::PathOrFileDescriptor;
 #[cfg(windows)]
-use bun_io as aio;
+use bun_loop as aio;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue};
 use bun_core::paths::PathBuffer;
 #[cfg(windows)]
@@ -86,7 +86,7 @@ impl MkdirpTarget for CopyFile<'_> {
 }
 
 impl jsc::concurrent_promise_task::ConcurrentPromiseTaskContext for CopyFile<'_> {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::CopyFilePromiseTask;
+    const TASK_TAG: bun_loop::TaskTag = bun_loop::task_tag::CopyFilePromiseTask;
     fn run(&mut self) {
         self.run_async();
     }
@@ -1822,9 +1822,9 @@ fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>) {
         bun_sys::Result::Err(e) => Some(e),
         bun_sys::Result::Ok(()) => None,
     };
-    // `bun_event_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
+    // `bun_loop::JsResult` carries the low-tier `ErasedJsError`; shim the
     // callback signature to match `ManagedTask::new`'s `fn(*mut T) -> JsResult<()>`.
-    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_event_loop::JsResult<()> {
+    fn call_erased(this: *mut CopyFileWindows<'_>) -> bun_loop::JsResult<()> {
         // SAFETY: `this` is the heap-allocated `CopyFileWindows` passed to
         // `ManagedTask::new` below; `on_mkdirp_complete` may free it via `throw`, so we
         // do not touch `this` afterward.

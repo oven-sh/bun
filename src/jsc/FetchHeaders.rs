@@ -1,10 +1,8 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use crate::virtual_machine::VirtualMachine;
 use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
 use bun_core::{String as BunString, StringPointer, ZigString};
-use bun_uws::ResponseKind;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
@@ -85,14 +83,6 @@ unsafe extern "C" {
         arg2: &JSGlobalObject,
     );
     safe fn WebCore__FetchHeaders__toJS(arg0: &FetchHeaders, arg1: &JSGlobalObject) -> JSValue;
-    // safe: `FetchHeaders` is an opaque ZST handle (`&mut` ≡ non-null `*mut`);
-    // `arg2` is an opaque handle to a C++-owned uWS response (never dereferenced
-    // as Rust data).
-    safe fn WebCore__FetchHeaders__toUWSResponse(
-        arg0: &mut FetchHeaders,
-        kind: ResponseKind,
-        arg2: *mut c_void,
-    );
     safe fn WebCore__FetchHeaders__createFromH3(arg0: *mut c_void) -> *mut FetchHeaders;
 
     safe fn WebCore__FetchHeaders__createFromJS(
@@ -202,10 +192,6 @@ impl FetchHeaders {
             .expect("WebCore__FetchHeaders__createFromH3 returned null")
     }
 
-    pub fn to_uws_response(&mut self, kind: ResponseKind, uws_response: *mut c_void) {
-        WebCore__FetchHeaders__toUWSResponse(self, kind, uws_response)
-    }
-
     pub fn create_empty() -> NonNull<FetchHeaders> {
         NonNull::new(WebCore__FetchHeaders__createEmpty())
             .expect("WebCore__FetchHeaders__createEmpty returned null")
@@ -304,10 +290,7 @@ impl FetchHeaders {
         NonNull::new(WebCore__FetchHeaders__cast_(value, vm))
     }
 
-    pub fn cast(value: JSValue) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: `VirtualMachine::get()` is only called from the JS thread, where
-        // `global` is a live non-null JSGlobalObject for the VM's lifetime.
-        let global = VirtualMachine::get().global();
+    pub fn cast(value: JSValue, global: &JSGlobalObject) -> Option<NonNull<FetchHeaders>> {
         Self::cast_(value, global.vm())
     }
 

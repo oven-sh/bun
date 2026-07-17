@@ -691,7 +691,7 @@ pub struct DirTask {
     pub kind_hint: EntryKindHint,
     pub deleted_entries: Vec<u8>,
     /// Intrusive node for the verbose-write bounce-back to the main thread.
-    pub concurrent_task: bun_event_loop::EventLoopTask,
+    pub concurrent_task: bun_loop::EventLoopTask,
     /// Intrusive node for the thread-pool dispatch.
     pub work_task: WorkPoolTask,
 }
@@ -733,7 +733,7 @@ impl ShellRmTask {
             deleting_after_waiting_for_children: AtomicBool::new(false),
             kind_hint: EntryKindHint::Idk,
             deleted_entries: Vec::new(),
-            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(evtloop),
+            concurrent_task: bun_loop::EventLoopTask::from_event_loop(evtloop),
             work_task: WorkPoolTask {
                 node: Default::default(),
                 callback: DirTask::work_pool_callback,
@@ -875,7 +875,7 @@ impl ShellRmTask {
             deleting_after_waiting_for_children: AtomicBool::new(false),
             kind_hint,
             deleted_entries: Vec::new(),
-            concurrent_task: bun_event_loop::EventLoopTask::from_event_loop(self.event_loop),
+            concurrent_task: bun_loop::EventLoopTask::from_event_loop(self.event_loop),
             work_task: WorkPoolTask {
                 node: Default::default(),
                 callback: DirTask::work_pool_callback,
@@ -1536,7 +1536,7 @@ impl DirTask {
     /// `this` is a live DirTask; the pending-main-callback count on the
     /// owning ShellRmTask was bumped before calling.
     unsafe fn queue_for_write(this: *mut DirTask) {
-        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
+        use bun_loop::{ConcurrentTask::AutoDeinit, EventLoopTask, EventLoopTaskPtr};
         // SAFETY: caller contract — `this` is live; `task_manager` is live
         // (pending count > 0). On the early-return path `deinit` reclaims a
         // non-root Box and `decr_pending_and_maybe_deinit` releases the
@@ -1753,11 +1753,11 @@ impl RemoveFileHandler for RemoveFileParent {
 
 // ── Taskable / ShellTaskCtx glue ──────────────────────────────────────────
 
-impl bun_event_loop::Taskable for ShellRmTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmTask;
+impl bun_loop::Taskable for ShellRmTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellRmTask;
 }
-impl bun_event_loop::Taskable for DirTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellRmDirTask;
+impl bun_loop::Taskable for DirTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellRmDirTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {

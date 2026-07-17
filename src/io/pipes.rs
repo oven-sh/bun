@@ -131,7 +131,7 @@ impl PollOrFd {
 }
 
 // Sunk to `bun_io` so `FilePoll::file_type()` needs no aio→io edge; re-export
-// keeps the historical `bun_io::FileType` / `bun_io::pipes::FileType` paths.
+// keeps the historical `bun_loop::FileType` / `bun_loop::pipes::FileType` paths.
 pub use crate::posix_event_loop::FileType;
 
 #[derive(Copy, Clone, Eq, PartialEq)]

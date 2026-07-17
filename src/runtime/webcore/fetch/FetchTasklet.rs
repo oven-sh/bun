@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_boringssl as boringssl;
 use bun_sys::cares::c_ares_draft as c_ares;
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
-use bun_event_loop::{
+use bun_loop::{
     AnyTask::AnyTask,
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
     Task, Taskable,
@@ -15,7 +15,7 @@ use bun_http::{
     AsyncHTTP, CertificateInfo, FetchRedirect, HTTPClientResult, HTTPResponseMetadata, Headers,
     Signals, ThreadSafeStreamBuffer,
 };
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -37,16 +37,16 @@ use crate::webcore::{
 };
 
 use bun_jsc::JsTerminatedResult;
-// `bun_event_loop::JsResult` (cycle-broken erased error) — used by
+// `bun_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask/AnyTask callbacks at the tier-3 layer.
-type ElJsResult<T> = bun_event_loop::JsResult<T>;
+type ElJsResult<T> = bun_loop::JsResult<T>;
 
 use boringssl::c::{X509_free, d2i_X509};
 
 // ConcurrentTask::from() needs `Taskable`; tag is declared in bun_event_loop
 // but the impl lives next to the type (cycle-break).
 impl Taskable for FetchTasklet {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::FetchTasklet;
 }
 
 bun_core::declare_scope!(FetchTasklet, visible);
@@ -412,7 +412,7 @@ impl FetchTasklet {
         );
     }
 
-    // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
+    // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_loop::JsResult<()>`
     // (cycle-broken erased error).
     fn deinit_callback(this: *mut FetchTasklet) -> ElJsResult<()> {
         // SAFETY: enqueued with last ref; exclusive access on main thread
@@ -852,7 +852,7 @@ impl FetchTasklet {
                     sink.cancel(JSValue::UNDEFINED);
                 }
                 let mut poll_ref = core::mem::take(&mut this.poll_ref);
-                poll_ref.unref(bun_io::js_vm_ctx());
+                poll_ref.unref(bun_loop::js_vm_ctx());
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
                 FetchTasklet::deref(std::ptr::from_mut(this));
             }
@@ -1106,10 +1106,10 @@ impl FetchTasklet {
 
         // Map `JsTerminated` to the low-tier `Terminated` tag so the dispatcher unwinds correctly.
         fn resolve_erased(p: *mut Holder) -> ElJsResult<()> {
-            Holder::resolve(p).map_err(|_| bun_event_loop::ErasedJsError::Terminated)
+            Holder::resolve(p).map_err(|_| bun_loop::ErasedJsError::Terminated)
         }
         fn reject_erased(p: *mut Holder) -> ElJsResult<()> {
-            Holder::reject(p).map_err(|_| bun_event_loop::ErasedJsError::Terminated)
+            Holder::reject(p).map_err(|_| bun_loop::ErasedJsError::Terminated)
         }
 
         let holder = bun_core::heap::into_raw(Box::new(Holder {
@@ -1588,7 +1588,7 @@ impl FetchTasklet {
 
         // A body consumer is attaching; keep the process alive until the
         // body finishes (undone in `on_progress_update` when `is_done`).
-        this.poll_ref.ref_(bun_io::js_vm_ctx());
+        this.poll_ref.ref_(bun_loop::js_vm_ctx());
 
         // The bytes already in `scheduled_response_buffer` are handed to the
         // new stream below. That is the drain `Paused` was waiting for, so
@@ -1674,7 +1674,7 @@ impl FetchTasklet {
 
     fn on_start_buffering_callback(ctx: *mut c_void) {
         let this = Self::from_ctx(ctx);
-        this.poll_ref.ref_(bun_io::js_vm_ctx());
+        this.poll_ref.ref_(bun_loop::js_vm_ctx());
         if this
             .signal_store
             .set_receive_mode_terminal(BodyReceiveMode::BufferAll)
@@ -1826,7 +1826,7 @@ impl FetchTasklet {
         }
         // we should not keep the process alive if we are ignoring the body
         let _ = self.javascript_vm;
-        self.poll_ref.unref(bun_io::js_vm_ctx());
+        self.poll_ref.unref(bun_loop::js_vm_ctx());
         // clean any remaining references
         if !from_finalizer {
             self.clear_stream_handlers();
@@ -1848,7 +1848,7 @@ impl FetchTasklet {
         // consumer hooks (`on_start_streaming_http_response_body_callback`,
         // `on_start_buffering_callback`) re-ref if the caller reads the body.
         if self.is_waiting_body {
-            self.poll_ref.unref(bun_io::js_vm_ctx());
+            self.poll_ref.unref(bun_loop::js_vm_ctx());
         }
         // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
@@ -2151,7 +2151,7 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
+    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_loop::JsResult<()>`.
     pub(crate) fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
         bun_core::scoped_log!(FetchTasklet, "resumeRequestDataStream");
@@ -2309,7 +2309,7 @@ impl FetchTasklet {
         let node_ref = Self::from_raw_mut(node);
         let mut batch = bun_sys::threading::thread_pool::Batch::default();
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
-        node_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+        node_ref.poll_ref.ref_(bun_loop::js_vm_ctx());
 
         // increment ref so we can keep it alive until the http client is done
         node_ref.ref_();

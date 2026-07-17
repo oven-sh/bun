@@ -2,7 +2,7 @@
 //!
 //! The few methods that diverge per platform keep their behaviour via
 //! `#[cfg]` arms inline below — no caller-visible contract changes (all
-//! external users go through `bun_io::KeepAlive` and only touch the
+//! external users go through `bun_loop::KeepAlive` and only touch the
 //! identical-signature methods).
 
 use crate::EventLoopCtx;

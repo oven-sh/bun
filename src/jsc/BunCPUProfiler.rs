@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use core::ffi::c_int;
 use std::io::Write as _;
 

@@ -155,8 +155,8 @@ pub fn write_array<S, T>(stream: &mut S, array: &[T], prefix: &'static str) -> c
 where
     // One type plays both the positional-stream and append-writer roles —
     // `StreamType` impls both `PositionalStream` (get_pos/pwrite) and
-    // `bun_io::Write` (append) — so there are never two `&mut` to one buffer.
-    S: lockfile::PositionalStream + bun_io::Write,
+    // `bun_loop::Write` (append) — so there are never two `&mut` to one buffer.
+    S: lockfile::PositionalStream + bun_loop::Write,
 {
     // This call is a zero-cost intent marker only — it carries no trait bound (see the
     // doc comment on `assert_no_uninitialized_padding`). The actual compile-time
@@ -216,7 +216,7 @@ pub fn save<S>(
 ) -> crate::Result<()>
 where
     // See `write_array` — a single bound avoids two `&mut` to the same object.
-    S: lockfile::PositionalStream + bun_io::Write,
+    S: lockfile::PositionalStream + bun_loop::Write,
 {
     let buffers = &lockfile.buffers;
 

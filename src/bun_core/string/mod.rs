@@ -29,7 +29,7 @@ pub mod string_joiner;
 pub mod mutable_string;
 pub mod wtf;
 
-// Canonical byte-oriented `Write` trait — re-exported by `bun_io::write`.
+// Canonical byte-oriented `Write` trait — re-exported by `bun_loop::write`.
 pub mod write;
 pub use write::Write;
 

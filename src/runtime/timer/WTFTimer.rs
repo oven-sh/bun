@@ -55,7 +55,7 @@ pub struct WTFTimer {
     script_execution_context_id: ScriptExecutionContextIdentifier,
 }
 
-bun_event_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(WTFTimer; from_timer_ptr => event_loop_timer);
 
 /// # Safety
 /// `vm` must be the live `VirtualMachine` for the current thread.

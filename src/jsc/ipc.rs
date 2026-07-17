@@ -9,9 +9,9 @@ use crate::{JSGlobalObject, JSValue, JsError, JsResult, SerializedFlags, Task};
 use bun_core::collections::{ByteVecExt, VecExt};
 use bun_core::{Output, handle_oom};
 use bun_core::{String as BunString, strings};
-use bun_event_loop::ManagedTask::ManagedTask;
-use bun_io::KeepAlive;
-use bun_io::StreamBuffer;
+use bun_loop::ManagedTask::ManagedTask;
+use bun_loop::KeepAlive;
+use bun_loop::StreamBuffer;
 use bun_sys::Fd;
 use bun_sys::FdExt;
 #[cfg(windows)]
@@ -1000,7 +1000,7 @@ impl SendQueue {
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
         if was_open && self.after_close_task.is_none() {
-            // Note: `bun_event_loop::JsResult` erases the error to `*mut ()`;
+            // Note: `bun_loop::JsResult` erases the error to `*mut ()`;
             // adapt the jsc-crate `JsResult` via a non-capturing closure (coerces to fn ptr).
             let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
                 let _ = Self::_on_after_ipc_closed(p);
@@ -1056,7 +1056,7 @@ impl SendQueue {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
             return;
         }
-        // Note: see `_socket_closed` — adapt `bun_event_loop::JsResult` via closure.
+        // Note: see `_socket_closed` — adapt `bun_loop::JsResult` via closure.
         let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
             let _ = Self::_close_socket_task(p);
             Ok(())
@@ -1220,8 +1220,8 @@ impl SendQueue {
         let _ = global;
         // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`; dispatch is
-        // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
-        let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
+        // routed through `bun_loop::get_vm_ctx` which `bun_runtime` registers.
+        let ctx = bun_loop::posix_event_loop::get_vm_ctx(bun_loop::AllocatorType::Js);
         if self.should_ref() {
             self.keep_alive.ref_(ctx);
         } else {

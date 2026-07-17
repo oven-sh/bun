@@ -746,8 +746,8 @@ impl ShellCpTask {
     }
 }
 
-impl bun_event_loop::Taskable for ShellCpTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellCpTask;
+impl bun_loop::Taskable for ShellCpTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellCpTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellCpTask {

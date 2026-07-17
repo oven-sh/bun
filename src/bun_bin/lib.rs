@@ -217,7 +217,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
 
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
-    bun_io::ParentDeathWatchdog::install();
+    bun_loop::ParentDeathWatchdog::install();
 
     // 6. Push high-tier allocator vtable addresses into the
     //    `bun_core::safety::alloc::has_ptr` registry so debug-only allocator-mismatch

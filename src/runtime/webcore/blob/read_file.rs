@@ -17,7 +17,7 @@ use crate::webcore::node_types::PathOrFileDescriptor;
 use bun_core::collections::ByteVecExt as _;
 use bun_core;
 use bun_core::String as BunString;
-use bun_io::{self as io, FileAction};
+use bun_loop::{self as io, FileAction};
 #[cfg(windows)]
 // `bun_jsc::EventLoop` is the *module*; the struct is one level deeper.
 use bun_jsc::event_loop::EventLoop;
@@ -164,7 +164,7 @@ pub type ReadFileTask = bun_jsc::work_task::WorkTask<ReadFile>;
 // and are guaranteed live (see SAFETY notes below).
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl bun_jsc::work_task::WorkTaskContext for ReadFile {
-    const TASK_TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ReadFileTask;
+    const TASK_TAG: bun_loop::TaskTag = bun_loop::task_tag::ReadFileTask;
     fn run(this: *mut Self, task: *mut bun_jsc::work_task::WorkTask<Self>) {
         // SAFETY: WorkTask::run_from_thread_pool guarantees `this` is live.
         unsafe { (*this).run(task) }
@@ -242,7 +242,7 @@ impl FileOpener for ReadFile {
 }
 
 impl FileCloser for ReadFile {
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
+    const IO_TAG: bun_loop::Tag = bun_loop::Tag::ReadFile;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -258,10 +258,10 @@ impl FileCloser for ReadFile {
     fn state(&self) -> &AtomicU8 {
         &self.state
     }
-    fn io_request(&mut self) -> Option<&mut bun_io::Request> {
+    fn io_request(&mut self) -> Option<&mut bun_loop::Request> {
         Some(&mut self.io_request)
     }
-    fn io_poll(&mut self) -> &mut bun_io::Poll {
+    fn io_poll(&mut self) -> &mut bun_loop::Poll {
         &mut self.io_poll
     }
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
@@ -275,7 +275,7 @@ impl FileCloser for ReadFile {
         unreachable!()
     }
 
-    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_> {
+    fn schedule_close(request: &mut bun_loop::Request) -> bun_loop::Action<'_> {
         // SAFETY: request is &mut self.io_request (intrusive); recover parent.
         let this: &mut ReadFile = unsafe {
             &mut *(bun_core::from_field_ptr!(
@@ -976,7 +976,7 @@ impl<'a> FileOpener for ReadFileUV<'a> {
 
 #[cfg(windows)]
 impl<'a> FileCloser for ReadFileUV<'a> {
-    const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
+    const IO_TAG: bun_loop::Tag = bun_loop::Tag::ReadFile;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -1000,10 +1000,10 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn state(&self) -> &AtomicU8 {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    fn io_request(&mut self) -> Option<&mut bun_io::Request> {
+    fn io_request(&mut self) -> Option<&mut bun_loop::Request> {
         None
     }
-    fn io_poll(&mut self) -> &mut bun_io::Poll {
+    fn io_poll(&mut self) -> &mut bun_loop::Poll {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask {
@@ -1012,7 +1012,7 @@ impl<'a> FileCloser for ReadFileUV<'a> {
     fn update(&mut self) {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
-    fn schedule_close(_: &mut bun_io::Request) -> bun_io::Action<'_> {
+    fn schedule_close(_: &mut bun_loop::Request) -> bun_loop::Action<'_> {
         unreachable!("@hasField(ReadFileUV, \"io_request\") == false")
     }
     fn on_close_io_request(_: *mut bun_jsc::WorkPoolTask) {

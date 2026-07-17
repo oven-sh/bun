@@ -1809,7 +1809,7 @@ pub mod io {
     // Lives in `bun_core` (not `bun_io`) so leaf crates
     // below `bun_io` in the dep graph — `bun_string`, `bun_collections`,
     // `bun_url` — can implement it without an upward dep. `bun_io` re-exports
-    // this verbatim as `bun_io::Write`.
+    // this verbatim as `bun_loop::Write`.
     // ════════════════════════════════════════════════════════════════════════
     use core::fmt;
 

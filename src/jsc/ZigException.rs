@@ -6,8 +6,6 @@ use crate::schema_api as api;
 use bun_core::String;
 use bun_core::url::URL as ZigURL;
 
-use crate::module_loader::ModuleLoader;
-use crate::virtual_machine::VirtualMachine;
 use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace};
 
 // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
@@ -164,7 +162,7 @@ impl Holder {
     // `Drop` cannot), but the string-ref release half is also covered by
     // `Drop` below so an early `?`/return between population and the tail
     // call won't leak WTF string refs.
-    pub fn deinit(&mut self, vm: &mut VirtualMachine) {
+    pub fn deinit(&mut self, reset_arena: impl FnOnce()) {
         if self.loaded {
             // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
             unsafe { self.zig_exception.assume_init_mut() }.deinit();
@@ -172,7 +170,7 @@ impl Holder {
             self.loaded = false;
         }
         if self.need_to_clear_parser_arena_on_deinit {
-            ModuleLoader::reset_arena(vm);
+            reset_arena();
         }
     }
 

@@ -165,7 +165,7 @@ pub(crate) fn filter<'a>(
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
-    let mut event_loop = bun_event_loop::AnyEventLoop::init();
+    let mut event_loop = bun_loop::AnyEventLoop::init();
 
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,

@@ -9,7 +9,7 @@
 //! big-endian integer helper. `bun_io` re-exports this module
 //! (`pub use bun_core::write::*;`) and layers its sink types
 //! (`FixedBufferStream`, `BufWriter`, `FmtAdapter`, `DiscardingWriter`) on top,
-//! so the existing `bun_io::Write` importers are unaffected.
+//! so the existing `bun_loop::Write` importers are unaffected.
 
 /// `Result<T>` over `core::fmt::Error` so `?` composes everywhere.
 pub type Result<T = ()> = core::result::Result<T, core::fmt::Error>;
@@ -21,7 +21,7 @@ pub use crate::util::io::{IntLe, Write};
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Integers that can be written/read in big-endian (network) byte order.
-/// Mirrors [`IntLe`]; used by `bun_io::FixedBufferStream::read_int_be` and the
+/// Mirrors [`IntLe`]; used by `bun_loop::FixedBufferStream::read_int_be` and the
 /// HTTP/2 wire-format writers.
 pub trait IntBe: Copy {
     type Bytes: AsRef<[u8]> + AsMut<[u8]> + Default;

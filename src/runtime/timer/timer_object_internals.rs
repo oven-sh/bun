@@ -62,10 +62,10 @@ impl Default for TimerObjectInternals {
 }
 
 // LAYERING: `Flags` (the packed-u32 state machine) was MOVED DOWN to
-// `bun_event_loop::EventLoopTimer::TimerFlags` so `bun_jsc::abort_signal::Timeout`
+// `bun_loop::EventLoopTimer::TimerFlags` so `bun_jsc::abort_signal::Timeout`
 // can name it without a forward dep on this crate. Re-exported here so existing
 // `TimerObjectInternals`/`All::update` callers see the same nominal type.
-pub use bun_event_loop::EventLoopTimer::TimerFlags as Flags;
+pub use bun_loop::EventLoopTimer::TimerFlags as Flags;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `runImmediateTask` path for `__bun_run_immediate_task` (dispatch.rs).

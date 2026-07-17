@@ -1637,7 +1637,7 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-// `bun_spawn::sync::Options` owns
+// `bun_loop::sync::Options` owns
 // `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
 // the null-terminated envp array is returned alongside as the second tuple element —
 // caller must keep it alive while `Options` is in use (no `Box::leak`, §Forbidden).
@@ -1646,8 +1646,8 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
-) -> (bun_spawn::sync::Options, Vec<*const core::ffi::c_char>) {
+    loop_: &mut bun_loop::AnyEventLoop<'static>,
+) -> (bun_loop::sync::Options, Vec<*const core::ffi::c_char>) {
     let argv: Vec<Box<[u8]>> = {
         const ARGV: &[&[u8]] = &[
             b"git",
@@ -1702,17 +1702,17 @@ pub fn spawn_opts(
     #[cfg(not(windows))]
     let _ = loop_;
 
-    let opts = bun_spawn::sync::Options {
-        stdout: bun_spawn::sync::Stdio::Buffer,
-        stderr: bun_spawn::sync::Stdio::Buffer,
+    let opts = bun_loop::sync::Options {
+        stdout: bun_loop::sync::Stdio::Buffer,
+        stderr: bun_loop::sync::Stdio::Buffer,
         cwd: cwd.as_bytes().into(),
         envp: Some(envp_buf.as_ptr()),
         argv,
         #[cfg(windows)]
-        windows: bun_spawn::sync::WindowsOptions {
+        windows: bun_loop::sync::WindowsOptions {
             // `as_handle` owns the handle conversion so variant internals
             // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+            loop_: bun_loop::AnyEventLoop::as_handle(loop_),
             ..Default::default()
         },
         ..Default::default()
@@ -1722,7 +1722,7 @@ pub fn spawn_opts(
 }
 
 pub fn diff_post_process(
-    result: &mut bun_spawn::sync::Result,
+    result: &mut bun_loop::sync::Result,
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> crate::patch::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
@@ -1801,13 +1801,13 @@ pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop<'static>,
+    loop_: &mut bun_loop::AnyEventLoop<'static>,
 ) -> crate::patch::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths::<false>(old_folder_, new_folder_);
     let old_folder = &paths[0][..];
     let new_folder = &paths[1][..];
 
-    // `bun_spawn::sync` execs argv[0] verbatim (execve, no PATH search), so
+    // `bun_loop::sync` execs argv[0] verbatim (execve, no PATH search), so
     // resolve `git` here — same as `patchCommit`'s `bun.which` call.
     let mut gitbuf = PathBuffer::uninit();
     let git = bun_sys::which::which(
@@ -1865,18 +1865,18 @@ pub fn git_diff_internal(
     #[cfg(not(windows))]
     let _ = loop_;
 
-    let opts = bun_spawn::sync::Options {
-        stdout: bun_spawn::sync::Stdio::Buffer,
-        stderr: bun_spawn::sync::Stdio::Buffer,
+    let opts = bun_loop::sync::Options {
+        stdout: bun_loop::sync::Stdio::Buffer,
+        stderr: bun_loop::sync::Stdio::Buffer,
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // This routes through `bun_spawn::sync::spawn`, whose Windows path
+        // This routes through `bun_loop::sync::spawn`, whose Windows path
         // unconditionally derefs `windows.loop_` (process.rs spawn_windows_*).
         // `WindowsOptions::default()` is `zeroed_unchecked()`, so leaving this
         // defaulted is a null deref on Windows — supply the caller's loop.
         #[cfg(windows)]
-        windows: bun_spawn::sync::WindowsOptions {
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+        windows: bun_loop::sync::WindowsOptions {
+            loop_: bun_loop::AnyEventLoop::as_handle(loop_),
             ..Default::default()
         },
         ..Default::default()
@@ -1884,7 +1884,7 @@ pub fn git_diff_internal(
 
     // unfortunately, git diff returns non-zero exit codes even when it succeeds.
     // we have to check that stderr was not empty to know if it failed
-    let mut result = bun_spawn::sync::spawn(&opts)??;
+    let mut result = bun_loop::sync::spawn(&opts)??;
 
     // Keep envp storage alive across the spawn call; Options.envp borrows it.
     drop(opts);

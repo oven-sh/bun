@@ -5,7 +5,6 @@ use crate::{JSGlobalObject, JSValue, JsError, JsResult, VM};
 // so import them under aliases.
 use crate::JsTerminated;
 use crate::strong::Optional as JscStrong;
-use crate::virtual_machine::VirtualMachine;
 use crate::weak::{Weak as JscWeak, WeakRefType};
 
 bun_opaque::opaque_ffi! {
@@ -86,22 +85,8 @@ impl<T> Weak<T> {
         let _ = self.swap().reject(global, Ok(val));
     }
 
-    /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        // The safe wrapper funnels through the single audited deref in
-        // `enter_event_loop_scope`.
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.reject(global, val);
-    }
-
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) {
         let _ = self.swap().resolve(global, val);
-    }
-
-    /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn resolve_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.resolve(global, val);
     }
 
     pub fn init(
@@ -205,30 +190,8 @@ impl Strong {
         self.swap().reject(global, Ok(err))
     }
 
-    /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn reject_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JSValue,
-    ) -> Result<(), JsTerminated> {
-        // The safe wrapper funnels through the single audited deref in
-        // `enter_event_loop_scope`.
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.reject(global, Ok(val))
-    }
-
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         self.swap().resolve(global, val)
-    }
-
-    /// Like `resolve`, except it drains microtasks at the end of the current event loop iteration.
-    pub fn resolve_task(
-        &mut self,
-        global: &JSGlobalObject,
-        val: JSValue,
-    ) -> Result<(), JsTerminated> {
-        let _guard = VirtualMachine::get().enter_event_loop_scope();
-        self.resolve(global, val)
     }
 
     pub fn init(global: &JSGlobalObject) -> Self {

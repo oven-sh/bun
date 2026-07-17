@@ -121,9 +121,9 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .any_loop_mut()
         .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
     {
-        bun_event_loop::AnyEventLoop::Js { owner } => {
+        bun_loop::AnyEventLoop::Js { owner } => {
             owner.enqueue_task_concurrent(
-                bun_event_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
+                bun_loop::ConcurrentTask::ConcurrentTask::from_callback(result, |p| {
                     // SAFETY: `p` is the `result` Box leaked above; ownership
                     // transfers to `on_complete`, which deallocates it.
                     unsafe { on_complete(p) };
@@ -131,7 +131,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 }),
             );
         }
-        bun_event_loop::AnyEventLoop::Mini(mini) => {
+        bun_loop::AnyEventLoop::Mini(mini) => {
             // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
             // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
             unsafe {

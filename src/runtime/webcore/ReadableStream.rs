@@ -422,7 +422,7 @@ impl ReadableStream {
     pub fn from_pipe<P>(
         global_this: &JSGlobalObject,
         _parent: P,
-        buffered_reader: &mut bun_io::BufferedReader,
+        buffered_reader: &mut bun_loop::BufferedReader,
     ) -> JsResult<JSValue> {
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_core::ptr::BackRef::new(global_this)),

@@ -441,4 +441,4 @@ mod waker_c {
 
 // `Closer` (struct + close/on_close) was duplicated here and in
 // `crate::closer` (lib.rs); the canonical one is re-exported as
-// `bun_io::Closer`. No callers referenced `windows_event_loop::Closer`.
+// `bun_loop::Closer`. No callers referenced `windows_event_loop::Closer`.

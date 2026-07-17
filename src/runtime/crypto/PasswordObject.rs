@@ -3,7 +3,7 @@ use core::fmt::Write as _;
 use std::io::Write as _;
 
 use bun_core::ZigString;
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
@@ -625,7 +625,7 @@ struct PasswordResult<Op: PasswordOp> {
 impl<Op: PasswordOp> PasswordResult<Op> {
     fn run_from_js_erased(p: *mut Self) -> AnyTaskJsResult<()> {
         Self::run_from_js(p)
-            .map_err(|_: jsc::JsTerminated| bun_event_loop::ErasedJsError::Terminated)
+            .map_err(|_: jsc::JsTerminated| bun_loop::ErasedJsError::Terminated)
     }
 
     fn run_from_js(this: *mut Self) -> Result<(), jsc::JsTerminated> {
@@ -642,7 +642,7 @@ impl<Op: PasswordOp> PasswordResult<Op> {
         } = this;
         // SAFETY: `global` stored from a live `&JSGlobalObject`; VM outlives the task.
         let global = unsafe { &*global };
-        r#ref.unref(bun_io::js_vm_ctx());
+        r#ref.unref(bun_loop::js_vm_ctx());
         match value {
             Err(err) => {
                 let error_instance = password_error_instance(&err, Op::ERR_VERB, global);
@@ -693,7 +693,7 @@ impl JSPasswordObject {
             r#ref: KeepAlive::default(),
             task: WorkPoolTask::default(),
         });
-        job.r#ref.ref_(bun_io::js_vm_ctx());
+        job.r#ref.ref_(bun_loop::js_vm_ctx());
         WorkPool::schedule_owned(job);
 
         Ok(promise_value)

@@ -13,7 +13,6 @@ members = [
   "src/install",
   "src/install/windows-shim",
   "src/parsers",
-  "src/io",
   "src/md",
   "src/resolver",
   "src/safety",
@@ -28,7 +27,6 @@ members = [
   "src/css_jsc",
   "src/dns",
   "src/dotenv",
-  "src/event_loop",
   "src/highway",
   "src/http_jsc",
   "src/http_types",
@@ -44,7 +42,6 @@ members = [
   "src/ast_jsc",
   "src/picohttp",
   "src/sql_jsc",
-  "src/patch",
   "src/platform",
   "src/sha_hmac",
   "src/sys_jsc",
@@ -84,7 +81,6 @@ members = [
   "src/which",
   "src/transpiler",
   "src/react_compiler",
-  "src/spawn",
   "src/bunfig",
   "src/bun_bin",
 ]
@@ -347,7 +343,6 @@ bun_glob = { path = "src/glob" }
 bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
-bun_io = { path = "src/io" }
 bun_md = { path = "src/md" }
 bun_resolver = { path = "src/resolver" }
 bun_safety = { path = "src/safety" }
@@ -362,7 +357,6 @@ bun_csrf = { path = "src/csrf" }
 bun_css_jsc = { path = "src/css_jsc" }
 bun_dns = { path = "src/dns" }
 bun_dotenv = { path = "src/dotenv" }
-bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/crypto", package = "bun_crypto" }
 bun_highway = { path = "src/highway" }
 bun_http_jsc = { path = "src/http_jsc" }
@@ -380,7 +374,6 @@ bun_ast_jsc = { path = "src/ast_jsc" }
 bun_picohttp = { path = "src/picohttp" }
 bun_s3_signing = { path = "src/crypto", package = "bun_crypto" }
 bun_sql_jsc = { path = "src/sql_jsc" }
-bun_patch = { path = "src/patch" }
 bun_platform = { path = "src/platform" }
 bun_sha_hmac = { path = "src/sha_hmac" }
 bun_sys_jsc = { path = "src/sys_jsc" }
@@ -405,11 +398,11 @@ bun_hash = { path = "src/hash" }
 bun_boringssl_sys = { path = "src/boringssl_sys" }
 bun_core = { path = "src/bun_core" }
 bun_crypto = { path = "src/crypto" }
+bun_loop = { path = "src/loop" }
 bun_output_tags = { path = "src/bun_output_tags" }
 bun_patch_jsc = { path = "src/patch_jsc" }
 bun_router = { path = "src/router" }
 bun_shell_parser = { path = "src/shell_parser" }
-bun_spawn = { path = "src/spawn" }
 bun_tcc_sys = { path = "src/tcc_sys" }
 bun_uws_sys = { path = "src/uws_sys" }
 bun_zstd = { path = "src/zstd" }

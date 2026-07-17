@@ -21,7 +21,7 @@
 use core::ffi::c_int;
 
 use bun_core::{Timespec, TimespecMockMode};
-use bun_event_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
+use bun_loop::EventLoopTimer::{EventLoopTimer, State as TimerState, Tag as TimerTag};
 use bun_uws as uws;
 
 use crate::VM;
@@ -43,7 +43,7 @@ pub struct GarbageCollectionController {
     hint_pending: bool,
 }
 
-bun_event_loop::impl_timer_owner!(
+bun_loop::impl_timer_owner!(
     GarbageCollectionController;
     from_gc_timer_ptr => gc_timer,
     from_gc_repeating_timer_ptr => gc_repeating_timer,

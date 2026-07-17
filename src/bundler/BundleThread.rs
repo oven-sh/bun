@@ -2,7 +2,7 @@ use core::ptr::NonNull;
 
 use bun_core::alloc_impl::Arena; // MimallocArena → bumpalo::Bump (ThreadLocalArena)
 use bun_core::{self, Output, zstr};
-use bun_io as Async;
+use bun_loop as Async;
 use bun_sys::threading::unbounded_queue::{Node, UnboundedQueue};
 
 use crate::bundle_v2::{FileMap, JSBundlerPlugin, dispatch};

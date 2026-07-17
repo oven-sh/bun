@@ -5,8 +5,8 @@ use core::ptr::NonNull;
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl as boringssl;
 use bun_core::{String as BunString, strings};
-use bun_event_loop::EventLoopTimer as Timer;
-use bun_io::KeepAlive;
+use bun_loop::EventLoopTimer as Timer;
+use bun_loop::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, CallFrame, GlobalRef, JSArray, JSGlobalObject, JSMap, JSPromise, JSValue, JsCell,
@@ -52,8 +52,8 @@ fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
 /// Bridge JS-thread `VirtualMachine` to the aio-level `EventLoopCtx` used by
 /// `KeepAlive::ref_/unref`. Valkey always runs on the JS event loop.
 #[inline]
-fn vm_event_loop_ctx() -> bun_io::EventLoopCtx {
-    bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js)
+fn vm_event_loop_ctx() -> bun_loop::EventLoopCtx {
+    bun_loop::posix_event_loop::get_vm_ctx(bun_loop::AllocatorType::Js)
 }
 
 /// Scope-guarded `ref/deref` over a raw pointer — sidesteps the
@@ -384,7 +384,7 @@ pub struct JSValkeyClient {
     pub ref_count: bun_core::ptr::RefCount<JSValkeyClient>,
 }
 
-bun_event_loop::impl_timer_owner!(JSValkeyClient;
+bun_loop::impl_timer_owner!(JSValkeyClient;
     from_timer_ptr => timer,
     from_reconnect_timer_ptr => reconnect_timer,
 );
@@ -1093,7 +1093,7 @@ impl JSValkeyClient {
             bun_core::TimespecMockMode::AllowMockedTime,
             i64::from(next_timeout_ms),
         );
-        // `bun_event_loop::Timespec` is a local stub distinct from
+        // `bun_loop::Timespec` is a local stub distinct from
         // `bun_core::Timespec`; convert by fields until they are unified.
         timer.with_mut(|t| {
             t.next = Timer::Timespec {

@@ -11,12 +11,12 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 
-use bun_io::Closer;
+use bun_loop::Closer;
 #[cfg(windows)]
-use bun_io::pipe_reader::WindowsFlags as ReaderFlags;
-use bun_io::{BufferedReader, FileType, ReadState};
+use bun_loop::pipe_reader::WindowsFlags as ReaderFlags;
+use bun_loop::{BufferedReader, FileType, ReadState};
 #[cfg(unix)]
-use bun_io::{FilePollFlag, PosixFlags as ReaderFlags};
+use bun_loop::{FilePollFlag, PosixFlags as ReaderFlags};
 use bun_sys::{self as sys, Fd};
 use bun_uws::{AnyResponse, WriteResult};
 
@@ -32,7 +32,7 @@ pub(crate) struct FileResponseStream {
     // `'static` for the uWS callback userdata slot while giving safe `Deref`.
     vm: bun_core::ptr::BackRef<VirtualMachine>,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
     fd: Fd,
     auto_close: bool,
@@ -510,7 +510,7 @@ impl FileResponseStream {
         EventLoopHandle::init(self.vm.event_loop().cast::<()>())
     }
 
-    pub(crate) fn r#loop(&self) -> *mut bun_io::Loop {
+    pub(crate) fn r#loop(&self) -> *mut bun_loop::Loop {
         #[cfg(windows)]
         {
             // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
@@ -531,7 +531,7 @@ impl FileResponseStream {
 // BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
 // cfg(windows) `.uv_loop` projection.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(chunk, state);

@@ -21,7 +21,7 @@ pub mod ManagedTask;
 pub mod MiniEventLoop;
 // Module renamed `any_event_loop` so the *type* `AnyEventLoop` can be re-exported
 // at crate root without colliding (modules and types share the type namespace).
-// Downstream callers use `bun_event_loop::AnyEventLoop` as a type / for
+// Downstream callers use `bun_loop::AnyEventLoop` as a type / for
 // associated fns (`::init()`, `::js_current()`, `::as_handle()`), never as a
 // module path, so the snake_case module name is internal.
 #[path = "SpawnSyncEventLoop.rs"]
@@ -35,7 +35,7 @@ pub use AnyTask::{ErasedJsError, JsResult};
 pub use ConcurrentTask::{Task, TaskTag, Taskable, task_tag};
 
 // snake_case alias for the file-level-struct module so higher tiers can
-// `use bun_event_loop::auto_flusher::{AutoFlusher, HasAutoFlusher}` without
+// `use bun_loop::auto_flusher::{AutoFlusher, HasAutoFlusher}` without
 // tripping the type/module namespace collision on the PascalCase form.
 pub use AutoFlusher as auto_flusher;
 pub use DeferredTaskQueue as deferred_task_queue;
@@ -50,8 +50,8 @@ pub use any_event_loop::{AnyEventLoop, EventLoopHandle, EventLoopTask, EventLoop
 bun_macros::link_interface! {
     pub JsEventLoop[Jsc] {
         fn iteration_number() -> u64;
-        fn file_polls() -> *mut bun_io::file_poll::Store;
-        fn put_file_poll(poll: *mut bun_io::FilePoll, was_ever_registered: bool);
+        fn file_polls() -> *mut bun_loop::file_poll::Store;
+        fn put_file_poll(poll: *mut bun_loop::FilePoll, was_ever_registered: bool);
         fn uws_loop() -> *mut bun_uws::Loop;
         fn pipe_read_buffer() -> *mut [u8];
         fn tick();

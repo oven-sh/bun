@@ -900,7 +900,7 @@ impl RunCommand {
         // Bun process the script spawns enables its own watchdog. The env
         // loader snapshots `environ` before flag parsing runs, so the
         // `setenv()` in `enable()` isn't reflected here.
-        if bun_io::parent_death_watchdog::is_enabled() {
+        if bun_loop::parent_death_watchdog::is_enabled() {
             let _ = env_loader.map.put(b"BUN_FEATURE_FLAG_NO_ORPHANS", b"1");
         }
 
@@ -1085,7 +1085,7 @@ pub(crate) type PackageNameAndVersionHash = u64;
 pub(crate) struct Aligner;
 
 impl Aligner {
-    pub(crate) fn write<T, W: bun_io::Write>(writer: &mut W, pos: u64) -> bun_io::Result<usize> {
+    pub(crate) fn write<T, W: bun_loop::Write>(writer: &mut W, pos: u64) -> bun_loop::io::Result<usize> {
         let to_write = Self::skip_amount::<T>(pos as usize);
 
         let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER
@@ -1098,11 +1098,11 @@ impl Aligner {
     /// Runtime-alignment variant of [`Aligner::write`] for call sites that
     /// compute `align_of::<T>()` at the caller (callers without a nameable
     /// `T` pass the alignment as a value).
-    pub(crate) fn write_with_align<W: bun_io::Write>(
+    pub(crate) fn write_with_align<W: bun_loop::Write>(
         align: usize,
         writer: &mut W,
         pos: u64,
-    ) -> bun_io::Result<usize> {
+    ) -> bun_loop::io::Result<usize> {
         let to_write = Self::skip_amount_with_align(align, pos as usize);
 
         let remainder: &[u8] = &ALIGNMENT_BYTES_TO_REPEAT_BUFFER

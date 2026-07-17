@@ -244,7 +244,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
- "bun_io",
+ "bun_loop",
  "bun_mimalloc_sys",
  "bun_runtime",
  "bun_sys",
@@ -315,12 +315,11 @@ dependencies = [
  "bun_css",
  "bun_dotenv",
  "bun_errno",
- "bun_event_loop",
  "bun_hash",
  "bun_http_types",
- "bun_io",
  "bun_js_parser",
  "bun_js_printer",
+ "bun_loop",
  "bun_macros",
  "bun_md",
  "bun_opaque",
@@ -355,8 +354,8 @@ dependencies = [
  "bun_ast",
  "bun_bundler",
  "bun_core",
- "bun_io",
  "bun_jsc",
+ "bun_loop",
  "bun_opaque",
  "bun_options_types",
  "bun_ptr",
@@ -385,8 +384,8 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_install_types",
- "bun_io",
  "bun_js_parser",
+ "bun_loop",
  "bun_options_types",
  "bun_parsers",
  "bun_resolver",
@@ -532,7 +531,7 @@ dependencies = [
  "bun_base64",
  "bun_collections",
  "bun_core",
- "bun_io",
+ "bun_loop",
  "bun_macros",
  "bun_ptr",
  "bun_wyhash",
@@ -630,28 +629,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_event_loop"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_collections",
- "bun_core",
- "bun_dotenv",
- "bun_io",
- "bun_macros",
- "bun_ptr",
- "bun_sys",
- "bun_uws",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
-]
-
-[[package]]
 name = "bun_glob"
 version = "0.0.0"
 dependencies = [
@@ -706,9 +683,8 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_errno",
- "bun_event_loop",
  "bun_http_types",
- "bun_io",
+ "bun_loop",
  "bun_macros",
  "bun_picohttp",
  "bun_ptr",
@@ -739,8 +715,8 @@ dependencies = [
  "bun_highway",
  "bun_http",
  "bun_http_types",
- "bun_io",
  "bun_jsc",
+ "bun_loop",
  "bun_opaque",
  "bun_picohttp",
  "bun_ptr",
@@ -817,23 +793,20 @@ dependencies = [
  "bun_core",
  "bun_dotenv",
  "bun_errno",
- "bun_event_loop",
  "bun_http",
  "bun_ini",
  "bun_install_types",
- "bun_io",
  "bun_js_parser",
  "bun_js_printer",
+ "bun_loop",
  "bun_options_types",
  "bun_parsers",
- "bun_patch",
  "bun_picohttp",
  "bun_ptr",
  "bun_resolver",
  "bun_semver",
  "bun_sha_hmac",
  "bun_simdutf_sys",
- "bun_spawn",
  "bun_sys",
  "bun_transpiler",
  "bun_uws",
@@ -895,29 +868,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_io"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_collections",
- "bun_core",
- "bun_errno",
- "bun_macros",
- "bun_opaque",
- "bun_ptr",
- "bun_sys",
- "bun_uws_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_js_parser"
 version = "0.0.0"
 dependencies = [
@@ -930,7 +880,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_highway",
- "bun_io",
+ "bun_loop",
  "bun_macros",
  "bun_options_types",
  "bun_ptr",
@@ -991,7 +941,7 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
- "bun_io",
+ "bun_loop",
  "bun_options_types",
  "bun_ptr",
  "bun_sourcemap",
@@ -1026,25 +976,22 @@ dependencies = [
  "bun_crypto",
  "bun_dotenv",
  "bun_errno",
- "bun_event_loop",
  "bun_hash",
  "bun_http",
  "bun_http_types",
  "bun_install",
- "bun_io",
  "bun_js_parser",
  "bun_js_printer",
+ "bun_loop",
  "bun_macros",
  "bun_opaque",
  "bun_options_types",
- "bun_patch",
  "bun_ptr",
  "bun_resolve_builtins",
  "bun_resolver",
  "bun_sha_hmac",
  "bun_simdutf_sys",
  "bun_sourcemap",
- "bun_spawn",
  "bun_sys",
  "bun_transpiler",
  "bun_uws",
@@ -1226,27 +1173,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_patch"
-version = "0.0.0"
-dependencies = [
- "bitflags",
- "bstr",
- "bun_collections",
- "bun_core",
- "bun_errno",
- "bun_event_loop",
- "bun_spawn",
- "bun_sys",
- "const_format",
- "enum-map",
- "enumset",
- "libc",
- "scopeguard",
- "strum",
- "thiserror",
-]
-
-[[package]]
 name = "bun_patch_jsc"
 version = "0.0.0"
 dependencies = [
@@ -1254,7 +1180,7 @@ dependencies = [
  "bstr",
  "bun_core",
  "bun_jsc",
- "bun_patch",
+ "bun_loop",
  "bun_sys",
  "const_format",
  "enum-map",
@@ -1449,7 +1375,6 @@ dependencies = [
  "bun_css_jsc",
  "bun_dotenv",
  "bun_errno",
- "bun_event_loop",
  "bun_hash",
  "bun_highway",
  "bun_http",
@@ -1458,12 +1383,12 @@ dependencies = [
  "bun_install",
  "bun_install_jsc",
  "bun_install_types",
- "bun_io",
  "bun_js_parser",
  "bun_js_parser_jsc",
  "bun_js_printer",
  "bun_jsc",
  "bun_libuv_sys",
+ "bun_loop",
  "bun_md",
  "bun_opaque",
  "bun_options_types",
@@ -1483,7 +1408,6 @@ dependencies = [
  "bun_simdutf_sys",
  "bun_sourcemap",
  "bun_sourcemap_jsc",
- "bun_spawn",
  "bun_sql_jsc",
  "bun_standalone_graph",
  "bun_sys",
@@ -1634,7 +1558,7 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_highway",
- "bun_io",
+ "bun_loop",
  "bun_opaque",
  "bun_parsers",
  "bun_ptr",
@@ -1661,8 +1585,8 @@ dependencies = [
  "bun_ast",
  "bun_collections",
  "bun_core",
- "bun_io",
  "bun_jsc",
+ "bun_loop",
  "bun_opaque",
  "bun_options_types",
  "bun_sourcemap",
@@ -1673,26 +1597,6 @@ dependencies = [
  "libc",
  "scopeguard",
  "strum",
-]
-
-[[package]]
-name = "bun_spawn"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_alloc",
- "bun_core",
- "bun_errno",
- "bun_event_loop",
- "bun_io",
- "bun_macros",
- "bun_opaque",
- "bun_output",
- "bun_ptr",
- "bun_sys",
- "libc",
- "scopeguard",
- "thiserror",
 ]
 
 [[package]]
@@ -1729,9 +1633,8 @@ dependencies = [
  "bun_boringssl_sys",
  "bun_collections",
  "bun_core",
- "bun_event_loop",
- "bun_io",
  "bun_jsc",
+ "bun_loop",
  "bun_opaque",
  "bun_ptr",
  "bun_sha_hmac",
@@ -1762,8 +1665,8 @@ dependencies = [
  "bun_dotenv",
  "bun_errno",
  "bun_http",
- "bun_io",
  "bun_js_parser",
+ "bun_loop",
  "bun_opaque",
  "bun_options_types",
  "bun_parsers",

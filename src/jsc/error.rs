@@ -77,7 +77,7 @@ pub enum Error {
     #[error(transparent)]
     Ast(#[from] bun_ast::Error),
     #[error(transparent)]
-    Patch(#[from] bun_patch::Error),
+    Patch(#[from] bun_loop::patch::Error),
     #[error(transparent)]
     ToJS(#[from] bun_ast::ToJSError),
     #[error(transparent)]

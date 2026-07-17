@@ -272,7 +272,7 @@ impl EncodedPattern {
         let len = Self::pattern_serialized_length(parts);
         let slice = arena.alloc_slice_fill_default::<u8>(len);
         {
-            let mut fbs = bun_io::FixedBufferStream::new(&mut slice[..]);
+            let mut fbs = bun_loop::FixedBufferStream::new(&mut slice[..]);
             for part in parts {
                 part.write_as_serialized(&mut fbs)
                     .expect("unreachable: enough space");
@@ -574,7 +574,7 @@ impl<'a> Part<'a> {
         }
     }
 
-    pub fn write_as_serialized(&self, writer: &mut impl bun_io::Write) -> crate::Result<()> {
+    pub fn write_as_serialized(&self, writer: &mut impl bun_loop::Write) -> crate::Result<()> {
         if let Part::Text(text) = self {
             debug_assert!(!text.is_empty());
             debug_assert!(strings::index_of_char(text, b'/').is_none());

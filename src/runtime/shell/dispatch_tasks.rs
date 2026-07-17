@@ -165,8 +165,8 @@ pub(crate) struct ShellGlobTask {
     pub err: Option<ShellGlobErr>,
 }
 
-impl bun_event_loop::Taskable for ShellGlobTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellGlobTask;
+impl bun_loop::Taskable for ShellGlobTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellGlobTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellGlobTask {

@@ -665,7 +665,7 @@ impl Pending {
         // `Task::from_boxed` owns the `Box → *mut` leak; the matching
         // `heap::take` lives in `run_from_js_thread` (the dispatch arm).
         vm.event_loop_ref()
-            .enqueue_task(bun_event_loop::Task::from_boxed(clone));
+            .enqueue_task(bun_loop::Task::from_boxed(clone));
     }
 
     /// # Safety
@@ -682,8 +682,8 @@ impl Pending {
     }
 }
 
-impl bun_event_loop::Taskable for Pending {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::StreamPending;
+impl bun_loop::Taskable for Pending {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::StreamPending;
 }
 
 pub enum PendingFuture {

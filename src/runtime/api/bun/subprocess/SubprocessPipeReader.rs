@@ -1,13 +1,13 @@
 use core::ptr::NonNull;
 
 use crate::webcore::ReadableStream;
-use bun_io::BufferedReader;
+use bun_loop::BufferedReader;
 #[cfg(unix)]
-use bun_io::FilePollFlag;
-use bun_io::Loop as AsyncLoop;
-use bun_io::max_buf::MaxBuf;
+use bun_loop::FilePollFlag;
+use bun_loop::Loop as AsyncLoop;
+use bun_loop::max_buf::MaxBuf;
 #[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
+use bun_loop::pipe_reader::PosixFlags;
 use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult, MarkedArrayBuffer};
 #[cfg(not(windows))]
@@ -44,7 +44,7 @@ pub struct PipeReader {
     // single unsafe deref behind a safe `Deref`/`get()`.
     pub event_loop: bun_core::ptr::BackRef<EventLoop>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// (`bun_loop::io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
     /// Intrusive refcount field for `bun_core::ptr::IntrusiveRc<PipeReader>`.
     pub ref_count: RefCount<PipeReader>,
@@ -125,7 +125,7 @@ impl PipeReader {
             // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
             // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
-                this.reader.source = Some(bun_io::Source::Pipe(pipe));
+                this.reader.source = Some(bun_loop::Source::Pipe(pipe));
             }
         }
 
@@ -406,7 +406,7 @@ impl PipeReader {
 // `eventLoop` (no `onReadChunk`).
 // `on_reader_done`/`on_reader_error` are tail-position (the reader is finished
 // with `self`), so `&mut *this` autoref is OK.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     SubprocessPipeReader for PipeReader;
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
@@ -422,14 +422,14 @@ bun_io::impl_buffered_reader_parent! {
         let sp = process.get();
         let kind = if sp.stdout_maxbuf.get() == Some(maxbuf) {
             let mut mb = sp.stdout_maxbuf.get();
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
+            bun_loop::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
             sp.stdout_maxbuf.set(mb);
-            bun_io::max_buf::Kind::Stdout
+            bun_loop::max_buf::Kind::Stdout
         } else {
             let mut mb = sp.stderr_maxbuf.get();
-            bun_io::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
+            bun_loop::max_buf::MaxBuf::remove_from_subprocess(&mut mb);
             sp.stderr_maxbuf.set(mb);
-            bun_io::max_buf::Kind::Stderr
+            bun_loop::max_buf::Kind::Stderr
         };
         sp.on_max_buffer(kind);
     };

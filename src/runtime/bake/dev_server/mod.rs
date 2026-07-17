@@ -196,7 +196,7 @@ impl HmrTopic {
 // ──────────────────────────────────────────────────────────────────────────
 // EventLoopTimer
 // ──────────────────────────────────────────────────────────────────────────
-pub use bun_event_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
+pub use bun_loop::EventLoopTimer::{EventLoopTimer, Tag as TimerTag};
 
 // ──────────────────────────────────────────────────────────────────────────
 // IncrementalResult / GraphTraceState
@@ -400,7 +400,7 @@ pub struct HotReloadEvent {
     /// BACKREF (LIFETIMES.tsv): inline element of `WatcherAtomics.events: [3]`.
     /// `*mut` (not `*const`) because `run` mutates the owning DevServer.
     pub owner: *mut DevServer,
-    pub concurrent_task: bun_event_loop::ConcurrentTask::ConcurrentTask,
+    pub concurrent_task: bun_loop::ConcurrentTask::ConcurrentTask,
     pub files: StringArrayHashMap<()>,
     pub dirs: StringArrayHashMap<()>,
     /// NUL-joined absolute paths.
@@ -412,8 +412,8 @@ pub struct HotReloadEvent {
     pub debug_mutex: bun_sys::threading::Mutex,
 }
 
-impl bun_event_loop::Taskable for HotReloadEvent {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::BakeHotReloadEvent;
+impl bun_loop::Taskable for HotReloadEvent {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::BakeHotReloadEvent;
 }
 
 impl HotReloadEvent {
@@ -941,8 +941,8 @@ impl WatcherAtomics {
                     // Not atomic because the dev server is not running events right now.
                     self.dbg_server_event = Some(ev);
                 }
-                ev_ref.concurrent_task = bun_event_loop::ConcurrentTask::ConcurrentTask {
-                    task: bun_event_loop::Task::init(ev),
+                ev_ref.concurrent_task = bun_loop::ConcurrentTask::ConcurrentTask {
+                    task: bun_loop::Task::init(ev),
                     ..Default::default()
                 };
                 // SAFETY: `owner` BACKREF is valid; `vm` is a `BackRef` (safe

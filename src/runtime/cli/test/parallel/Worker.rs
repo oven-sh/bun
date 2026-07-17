@@ -13,8 +13,8 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
-use bun_io as r#async;
-use bun_io;
+use bun_loop as r#async;
+use bun_loop;
 use bun_jsc as jsc;
 use bun_sys;
 
@@ -160,7 +160,7 @@ impl Worker {
             let stderr = spawned.stderr;
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(spawned.to_process(
-                bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                bun_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
                 false,
             ));
             if let Some(fd) = stdout {
@@ -314,8 +314,8 @@ impl Worker {
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
         process.set_exit_handler(unsafe {
-            bun_spawn::ProcessExit::new(
-                bun_spawn::ProcessExitKind::TestParallelWorker,
+            bun_loop::ProcessExit::new(
+                bun_loop::ProcessExitKind::TestParallelWorker,
                 &raw mut **this,
             )
         });
@@ -408,7 +408,7 @@ impl Worker {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     TestParallelWorker for Worker => |this| {
         on_process_exit(process, status, rusage) =>
             (*this).on_process_exit(&*process, status, rusage),
@@ -446,7 +446,7 @@ pub enum PipeRole {
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.
 pub struct WorkerPipe {
-    pub reader: bun_io::BufferedReader,
+    pub reader: bun_loop::BufferedReader,
     pub worker: *const Worker,
     pub role: PipeRole,
     /// EOF or error observed.
@@ -456,14 +456,14 @@ pub struct WorkerPipe {
 impl WorkerPipe {
     pub fn new(role: PipeRole, worker: *const Worker) -> Self {
         Self {
-            reader: bun_io::BufferedReader::init::<WorkerPipe>(),
+            reader: bun_loop::BufferedReader::init::<WorkerPipe>(),
             worker,
             role,
             done: false,
         }
     }
 
-    pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
+    pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_loop::ReadState) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
         // Mutating `captured` through cast_mut requires write provenance on
         // the stored pointer; all backref creation sites (the runner.rs
@@ -490,16 +490,16 @@ impl Default for WorkerPipe {
     }
 }
 
-// `bun_io::BufferedReader` vtable parent.
+// `bun_loop::BufferedReader` vtable parent.
 // Callbacks touch only fields disjoint from `reader` (worker backref / done
 // flag); worker/coord backrefs are valid for the pipe's lifetime.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
-    // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.
+    // `vm.uv_loop()` is `*mut bun_loop::Loop` on every target.
     loop_           = |this| (*(*(*this).worker).coord).vm.uv_loop();
     event_loop      = |this| (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx();
 }

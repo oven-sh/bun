@@ -6,8 +6,8 @@ use core::ptr::NonNull;
 use bun_core::ptr::ParentRef;
 
 use bun_core::{String as BunString, ZigStringSlice};
-use bun_event_loop::Taskable;
-use bun_io::KeepAlive;
+use bun_loop::Taskable;
+use bun_loop::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -91,7 +91,7 @@ fn flush_value_is_valid(n: u32) -> bool {
 impl CountedKeepAlive {
     pub(crate) fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
-            self.keep_alive.ref_(bun_io::js_vm_ctx());
+            self.keep_alive.ref_(bun_loop::js_vm_ctx());
         }
         self.ref_count += 1;
     }
@@ -99,7 +99,7 @@ impl CountedKeepAlive {
     pub(crate) fn unref(&mut self, _vm: &VirtualMachine) {
         self.ref_count -= 1;
         if self.ref_count == 0 {
-            self.keep_alive.unref(bun_io::js_vm_ctx());
+            self.keep_alive.unref(bun_loop::js_vm_ctx());
         }
     }
 }
@@ -973,8 +973,8 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 macro_rules! __impl_compression_stream {
     ($native:ident, $ctx:ty, $type_name:literal) => {
         // Tag for the event-loop dispatcher (bun_runtime::dispatch::run_task).
-        impl ::bun_event_loop::Taskable for $native {
-            const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
+        impl ::bun_loop::Taskable for $native {
+            const TAG: ::bun_loop::TaskTag = ::bun_loop::task_tag::$native;
         }
 
         /// `T.js.*` — cached-property accessors emitted by

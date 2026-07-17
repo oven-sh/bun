@@ -3,8 +3,8 @@ use core::ffi::c_void;
 use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
-use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{self, WriteResult, WriteStatus};
+use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
+use bun_loop::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
@@ -147,7 +147,7 @@ fn is_pollable(mode: sys::Mode) -> bool {
 /// Streaming-writer vtable wiring: the
 /// parent type implements the handler trait
 /// (onClose / onWritable / onError / onWrite) directly.
-pub type IOWriter = bun_io::StreamingWriter<FileSink>;
+pub type IOWriter = bun_loop::StreamingWriter<FileSink>;
 pub type Poll = IOWriter;
 
 // `StreamingWriter<P>` requires `P: PosixStreamingWriterParent` (POSIX) /
@@ -173,9 +173,9 @@ pub type Poll = IOWriter;
 // FileSink` and only reborrow `(*this).field` per-statement (never holding any
 // `&FileSink` across a re-entrant/freeing call). `ref_`/`deref` already take
 // the raw ptr; `ref_` only touches `ref_count: Cell<u32>`.
-bun_io::impl_streaming_writer_parent! {
+bun_loop::impl_streaming_writer_parent! {
     FileSink;
-    poll_tag   = bun_io::posix_event_loop::poll_tag::FILE_SINK,
+    poll_tag   = bun_loop::posix_event_loop::poll_tag::FILE_SINK,
     borrow     = ptr,
     on_write   = on_write,
     on_error   = on_error,
@@ -250,7 +250,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
         let did_set_blocking = this.writer.with_mut(|w| {
             if let Some(source) = w.source.as_mut() {
                 match source {
-                    bun_io::Source::Pipe(pipe) => {
+                    bun_loop::Source::Pipe(pipe) => {
                         // SAFETY: `pipe` is a live `Box<uv::Pipe>` owned by `writer.source`;
                         // `uv_pipe_t` is `#[repr(C)]` with `uv_stream_t` as its first field
                         // (libuv handle subtyping), so the pointer cast is valid.
@@ -264,7 +264,7 @@ pub extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
                             return true;
                         }
                     }
-                    bun_io::Source::Tty(tty) => {
+                    bun_loop::Source::Tty(tty) => {
                         // SAFETY: `tty` is a live `NonNull<uv_tty_t>` (heap or static stdin tty);
                         // `uv_tty_t` embeds `uv_stream_t` as its first field, so the cast is the
                         // libuv handle-subtype downcast.
@@ -596,20 +596,20 @@ impl FileSink {
         }
 
         // reshaped for borrowck — split into a local capture and apply after.
-        // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
+        // R-2: out-params for `bun_loop::open_for_writing` are local then `Cell::set`.
         let mut force_sync_out = self.force_sync.get();
         let mut pollable_out = self.pollable.get();
         let mut is_socket_out = self.is_socket.get();
         let mut nonblocking_out = self.nonblocking.get();
         // `OpenForWritingInput` is impl'd for
-        // `bun_io::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
+        // `bun_loop::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
         // bridge by-value here. The borrowed slice is valid for the duration of
         // `open_for_writing` (the call only needs it for `openat_a`).
         let io_path = match &options.input_path {
-            PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
-            PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
+            PathOrFileDescriptor::Fd(fd) => bun_loop::PathOrFileDescriptor::Fd(*fd),
+            PathOrFileDescriptor::Path(slice) => bun_loop::PathOrFileDescriptor::Path(slice.slice()),
         };
-        let result = bun_io::open_for_writing(
+        let result = bun_loop::open_for_writing(
             Fd::cwd(),
             &io_path,
             options.flags(),
@@ -683,7 +683,7 @@ impl FileSink {
                             .get()
                             .get_poll()
                             .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Nonblocking);
+                            .set_flag(bun_loop::FilePollFlag::Nonblocking);
                     }
 
                     if self.is_socket.get() {
@@ -691,13 +691,13 @@ impl FileSink {
                             .get()
                             .get_poll()
                             .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Socket);
+                            .set_flag(bun_loop::FilePollFlag::Socket);
                     } else if self.pollable.get() {
                         self.writer
                             .get()
                             .get_poll()
                             .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Fifo);
+                            .set_flag(bun_loop::FilePollFlag::Fifo);
                     }
                 }
             }
@@ -707,9 +707,9 @@ impl FileSink {
     }
 
     /// Returns the platform's `bun.Async.Loop` (`uv_loop_t*` on Windows,
-    /// `us_loop_t*` on POSIX). `bun_io::Loop` is the cfg-aliased nominal that
+    /// `us_loop_t*` on POSIX). `bun_loop::Loop` is the cfg-aliased nominal that
     /// resolves to the correct one per target — see `aio/{posix,windows}_event_loop.rs`.
-    pub fn loop_(&self) -> *mut bun_io::Loop {
+    pub fn loop_(&self) -> *mut bun_loop::Loop {
         self.event_loop_handle.native_loop()
     }
 
@@ -717,13 +717,13 @@ impl FileSink {
         self.event_loop_handle
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
+    /// `bun_loop::io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
     /// `FilePollVTable` round-trips back to the runtime. We pass the address of
     /// the stored `bun_jsc::EventLoopHandle` so the (runtime-registered) vtable
     /// can recover it.
     #[inline]
-    fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
+    fn io_evtloop(&self) -> bun_loop::io::EventLoopHandle {
+        // SAFETY: `bun_loop::io::EventLoopHandle` stores `*mut c_void` purely for
         // type-erasure; the vtable consumers treat the pointee as read-only
         self.event_loop_handle.as_event_loop_ctx()
     }
@@ -793,8 +793,8 @@ impl FileSink {
             // `*FlushPendingTask` is `task_tag::FlushPendingFileSinkTask`.
             // Ptr identity only — `run_from_js_thread` recovers `*mut FileSink`
             // via `from_field_ptr!` and never forms `&mut FileSink`.
-            let task = bun_event_loop::Task::new(
-                bun_event_loop::task_tag::FlushPendingFileSinkTask,
+            let task = bun_loop::Task::new(
+                bun_loop::task_tag::FlushPendingFileSinkTask,
                 core::ptr::from_ref(&self.run_pending_later)
                     .cast_mut()
                     .cast::<()>(),

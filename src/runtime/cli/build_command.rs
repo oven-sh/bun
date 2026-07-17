@@ -623,7 +623,7 @@ impl BuildCommand {
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
             // drop at scope exit; the arena bulk-free skips Drop. Outlives the
             // BACKREF passed to `generate_from_cli`.
-            let mut event_loop = bun_event_loop::AnyEventLoop::init();
+            let mut event_loop = bun_loop::AnyEventLoop::init();
 
             let build_result = match BundleV2::generate_from_cli(
                 this_transpiler,

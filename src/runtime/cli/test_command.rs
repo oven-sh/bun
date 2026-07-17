@@ -1,4 +1,4 @@
-use bun_io::Write as _;
+use bun_loop::Write as _;
 
 use crate::cli::Command;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
@@ -59,9 +59,9 @@ mod coverage {
             max_filename_length: usize,
             fraction: &mut Fraction,
             base_path: &[u8],
-            writer: &mut impl bun_io::Write,
+            writer: &mut impl bun_loop::Write,
             enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
+        ) -> bun_loop::io::Result<()> {
             if enable_ansi_colors {
                 text::write_format::<true>(report, max_filename_length, fraction, base_path, writer)
             } else {
@@ -83,10 +83,10 @@ mod coverage {
             vals: Fraction,
             failing: Fraction,
             failed: bool,
-            writer: &mut impl bun_io::Write,
+            writer: &mut impl bun_loop::Write,
             indent_name: bool,
             enable_ansi_colors: bool,
-        ) -> bun_io::Result<()> {
+        ) -> bun_loop::io::Result<()> {
             if enable_ansi_colors {
                 text::write_format_with_values::<true>(
                     filename,
@@ -143,7 +143,7 @@ mod bun_test {
     }
 }
 
-pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_io::Write) -> crate::Result<()> {
+pub(crate) fn escape_xml(str_: &[u8], writer: &mut impl bun_loop::Write) -> crate::Result<()> {
     let mut last: usize = 0;
     let mut i: usize = 0;
     let len = str_.len();
@@ -198,7 +198,7 @@ fn fmt_status_text_line(
 
 pub fn write_test_status_line(
     status: bun_test::Execution::Result,
-    writer: &mut impl bun_io::Write,
+    writer: &mut impl bun_loop::Write,
 ) {
     if Output::enable_ansi_colors_stderr() {
         let _ = writer.write_all(&fmt_status_text_line(status, true));
@@ -317,7 +317,7 @@ impl JunitReporter {
                             && !github_repository.is_empty()
                         {
                             let mut v = Vec::new();
-                            // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+                            // Std::io::Write removed; bun_loop::Write (top-level) provides write_fmt.
                             let _ = write!(
                                 &mut v,
                                 "{}/{}/actions/runs/{}",
@@ -438,7 +438,7 @@ impl JunitReporter {
         }
 
         if line_number > 0 {
-            // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+            // Std::io::Write removed; bun_loop::Write (top-level) provides write_fmt.
             let _ = write!(&mut self.contents, " line=\"{}\"", line_number);
         }
 
@@ -491,7 +491,7 @@ impl JunitReporter {
         // Insert the summary attributes
         let mut summary = Vec::new();
         {
-            // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+            // Std::io::Write removed; bun_loop::Write (top-level) provides write_fmt.
             let _ = write!(
                 &mut summary,
                 "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\" hostname=\"{}\"",
@@ -532,7 +532,7 @@ impl JunitReporter {
         elapsed_ns: u64,
         line_number: u32,
     ) -> crate::Result<()> {
-        // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+        // Std::io::Write removed; bun_loop::Write (top-level) provides write_fmt.
         let elapsed_ns_f64: f64 = elapsed_ns as f64;
         let elapsed_ms = elapsed_ns_f64 / bun::time::NS_PER_MS as f64;
 
@@ -711,7 +711,7 @@ impl JunitReporter {
                 / bun::time::NS_PER_S as f64;
             let mut summary = Vec::new();
             {
-                // Std::io::Write removed; bun_io::Write (top-level) provides write_fmt.
+                // Std::io::Write removed; bun_loop::Write (top-level) provides write_fmt.
                 let _ = write!(
                     &mut summary,
                     "tests=\"{}\" assertions=\"{}\" failures=\"{}\" skipped=\"{}\" time=\"{}\"",
@@ -804,7 +804,7 @@ impl CommandLineReporter {
         sequence: &mut bun_test::Execution::ExecutionSequence,
         test_entry: &mut bun_test::ExecutionEntry,
         elapsed_ns: u64,
-        writer: &mut impl bun_io::Write,
+        writer: &mut impl bun_loop::Write,
     ) {
         let initial_retry_count = test_entry.retry_count;
         let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
@@ -1498,7 +1498,7 @@ impl CommandLineReporter {
             }
             bun_sys::Result::Ok(f) => f,
         };
-        // Buffer in a Vec (impl `bun_io::Write`) and write through in one shot below.
+        // Buffer in a Vec (impl `bun_loop::Write`) and write through in one shot below.
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
         let writer = &mut buffered;
 
@@ -1594,7 +1594,7 @@ impl CommandLineReporter {
             0
         };
 
-        // `&mut bun_core::io::Writer: bun_io::Write` (impl in `bun_core::io`);
+        // `&mut bun_core::io::Writer: bun_loop::Write` (impl in `bun_core::io`);
         // `splat_byte_all` / `write_all` resolve via the trait import at top.
         let mut console = Output::error_writer();
         let base_fraction = opts.fractions;
@@ -1729,7 +1729,7 @@ impl CommandLineReporter {
                             Global::exit(1);
                         }
                         bun_sys::Result::Ok(f) => {
-                            // Accumulate in a `Vec<u8>` (impl `bun_io::Write`)
+                            // Accumulate in a `Vec<u8>` (impl `bun_loop::Write`)
                             // and flush to the fd via `write_all` on success
                             // below.
                             let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);

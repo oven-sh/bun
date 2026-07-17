@@ -17,8 +17,8 @@ use std::cell::Cell;
 
 #[cfg(not(windows))]
 use bun_core::env_var;
-use bun_io::BufferedReader as OutputReader;
-use bun_io::{KeepAlive, Loop as AsyncLoop};
+use bun_loop::BufferedReader as OutputReader;
+use bun_loop::{KeepAlive, Loop as AsyncLoop};
 use bun_jsc::virtual_machine::{HOT_RELOAD_HOT, VirtualMachine};
 use bun_jsc::{
     self as jsc, CallFrame, EventLoopHandle, GlobalRef, JSFunction, JSGlobalObject, JSObject,
@@ -39,7 +39,7 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use bun_core::ZStr;
-use bun_io::pipe_reader::BufferedReaderParent;
+use bun_loop::pipe_reader::BufferedReaderParent;
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
 // Owned NUL-terminated string — `bun_str` exposes the
@@ -155,7 +155,7 @@ pub struct CronRegisterJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
+    /// Typed enum for the io-layer FilePoll vtable (`bun_loop::io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
@@ -176,7 +176,7 @@ enum RegisterState {
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     CronRegister for CronRegisterJob;
     has_on_read_chunk = false;
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(this);
@@ -352,7 +352,7 @@ impl CronRegisterJob {
         } else {
             RegisterState::Done
         };
-        this_ref.poll.unref(bun_io::js_vm_ctx());
+        this_ref.poll.unref(bun_loop::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
@@ -804,7 +804,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).
         let job_ref = unsafe { &mut *job };
-        job_ref.poll.ref_(bun_io::js_vm_ctx());
+        job_ref.poll.ref_(bun_loop::js_vm_ctx());
         job_ref.promise.value()
     };
 
@@ -961,7 +961,7 @@ pub struct CronRemoveJob {
     exit_status: Option<Status>,
     err_msg: Option<Vec<u8>>,
     tmp_path: Option<ZString>,
-    /// Typed enum for the io-layer FilePoll vtable (`bun_io::EventLoopHandle`
+    /// Typed enum for the io-layer FilePoll vtable (`bun_loop::io::EventLoopHandle`
     /// wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
 }
@@ -977,7 +977,7 @@ enum RemoveState {
 }
 
 // Forward as raw ptr — `maybe_finished` (via `CronJobBase`) may free `this`.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     CronRemove for CronRemoveJob;
     has_on_read_chunk = false;
     on_reader_done  = |this| <Self as CronJobBase>::on_reader_done(this);
@@ -1147,7 +1147,7 @@ impl CronRemoveJob {
         } else {
             RemoveState::Done
         };
-        this_ref.poll.unref(bun_io::js_vm_ctx());
+        this_ref.poll.unref(bun_loop::js_vm_ctx());
         let ev = VirtualMachine::get().event_loop_mut();
         ev.enter();
         if let Some(msg) = &this_ref.err_msg {
@@ -1326,7 +1326,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
         // SAFETY: just allocated; unique. Short-lived borrow ends before
         // `start_*` (which may free `job`).
         let job_ref = unsafe { &mut *job };
-        job_ref.poll.ref_(bun_io::js_vm_ctx());
+        job_ref.poll.ref_(bun_loop::js_vm_ctx());
         job_ref.promise.value()
     };
     // SAFETY: `job` is the freshly-leaked Box; `start_*` consumes it on
@@ -1433,7 +1433,7 @@ pub struct CronJob {
     in_fire: Cell<bool>,
 }
 
-bun_event_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(CronJob; from_timer_ptr => event_loop_timer);
 
 pub mod js {
     // `jsc.Codegen.JSCronJob` cached-slot accessors. The C++ side is emitted by
@@ -1551,7 +1551,7 @@ impl CronJob {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             timer_all().remove(self.event_loop_timer.as_ptr());
         }
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
         self.maybe_downgrade();
     }
 
@@ -1569,7 +1569,7 @@ impl CronJob {
         // and clearAllForVM(.teardown) can release pending_ref.
         if this_ref.in_fire.get() || this_ref.pending_ref.get() {
             this_ref.stopped.set(true);
-            this_ref.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+            this_ref.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
             return;
         }
         this_ref.stop_internal(vm);
@@ -1815,14 +1815,14 @@ impl CronJob {
     #[bun_jsc::host_fn(method)]
     pub fn do_ref(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if !self.stopped.get() {
-            self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+            self.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
         }
         Ok(frame.this())
     }
 
     #[bun_jsc::host_fn(method)]
     pub fn do_unref(&self, _global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        self.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+        self.poll_ref.with_mut(|p| p.unref(bun_loop::js_vm_ctx()));
         Ok(frame.this())
     }
 
@@ -1907,7 +1907,7 @@ impl CronJob {
             callback_arg.with_async_context_if_needed(global),
         );
 
-        job_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        job_ref.poll_ref.with_mut(|p| p.ref_(bun_loop::js_vm_ctx()));
         // SAFETY: `event_loop_timer` is the live inline timer field of the
         // heap-allocated `CronJob` `job_ref` borrows.
         timer_all().update(job_ref.event_loop_timer.as_ptr(), &next_time);
@@ -2070,7 +2070,7 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
-    const EXIT_KIND: bun_spawn::ProcessExitKind;
+    const EXIT_KIND: bun_loop::ProcessExitKind;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
     /// Consumes and frees `this`.
     unsafe fn finish(this: *mut Self);
@@ -2082,14 +2082,14 @@ trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     fn remaining_fds(&mut self) -> &mut i8;
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     CronRegister for CronRegisterJob => |this| {
         // Forward `this` raw — `on_process_exit` → `maybe_finished` may free it.
         on_process_exit(process, status, rusage) =>
             <CronRegisterJob as CronJobBase>::on_process_exit(this, &*process, status, rusage),
     }
 }
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     CronRemove for CronRemoveJob => |this| {
         on_process_exit(process, status, rusage) =>
             <CronRemoveJob as CronJobBase>::on_process_exit(this, &*process, status, rusage),
@@ -2097,7 +2097,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 impl SpawnCmdTarget for CronRegisterJob {
-    const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRegister;
+    const EXIT_KIND: bun_loop::ProcessExitKind = bun_loop::ProcessExitKind::CronRegister;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
         CronRegisterJob::set_err(self, args)
     }
@@ -2121,7 +2121,7 @@ impl SpawnCmdTarget for CronRegisterJob {
     }
 }
 impl SpawnCmdTarget for CronRemoveJob {
-    const EXIT_KIND: bun_spawn::ProcessExitKind = bun_spawn::ProcessExitKind::CronRemove;
+    const EXIT_KIND: bun_loop::ProcessExitKind = bun_loop::ProcessExitKind::CronRemove;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>) {
         CronRemoveJob::set_err(self, args)
     }
@@ -2297,7 +2297,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                 let _ = sys::set_nonblocking(stdout);
                 *s.remaining_fds() += 1;
                 {
-                    use bun_io::pipe_reader::PosixFlags;
+                    use bun_loop::pipe_reader::PosixFlags;
                     let flags = &mut s.stdout_reader().flags;
                     flags.insert(PosixFlags::NONBLOCKING | PosixFlags::SOCKET);
                     flags.remove(
@@ -2312,7 +2312,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
                     return unsafe { T::finish(this) };
                 }
                 if let Some(p) = s.stdout_reader().handle.get_poll() {
-                    p.set_flag(bun_io::FilePollFlag::Socket);
+                    p.set_flag(bun_loop::FilePollFlag::Socket);
                 }
             } else {
                 s.stdout_reader().set_parent(this_ptr);
@@ -2333,7 +2333,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         // callback + double-free on reader close).
         if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stderr.take() {
             debug_assert!(core::ptr::eq(Box::as_ref(&pipe), stderr_pipe_ptr));
-            s.stderr_reader().source = Some(bun_io::Source::Pipe(pipe));
+            s.stderr_reader().source = Some(bun_loop::Source::Pipe(pipe));
             s.stderr_reader()
                 .set_parent(this.cast::<core::ffi::c_void>());
             *s.remaining_fds() += 1;
@@ -2351,7 +2351,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     // SAFETY: `process` was just allocated by `to_process`; we hold the only
     // ref. `this` is the owning `Box<T>` (only freed in `T::finish`, gated on
     // `has_called_process_exit`), so it outlives `process`.
-    unsafe { (*process).set_exit_handler(bun_spawn::ProcessExit::new(T::EXIT_KIND, this)) };
+    unsafe { (*process).set_exit_handler(bun_loop::ProcessExit::new(T::EXIT_KIND, this)) };
     // `s` not used past this point — `watch_or_reap` may synchronously invoke
     // the exit handler, which can free `this`.
     // SAFETY: `process` is live; `watch_or_reap` may synchronously invoke the

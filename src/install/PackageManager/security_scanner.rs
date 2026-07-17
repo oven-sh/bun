@@ -7,7 +7,7 @@ use bstr::BStr;
 
 // `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
-// `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
+// `bun_loop::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
 // on Windows so `BufferedReaderParent::loop_` returns the libuv loop directly.
 use crate::Error;
@@ -17,19 +17,19 @@ use crate::package_manager_real::Command::Context as CommandContext;
 use bun_core::collections::ArrayHashMap;
 use bun_core::strings;
 use bun_core::{self, Output};
-use bun_event_loop::{AnyEventLoop, EventLoopHandle};
+use bun_loop::{AnyEventLoop, EventLoopHandle};
 use bun_install::{
     DependencyID, PackageID, PackageManager, invalid_dependency_id, invalid_package_id,
 };
-use bun_io::Loop as AsyncLoop;
+use bun_loop::Loop as AsyncLoop;
 #[cfg(unix)]
-use bun_io::pipe_reader::PosixFlags;
-use bun_io::{BufferedReader, ReadState};
+use bun_loop::pipe_reader::PosixFlags;
+use bun_loop::{BufferedReader, ReadState};
 use bun_core::ptr::{RefCount, RefPtr, ThreadSafeRefCount};
 #[cfg(not(windows))]
-use bun_spawn::SpawnResultExt as _;
-use bun_spawn::subprocess::{self, StdioResult};
-use bun_spawn::{
+use bun_loop::SpawnResultExt as _;
+use bun_loop::subprocess::{self, StdioResult};
+use bun_loop::{
     self as spawn, Exited, Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status,
     Stdio,
 };
@@ -923,7 +923,7 @@ fn attempt_security_scan_with_retry(
 
 pub struct SecurityScanSubprocess<'a> {
     manager: &'a mut PackageManager,
-    /// Stable storage for the io-layer opaque `bun_io::EventLoopHandle`
+    /// Stable storage for the io-layer opaque `bun_loop::io::EventLoopHandle`
     /// (which carries `*const EventLoopHandle`). `manager.event_loop` is an
     /// `AnyEventLoop` — different layout — so its address is NOT a valid
     /// substitute. Mirrors the pattern in `StaticPipeWriter::io_evtloop`.
@@ -957,7 +957,7 @@ pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubp
 // `StaticPipeWriter::start()` while `finish_spawn` still has `&mut self` on
 // the stack (small JSON fits the pipe buffer → write completes → close).
 impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::PollTag::SecurityScanStaticPipeWriter;
+    const POLL_OWNER_TAG: bun_loop::PollTag = bun_loop::PollTag::SecurityScanStaticPipeWriter;
     unsafe fn on_close_io(this: *mut Self, kind: subprocess::StdioKind) {
         // SAFETY: `this` is the `parent` backref passed to `StaticPipeWriter::create`;
         // the subprocess outlives its writer (it `deref`s the writer in `deinit`/Drop).
@@ -967,7 +967,7 @@ impl<'a> subprocess::StaticPipeWriterProcess for SecurityScanSubprocess<'a> {
     }
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     SecurityScan for SecurityScanSubprocess => |this| {
         on_process_exit(process, status, rusage) =>
             (*this).on_process_exit(&mut *process, status, rusage),
@@ -999,7 +999,7 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
 // Wire the buffered-reader vtable to this type so `BufferedReader::init::<Self>()`
 // resolves. The reader stores `*mut Self` (set via `set_parent`) and calls back
 // through these raw-pointer hooks.
-bun_io::impl_buffered_reader_parent! {
+bun_loop::impl_buffered_reader_parent! {
     SecurityScan for SecurityScanSubprocess<'a>;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
@@ -1223,7 +1223,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         self.ipc_reader
             .flags
-            .insert(bun_io::pipe_reader::WindowsFlags::NONBLOCKING);
+            .insert(bun_loop::pipe_reader::WindowsFlags::NONBLOCKING);
 
         // Hand the pipe to StaticPipeWriter lazily: the closure captures only the
         // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the

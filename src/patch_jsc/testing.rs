@@ -4,7 +4,7 @@ use bun_core::{OwnedString, String as BunString};
 use bun_jsc::{
     ArgumentsSlice, CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc, SysErrorJsc,
 };
-use bun_patch::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
+use bun_loop::{ParseErr, PatchFile, git_diff_internal, parse_patch_file};
 use bun_sys::{Fd, FdExt};
 
 pub struct TestingAPIs;
@@ -33,7 +33,7 @@ impl TestingAPIs {
         let old_folder = old_folder_bunstr.to_utf8();
         let new_folder = new_folder_bunstr.to_utf8();
 
-        // `git_diff_internal` routes through `bun_spawn::sync`, which on
+        // `git_diff_internal` routes through `bun_loop::sync`, which on
         // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
         // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
         let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
@@ -91,10 +91,10 @@ impl TestingAPIs {
             Ok(p) => p,
             Err(e) => {
                 if e == ParseErr::hunk_header_integrity_check_failed {
-                    return Err(global.throw_error(bun_patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
+                    return Err(global.throw_error(bun_loop::patch::Error::from(e), "this indicates either that the supplied patch file was incorrect, or there is a bug in Bun. Please check your .patch file, or open a GitHub issue :)"));
                 } else {
                     return Err(
-                        global.throw_error(bun_patch::Error::from(e), "failed to parse patch file")
+                        global.throw_error(bun_loop::patch::Error::from(e), "failed to parse patch file")
                     );
                 }
             }
@@ -103,7 +103,7 @@ impl TestingAPIs {
         let mut str: Vec<u8> = Vec::new();
         {
             use std::io::Write as _;
-            write!(&mut str, "{}", bun_patch::json_fmt(&patchfile)).expect("unreachable");
+            write!(&mut str, "{}", bun_loop::json_fmt(&patchfile)).expect("unreachable");
         }
         let outstr = BunString::borrow_utf8(&str);
         let js = outstr.to_js(global)?;
@@ -168,7 +168,7 @@ impl TestingAPIs {
             }
 
             drop(patchfile_src);
-            return Err(global.throw_error(bun_patch::Error::from(e), "failed to parse patchfile"));
+            return Err(global.throw_error(bun_loop::patch::Error::from(e), "failed to parse patchfile"));
         }
 
         Ok(ApplyArgs {

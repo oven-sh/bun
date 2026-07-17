@@ -1,7 +1,7 @@
 use core::ptr::NonNull;
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_io::FilePoll;
+use bun_loop::FilePoll;
 use bun_core::ptr::BackRef;
 use bun_uws::Loop as UwsLoop;
 
@@ -238,10 +238,10 @@ impl AnyEventLoop<'static> {
     }
 
     /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
-    /// Windows). See [`bun_io::uws_to_native`].
+    /// Windows). See [`bun_loop::uws_to_native`].
     #[inline]
-    pub fn native_loop(&mut self) -> *mut bun_io::Loop {
-        bun_io::uws_to_native(self.r#loop())
+    pub fn native_loop(&mut self) -> *mut bun_loop::Loop {
+        bun_loop::uws_to_native(self.r#loop())
     }
 
     #[inline]
@@ -254,7 +254,7 @@ impl AnyEventLoop<'static> {
     /// See [`EventLoopHandle::file_polls`] for the aliasing
     /// contract — callers deref locally for the brief region they need `&mut`.
     #[inline]
-    pub fn file_polls(&mut self) -> *mut bun_io::file_poll::Store {
+    pub fn file_polls(&mut self) -> *mut bun_loop::file_poll::Store {
         EventLoopHandle::from_any(self).file_polls()
     }
 
@@ -389,14 +389,14 @@ impl EventLoopHandle {
     }
 
     #[inline]
-    pub fn as_event_loop_ctx(self) -> bun_io::EventLoopCtx {
+    pub fn as_event_loop_ctx(self) -> bun_loop::EventLoopCtx {
         match self {
             // SAFETY: `owner.bun_vm()` returns the owning `*mut VirtualMachine`,
             // which is what the `EventLoopCtxKind::Js` `link_impl_EventLoopCtx!`
             // (in `bun_jsc`) is written for. Both are per-thread singletons
             // that outlive the ctx.
             EventLoopHandle::Js { owner } => unsafe {
-                bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Js, owner.bun_vm())
+                bun_loop::EventLoopCtx::new(bun_loop::EventLoopCtxKind::Js, owner.bun_vm())
             },
             // `mini` is a `BackRef` to the live per-thread singleton (see
             // `mini_mut` doc) — valid for the ctx's lifetime.
@@ -540,7 +540,7 @@ impl EventLoopHandle {
     /// `EventLoopHandle` is `Copy`; promoting to `&'static mut` would let two
     /// calls produce aliased exclusive references (UB). Callers deref locally
     /// for the brief region they need `&mut`.
-    pub fn file_polls(self) -> *mut bun_io::file_poll::Store {
+    pub fn file_polls(self) -> *mut bun_loop::file_poll::Store {
         match self {
             EventLoopHandle::Js { owner } => owner.file_polls(),
             EventLoopHandle::Mini(mut mini) => std::ptr::from_mut(mini_mut(&mut mini).file_polls()),
@@ -550,7 +550,7 @@ impl EventLoopHandle {
     pub fn put_file_poll(&mut self, poll: &mut FilePoll) {
         let was_ever_registered = poll
             .flags
-            .contains(bun_io::file_poll::Flags::WasEverRegistered);
+            .contains(bun_loop::file_poll::Flags::WasEverRegistered);
         // Decay `poll` to `NonNull` *before* taking any further `&mut` so
         // `Store::put`'s raw-pointer field touches don't alias a live `&mut`.
         let poll_ptr = NonNull::from(poll);
@@ -610,19 +610,19 @@ impl EventLoopHandle {
     }
 
     /// Platform-native loop pointer (`us_loop_t*` on POSIX, `uv_loop_t*` on
-    /// Windows). See [`bun_io::uws_to_native`] — collapses the per-site
+    /// Windows). See [`bun_loop::uws_to_native`] — collapses the per-site
     /// `#[cfg(windows)]` `.uv_loop` projection that previously appeared at
     /// every `BufferedReaderParent::loop_` impl.
     #[inline]
-    pub fn native_loop(self) -> *mut bun_io::Loop {
-        bun_io::uws_to_native(self.r#loop())
+    pub fn native_loop(self) -> *mut bun_loop::Loop {
+        bun_loop::uws_to_native(self.r#loop())
     }
 
     /// Windows convenience alias for [`native_loop`](Self::native_loop)
     /// (kept for existing `cfg(windows)` callers that spell `uv_loop`).
     #[cfg(windows)]
     #[inline]
-    pub fn uv_loop(self) -> *mut bun_io::Loop {
+    pub fn uv_loop(self) -> *mut bun_loop::Loop {
         self.native_loop()
     }
 

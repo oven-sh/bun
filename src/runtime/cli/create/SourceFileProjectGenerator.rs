@@ -192,7 +192,7 @@ fn run_install(argv: &mut Vec<&[u8]>) -> Result<(), crate::Error> {
 
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_loop::MiniEventLoop::init_global(
                 None, None,
             )),
             ..Default::default()
@@ -369,7 +369,7 @@ pub fn generate_files(
                     #[cfg(windows)]
                     windows: bun_process::WindowsOptions {
                         loop_: bun_jsc::EventLoopHandle::init_mini(
-                            bun_event_loop::MiniEventLoop::init_global(None, None),
+                            bun_loop::MiniEventLoop::init_global(None, None),
                         ),
                         ..Default::default()
                     },
@@ -430,7 +430,7 @@ pub fn generate_files(
 
         #[cfg(windows)]
         windows: bun_process::WindowsOptions {
-            loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(
+            loop_: bun_jsc::EventLoopHandle::init_mini(bun_loop::MiniEventLoop::init_global(
                 None, None,
             )),
             ..Default::default()

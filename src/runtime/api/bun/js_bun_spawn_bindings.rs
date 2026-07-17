@@ -7,8 +7,8 @@ use std::io::Write as _;
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
-use bun_event_loop::SpawnSyncEventLoop::TickState;
-use bun_io::max_buf::MaxBuf;
+use bun_loop::SpawnSyncEventLoop::TickState;
+use bun_loop::max_buf::MaxBuf;
 use bun_jsc::ipc as IPC;
 use bun_jsc::{
     self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
@@ -27,7 +27,7 @@ use crate::api::bun_process::ExtraPipe;
 use crate::api::bun_process::SpawnResultExt as _;
 use crate::api::bun_process::{self as spawn, CStrPtr, Process, Rusage, SpawnOptions};
 // User-facing JS `Stdio` enum (extract/as_spawn_option/is_piped).
-use crate::api::bun_spawn::stdio::{self, Stdio};
+use crate::api::bun_loop::stdio::{self, Stdio};
 use crate::api::bun_subprocess::{
     self as Subprocess, Readable, Subprocess as SubprocessT, Writable,
 };
@@ -1180,8 +1180,8 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         spawn::spawn_process(&spawn_options, argv.as_ptr(), env_array.as_ptr())
     } {
         Err(err)
-            if err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE)
-                || err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::ENFILE) =>
+            if err == bun_loop::spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE)
+                || err == bun_loop::spawn::Error::Sys(bun_core::errno::SystemErrno::ENFILE) =>
         {
             // Windows: close+free the heap `uv::Pipe` handles that
             // `as_spawn_option` allocated and `spawn_process_windows` may have
@@ -1197,7 +1197,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                 ZStr::EMPTY
             };
             let mut systemerror = sys::Error::from_code(
-                if err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE) {
+                if err == bun_loop::spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE) {
                     sys::Errno::EMFILE
                 } else {
                     sys::Errno::ENFILE
@@ -1206,7 +1206,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             )
             .with_path(display_path)
             .to_system_error();
-            systemerror.errno = if err == bun_spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE) {
+            systemerror.errno = if err == bun_loop::spawn::Error::Sys(bun_core::errno::SystemErrno::EMFILE) {
                 -UV_E::MFILE
             } else {
                 -UV_E::NFILE
@@ -1467,7 +1467,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // SAFETY: `subprocess_ptr` is the live JSC-allocated Subprocess that owns
     // `process` and outlives it (handler ctx invariant).
     subprocess.process_mut().set_exit_handler(unsafe {
-        bun_spawn::ProcessExit::new(bun_spawn::ProcessExitKind::Subprocess, subprocess_ptr)
+        bun_loop::ProcessExit::new(bun_loop::ProcessExitKind::Subprocess, subprocess_ptr)
     });
 
     promise_for_stream.ensure_still_alive();

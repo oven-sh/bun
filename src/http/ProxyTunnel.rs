@@ -48,7 +48,7 @@ pub struct ProxyTunnel {
     pub shutdown_err: Cell<Error>,
     /// active socket is the socket that is currently being used
     pub socket: Socket,
-    pub write_buffer: bun_io::StreamBuffer,
+    pub write_buffer: bun_loop::StreamBuffer,
     /// Property of the inner TLS session, not the owning client. Captured from
     /// the client in detachOwner() and restored to the next client in adopt()
     /// so the pool's did_have_handshaking_error_while_reject_unauthorized_is_false
@@ -71,7 +71,7 @@ impl Default for ProxyTunnel {
             wrapper: None,
             shutdown_err: Cell::new(crate::Error::ConnectionClosed),
             socket: Socket::None,
-            write_buffer: bun_io::StreamBuffer::default(),
+            write_buffer: bun_loop::StreamBuffer::default(),
             did_have_handshaking_error: false,
             established_with_reject_unauthorized: false,
             ref_count: Cell::new(1),
@@ -113,7 +113,7 @@ impl ProxyTunnel {
 
     /// Mutable access to `write_buffer` (disjoint from `wrapper`).
     #[inline]
-    fn write_buffer_of<'a>(this: NonNull<Self>) -> &'a mut bun_io::StreamBuffer {
+    fn write_buffer_of<'a>(this: NonNull<Self>) -> &'a mut bun_loop::StreamBuffer {
         // SAFETY: see [`Self::socket_of`].
         unsafe { &mut *addr_of_mut!((*this.as_ptr()).write_buffer) }
     }

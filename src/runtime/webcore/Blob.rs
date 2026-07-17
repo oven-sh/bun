@@ -164,7 +164,7 @@ pub trait BlobExt {
         global: &JSGlobalObject,
     );
     fn get_content_type(&self) -> Option<ZigStringSlice>;
-    fn _on_structured_clone_serialize<W: bun_io::Write>(&self, writer: &mut W)
+    fn _on_structured_clone_serialize<W: bun_loop::Write>(&self, writer: &mut W)
     -> crate::Result<()>;
     fn on_structured_clone_serialize(
         &self,
@@ -568,11 +568,11 @@ impl BlobExt for Blob {
             struct Task<H> {
                 ctx: *mut H,
                 blob: Blob, // dupe for store ref + offset/size
-                poll: bun_io::KeepAlive,
+                poll: bun_loop::KeepAlive,
             }
             impl<H: ReadBytesHandler> Task<H> {
                 fn done(mut self: Box<Self>, r: ReadBytesResult) {
-                    self.poll.unref(bun_io::js_vm_ctx());
+                    self.poll.unref(bun_loop::js_vm_ctx());
                     self.blob.deinit();
                     // SAFETY: caller-owned ctx, kept alive by contract.
                     let c = unsafe { &mut *self.ctx };
@@ -615,9 +615,9 @@ impl BlobExt for Blob {
             let mut t = Box::new(Task::<H> {
                 ctx,
                 blob: self.dupe(),
-                poll: bun_io::KeepAlive::default(),
+                poll: bun_loop::KeepAlive::default(),
             });
-            t.poll.ref_(bun_io::js_vm_ctx());
+            t.poll.ref_(bun_loop::js_vm_ctx());
             let proxy = http_proxy_href(global);
             // reshaped for borrowck — `heap::alloc(t)` moves `t`,
             // so clone the `Rc<S3Credentials>` out (cheap ref bump)
@@ -725,7 +725,7 @@ impl BlobExt for Blob {
         }
         None
     }
-    fn _on_structured_clone_serialize<W: bun_io::Write>(
+    fn _on_structured_clone_serialize<W: bun_loop::Write>(
         &self,
         writer: &mut W,
     ) -> crate::Result<()> {
@@ -833,7 +833,7 @@ impl BlobExt for Blob {
         // SAFETY: `[*cursor, end)` spans `total_length` bytes owned by the
         // SerializedScriptValue for the duration of this call (see fn contract).
         let mut buffer_stream =
-            bun_io::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
+            bun_loop::FixedBufferStream::new(unsafe { bun_core::ffi::slice(*cursor, total_length) });
 
         let result = match _on_structured_clone_deserialize(global_this, &mut buffer_stream) {
             Ok(v) => v,
@@ -1564,7 +1564,7 @@ impl BlobExt for Blob {
                 };
 
                 #[cfg(windows)]
-                use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+                use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
                 if is_stdout_or_stderr {
                     // SAFETY: sink is live; sole owner here.
                     if let bun_sys::Result::Err(err) =
@@ -1859,7 +1859,7 @@ impl BlobExt for Blob {
 
         #[cfg(windows)]
         {
-            use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
+            use bun_loop::pipe_writer::BaseWindowsPipeWriter as _;
 
             let pathlike = &store.data.as_file().pathlike;
             // SAFETY: bun_vm() never returns null for a Bun-owned global.
@@ -4133,9 +4133,9 @@ impl StructuredCloneWriter {
     }
 }
 
-// Implement `bun_io::Write` so `write_int_le` / `write_all` work directly.
-impl bun_io::Write for StructuredCloneWriter {
-    fn write_all(&mut self, bytes: &[u8]) -> bun_io::Result<()> {
+// Implement `bun_loop::Write` so `write_int_le` / `write_all` work directly.
+impl bun_loop::Write for StructuredCloneWriter {
+    fn write_all(&mut self, bytes: &[u8]) -> bun_loop::io::Result<()> {
         StructuredCloneWriter::write(self, bytes);
         Ok(())
     }
@@ -4144,18 +4144,18 @@ impl bun_io::Write for StructuredCloneWriter {
 // Only ever called with f64 (Blob.last_modified). A concrete impl
 // because Rust forbids `[u8; size_of::<F>()]`
 // without `generic_const_exprs`. Bit-cast → native-endian bytes.
-fn write_float<W: bun_io::Write>(value: f64, writer: &mut W) -> crate::Result<()> {
+fn write_float<W: bun_loop::Write>(value: f64, writer: &mut W) -> crate::Result<()> {
     Ok(writer.write_all(&value.to_ne_bytes())?)
 }
 
-fn read_float<B: AsRef<[u8]>>(reader: &mut bun_io::FixedBufferStream<B>) -> crate::Result<f64> {
+fn read_float<B: AsRef<[u8]>>(reader: &mut bun_loop::FixedBufferStream<B>) -> crate::Result<f64> {
     let mut bytes_buf = [0u8; core::mem::size_of::<f64>()];
     reader.read_exact(&mut bytes_buf)?;
     Ok(f64::from_ne_bytes(bytes_buf))
 }
 
 fn read_slice<B: AsRef<[u8]>>(
-    reader: &mut bun_io::FixedBufferStream<B>,
+    reader: &mut bun_loop::FixedBufferStream<B>,
     len: usize,
 ) -> crate::Result<Vec<u8>> {
     if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
@@ -4170,7 +4170,7 @@ fn read_slice<B: AsRef<[u8]>>(
 
 fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
     global_this: &JSGlobalObject,
-    reader: &mut bun_io::FixedBufferStream<B>,
+    reader: &mut bun_loop::FixedBufferStream<B>,
 ) -> crate::Result<JSValue> {
     let version = reader.read_int_le::<u8>()?;
     let offset = reader.read_int_le::<u64>()?;
@@ -5837,7 +5837,7 @@ pub struct S3BlobDownloadTask {
     /// the borrow detaches from `&self` (Copy) for use across `&mut self` calls.
     pub global_this: bun_core::ptr::BackRef<JSGlobalObject>,
     pub promise: jsc::JSPromiseStrong,
-    pub poll_ref: bun_io::KeepAlive,
+    pub poll_ref: bun_loop::KeepAlive,
     pub handler: S3ReadHandler,
 }
 
@@ -5912,7 +5912,7 @@ impl S3BlobDownloadTask {
             global_this: bun_core::ptr::BackRef::new(global_this),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(global_this),
-            poll_ref: bun_io::KeepAlive::default(),
+            poll_ref: bun_loop::KeepAlive::default(),
             handler,
         }));
         // SAFETY: just allocated.
@@ -5929,7 +5929,7 @@ impl S3BlobDownloadTask {
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
 
-        this_ref.poll_ref.ref_(bun_io::js_vm_ctx());
+        this_ref.poll_ref.ref_(bun_loop::js_vm_ctx());
         let proxy_owned = http_proxy_href(global_this);
         let proxy = proxy_owned.as_deref();
 
@@ -5989,7 +5989,7 @@ impl S3BlobDownloadTask {
 impl Drop for S3BlobDownloadTask {
     fn drop(&mut self) {
         Blob::deinit(&mut self.blob);
-        self.poll_ref.unref(bun_io::js_vm_ctx());
+        self.poll_ref.unref(bun_loop::js_vm_ctx());
         // promise: Drop handles deinit.
     }
 }
@@ -7262,15 +7262,15 @@ pub trait FileOpener: Sized {
 
 // TODO: move to bun_sys?
 pub trait FileCloser: Sized {
-    const IO_TAG: bun_io::Tag;
+    const IO_TAG: bun_loop::Tag;
 
     fn opened_fd(&self) -> Fd;
     fn set_opened_fd(&mut self, fd: Fd);
     fn close_after_io(&self) -> bool;
     fn set_close_after_io(&mut self, v: bool);
     fn state(&self) -> &core::sync::atomic::AtomicU8;
-    fn io_request(&mut self) -> Option<&mut bun_io::Request>;
-    fn io_poll(&mut self) -> &mut bun_io::Poll;
+    fn io_request(&mut self) -> Option<&mut bun_loop::Request>;
+    fn io_poll(&mut self) -> &mut bun_loop::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
     fn update(&mut self);
     #[cfg(windows)]
@@ -7279,12 +7279,12 @@ pub trait FileCloser: Sized {
     /// Intrusive backref: Rust `offset_of!` cannot name
     /// fields on a trait `Self`, so each concrete impl supplies its own
     /// container_of recovery (no default body).
-    fn schedule_close(request: &mut bun_io::Request) -> bun_io::Action<'_>;
+    fn schedule_close(request: &mut bun_loop::Request) -> bun_loop::Action<'_>;
 
     fn on_io_request_closed(this: &mut Self) {
         this.io_poll()
             .flags
-            .remove(bun_io::Flags::WasEverRegistered);
+            .remove(bun_loop::Flags::WasEverRegistered);
         *this.task() = bun_jsc::WorkPoolTask {
             node: Default::default(),
             callback: Self::on_close_io_request,
@@ -7311,12 +7311,12 @@ pub trait FileCloser: Sized {
             );
             if let Some(io_request) = self.io_request() {
                 // The io thread reads `callback` after popping from its MPSC
-                // queue; a plain store here is a data race. `bun_io::Request::
+                // queue; a plain store here is a data race. `bun_loop::Request::
                 // store_callback_seq_cst` lowers to a volatile write + SeqCst
                 // fence (Rust has no `AtomicFnPtr`).
                 io_request.store_callback_seq_cst(Self::schedule_close);
                 if !io_request.scheduled {
-                    bun_io::IoRequestLoop::schedule(io_request);
+                    bun_loop::IoRequestLoop::schedule(io_request);
                 }
                 return true;
             }
@@ -7327,7 +7327,7 @@ pub trait FileCloser: Sized {
             && self.opened_fd().stdio_tag().is_none()
         {
             #[cfg(windows)]
-            bun_io::Closer::close(self.opened_fd(), self.loop_());
+            bun_loop::Closer::close(self.opened_fd(), self.loop_());
             #[cfg(not(windows))]
             {
                 use bun_sys::FdExt as _;

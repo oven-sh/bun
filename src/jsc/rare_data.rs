@@ -10,14 +10,14 @@ use bun_boringssl::c as boring;
 use bun_core::collections::StringArrayHashMap;
 use bun_core::strings;
 use bun_core::{Mutex, Output};
-use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
+use bun_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_http::MimeType as mime_type;
-use bun_io::{self as Async};
+use bun_loop::{self as Async};
 use bun_core::paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, FdExt as _, Mode};
 use bun_uws::{self as uws, SocketGroup, SslCtx};
 
-use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
+use bun_loop::SpawnSyncEventLoop::SpawnSyncEventLoop;
 
 use super::uuid::UUID;
 
@@ -381,7 +381,7 @@ impl PathBuf {
 // Canonical definition lives in the lower-tier `bun_event_loop` crate (shared
 // with `MiniEventLoop`'s scratch buffer). Re-export so `rare_data::PipeReadBuffer`
 // remains a stable path for existing callers.
-pub use bun_event_loop::PipeReadBuffer;
+pub use bun_loop::PipeReadBuffer;
 
 // ──────────────────────────────────────────────────────────────────────────
 // ProxyEnvStorage
@@ -894,7 +894,7 @@ impl RareData {
     #[inline]
     fn stdio_ctor(fd: Fd, is_atty: bool, mode: Mode) -> *mut c_void {
         // `__bun_stdio_blob_store_new` is declared `safe fn` in
-        // `bun_event_loop::MiniEventLoop` (all args by-value; allocates a
+        // `bun_loop::MiniEventLoop` (all args by-value; allocates a
         // fresh `Store` with no caller-side precondition).
         __bun_stdio_blob_store_new(fd, is_atty, mode).cast()
     }
@@ -1094,4 +1094,4 @@ impl Drop for RareData {
     }
 }
 
-pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;
+pub use bun_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;

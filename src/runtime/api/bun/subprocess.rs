@@ -50,10 +50,10 @@ pub use readable::Readable;
 pub mod writable;
 pub use writable::Writable;
 
-pub use bun_spawn::static_pipe_writer;
+pub use bun_loop::static_pipe_writer;
 pub use static_pipe_writer::StaticPipeWriter as NewStaticPipeWriter;
 
-pub use bun_io::MaxBuf;
+pub use bun_loop::MaxBuf;
 pub use js_bun_spawn_bindings::{spawn, spawn_sync};
 
 bun_core::declare_scope!(Subprocess, visible);
@@ -78,7 +78,7 @@ pub mod js {
 }
 
 /// Platform-dependent stdio result type.
-pub use bun_spawn::subprocess::StdioResult;
+pub use bun_loop::subprocess::StdioResult;
 
 #[cfg(windows)]
 type StdioPipeItem = StdioResult;
@@ -88,7 +88,7 @@ type StdioPipeItem = ExtraPipe;
 pub type StaticPipeWriter<'a> = NewStaticPipeWriter<Subprocess<'a>>;
 
 impl<'a> static_pipe_writer::StaticPipeWriterProcess for Subprocess<'a> {
-    const POLL_OWNER_TAG: bun_io::PollTag = bun_io::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
+    const POLL_OWNER_TAG: bun_loop::PollTag = bun_loop::posix_event_loop::poll_tag::STATIC_PIPE_WRITER;
     unsafe fn on_close_io(this: *mut Self, kind: StdioKind) {
         // SAFETY: caller (StaticPipeWriter) guarantees `this` is live.
         unsafe { (*this).on_close_io(kind) }
@@ -102,7 +102,7 @@ pub enum ObservableGetter {
     Stderr,
 }
 
-pub use bun_spawn::process::StdioKind;
+pub use bun_loop::process::StdioKind;
 
 // Note: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
@@ -168,7 +168,7 @@ pub struct Subprocess<'a> {
     pub exited_due_to_maxbuf: Cell<Option<MaxBuf::Kind>>,
 }
 
-bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
+bun_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
 
 // Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
 // spawn_maybe_sync` fills every field explicitly (see note there), and
@@ -340,7 +340,7 @@ pub unsafe extern "C" fn on_abort_signal(ctx: *mut c_void, reason: JSValue) {
     unsafe { Subprocess::on_abort_signal_c(ctx, reason) }
 }
 
-bun_spawn::link_impl_ProcessExit! {
+bun_loop::link_impl_ProcessExit! {
     Subprocess for Subprocess => |this| {
         // `process` forwarded raw (not reborrowed) so `on_process_exit` can
         // hand it to `VirtualMachine::on_subprocess_exit` without a const→mut
@@ -1450,7 +1450,7 @@ impl Subprocess<'_> {
     }
 }
 
-pub use bun_spawn::subprocess::{Source, SourceData};
+pub use bun_loop::subprocess::{Source, SourceData};
 
 // JSC-tier payloads wrap as `Source::Any(Box<dyn SourceData>)` — the lower-tier
 // `bun_spawn` crate cannot name `webcore`/`jsc`, so the vtable travels with the

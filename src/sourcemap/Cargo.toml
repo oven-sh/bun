@@ -35,7 +35,7 @@ bun_highway.workspace = true
 # once parse_json un-gates (currently blocked on bun_ast::Source lifetime,
 # not on bun_parsers).
 # bun_parsers.workspace = true
-bun_io.workspace = true
+bun_loop.workspace = true
 # bun_js_parser not needed: parse_json uses the T2 value-subset Expr from
 # bun_ast::js_ast (what bun_parsers::json::parse returns).
 # bun_js_printer would create a dep cycle (it depends on bun_sourcemap);

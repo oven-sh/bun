@@ -910,7 +910,7 @@ impl PackageManifest {
     }
 
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
-        let mut counter = bun_io::DiscardingWriter::new();
+        let mut counter = bun_loop::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, scope, &mut counter) {
             Ok(()) => counter.count,
             Err(_) => 0,
@@ -920,7 +920,7 @@ impl PackageManifest {
 
 pub mod package_manifest {
     use super::*;
-    use bun_io::Write as _;
+    use bun_loop::Write as _;
 
     // bindings — see bun_install_jsc::npm_jsc::ManifestBindings (deleted *_jsc alias)
 
@@ -956,7 +956,7 @@ pub mod package_manifest {
     );
 
     impl Serializer {
-        pub fn write_array<W: bun_io::Write, T: Copy>(
+        pub fn write_array<W: bun_loop::Write, T: Copy>(
             writer: &mut W,
             array: &[T],
             pos: &mut u64,
@@ -981,7 +981,7 @@ pub mod package_manifest {
         }
 
         pub fn read_array<'a, T: Copy>(
-            stream: &mut bun_io::FixedBufferStream<&'a [u8]>,
+            stream: &mut bun_loop::FixedBufferStream<&'a [u8]>,
         ) -> Result<&'a [T], Error> {
             let byte_len = stream.read_int_le::<u64>()?;
             if byte_len == 0 {
@@ -1005,7 +1005,7 @@ pub mod package_manifest {
             Ok(result)
         }
 
-        pub fn write<W: bun_io::Write>(
+        pub fn write<W: bun_loop::Write>(
             this: &PackageManifest,
             scope: &registry::Scope,
             writer: &mut W,
@@ -1327,7 +1327,7 @@ pub mod package_manifest {
             scope: &registry::Scope,
         ) -> Result<&'b bun_core::ZStr, Error> {
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
-            let mut stream = bun_io::FixedBufferStream::new_mut(buf);
+            let mut stream = bun_loop::FixedBufferStream::new_mut(buf);
             if scope.url_hash == *registry::DEFAULT_URL_HASH {
                 write!(stream, "{}.npm", file_id_hex_fmt)?;
             } else {
@@ -1354,7 +1354,7 @@ pub mod package_manifest {
             let mut dest_path_buf = [0u8; 512 + 64];
             let mut out_path_buf =
                 [0u8; ("18446744073709551615".len() * 2) + "_".len() + ".npm".len() + 1];
-            let mut dest_path_stream = bun_io::FixedBufferStream::new_mut(&mut dest_path_buf);
+            let mut dest_path_stream = bun_loop::FixedBufferStream::new_mut(&mut dest_path_buf);
             let file_id_hex_fmt = bun_fmt::hex_int_lower::<16>(file_id);
             let hex_timestamp: usize =
                 usize::try_from(bun_core::time::milli_timestamp().max(0)).expect("int cast");
@@ -1426,7 +1426,7 @@ pub mod package_manifest {
             if &bytes[..Self::HEADER_BYTES.len()] != Self::HEADER_BYTES.as_bytes() {
                 return Ok(None);
             }
-            let mut pkg_stream = bun_io::FixedBufferStream::new(bytes);
+            let mut pkg_stream = bun_loop::FixedBufferStream::new(bytes);
             pkg_stream.pos = Self::HEADER_BYTES.len();
 
             let mut package_manifest = PackageManifest::default();

@@ -65,7 +65,7 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_core::{String as BunString, WTFStringImpl};
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_sys::threading::{Futex, Mutex};
 
 use crate::virtual_machine::{self, VirtualMachine, runtime_hooks};
@@ -588,8 +588,8 @@ impl WebWorker {
         // regardless, because the child holds a non-owning `BackRef` to the parent VM.
         if !default_unref || parent_ref.worker_ref().is_some() {
             // `worker` is a fresh heap allocation; not yet shared.
-            // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop.
-            worker_ref.with_parent_poll_ref(|p| p.ref_(bun_io::js_vm_ctx()));
+            // `bun_loop::js_vm_ctx()` resolves to this (parent) thread's loop.
+            worker_ref.with_parent_poll_ref(|p| p.ref_(bun_loop::js_vm_ctx()));
         }
 
         // Register BEFORE spawning so terminateAllAndWait() can never miss a
@@ -621,7 +621,7 @@ impl WebWorker {
             Err(_) => {
                 live_workers::unregister(worker);
                 // `worker` not yet shared (spawn failed); parent thread.
-                worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+                worker_ref.with_parent_poll_ref(|p| p.unref(bun_loop::js_vm_ctx()));
                 // SAFETY: `worker` is the heap allocation from `heap::into_raw`
                 // above; spawn failed so it was never shared with another thread.
                 unsafe { Self::destroy(worker) };
@@ -661,7 +661,7 @@ impl WebWorker {
     pub extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
         // `this` is a valid heap allocation owned by C++ `WebCore::Worker`
         // (alive while JSWorker holds its Ref) — `ParentRef` invariant holds.
-        // `bun_io::js_vm_ctx()` resolves to this (parent) thread's loop, which
+        // `bun_loop::js_vm_ctx()` resolves to this (parent) thread's loop, which
         // IS `this.parent`'s loop.
         let this = bun_core::ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
         // A nested worker (parent is itself a worker) must keep the parent-loop
@@ -670,9 +670,9 @@ impl WebWorker {
         let parent_is_worker = this.parent.get().worker_ref().is_some();
         this.with_parent_poll_ref(|poll| {
             if value {
-                poll.ref_(bun_io::js_vm_ctx());
+                poll.ref_(bun_loop::js_vm_ctx());
             } else if !parent_is_worker {
-                poll.unref(bun_io::js_vm_ctx());
+                poll.unref(bun_loop::js_vm_ctx());
             }
         });
     }
@@ -728,7 +728,7 @@ impl WebWorker {
         // `this` is a valid heap allocation owned by C++ — `ParentRef` invariant
         // holds; parent-thread only.
         let this = bun_core::ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
-        this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+        this.with_parent_poll_ref(|p| p.unref(bun_loop::js_vm_ctx()));
     }
 
     /// Non-owning back-reference to the parent VM. See field doc for validity

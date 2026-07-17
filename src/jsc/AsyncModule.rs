@@ -6,7 +6,7 @@ use bun_bundler::transpiler::ParseResult;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_install::dependency::Dependency;
 use bun_install::{DependencyID, Resolution};
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
@@ -63,7 +63,7 @@ pub struct AsyncModule {
 
     // This is the specific state for making it async
     pub poll_ref: KeepAlive,
-    pub any_task: bun_event_loop::AnyTask::AnyTask,
+    pub any_task: bun_loop::AnyTask::AnyTask,
 }
 
 pub type Id = u32;
@@ -116,8 +116,8 @@ impl Queue {
 // `on_wake_handler` and dispatched in `bun_runtime::dispatch::run_task` →
 // `vm.modules.on_poll()`. The pointer is a
 // borrow into `VirtualMachine.modules`, never freed by the dispatcher.
-impl bun_event_loop::Taskable for Queue {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::PollPendingModulesTask;
+impl bun_loop::Taskable for Queue {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::PollPendingModulesTask;
 }
 
 impl AsyncModule {
@@ -306,8 +306,8 @@ impl Queue {
     pub fn enqueue(&mut self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let mut module = AsyncModule::init(opts, global_object).expect("unreachable");
-        module.poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
+        module.poll_ref.ref_(bun_loop::posix_event_loop::get_vm_ctx(
+            bun_loop::AllocatorType::Js,
         ));
 
         // allocator arg dropped (Vec uses global mimalloc).
@@ -716,8 +716,8 @@ impl AsyncModule {
             jsc_vm.package_manager().end_progress_bar();
         }
         let mut log = bun_ast::Log::init();
-        this.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
+        this.poll_ref.unref(bun_loop::posix_event_loop::get_vm_ctx(
+            bun_loop::AllocatorType::Js,
         ));
         let errorable: ErrorableResolvedSource = match this.resume_loading_module(&mut log) {
             Ok(rs) => ErrorableResolvedSource::ok(rs),
@@ -958,8 +958,8 @@ impl AsyncModule {
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
+        self.poll_ref.unref(bun_loop::posix_event_loop::get_vm_ctx(
+            bun_loop::AllocatorType::Js,
         ));
         // The caller (Queue::retain_mut) returns `false` and Vec drops the
         // element, running Drop.
@@ -1175,8 +1175,8 @@ impl AsyncModule {
         let promise = promise_value.as_internal_promise().unwrap();
         promise_value.ensure_still_alive();
         let _ = vm;
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
+        self.poll_ref.unref(bun_loop::posix_event_loop::get_vm_ctx(
+            bun_loop::AllocatorType::Js,
         ));
         // Caller drops via retain_mut → false.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is

@@ -395,7 +395,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             avg.stmts /= avg_n;
         }
         let _ = console.write_all(&body);
-        // bun_core::io::Writer doesn't impl bun_io::Write — buffer
+        // bun_core::io::Writer doesn't impl bun_loop::Write — buffer
         // through a Vec then write_all once.
         let mut all_files: Vec<u8> = Vec::new();
         let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(

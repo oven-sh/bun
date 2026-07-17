@@ -772,8 +772,8 @@ fn civil_from_days(z: i64) -> (i32, u8, u8) {
     ((y + (m <= 2) as i64) as i32, m, d)
 }
 
-impl bun_event_loop::Taskable for ShellLsTask {
-    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellLsTask;
+impl bun_loop::Taskable for ShellLsTask {
+    const TAG: bun_loop::TaskTag = bun_loop::task_tag::ShellLsTask;
 }
 
 impl crate::shell::interpreter::ShellTaskCtx for ShellLsTask {

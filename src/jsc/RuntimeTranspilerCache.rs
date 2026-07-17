@@ -135,7 +135,7 @@ impl Metadata {
     // 1×u32 + 2×u8 (enum reprs) + 12×u64 = 4 + 2 + 96 = 102
     pub const SIZE: usize = 4 + 1 + 1 + 12 * 8;
 
-    pub fn encode<W: bun_io::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
+    pub fn encode<W: bun_loop::Write>(&self, writer: &mut W) -> crate::CrateResult<()> {
         writer.write_int_le::<u32>(self.cache_version)?;
         writer.write_int_le::<u8>(self.module_type as u8)?;
         writer.write_int_le::<u8>(self.output_encoding.0)?;
@@ -161,10 +161,10 @@ impl Metadata {
 
     /// Both call sites (`from_file_with_cache_file_path`, the debug round-trip
     /// in `Entry::save`) drive this from a fixed buffer, so accept the concrete
-    /// `bun_io::FixedBufferStream` over a borrowed slice.
+    /// `bun_loop::FixedBufferStream` over a borrowed slice.
     pub fn decode(
         &mut self,
-        reader: &mut bun_io::FixedBufferStream<&[u8]>,
+        reader: &mut bun_loop::FixedBufferStream<&[u8]>,
     ) -> crate::CrateResult<()> {
         self.cache_version = reader.read_int_le::<u32>()?;
         if self.cache_version != EXPECTED_VERSION {
@@ -333,14 +333,14 @@ impl Entry {
                     metadata.esm_record_hash = hash(esm_record);
                 }
 
-                let mut metadata_stream = bun_io::FixedBufferStream::new_mut(&mut metadata_buf[..]);
+                let mut metadata_stream = bun_loop::FixedBufferStream::new_mut(&mut metadata_buf[..]);
                 metadata.encode(&mut metadata_stream)?;
                 let pos = metadata_stream.pos;
 
                 #[cfg(debug_assertions)]
                 {
                     let mut reader =
-                        bun_io::FixedBufferStream::new(&metadata_buf[0..Metadata::SIZE]);
+                        bun_loop::FixedBufferStream::new(&metadata_buf[0..Metadata::SIZE]);
                     let mut metadata2 = Metadata::default();
                     if let Err(err) = metadata2.decode(&mut reader) {
                         bun_core::Output::panic(format_args!(
@@ -811,7 +811,7 @@ impl RuntimeTranspilerCache {
         {
             file.seek_to(0)?;
         }
-        let mut reader = bun_io::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
+        let mut reader = bun_loop::FixedBufferStream::new(&metadata_bytes_buf[0..metadata_bytes]);
 
         let mut entry = Entry {
             metadata: Metadata::default(),

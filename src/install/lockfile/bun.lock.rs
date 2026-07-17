@@ -46,7 +46,7 @@ use super::{
     PackageIndexEntry, PackageIndexMap, PatchedDep, TrustedDependenciesSet, VersionHashMap, tree,
 };
 
-use bun_io::AsFmt;
+use bun_loop::AsFmt;
 
 /// `Bin::to_json` indent callback typed against `AsFmt`.
 fn write_indent_fmt(w: &mut AsFmt<'_>, indent: &mut u32) -> core::fmt::Result {
@@ -92,9 +92,9 @@ macro_rules! sbuf {
 }
 
 // Dyn dispatch for now — the trait shape is unsettled.
-type Writer = dyn bun_io::Write;
-// `bun_io::Write` returns `core::result::Result<_, crate::Error>` (see
-// `bun_io::write::Result`), so the writer error is just the global `crate::Error`.
+type Writer = dyn bun_loop::Write;
+// `bun_loop::Write` returns `core::result::Result<_, crate::Error>` (see
+// `bun_loop::write::Result`), so the writer error is just the global `crate::Error`.
 type WriteError = crate::Error;
 
 #[repr(u32)]

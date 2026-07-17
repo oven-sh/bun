@@ -3,10 +3,10 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use bun_core::{MutableString, strings};
-use bun_event_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
-use bun_event_loop::{TaskTag, Taskable, task_tag};
+use bun_loop::ConcurrentTask::{AutoDeinit, ConcurrentTask};
+use bun_loop::{TaskTag, Taskable, task_tag};
 use bun_http::{AsyncHTTP, HTTPClientResult, Headers, Signals};
-use bun_io::KeepAlive;
+use bun_loop::KeepAlive;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_s3_signing::credentials::SignResult;
 use bun_s3_signing::s3_signing::error::S3Error;
@@ -362,8 +362,8 @@ impl Drop for S3HttpDownloadStreamingTask {
         // KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
         // via the global hook (registered by crate::init) — same pattern as
         // `S3HttpSimpleTask::drop` in simple_request.rs.
-        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-            bun_io::AllocatorType::Js,
+        self.poll_ref.unref(bun_loop::posix_event_loop::get_vm_ctx(
+            bun_loop::AllocatorType::Js,
         ));
         // response_buffer, reported_response_buffer, headers, sign_result, range, proxy_url:
         // dropped automatically (Box/Vec-backed fields).

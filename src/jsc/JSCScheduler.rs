@@ -1,6 +1,6 @@
 use core::ffi::c_int;
 
-use bun_event_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
+use bun_loop::{ConcurrentTask::ConcurrentTask, TaskTag, Taskable, task_tag};
 
 use crate::event_loop::{EventLoop, JsTerminated};
 use crate::virtual_machine::VirtualMachine;

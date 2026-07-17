@@ -1932,6 +1932,7 @@ it.each([
   ["--throw-deprecation", "throwDeprecation"],
   ["--trace-deprecation", "traceDeprecation"],
   ["--trace-warnings", "traceProcessWarnings"],
+  ["--pending-deprecation", "pendingDeprecation"],
 ])("%s seeds process.%s as a read-only alias", async (flag, prop) => {
   await using proc = Bun.spawn({
     cmd: [

@@ -4855,6 +4855,8 @@ void Process::finishCreation(JSC::VM& vm)
         putDirect(vm, Identifier::fromString(vm, "throwDeprecation"_s), jsBoolean(true), readOnlyAlias);
     if (Bun__Node__ProcessNoDeprecation)
         putDirect(vm, Identifier::fromString(vm, "noDeprecation"_s), jsBoolean(true), readOnlyAlias);
+    if (Bun__Node__ProcessPendingDeprecation)
+        putDirect(vm, Identifier::fromString(vm, "pendingDeprecation"_s), jsBoolean(true), readOnlyAlias);
 }
 
 } // namespace Bun

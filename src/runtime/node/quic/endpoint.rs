@@ -1445,6 +1445,14 @@ impl QuicEndpoint {
             self.finish_close();
         }
         self.send_scope_depth.set(self.send_scope_depth.get() - 1);
+        // Writes made by the dispatch above (handlers answering what this pass
+        // delivered) could not flush inline -- the scope was held. Hand them to
+        // the socket now, at the pass's outer edge, the way node's
+        // SendPendingDataScope flushes when the receive path unwinds; left to
+        // the loop driver they would sit out the next epoll timeout.
+        if self.nq_driver.with_mut(|d| core::mem::replace(&mut d.pending, 0)) != 0 {
+            self.drive_engines_once();
+        }
     }
 
     fn engine_conn_count(&self) -> u32 {

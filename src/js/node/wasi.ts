@@ -19,6 +19,7 @@ const {
 } = require("internal/validators");
 const { kEmptyObject } = require("internal/shared");
 
+const ArrayPrototypeMap = Array.prototype.map;
 const kExitCode = Symbol("kExitCode");
 const kStarted = Symbol("kStarted");
 const kInstance = Symbol("kInstance");
@@ -826,7 +827,7 @@ var require_wasi = __commonJS({
         }
 
         if (argsOption !== undefined) validateArray(argsOption, "options.args");
-        const args = $Array.prototype.map.$call(argsOption || [], String);
+        const args = ArrayPrototypeMap.$call(argsOption || [], String);
 
         if (envOption !== undefined) validateObject(envOption, "options.env");
         if (preopensOption !== undefined) validateObject(preopensOption, "options.preopens");

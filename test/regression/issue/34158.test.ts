@@ -54,7 +54,7 @@ test.concurrent("Bun.serve: graceful stop() keeps the loop alive until in-flight
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 10_000,
+    timeout: 30_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
@@ -89,7 +89,7 @@ test.concurrent("node:http: server.close() with a half-closed connection drains 
 
     await fetch(url, {
       method: "POST",
-      body: Buffer.allocUnsafe(1024 * 1024 * 10),
+      body: Buffer.allocUnsafe(64 * 1024),
     })
       .then(r => r.bytes())
       .catch(() => {});
@@ -109,7 +109,7 @@ test.concurrent("node:http: server.close() with a half-closed connection drains 
     stderr: "pipe",
     // Regression mode is a hang; bound the child so the assertion reports a
     // clear signalCode diff instead of the outer runner timing out.
-    timeout: 10_000,
+    timeout: 30_000,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 

@@ -609,14 +609,21 @@ describe("HTTP server CONNECT", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
       // Before the fix the server socket never closes: stdout stops at
       // server:finish and the process hangs until the test timeout. client:close
       // and server:close may interleave, so assert presence + server ordering.
       const lines = stdout.split("\n").filter(Boolean);
-      expect(lines.filter(l => l.startsWith("server:"))).toEqual(["server:end", "server:finish", "server:close"]);
-      expect(lines).toContain("client:close");
-      expect(exitCode).toBe(0);
+      expect({
+        server: lines.filter(l => l.startsWith("server:")),
+        hasClientClose: lines.includes("client:close"),
+        stderr,
+        exitCode,
+      }).toEqual({
+        server: ["server:end", "server:finish", "server:close"],
+        hasClientClose: true,
+        stderr: "",
+        exitCode: 0,
+      });
     },
   );
 });

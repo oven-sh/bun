@@ -3022,8 +3022,10 @@ pub fn create_shell_interpreter(
     global: &crate::jsc::JSGlobalObject,
     callframe: &crate::jsc::CallFrame,
 ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
-    use crate::jsc::{ArgumentsSlice, JsClass as _};
+    use crate::jsc::JsClass as _;
+    use crate::jsc_ext::JSGlobalObjectExt as _;
     use crate::shell::parsed_shell_script::ParsedShellScript;
+    use crate::vm::ArgumentsSlice;
 
     let arguments_ = callframe.arguments_old::<3>();
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
@@ -3108,7 +3110,7 @@ pub fn create_shell_interpreter(
         it.this_jsvalue.set(js_value);
         it.keep_alive.with_mut(|k| {
             // `bun_vm_ptr()` is the live per-thread VM singleton.
-            k.ref_(crate::vm::VirtualMachineRef::event_loop_ctx(
+            k.ref_(crate::VirtualMachineRef::event_loop_ctx(
                 global.bun_vm_ptr(),
             ))
         });

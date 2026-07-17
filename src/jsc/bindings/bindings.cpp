@@ -656,9 +656,12 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
 // getOwnPropertySlot instead of being stored in the structure, so a structure with
 // no named properties means nothing is left to compare once the contents match.
 // Checking this keeps those comparisons off the index-enumerating slow path.
-static ALWAYS_INLINE bool hasNamedOwnProperties(JSC::Structure* structure)
+// Indexed storage counts too: an out-of-range index (`new String("ab")[5] = "x"`)
+// is an own property node compares but the contents check would miss.
+static ALWAYS_INLINE bool hasExtraOwnProperties(JSC::Structure* structure)
 {
-    return structure->outOfLineSize() != 0 || structure->inlineSize() != 0;
+    return structure->outOfLineSize() != 0 || structure->inlineSize() != 0
+        || hasIndexedProperties(structure->indexingType());
 }
 
 template<bool isStrict, bool enableAsymmetricMatchers, bool skipPrototype>
@@ -1447,7 +1450,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         // ignores them. Guarded because the property walk below enumerates every
         // index, which would make each comparison O(elements).
         if constexpr (isStrict) {
-            if (hasNamedOwnProperties(c1->structure()) || hasNamedOwnProperties(c2->structure())) {
+            if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
                 break;
             }
         }
@@ -1484,7 +1487,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
             // Only strict mode compares extra own properties on boxed primitives.
             // Guarded so a plain boxed string does not fall through to the property
             // walk, which would enumerate every character index.
-            if (hasNamedOwnProperties(c1->structure()) || hasNamedOwnProperties(c2->structure())) {
+            if (hasExtraOwnProperties(c1->structure()) || hasExtraOwnProperties(c2->structure())) {
                 break;
             }
         }

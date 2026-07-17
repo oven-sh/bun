@@ -133,6 +133,18 @@ const cases: Case[] = [
     loose: false,
     looseBug: "reports equal",
   },
+  {
+    name: "a boxed string with an out-of-range indexed own property",
+    a: () => {
+      const boxed = new String("ab");
+      boxed[5] = "x";
+      return boxed;
+    },
+    b: () => new String("ab"),
+    strict: false,
+    loose: false,
+    looseBug: "reports equal",
+  },
 
   // Undefined-valued and missing properties. Both modes compare own key counts.
   {

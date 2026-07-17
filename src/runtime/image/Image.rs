@@ -1369,6 +1369,24 @@ impl<'a> ReadBytesHandler for BlobReadChain<'a> {
         let boxed = unsafe { bun_core::heap::take(std::ptr::from_mut::<Self>(self)) };
         boxed.on_read_bytes_impl(result);
     }
+
+    unsafe fn on_read_discard(ctx: *mut Self) {
+        // SAFETY: `ctx` is the `heap::into_raw` from `start()`; we reclaim
+        // ownership here. The JSC `HandleSet` is already freed when this
+        // runs on Windows `Loop::shutdown`'s final `uv_run`, so the Strong
+        // handles must be leaked rather than dropped.
+        let mut chain = unsafe { bun_core::heap::take(ctx) };
+        #[allow(clippy::mem_forget)]
+        {
+            core::mem::forget(core::mem::take(&mut chain.outer));
+            if let Deliver::WriteDest(strong) =
+                core::mem::replace(&mut chain.deliver, Deliver::Uint8Array)
+            {
+                core::mem::forget(strong);
+            }
+        }
+        drop(chain);
+    }
 }
 
 /// `jsc.ConcurrentPromiseTask(PipelineTask)` — the heap object the event-loop

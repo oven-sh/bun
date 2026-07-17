@@ -1554,8 +1554,11 @@ impl WebWorker {
         // TerminationException from the still-set NeedTermination trap bit, so
         // every call below would bail (reported as `JsError::Thrown`, not
         // `Terminated`) and there is no point dispatching a late 'error' for a
-        // worker that is shutting down anyway.
-        if self.has_requested_terminate() {
+        // worker that is shutting down anyway. Keyed on the JSC request so the
+        // internal short-circuits that set only the atomic without arming the
+        // trap (start_vm's configure_defines failure, whose comment says
+        // "vm.log carries the error for flushLogs") still dispatch.
+        if self.has_requested_terminate() && vm.jsc_vm().has_termination_request() {
             return;
         }
         let global = vm.global();

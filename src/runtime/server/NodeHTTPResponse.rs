@@ -1682,7 +1682,9 @@ impl NodeHTTPResponse {
 
     /// Release the pin + GC root + byte owner taken by a zero-copy write.
     fn clear_pending_pinned_write(&self, js_this: JSValue, global_object: &JSGlobalObject) {
-        let p = self.pending_pinned_write.replace(PendingPinnedWrite::default());
+        let p = self
+            .pending_pinned_write
+            .replace(PendingPinnedWrite::default());
         if p.is_some() {
             if p.pinned_value != JSValue::ZERO {
                 p.pinned_value.unpin_array_buffer();

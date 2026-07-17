@@ -143,7 +143,9 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
     const body = Buffer.from(await response.arrayBuffer());
     expect(body.length).toBe(CHUNK_SIZE * 2);
     const h = createHash("sha1").update(body).digest("hex");
-    const expected = createHash("sha1").update(Buffer.alloc(CHUNK_SIZE * 2, "a")).digest("hex");
+    const expected = createHash("sha1")
+      .update(Buffer.alloc(CHUNK_SIZE * 2, "a"))
+      .digest("hex");
     expect(h).toBe(expected);
   });
 

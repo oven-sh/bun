@@ -2119,10 +2119,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncCreateTagStore, (JSGlobalObject * globalO
     REQUIRE_DB_OPEN(self);
     // Node: `int capacity = args[0].As<Number>()->Value()` then passed as
     // size_t to LRUCache. No clamp: -1 wraps to SIZE_MAX (unlimited), 0 stays 0.
+    // JSC::toInt32 avoids the double→int UB Node has for NaN/±Inf/>2^31.
     int capacity = 1000;
     JSValue arg0 = callFrame->argument(0);
     if (arg0.isNumber()) {
-        capacity = static_cast<int>(arg0.asNumber());
+        capacity = JSC::toInt32(arg0.asNumber());
     }
     auto* zigGlobal = defaultGlobalObject(globalObject);
     auto* structure = zigGlobal->m_JSNodeSqliteTagStoreClassStructure.get(zigGlobal);

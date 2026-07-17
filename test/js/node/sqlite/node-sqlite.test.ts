@@ -1506,6 +1506,8 @@ describe("createTagStore()", () => {
       "1.5": db.createTagStore(1.5).capacity,
       "0.9": db.createTagStore(0.9).capacity,
       "-0.5": db.createTagStore(-0.5).capacity,
+      "NaN": db.createTagStore(NaN).capacity,
+      "Inf": db.createTagStore(Infinity).capacity,
       "'5'": db.createTagStore("5" as any).capacity,
       "null": db.createTagStore(null as any).capacity,
       "undef": db.createTagStore(undefined).capacity,
@@ -1517,6 +1519,9 @@ describe("createTagStore()", () => {
       "1.5": 1,
       "0.9": 0,
       "-0.5": 0,
+      // Node's raw double→int cast is UB here; Bun uses ES ToInt32 (→ 0).
+      "NaN": 0,
+      "Inf": 0,
       "'5'": 1000,
       "null": 1000,
       "undef": 1000,

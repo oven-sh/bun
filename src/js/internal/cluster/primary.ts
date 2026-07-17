@@ -346,13 +346,6 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
-  if (handle) {
-    // Descriptor-bearing replies travel as a NODE_HANDLE envelope so the
-    // worker pairs the descriptor with the message and acks it; the inner
-    // message is marked NODE_CLUSTER so it is dispatched as a cluster-internal
-    // message rather than a process 'message' event.
-    message = { cmd: "NODE_HANDLE", type: "dgram.Native", message: { ...message, cmd: "NODE_CLUSTER" } };
-  }
   return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 

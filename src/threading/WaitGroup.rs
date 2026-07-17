@@ -89,3 +89,36 @@ impl WaitGroup {
         self.mutex.unlock();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // After `wait()` returns the caller may drop the `WaitGroup`; `finish()`
+    // must therefore not touch `self` once it has published `raw_count == 0`.
+    #[test]
+    fn wait_returning_means_finish_is_done_with_self() {
+        for _ in 0..10_000 {
+            let wg = Box::into_raw(Box::new(WaitGroup::init_with_count(1)));
+            struct SendPtr(*mut WaitGroup);
+            // SAFETY: `WaitGroup` is `Sync`; the raw pointer is only ever
+            // dereferenced while the pointee is live (joined below).
+            unsafe impl Send for SendPtr {}
+            let p = SendPtr(wg);
+            let t = std::thread::spawn(move || {
+                let p = p;
+                // SAFETY: `wg` is live until `drop(Box::from_raw(..))` below,
+                // which happens-before `join()`, so the pointee outlives this
+                // deref iff `finish()` is done with `self` by the time
+                // `wait()` returns — the property under test.
+                unsafe { (*p.0).finish() };
+            });
+            // SAFETY: `wg` is the freshly-boxed allocation; sole owner here.
+            unsafe {
+                (*wg).wait();
+                drop(Box::from_raw(wg));
+            }
+            t.join().unwrap();
+        }
+    }
+}

@@ -2010,7 +2010,7 @@ impl BuildArtifact {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: crate::vm::ConsoleFormatter,
+        F: crate::jsc_ext::ConsoleFormatter,
         W: core::fmt::Write,
     {
         write!(

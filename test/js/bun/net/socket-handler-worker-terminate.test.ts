@@ -7,6 +7,24 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 
+// The handler body shared by both the Bun.listen close handler and the
+// Bun.serve websocket message handler: a two-phase Atomics handshake so the
+// safepoint spin starts only once the parent is already calling terminate(),
+// making the window build-speed-independent.
+//   shared[0]: worker -> parent ("I am inside the handler"; 2 = spin ran out)
+//   shared[1]: parent -> worker ("terminate() is in flight")
+const handlerBody = `
+  Atomics.store(shared, 0, 1);
+  Atomics.notify(shared, 0);
+  Atomics.wait(shared, 1, 0, 5000);
+  // terminate() is now in flight; spin on safepoints so the termination
+  // exception is raised inside this handler frame. Bounded so a missed
+  // terminate cannot hang.
+  let sink = 0;
+  for (let i = 0; i < 10_000_000; i++) sink += Atomics.load(shared, 1);
+  Atomics.store(shared, 0, 2);
+`;
+
 const workerSource = `
 const { parentPort } = require("worker_threads");
 const shared = new Int32Array(require("worker_threads").workerData);
@@ -15,70 +33,15 @@ const server = Bun.listen({
   hostname: "127.0.0.1",
   port: 0,
   socket: {
-    open(socket) {
-      socket.write("hello");
-    },
+    open(socket) { socket.write("hello"); },
     data() {},
-    // The close handler is the dispatch point socket_body.rs:on_close drives:
-    // a termination raised here returns Err to the native caller, which then
-    // invokes the error handler via another JSValue::call.
-    close() {
-      // Signal the parent that we are inside the handler so it terminates us
-      // while this frame is still on the stack.
-      Atomics.store(shared, 0, 1);
-      Atomics.notify(shared, 0);
-      // Spin on safepoints until termination arrives (bounded so a missed
-      // terminate cannot hang the test). Array allocation + property sets are
-      // safepoints without needing any timers.
-      let sink = [];
-      for (let i = 0; i < 50_000; i++) {
-        sink.push(i & 0xff);
-        if (sink.length > 64) sink.length = 0;
-      }
-      // Reaching this line means termination did not land mid-handler this
-      // iteration; the parent observes 2 and does not count it as a hit.
-      Atomics.store(shared, 0, 2);
-    },
+    // socket_body.rs:on_close: a termination raised here returns Err to the
+    // native caller, which then invokes Handlers::call_error_handler.
+    close() {${handlerBody}},
     error() {},
   },
 });
 parentPort.postMessage(server.port);
-`;
-
-const parentSource = `
-const { Worker } = require("worker_threads");
-const net = require("net");
-
-(async () => {
-  // Each iteration is an independent opportunity for terminate() to land inside
-  // the close handler. Atomics coordination makes it land reliably on the
-  // first try; a handful leave headroom for CI scheduling jitter.
-  let hits = 0;
-  for (let i = 0; i < 8; i++) {
-    const sab = new SharedArrayBuffer(4);
-    const shared = new Int32Array(sab);
-    const worker = new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: sab });
-    const port = await new Promise(resolve => worker.once("message", resolve));
-
-    const conn = net.connect({ port, host: "127.0.0.1" });
-    await new Promise(resolve => conn.once("data", resolve));
-    // Closing the client is what drives on_close on the server's per-connection
-    // socket inside the worker.
-    conn.destroy();
-    // Wait until the worker signals it is inside the close handler, then
-    // terminate so the termination exception lands mid-handler.
-    const waited = Atomics.wait(shared, 0, 0, 2000);
-    if (waited === "timed-out") throw new Error("close() never fired");
-    await worker.terminate();
-    // shared[0] === 1 means termination landed mid-handler (the spin loop was
-    // interrupted); 2 means the handler returned normally first.
-    if (Atomics.load(shared, 0) === 1) hits++;
-  }
-  if (hits === 0) {
-    throw new Error("terminate() never landed inside the close handler (0/8)");
-  }
-  console.log("ok", hits);
-})();
 `;
 
 const wsWorkerSource = `
@@ -93,20 +56,10 @@ const server = Bun.serve({
   },
   websocket: {
     open(ws) { ws.send("hello"); },
-    // Bun.serve's websocket message handler is the dispatch point
-    // ServerWebSocket.rs drives; a termination raised here returns Err to the
-    // native caller, which then invokes WebSocketServerContext::
+    // ServerWebSocket.rs:on_message: a termination raised here returns Err to
+    // the native caller, which then invokes WebSocketServerContext::
     // run_error_callback.
-    message() {
-      Atomics.store(shared, 0, 1);
-      Atomics.notify(shared, 0);
-      let sink = [];
-      for (let i = 0; i < 50_000; i++) {
-        sink.push(i & 0xff);
-        if (sink.length > 64) sink.length = 0;
-      }
-      Atomics.store(shared, 0, 2);
-    },
+    message() {${handlerBody}},
     close() {},
     error() {},
   },
@@ -114,34 +67,50 @@ const server = Bun.serve({
 parentPort.postMessage(server.port);
 `;
 
-const wsParentSource = `
+function parentSource(workerSrc: string, driveHandler: string, cleanup: string) {
+  return `
 const { Worker } = require("worker_threads");
+const net = require("net");
 
 (async () => {
+  // Each iteration is an independent opportunity for terminate() to land inside
+  // the handler. The two-phase handshake makes it land on the first try; a few
+  // repeats leave headroom for CI scheduling jitter.
   let hits = 0;
-  for (let i = 0; i < 8; i++) {
-    const sab = new SharedArrayBuffer(4);
+  for (let i = 0; i < 6; i++) {
+    const sab = new SharedArrayBuffer(8);
     const shared = new Int32Array(sab);
-    const worker = new Worker(${JSON.stringify(wsWorkerSource)}, { eval: true, workerData: sab });
+    const worker = new Worker(${JSON.stringify(workerSrc)}, { eval: true, workerData: sab });
     const port = await new Promise(resolve => worker.once("message", resolve));
-
-    const ws = new WebSocket("ws://127.0.0.1:" + port);
-    await new Promise((resolve, reject) => {
-      ws.onopen = resolve;
-      ws.onerror = reject;
-    });
-    ws.send("go");
-    const waited = Atomics.wait(shared, 0, 0, 2000);
-    if (waited === "timed-out") throw new Error("message() never fired");
+    ${driveHandler}
+    // Wait until the worker is inside the handler, then release it from its
+    // own wait and terminate so the termination exception lands mid-handler.
+    if (Atomics.wait(shared, 0, 0, 5000) === "timed-out") throw new Error("handler never fired");
+    Atomics.store(shared, 1, 1);
+    Atomics.notify(shared, 1);
     await worker.terminate();
-    ws.close();
+    ${cleanup}
+    // shared[0] === 1 means termination landed mid-handler (the spin loop was
+    // interrupted); 2 means the handler returned normally first.
     if (Atomics.load(shared, 0) === 1) hits++;
   }
-  if (hits === 0) {
-    throw new Error("terminate() never landed inside the message handler (0/8)");
-  }
+  if (hits === 0) throw new Error("terminate() never landed inside the handler (0/6)");
   console.log("ok", hits);
 })();
+`;
+}
+
+const listenDriver = `
+    const conn = net.connect({ port, host: "127.0.0.1" });
+    await new Promise(resolve => conn.once("data", resolve));
+    // Closing the client drives on_close on the server's per-connection socket.
+    conn.destroy();
+`;
+
+const wsDriver = `
+    const ws = new WebSocket("ws://127.0.0.1:" + port);
+    await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+    ws.send("go");
 `;
 
 // On Windows the usockets close path and Atomics.wait scheduling differ enough
@@ -151,8 +120,11 @@ describe.skipIf(isWindows)(
   "worker.terminate() mid-handler does not re-enter JS with a pending termination exception",
   () => {
     for (const [name, src] of [
-      ["Bun.listen close handler (socket Handlers::call_error_handler)", parentSource],
-      ["Bun.serve websocket message handler (WebSocketServerContext::run_error_callback)", wsParentSource],
+      ["Bun.listen close handler (socket Handlers::call_error_handler)", parentSource(workerSource, listenDriver, "")],
+      [
+        "Bun.serve websocket message handler (WebSocketServerContext::run_error_callback)",
+        parentSource(wsWorkerSource, wsDriver, "ws.close();"),
+      ],
     ] as const) {
       test.concurrent(
         name,
@@ -169,7 +141,7 @@ describe.skipIf(isWindows)(
           // stdout/exitCode so benign debug-build stderr noise cannot cause a
           // false positive; the crash's stderr is in the diff either way.
           expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
-            stdout: expect.stringMatching(/^ok [1-8]$/),
+            stdout: expect.stringMatching(/^ok [1-6]$/),
             exitCode: 0,
           });
         },

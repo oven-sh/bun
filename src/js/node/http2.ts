@@ -2186,18 +2186,6 @@ function sessionErrorFromCode(code: number) {
   return $ERR_HTTP2_SESSION_ERROR(code);
 }
 hideFromStack(sessionErrorFromCode);
-// Used for the legacy native error dispatches that still carry a positive HTTP/2 error code
-// (e.g. MAX_PENDING_SETTINGS_ACK, ENHANCE_YOUR_CALM from the outbound paths): the message carries
-// the NGHTTP2_* constant name. Violations detected by the inbound engine arrive as negative
-// nghttp2 library codes and are surfaced as NghttpError (ERR_HTTP2_ERROR), exactly like node.
-// GOAWAY-received errors stay numeric (sessionErrorFromCode) to match node's message exactly.
-function sessionErrorFromCodeNamed(code: number) {
-  if (code === 0xe) {
-    return $ERR_HTTP2_MAX_PENDING_SETTINGS_ACK();
-  }
-  return $ERR_HTTP2_SESSION_ERROR(nameForErrorCode[code] || code);
-}
-hideFromStack(sessionErrorFromCodeNamed);
 
 function assertSession(session) {
   if (!session) {
@@ -5194,7 +5182,7 @@ class ClientHttp2Session extends Http2Session {
           ? $ERR_HTTP2_TOO_MANY_INVALID_FRAMES()
           : typeof errorCode === "number" && errorCode < 0
             ? new NghttpError(errorCode)
-            : sessionErrorFromCodeNamed(errorCode as number);
+            : sessionErrorFromCode(errorCode as number);
       self.destroy(error_instance);
     },
 

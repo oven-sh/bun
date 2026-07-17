@@ -4,6 +4,9 @@ const common = require('../common');
 if (!common.hasCrypto)
   common.skip('missing crypto');
 
+if (process.features.openssl_is_boringssl)
+  common.skip('BoringSSL does not support RSA-PSS key pair generation');
+
 const assert = require('assert');
 const {
   generateKeyPair,
@@ -12,9 +15,7 @@ const {
 // RFC 8017, 9.1.: "Assuming that the mask generation function is based on a
 // hash function, it is RECOMMENDED that the hash function be the same as the
 // one that is applied to the message."
-
-// BoringSSL does not support RSA-PSS key generation.
-if (!common.openSSLIsBoringSSL) {
+{
 
   generateKeyPair('rsa-pss', {
     modulusLength: 512,

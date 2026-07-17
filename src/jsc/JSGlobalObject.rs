@@ -622,6 +622,12 @@ impl JSGlobalObject {
         crate::cpp::JSC__JSGlobalObject__reload(self)
     }
 
+    /// The same wall-clock milliseconds JS `Date.now()` would return, including
+    /// any fake-timers override installed on this global.
+    pub fn js_date_now(&self) -> f64 {
+        crate::cpp::JSC__JSGlobalObject__jsDateNow(self)
+    }
+
     pub fn run_on_load_plugins(
         &self,
         namespace_: BunString,

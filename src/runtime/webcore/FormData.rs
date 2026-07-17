@@ -354,14 +354,16 @@ pub fn for_each_multipart_entry<C>(
                 b""
             };
             if strings::eql_case_insensitive_ascii(key, b"content-disposition", true) {
-                value = strings::trim(value, b" ");
-                if value.starts_with(b"form-data;") {
+                // OWS after the colon is SP or HTAB (RFC 9112 §5.6.3); the
+                // disposition type is a case-insensitive token (RFC 2183 §2).
+                value = strings::trim(value, b" \t");
+                if strings::starts_with_case_insensitive_ascii(value, b"form-data;") {
                     value = &value[b"form-data;".len()..];
-                    value = strings::trim(value, b" ");
+                    value = strings::trim(value, b" \t");
                 }
 
                 while let Some(eql_start) = strings::index_of(value, b"=") {
-                    let eql_key = strings::trim(&value[..eql_start], b" ;");
+                    let eql_key = strings::trim(&value[..eql_start], b" \t;");
                     value = &value[eql_start + 1..];
                     if value.starts_with(b"\"") {
                         value = &value[1..];

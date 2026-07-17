@@ -56,7 +56,7 @@ it("random_get fills only the requested window", () => {
   const bufLen = 16;
 
   const before = new Uint8Array(wasi.memory.buffer.slice(0));
-  expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(bufLen);
+  expect(wasi.wasiImport.random_get(bufPtr, bufLen)).toBe(WASI_ESUCCESS);
   const after = new Uint8Array(wasi.memory.buffer);
 
   // Every byte outside [bufPtr, bufPtr + bufLen) must be untouched: passing the
@@ -70,7 +70,6 @@ it("random_get fills only the requested window", () => {
 
   // ...and the window itself is filled (all-zero is a 1-in-2^128 false failure).
   expect(after.subarray(bufPtr, bufPtr + bufLen).some(b => b !== 0)).toBe(true);
-  expect(WASI_ESUCCESS).toBe(0);
 });
 
 it("path_open reports the host errno to the guest when the open fails", () => {

@@ -1851,7 +1851,7 @@ var require_wasi = __commonJS({
             // arguments, so a bare `buffer, bufPtr, bufLen` randomized all of linear
             // memory rather than the requested window.
             crypto.getRandomValues(new Uint8Array(this.memory.buffer, bufPtr, bufLen));
-            return bufLen;
+            return constants_1.WASI_ESUCCESS;
           },
           sched_yield() {
             return constants_1.WASI_ESUCCESS;

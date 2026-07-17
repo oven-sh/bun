@@ -1,12 +1,29 @@
 #include "root.h"
 #include "BunClientData.h"
 
+#include <atomic>
+
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Heap.h>
 
-extern "C" int Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+#if USE(MIMALLOC)
+// Matches oven-sh/mimalloc's mi_attr_noexcept declaration; bmalloc's
+// vendored mimalloc.h predates this entry point.
+extern "C" void mi_on_thread_idle(void) noexcept;
+#if !OS(WINDOWS)
+// uSockets' CLOCK_MONOTONIC reading (packages/bun-usockets/src/loop.c). Must be
+// the same clock the caller's `nowNs` came from, or the rate limit below
+// compares two epochs. Windows always passes a reading, so it needs no fallback.
+extern "C" uint64_t us_internal_monotonic_ns(void);
+#endif
+#endif
 
-extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
+// Rust-side `AtomicI32` static (src/jsc/VirtualMachine.rs). Same layout as a plain
+// int32_t, but Rust writes it (env parsing) while this thread reads it, so read
+// it as an atomic rather than through a plain `int`.
+extern "C" std::atomic<int32_t> Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+
+extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm, uint64_t nowNs)
 {
     ASSERT(vm);
     const bool previouslyHadAccess = vm->heap.hasHeapAccess();
@@ -48,7 +65,7 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
         // finalizers that might've been waiting to be run is a good idea.
         // But if you haven't, like if the process is just waiting on I/O
         // then don't bother.
-        const int defaultRemainingRunsUntilSkipReleaseAccess = Bun__defaultRemainingRunsUntilSkipReleaseAccess;
+        const int defaultRemainingRunsUntilSkipReleaseAccess = Bun__defaultRemainingRunsUntilSkipReleaseAccess.load(std::memory_order_relaxed);
 
         static thread_local int remainingRunsUntilSkipReleaseAccess = 0;
 
@@ -64,6 +81,22 @@ extern "C" void Bun__JSC_onBeforeWait(JSC::VM* _Nonnull vm)
             // > If you are not moving a VM to the different thread, then you can aquire the access and do not need to release
             vm->heap.stopIfNecessary();
             vm->didEnterVM = false;
+
+#if USE(MIMALLOC) && OS(WINDOWS)
+            // Collect retired pages, punch free-block holes, hand the arena purge to
+            // the scavenger. Rate-limited; nowNs is the tick's shared reading (0 = take
+            // one), compared by addition so an out-of-order reading cannot underflow.
+            //
+            // Windows only: everywhere else `us_loop_run_bun_tick` hands the heaps to the
+            // scavenger across the poll instead, so this thread never does the sweep itself.
+            // The libuv loop has no handoff yet, so it keeps paying for it here.
+            static constexpr uint64_t idleSweepIntervalNs = 100 * 1000000ULL;
+            static thread_local uint64_t lastIdleSweepNs = 0;
+            if (nowNs >= lastIdleSweepNs + idleSweepIntervalNs) {
+                lastIdleSweepNs = nowNs;
+                mi_on_thread_idle();
+            }
+#endif
         }
     }
 }

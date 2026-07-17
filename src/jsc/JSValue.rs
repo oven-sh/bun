@@ -931,7 +931,7 @@ impl JSValue {
         E::from_js_value(self, global, property_name)
     }
     pub fn as_string(self) -> *mut JSString {
-        debug_assert!(self.is_string());
+        debug_assert!(self.is_string_literal());
         JSC__JSValue__asString(self)
     }
     /// `jsTypeString()` — calls `JSC::jsTypeStringForValue`, returning the
@@ -1058,6 +1058,20 @@ impl JSValue {
     }
     pub fn get_unix_timestamp(self) -> f64 {
         JSC__JSValue__getUnixTimestamp(self)
+    }
+    /// `Date.prototype.toISOString` output via JSC's date cache: `None` when
+    /// `self` is not a `Date` or its time value is `NaN`; years outside
+    /// 0000-9999 use ECMAScript's expanded `+YYYYYY`/`-YYYYYY` form.
+    pub fn to_iso_string<'a>(
+        self,
+        global: &JSGlobalObject,
+        buf: &'a mut [u8; 64],
+    ) -> Option<&'a [u8]> {
+        let len = JSC__JSValue__toISOString(self, global, buf);
+        if len <= 0 {
+            return None;
+        }
+        Some(&buf[..len as usize])
     }
     /// Returns `(ptr, len)` of the cell's `ClassInfo` name (static C string).
     pub fn get_class_info_name(self) -> Option<&'static [u8]> {
@@ -1581,13 +1595,6 @@ impl JSValue {
             JSC__JSValue__jsonStringifyFast(self, global, out)
         })
     }
-
-    /// `JSC__JSValue__parseJSON` (bindings.cpp / headers.h:279) — parse `self`
-    /// (a JS string value) as JSON. The C++ symbol takes an *EncodedJSValue*,
-    /// not a `*const ZigString`.
-    pub fn parse_json(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        host_fn::from_js_host_call(global, || JSC__JSValue__parseJSON(self, global))
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2014,6 +2021,13 @@ unsafe extern "C" {
         exception: &mut ZigException,
     );
     safe fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
+    // safe: `&mut [u8; 64]` is ABI-identical to the non-null 64-byte out-buffer
+    // the C++ side requires (`Bun::toISOString` writes at most 28 bytes).
+    safe fn JSC__JSValue__toISOString(
+        this: JSValue,
+        global: &JSGlobalObject,
+        buf: &mut [u8; 64],
+    ) -> i32;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;
     safe fn JSC__JSValue__getOwnByValue(
         this: JSValue,
@@ -2099,7 +2113,6 @@ unsafe extern "C" {
         this: JSValue,
         global: &JSGlobalObject,
     ) -> f64;
-    safe fn JSC__JSValue__parseJSON(this: JSValue, global: &JSGlobalObject) -> JSValue;
     safe fn JSC__JSValue__toZigString(
         this: JSValue,
         out: &mut bun_core::ZigString,
@@ -2206,24 +2219,6 @@ impl core::fmt::Display for StringFormatter<'_> {
 }
 
 impl JSValue {
-    // ── C-API bridging. ───────
-    /// `JSValue.c(JSValueRef)` — wrap a C-API `JSValueRef` as a `JSValue`.
-    #[inline]
-    pub fn c(ptr: crate::C::JSValueRef) -> JSValue {
-        JSValue(ptr as usize, PhantomData)
-    }
-    /// `JSValue.asRef()` — view as C-API `JSValueRef`.
-    #[inline]
-    pub fn as_ref(self) -> crate::C::JSValueRef {
-        self.0 as crate::C::JSValueRef
-    }
-    /// `JSValue.asObjectRef()` — view as C-API `JSObjectRef` (caller asserts
-    /// `is_object()`).
-    #[inline]
-    pub fn as_object_ref(self) -> crate::C::JSObjectRef {
-        self.0 as crate::C::JSObjectRef
-    }
-
     // ── Equality / identity. ────────────────
     #[inline]
     pub fn eql_value(self, other: JSValue) -> bool {
@@ -2607,6 +2602,24 @@ impl JSValue {
         Bun__ProxyObject__getInternalField(self, field as u32)
     }
 
+    /// Returns the wrapped target of a `JSGlobalProxy` or `ProxyObject`, or
+    /// `ZERO` if `self` is not a proxy.
+    pub fn get_proxy_target(self) -> JSValue {
+        Bun__JSValue__getProxyTarget(self)
+    }
+
+    // ── ArrayBufferView accessors. ─────────────────────
+    /// Backing `ArrayBuffer` wrapper for a typed array or `DataView`.
+    /// Returns `ZERO` if `self` is not an `ArrayBufferView`.
+    pub fn get_array_buffer_view_buffer(self, global: &JSGlobalObject) -> JSValue {
+        Bun__JSValue__getArrayBufferViewBuffer(self, global)
+    }
+
+    /// `byteOffset` of a typed array or `DataView`, `0` otherwise.
+    pub fn get_array_buffer_view_byte_offset(self) -> usize {
+        Bun__JSValue__getArrayBufferViewByteOffset(self)
+    }
+
     // ── Formatting. ────────────────────────────────────
     #[inline]
     pub fn fmt_string(self, global: &JSGlobalObject) -> StringFormatter<'_> {
@@ -2727,6 +2740,12 @@ unsafe extern "C" {
         callback: ForEachCallback,
     );
     safe fn Bun__ProxyObject__getInternalField(this: JSValue, field: u32) -> JSValue;
+    safe fn Bun__JSValue__getProxyTarget(this: JSValue) -> JSValue;
+    safe fn Bun__JSValue__getArrayBufferViewBuffer(
+        this: JSValue,
+        global: &JSGlobalObject,
+    ) -> JSValue;
+    safe fn Bun__JSValue__getArrayBufferViewByteOffset(this: JSValue) -> usize;
     safe fn Bun__Process__queueNextTick1(global: &JSGlobalObject, func: JSValue, arg: JSValue);
     fn Bun__JSValue__deserialize(
         global: *const JSGlobalObject,

@@ -75,8 +75,11 @@ pub struct EventLoop {
     // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
     pub virtual_machine: Option<NonNull<VirtualMachine>>,
     pub waker: Option<Waker>,
-    // `?*uws.Timer` FFI handle.
+    // see `hold_forever_poll`
+    #[cfg(windows)]
     pub forever_timer: Option<NonNull<uws::Timer>>,
+    #[cfg(not(windows))]
+    pub holds_forever_poll: bool,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     #[cfg(windows)]
     // `?*uws.Loop` FFI handle.
@@ -115,7 +118,10 @@ impl Default for EventLoop {
             global: None,
             virtual_machine: None,
             waker: None,
+            #[cfg(windows)]
             forever_timer: None,
+            #[cfg(not(windows))]
+            holds_forever_poll: false,
             deferred_tasks: DeferredTaskQueue::DeferredTaskQueue::default(),
             #[cfg(windows)]
             uws_loop: None,
@@ -152,9 +158,9 @@ pub enum JsTerminated {
 /// Short alias for `Result<T, JsTerminated>`.
 pub type JsTerminatedResult<T> = Result<T, JsTerminated>;
 
-impl From<JsTerminated> for bun_core::Error {
+impl From<JsTerminated> for crate::CrateError {
     fn from(_: JsTerminated) -> Self {
-        bun_core::err!("JSTerminated")
+        crate::CrateError::JSTerminated
     }
 }
 
@@ -374,6 +380,13 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) {
+        // A prior callback's microtasks can tear the worker down
+        // (worker.terminate()), leaving the termination exception pending;
+        // entering JS then trips executeCallImpl's `assertNoException`. Same
+        // gate as `tick_with_count()`; guarding here covers all 50+ callers.
+        if global_object.has_exception() {
+            return;
+        }
         // R-2 noalias mitigation (see PORT_NOTES_PLAN R-2; precedent
         // `b818e70e1c57` NodeHTTPResponse::cork): `&mut self` carries LLVM
         // `noalias`, and `callback.call()` receives nothing derived from
@@ -406,6 +419,9 @@ impl EventLoop {
         this_value: JSValue,
         arguments: &[JSValue],
     ) -> JSValue {
+        if global_object.has_exception() {
+            return JSValue::ZERO;
+        }
         // R-2 noalias mitigation — see `run_callback` above.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the unique live `EventLoop`; short-lived `&mut`.
@@ -586,6 +602,21 @@ impl EventLoop {
         }
     }
 
+    /// A finished HTTP transaction asks the GC heuristic to look at the heap -- but not yet:
+    /// the response's JS handling and microtasks have not run, so the garbage is not there to
+    /// see. Acted on at the next park (`drain_pending_gc_hint`). `&self`: callers run inside
+    /// `tick_queue_with_count`, which already holds the `&mut EventLoop`.
+    pub fn request_gc_hint(&self) {
+        self.vm_ref().as_mut().gc_controller.request_hint();
+    }
+
+    /// Acts on a hint left by `request_gc_hint`. Must run BEFORE the poll deadline is computed
+    /// (`timer::All::get_timeout`): the GC heuristic arms a one-shot timer, and a timer armed
+    /// after the deadline is not in it -- the loop would sleep straight past it.
+    pub fn drain_pending_gc_hint(&mut self) {
+        self.vm_ref().as_mut().gc_controller.drain_pending_hint();
+    }
+
     #[inline]
     pub fn process_gc_timer(&mut self) {
         self.vm_ref().as_mut().gc_controller.process_gc_timer();
@@ -746,7 +777,11 @@ impl EventLoop {
         // `self.tasks` (a field of the static-rooted `VirtualMachine` box that
         // is never `dealloc`'d) leaves the chain reachable to LSan — the same
         // visibility they had via `concurrent_tasks` before
-        // `drop_concurrent_cpp_tasks` drained it.
+        // `drop_concurrent_cpp_tasks` drained it. CppTasks must NOT be deleted
+        // here: this runs after JSC VM teardown on both worker and main paths,
+        // and a Worker dispatchExit task's `~Ref<Worker>` would walk freed
+        // WeakBlock storage via `~JSEventListener`. They are reclaimed before
+        // teardown by `release_queued_tasks_for_shutdown`'s CppTask arm.
         let mut requeue: Vec<bun_event_loop::Task> = Vec::new();
         while let Some(task) = self.tasks.read_item() {
             if task.tag == bun_event_loop::task_tag::ManagedTask {
@@ -775,6 +810,11 @@ impl EventLoop {
                 unsafe { __bun_cancel_pending_immediate(task, vm) };
             }
         }
+        // Free the deferred-task map's storage. The tasks must not be run (same rule as the
+        // queued tasks above), and an entry owns nothing but a `Copy` ctx pointer whose owner
+        // released it when the JSC teardown before this finalized it. A worker's VM box is
+        // `dealloc`'d without running `Drop` (WebWorker::shutdown), so nothing else frees it.
+        self.deferred_tasks = DeferredTaskQueue::DeferredTaskQueue::default();
     }
 
     /// Note (§Dispatch): `task` is an erased
@@ -1051,6 +1091,36 @@ impl EventLoop {
         Ok(result)
     }
 
+    /// Keep one poll registered with the loop so `us_loop_run_bun_tick` parks
+    /// instead of returning immediately on `num_polls == 0`.
+    #[cfg(not(windows))]
+    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+        if !self.holds_forever_poll {
+            loop_.inc();
+            self.holds_forever_poll = true;
+        }
+    }
+
+    #[cfg(windows)]
+    fn hold_forever_poll(&mut self, loop_: &mut uws::Loop) {
+        if self.forever_timer.is_none() {
+            let mut t = uws::Timer::create(
+                loop_,
+                std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
+            );
+            // SAFETY: t is a fresh non-null timer handle
+            unsafe {
+                t.as_mut().set(
+                    std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
+                    Some(noop_forever_timer),
+                    1000 * 60 * 4,
+                    1000 * 60 * 4,
+                )
+            };
+            self.forever_timer = Some(t);
+        }
+    }
+
     pub fn tick_possibly_forever(&mut self) {
         let loop_ptr = self.usockets_loop();
         // SAFETY: usockets_loop() returns a live uws loop for the VM lifetime.
@@ -1065,27 +1135,19 @@ impl EventLoop {
         }
 
         if !loop_.is_active() {
-            if self.forever_timer.is_none() {
-                let mut t = uws::Timer::create(
-                    loop_,
-                    std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                );
-                // SAFETY: t is a fresh non-null timer handle
-                unsafe {
-                    t.as_mut().set(
-                        std::ptr::from_mut::<EventLoop>(self).cast::<core::ffi::c_void>(),
-                        Some(noop_forever_timer),
-                        1000 * 60 * 4,
-                        1000 * 60 * 4,
-                    )
-                };
-                self.forever_timer = Some(t);
-            }
+            self.hold_forever_poll(loop_);
         }
 
+        self.drain_pending_gc_hint();
         self.process_gc_timer();
         self.process_gc_timer();
-        loop_.tick();
+        // `tick()` below can start work (e.g. a --hot reload) whose only wake
+        // source is a cross-thread `wakeup()`; bound the park, same as the GC
+        // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
+        loop_.tick_with_timeout(
+            Some(&bun_core::Timespec { sec: 1, nsec: 0 }),
+            uws::NOW_NS_UNKNOWN,
+        );
 
         self.vm_ref().as_mut().on_after_event_loop();
         self.tick_concurrent();
@@ -1109,6 +1171,12 @@ impl EventLoop {
                     if !worker.has_requested_terminate()
                         && promise.status() == PromiseStatus::Pending
                     {
+                        // Unsettled top-level await: the loop has drained but the
+                        // entry module's evaluation promise is still pending. Stop
+                        // waiting so the worker can exit (node uses exit code 13).
+                        if !self.vm_ref().is_event_loop_alive() {
+                            break;
+                        }
                         self.auto_tick();
                     }
                 }
@@ -1177,6 +1245,7 @@ pub fn get_active_tasks(global_object: &JSGlobalObject, _frame: &CallFrame) -> J
     Ok(result)
 }
 
+#[cfg(windows)]
 extern "C" fn noop_forever_timer(_: *mut uws::Timer) {
     // do nothing
 }

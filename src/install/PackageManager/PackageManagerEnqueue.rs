@@ -78,7 +78,7 @@ pub fn enqueue_dependency_with_main(
     dependency: &Dependency,
     resolution: PackageID,
     install_peer: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     enqueue_dependency_with_main_and_success_fn(
         this,
         id,
@@ -162,7 +162,7 @@ pub fn enqueue_dependency_list(
                 );
             } else {
                 log.add_zig_error_with_note(
-                    err,
+                    err.name(),
                     format_args!("error occurred while resolving {}", path_fmt),
                 );
             }
@@ -185,6 +185,9 @@ pub fn enqueue_tarball_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueueTarballForDownloadError> {
     let task_id = Task::Id::for_tarball(url);
+    if this.network_task_has_failed(task_id) {
+        return Err(EnqueueTarballForDownloadError::AlreadyFailed);
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -390,6 +393,9 @@ pub fn enqueue_package_for_download(
     patch_name_and_version_hash: Option<u64>,
 ) -> Result<(), EnqueuePackageForDownloadError> {
     let task_id = Task::Id::for_npm_package(name, version);
+    if this.network_task_has_failed(task_id) {
+        return Err(EnqueuePackageForDownloadError::AlreadyFailed);
+    }
     let task_queue = this.task_queue.get_or_put(task_id)?;
     if !task_queue.found_existing {
         *task_queue.value_ptr = TaskCallbackList::default();
@@ -434,7 +440,7 @@ pub enum DependencyToEnqueue {
         resolution: Resolution,
     },
     NotFound,
-    Failure(bun_core::Error),
+    Failure(crate::Error),
 }
 
 pub fn enqueue_dependency_to_root(
@@ -510,7 +516,7 @@ pub fn enqueue_dependency_to_root(
             this.drain_dependency_list();
 
             struct Closure {
-                err: Option<bun_core::Error>,
+                err: Option<crate::Error>,
                 // raw `*mut` — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
@@ -662,7 +668,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     // folds them and a runtime fn-pointer address comparison is unsound. Thread
     // an explicit flag instead.
     is_root: bool,
-) -> Result<(), bun_core::Error> {
+) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
         return Ok(());
     }
@@ -798,7 +804,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     let resolve_result = match resolve_result_ {
                         Ok(v) => v,
                         Err(err) => {
-                            if err == bun_core::err!("DistTagNotFound") {
+                            if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -818,7 +824,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
-                            } else if err == bun_core::err!("NoMatchingVersion") {
+                            } else if err == crate::Error::NoMatchingVersion {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -834,7 +840,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
-                            } else if err == bun_core::err!("TooRecentVersion") {
+                            } else if err == crate::Error::TooRecentVersion {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -869,7 +875,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     }
                                 }
                                 return Ok(());
-                            } else if err == bun_core::err!("MissingPackageJSON") {
+                            } else if err == crate::Error::MissingPackageJSON {
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
@@ -1395,7 +1401,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                 success_fn,
             ) {
                 Ok(v) => v,
-                Err(err) if err == bun_core::err!("MissingPackageJSON") => None,
+                Err(crate::Error::MissingPackageJSON) => None,
                 Err(err) => return Err(err),
             };
 
@@ -1997,7 +2003,7 @@ fn get_or_put_resolved_package_with_find_result(
     find_result: Npm::FindResult,
     install_peer: bool,
     success_fn: SuccessFn,
-) -> Result<Option<ResolvedPackageResult>, bun_core::Error> {
+) -> crate::Result<Option<ResolvedPackageResult>> {
     // reshaped for borrowck — `is_root_dependency(&self, &mut PackageManager, …)`
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = {
@@ -2199,7 +2205,7 @@ fn get_or_put_resolved_package(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
-) -> Result<Option<ResolvedPackageResult>, bun_core::Error> {
+) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
         if let Some(index) = this.lockfile.package_index.get(&name_hash) {
             let resolutions = this.lockfile.packages.items_resolution();
@@ -2466,7 +2472,7 @@ fn get_or_put_resolved_package(
                 Npm::FindVersionResult::Err(err_type) => match err_type {
                     Npm::FindVersionError::TooRecent
                     | Npm::FindVersionError::AllVersionsTooRecent => {
-                        return Err(bun_core::err!("TooRecentVersion"));
+                        return Err(crate::Error::TooRecentVersion);
                     }
                     Npm::FindVersionError::NotFound => None, // Handle below with existing logic
                 },
@@ -2524,8 +2530,8 @@ fn get_or_put_resolved_package(
                     }
 
                     return match version.tag {
-                        dependency::version::Tag::Npm => Err(bun_core::err!("NoMatchingVersion")),
-                        dependency::version::Tag::DistTag => Err(bun_core::err!("DistTagNotFound")),
+                        dependency::version::Tag::Npm => Err(crate::Error::NoMatchingVersion),
+                        dependency::version::Tag::DistTag => Err(crate::Error::DistTagNotFound),
                         _ => unreachable!(),
                     };
                 }
@@ -2601,9 +2607,7 @@ fn get_or_put_resolved_package(
                         dependency.name.slice(buf),
                         buf,
                     ) {
-                        break 'res FolderResolutionValue::Err(bun_core::err!(
-                            "MissingPackageJSON"
-                        ));
+                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
                     }
                 }
 
@@ -2784,7 +2788,7 @@ impl PackageManager {
         dependency: &Dependency,
         resolution: PackageID,
         install_peer: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         enqueue_dependency_with_main(self, id, dependency, resolution, install_peer)
     }
 
@@ -2798,7 +2802,7 @@ impl PackageManager {
         success_fn: SuccessFn,
         fail_fn: Option<FailFn>,
         is_root: bool,
-    ) -> Result<(), bun_core::Error> {
+    ) -> crate::Result<()> {
         enqueue_dependency_with_main_and_success_fn(
             self,
             id,

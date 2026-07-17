@@ -623,6 +623,12 @@ impl JSGlobalObject {
         crate::cpp::JSC__JSGlobalObject__reload(self)
     }
 
+    /// The same wall-clock milliseconds JS `Date.now()` would return, including
+    /// any fake-timers override installed on this global.
+    pub fn js_date_now(&self) -> f64 {
+        crate::cpp::JSC__JSGlobalObject__jsDateNow(self)
+    }
+
     pub fn run_on_load_plugins(
         &self,
         namespace_: BunString,
@@ -881,19 +887,27 @@ impl JSGlobalObject {
         self.throw_value(instance)
     }
 
-    pub fn throw_error(&self, err: bun_core::Error, fmt: &'static str) -> JsError {
-        if err == bun_core::err!("OutOfMemory") {
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn throw_error(&self, err: impl bun_core::output::ErrName, fmt: &'static str) -> JsError {
+        if err.name() == b"OutOfMemory" {
             return self.throw_out_of_memory();
         }
 
         // If we're throwing JSError, that means either:
         // - We're throwing an exception while another exception is already active
         // - We're incorrectly returning JSError from a function that did not throw.
-        debug_assert!(err != bun_core::err!("JSError"));
+        debug_assert!(err.name() != b"JSError");
 
         let mut buffer: Vec<u8> = Vec::new();
         use core::fmt::Write;
-        if write!(WriteVec(&mut buffer), "{} {}", err.name(), fmt).is_err() {
+        if write!(
+            WriteVec(&mut buffer),
+            "{} {}",
+            bstr::BStr::new(err.name()),
+            fmt
+        )
+        .is_err()
+        {
             return self.throw_out_of_memory();
         }
         let str = ZigString::init_utf8(&buffer);

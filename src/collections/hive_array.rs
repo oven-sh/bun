@@ -377,6 +377,35 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         (value as usize) >= (start as usize) && (value as usize) < (end as usize)
     }
 
+    /// Drop every occupied slot in place and mark it free. Runs from
+    /// [`Drop`]; also callable explicitly when an owner wants to release
+    /// slot payloads earlier than the hive itself is dropped.
+    ///
+    /// # Safety
+    /// Every slot whose `used` bit is set must hold a fully-initialized `T`
+    /// (the invariant [`get_init`](Self::get_init) / [`alloc`](Self::alloc) /
+    /// [`claim`](Self::claim)+[`write`](HiveSlot::write) maintain). A slot
+    /// claimed via the deprecated [`get`](Self::get) but never written
+    /// violates this and makes the `drop_in_place` UB.
+    pub unsafe fn drop_all(&mut self) {
+        if core::mem::needs_drop::<T>() {
+            // `iter_set` snapshots the bitset, so `unset` inside the loop is
+            // invisible to it. Unsetting before `drop_in_place` means a later
+            // `drop_all` (e.g. from `Drop` after an explicit call) never
+            // revisits an already-dropped slot.
+            let mut iter = self.used.iter_set();
+            while let Some(index) = iter.next() {
+                let slot = self.ptr_at(index);
+                self.used.unset(index);
+                // SAFETY: caller contract — `used` bit set ⇒ slot is a fully
+                // initialized `T` (see fn doc).
+                unsafe { core::ptr::drop_in_place(slot) };
+                asan::poison(slot.cast(), size_of::<T>());
+            }
+        }
+        self.used = HiveBitSet::init_empty();
+    }
+
     /// Return a slot to the pool, dropping the contained `T` in place.
     ///
     /// Returns `false` (and drops nothing) if `value` does not point into
@@ -406,6 +435,18 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
 
         self.used.unset(index as usize);
         true
+    }
+}
+
+impl<T, const CAPACITY: usize> Drop for HiveArray<T, CAPACITY> {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `alloc`/`get_init`/`emplace` set `used` and write the slot
+        // in one `&self` call, and `claim()` hands out a `HiveSlot<'_>` that
+        // borrows the pool (its Drop unsets the bit if never written), so by
+        // the time `&mut self` is obtainable every `used` slot is fully
+        // initialized. The deprecated `get()` family has no external callers.
+        unsafe { self.drop_all() };
     }
 }
 
@@ -1011,6 +1052,13 @@ mod tests {
         // SAFETY: heap slot from this Fallback.
         unsafe { f.put(p.as_ptr()) };
         assert_eq!(drops.get(), 2);
+
+        // Dropping the pool itself drops every still-occupied slot.
+        a.get_init(mk(10)).unwrap();
+        a.get_init(mk(11)).unwrap();
+        assert_eq!(drops.get(), 2);
+        drop(a);
+        assert_eq!(drops.get(), 4);
     }
 
     #[test]

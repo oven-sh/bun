@@ -499,13 +499,21 @@ pub(crate) fn braces(
         if strings::is_all_ascii(brace_slice.slice()) {
             break 'lexer_output match Braces::Lexer::tokenize(brace_slice.slice()) {
                 Ok(v) => v,
-                Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
+                Err(err) => {
+                    return Err(
+                        global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                    );
+                }
             };
         }
 
         match Braces::NewLexer::<{ Braces::StringEncoding::Wtf8 }>::tokenize(brace_slice.slice()) {
             Ok(v) => break 'lexer_output v,
-            Err(err) => return Err(global.throw_error(err.into(), "failed to tokenize braces")),
+            Err(err) => {
+                return Err(
+                    global.throw_error(crate::Error::from(err), "failed to tokenize braces")
+                );
+            }
         }
     };
 
@@ -523,7 +531,9 @@ pub(crate) fn braces(
         let mut parser = Braces::Parser::init(&lexer_output.tokens[..], &arena);
         let ast_node = match parser.parse() {
             Ok(v) => v,
-            Err(err) => return Err(global.throw_error(err.into(), "failed to parse braces")),
+            Err(err) => {
+                return Err(global.throw_error(crate::Error::from(err), "failed to parse braces"));
+            }
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
@@ -873,13 +883,11 @@ pub(crate) fn register_macro(
         .get_or_put(id)
         .expect("unreachable");
     if get_or_put_result.found_existing {
-        // `value_ptr` is `&mut JSObjectRef` (`*mut OpaqueJSValue`); recover the
-        // protected JSValue and unprotect it before overwriting.
-        JSValue::c(*get_or_put_result.value_ptr).unprotect();
+        get_or_put_result.value_ptr.unprotect();
     }
 
     arguments[1].protect();
-    *get_or_put_result.value_ptr = arguments[1].as_object_ref();
+    *get_or_put_result.value_ptr = arguments[1];
 
     Ok(JSValue::UNDEFINED)
 }
@@ -1960,7 +1968,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(p) => p,
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     };
@@ -1975,7 +1984,8 @@ pub(crate) fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObje
         Ok(ctx) => valkey_ref._subscription_ctx.set(ctx),
         Err(jsc::JsError::Thrown) | Err(jsc::JsError::Terminated) => return JSValue::ZERO,
         Err(err) => {
-            let _ = global_this.throw_error(err.into(), "Failed to create Redis client");
+            let _ =
+                global_this.throw_error(crate::Error::from(err), "Failed to create Redis client");
             return JSValue::ZERO;
         }
     }
@@ -2542,7 +2552,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 
@@ -2683,7 +2693,7 @@ pub mod JSZlib {
                                 global_this.throw(format_args!("Zlib error: Invalid argument"))
                             );
                         }
-                        return Err(global_this.throw_error(err.into(), "Zlib error"));
+                        return Err(global_this.throw_error(crate::Error::from(err), "Zlib error"));
                     }
                 };
 
@@ -2698,8 +2708,17 @@ pub mod JSZlib {
                 leak_list_into_uint8array(global_this, list)
             }
             Library::Libdeflate => {
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level.unwrap_or(6))
-                else {
+                let level = level.unwrap_or(6);
+                if !(bun_libdeflate::MIN_COMPRESSION_LEVEL..=bun_libdeflate::MAX_COMPRESSION_LEVEL)
+                    .contains(&level)
+                {
+                    return Err(global_this.throw_invalid_arguments(format_args!(
+                        "Compression level must be between {} and {} for libdeflate",
+                        bun_libdeflate::MIN_COMPRESSION_LEVEL,
+                        bun_libdeflate::MAX_COMPRESSION_LEVEL,
+                    )));
+                }
+                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
                     return Err(global_this.throw_out_of_memory());
                 };
                 let encoding = if is_gzip {

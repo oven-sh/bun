@@ -164,6 +164,7 @@ use bun_sql_jsc::postgres::PostgresSQLConnection;
 use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
+use bun_jsc::garbage_collection_controller::GarbageCollectionController;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -975,6 +976,18 @@ pub unsafe fn __bun_fire_timer(t: *mut EventLoopTimer, now: *const ElTimespec, v
                 AbortSignalTimeout::run(c, vm)
             })
         }
+        EventLoopTimerTag::GcOneShot => {
+            timer_arm!(GarbageCollectionController, gc_timer, |c, _now, _vm| {
+                GarbageCollectionController::on_gc_timer(c)
+            })
+        }
+        EventLoopTimerTag::GcRepeating => {
+            timer_arm!(
+                GarbageCollectionController,
+                gc_repeating_timer,
+                |c, _now, vm| GarbageCollectionController::on_gc_repeating_timer(c, vm)
+            )
+        }
         EventLoopTimerTag::DateHeaderTimer => {
             timer_arm!(DateHeaderTimer, event_loop_timer, |c, _now, vm| (*c)
                 .run(&mut *vm))
@@ -1183,6 +1196,35 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
                 }};
             }
             for_each_fs_async_op!(__fs_destroy);
+            true
+        }
+        // A cross-thread Atomics.notify (or Wasm/FinalizationRegistry
+        // completion) enqueued this after the event loop's last tick. The
+        // dispatch arm above would have `delete`d it; mirror that here so the
+        // re-queue path doesn't keep it alive past worker VM dealloc. Runs
+        // before JSC teardown, so ~Ref<TicketData> is safe.
+        task_tag::JSCDeferredWorkTask => {
+            unsafe extern "C" {
+                fn Bun__deleteDeferredWorkTask(task: *mut JSCDeferredWorkTask);
+            }
+            // SAFETY: every JSCDeferredWorkTask payload is heap-allocated by
+            // `new JSCDeferredWorkTask` in JSCTaskScheduler::onScheduleWorkSoon;
+            // we own it once popped.
+            unsafe { Bun__deleteDeferredWorkTask(task.ptr.cast::<JSCDeferredWorkTask>()) };
+            true
+        }
+        // Same reclaim `drop_concurrent_cpp_tasks` performs, but for tasks
+        // that were already batch-moved into `self.tasks`. Must run before
+        // JSC teardown: a Worker `dispatchExit` lambda's `~Ref<Worker>` walks
+        // `~JSEventListener` Weak<> handles. Worker `shutdown()` calls
+        // `release_queued_tasks_for_shutdown` for the same reason.
+        task_tag::CppTask => {
+            unsafe extern "C" {
+                fn Bun__deleteEventLoopTask(task: *mut CppTask);
+            }
+            // SAFETY: every CppTask payload is a heap `WebCore::EventLoopTask*`;
+            // we own it once popped.
+            unsafe { Bun__deleteEventLoopTask(task.ptr.cast::<CppTask>()) };
             true
         }
         // Re-queued by the caller; the box stays reachable from the

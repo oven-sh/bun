@@ -1041,6 +1041,88 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
     });
   });
 
+  // server.stop() called while lsquic_engine_process_conns is on the stack
+  // (i.e. from the request handler, or from a microtask the handler resolved)
+  // used to re-enter the engine via lsquic_engine_send_unsent_packets and
+  // trip `assert(!ENPUB_PROC)` in lsquic_engine.c. The shutdown is now
+  // deferred until process_conns returns; graceful stop still lets the
+  // in-flight request finish, which is what this test asserts.
+  for (const http1 of [false, true]) {
+    test(`server.stop() from inside an H3 handler drains the in-flight request (http1: ${http1})`, async () => {
+      // Client and server share one process: the handler runs from inside
+      // the server engine's process_conns, and the microtask drain that
+      // follows it reaches the top-level `server.stop()` with that frame
+      // still on the stack.
+      const script = `
+        const tls = ${JSON.stringify(tls)};
+        const { promise: inHandler, resolve: handlerStarted } = Promise.withResolvers();
+        const { promise: proceed, resolve: letGo } = Promise.withResolvers();
+        const server = Bun.serve({
+          port: 0, hostname: "127.0.0.1", tls, http3: true, http1: ${http1},
+          async fetch(req) {
+            handlerStarted();
+            await proceed;
+            return new Response("late");
+          },
+        });
+        const res = fetch("https://127.0.0.1:" + server.port + "/", {
+          protocol: "http3", tls: { rejectUnauthorized: false },
+        }).then(r => r.text());
+        await inHandler;
+        server.stop();
+        letGo();
+        process.stdout.write("got:" + await res);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr }).toEqual({ stdout: "got:late", stderr: "" });
+      expect(exitCode).toBe(0);
+    });
+  }
+
+  test("server.stop(true) from inside an H3 handler does not re-enter the engine", async () => {
+    // Abrupt stop closes the UDP fd with the server conn's CONNECTION_CLOSE
+    // still unsent, so the in-process client hangs on the dead session; an
+    // AbortController drops it once the second listener has answered.
+    const script = `
+      const tls = ${JSON.stringify(tls)};
+      const opts = { port: 0, hostname: "127.0.0.1", tls, http3: true, http1: false };
+      const server = Bun.serve({
+        ...opts,
+        async fetch(req) {
+          server.stop(true);
+          return new Response("unreachable");
+        },
+      });
+      const ac = new AbortController();
+      const dead = fetch("https://127.0.0.1:" + server.port + "/", {
+        protocol: "http3", tls: { rejectUnauthorized: false }, signal: ac.signal,
+      }).then(r => r.text(), () => "rejected");
+      const second = Bun.serve({ ...opts, fetch: () => new Response("second") });
+      const body = await fetch("https://127.0.0.1:" + second.port + "/", {
+        protocol: "http3", tls: { rejectUnauthorized: false },
+      }).then(r => r.text());
+      ac.abort();
+      await dead;
+      await second.stop(true);
+      process.stdout.write("got:" + body);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "got:second", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   // Each QUIC connection counts as a virtual poll (loop->num_polls); after
   // server.stop() drains, the last conn close releases the UDP fd and the
   // loop has no polls left — the process exits without process.exit().

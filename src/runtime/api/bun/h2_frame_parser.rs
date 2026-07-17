@@ -8084,8 +8084,14 @@ impl H2FrameParser {
     ) -> JsResult<Local<'s>> {
         let global_object = scope.unscoped_global();
         let args = callframe.scoped_arguments::<6>(scope);
-        let [stream_arg, data_arg, encoding_arg, close_arg, callback_arg, defer_callback_arg] =
-            args.ptr;
+        let [
+            stream_arg,
+            data_arg,
+            encoding_arg,
+            close_arg,
+            callback_arg,
+            defer_callback_arg,
+        ] = args.ptr;
 
         if !stream_arg.is_number() {
             return Err(global_object.throw(format_args!("Expected stream to be a number")));

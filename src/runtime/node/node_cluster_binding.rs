@@ -266,8 +266,13 @@ pub(crate) fn send_helper_primary<'s>(
         );
     }
 
-    let success =
-        ipc_data.serialize_and_send(global, message.raw(), is_internal, JSValue::NULL, zig_handle);
+    let success = ipc_data.serialize_and_send(
+        global,
+        message.raw(),
+        is_internal,
+        JSValue::NULL,
+        zig_handle,
+    );
     Ok(scope.local(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {

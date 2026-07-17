@@ -779,7 +779,7 @@ async function runTests() {
           env.BUN_JSC_validateExceptionChecks = "1";
           env.BUN_JSC_dumpSimulatedThrows = "1";
         }
-        if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
+        if (!isWindows && (basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(testPath)) {
           env.BUN_DESTRUCT_VM_ON_EXIT = "1";
           env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
           // prettier-ignore
@@ -1586,7 +1586,7 @@ async function spawnBunTest(execPath, testPath, opts = { cwd }) {
     env.BUN_JSC_validateExceptionChecks = "1";
     env.BUN_JSC_dumpSimulatedThrows = "1";
   }
-  if ((basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
+  if (!isWindows && (basename(execPath).includes("asan") || !isCI) && shouldValidateLeakSan(relative(cwd, absPath))) {
     env.BUN_DESTRUCT_VM_ON_EXIT = "1";
     env.ASAN_OPTIONS = "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1:abort_on_error=1";
     // prettier-ignore

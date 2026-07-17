@@ -22,17 +22,6 @@ if (ext) {
       'Type ".help" for more information.',
   );
 
-  // `node -i -e`: an -e error is fatal (uncaught, exit 1), not caught by the
-  // REPL. Runs before REPL.start so the shim's process-wide capture callback
-  // isn't installed yet; `var`/`function` still land on globalThis.
-  // Diverges from node, which evaluates AFTER createInternalRepl and via
-  // runScriptInContext, so `-e` there also sees require/module/__filename.
-  // Node can order it that way because its REPL installs no capture callback;
-  // ours does, so moving the eval later would let the REPL swallow the error.
-  if (evalScript !== undefined) {
-    require("node:vm").runInThisContext(evalScript, { filename: "[eval]", displayErrors: true });
-  }
-
   createInternalRepl(process.env, (err: Error | null, replServer: any) => {
     if (err) throw err;
 
@@ -44,4 +33,51 @@ if (ext) {
       process.exit();
     });
   });
+
+  // `node -i -e`: node evaluates AFTER createInternalRepl (which starts the
+  // REPL synchronously), so the REPL's globals are already in place.
+  if (evalScript !== undefined) {
+    evalWithNodeBindings(evalScript);
+  }
+}
+
+// Mirrors node's runScriptInContext: it does NOT wrap the body as a CJS
+// module — it publishes the bindings onto the global and runs the body in
+// global scope, so `var`/`function` still land on globalThis while
+// require/module/exports/__dirname/__filename resolve.
+function evalWithNodeBindings(code: string) {
+  const Module = require("node:module");
+  const cwd = process.cwd();
+  const name = "[eval]";
+
+  const mod = new Module(name);
+  mod.filename = require("node:path").join(cwd, name);
+  mod.paths = Module._nodeModulePaths(cwd);
+
+  const global_ = globalThis as any;
+  const origModule = global_.module;
+  global_.module = mod;
+  global_.exports = mod.exports;
+  // node's wrapper is compiled as `${name}-wrapper`, so its __dirname is
+  // dirname("[eval]-wrapper") === "." — decoupled from module.filename, which
+  // stays the cwd-joined path used for require resolution.
+  global_.__dirname = ".";
+  global_.__filename = name;
+  global_.require = Module.createRequire(mod.filename);
+
+  try {
+    require("node:vm").runInThisContext(code, { filename: name, displayErrors: true });
+  } catch (e) {
+    // An -e error is fatal in node even with the REPL up. Report and exit here
+    // rather than rethrowing: the REPL is already live, so an uncaught throw
+    // races its EOF-driven exit and the process can leave 0 with the error
+    // unreported (empty stdin loses that race every time).
+    try {
+      process.setUncaughtExceptionCaptureCallback(null);
+    } catch {}
+    console.error(e);
+    process.exit(1);
+  } finally {
+    if (origModule !== undefined) global_.module = origModule;
+  }
 }

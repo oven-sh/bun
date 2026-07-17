@@ -1398,6 +1398,46 @@ describe("--interactive", () => {
     expect(exitCode).toBe(0);
   });
 
+  // node evaluates `-e` after createInternalRepl, via runScriptInContext, which
+  // publishes the CJS bindings onto the global before running the body.
+  test("-e sees require/module/__filename/__dirname like `node -i -e`", async () => {
+    const { stdout, exitCode } = await runInteractive(
+      ["-e", 'console.log(typeof require, typeof module, typeof __filename, typeof __dirname)'],
+      "",
+    );
+    expect(stdout).toContain("function object string string");
+    expect(exitCode).toBe(0);
+  });
+
+  // node's wrapper compiles as `[eval]-wrapper`, so __dirname is "." — NOT the
+  // cwd — while module.filename stays the cwd-joined path.
+  test("-e exposes node's exact __dirname/__filename/module.filename", async () => {
+    using dir = tempDir("repl-eval-dirname", {});
+    const { stdout, exitCode } = await runInteractive(
+      ["-e", "console.log(JSON.stringify({d: __dirname, f: __filename, m: module.filename}))"],
+      "",
+      { cwd: String(dir) },
+    );
+    const parsed = JSON.parse(stdout.slice(stdout.indexOf("{"), stdout.indexOf("}") + 1));
+    expect({ d: parsed.d, f: parsed.f }).toEqual({ d: ".", f: "[eval]" });
+    expect(parsed.m).toBe(path.join(String(dir), "[eval]"));
+    expect(exitCode).toBe(0);
+  });
+
+  test("-e can require() a builtin", async () => {
+    const { stdout, exitCode } = await runInteractive(["-e", 'console.log("plat:" + typeof require("os").platform)'], "");
+    expect(stdout).toContain("plat:function");
+    expect(exitCode).toBe(0);
+  });
+
+  // Publishing those bindings must not move `var`/`function` off the global —
+  // node runs the body in global scope, it does not CJS-wrap it.
+  test("-e declarations still land on the REPL's global", async () => {
+    const { stdout, exitCode } = await runInteractive(["-e", "var x = 5; function f(){}"], "typeof x + typeof f\n");
+    expect(stdout).toContain("numberfunction");
+    expect(exitCode).toBe(0);
+  });
+
   // node's `-i` is an alias for --interactive. Bun's own `-i` is
   // --install=fallback, which has no meaning under node emulation, so the node
   // meaning wins there; everywhere else `-i` stays --install=fallback.

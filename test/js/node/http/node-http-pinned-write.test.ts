@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { once } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import net from "node:net";
 
 // Large enough to overflow both the 16KB cork buffer and the kernel send
 // buffer on every platform (Windows loopback auto-tuning can absorb several
@@ -24,32 +25,25 @@ function sha1(buf: Uint8Array): string {
 describe("node:http large Buffer writes are sent zero-copy", () => {
   test("the buffer backing store is pinned while the write is pending, then released on drain", async () => {
     const payload = makePayload(CHUNK_SIZE);
-    const expectedChunkHash = sha1(payload);
+    const expectedHash = sha1(payload);
 
     let detachedWhilePending: boolean | undefined;
     let detachedAfterDrain: boolean | undefined;
     let copyByteLength: number | undefined;
     let originalByteLength: number | undefined;
-    let writableLengthAfterBackpressure: number | undefined;
-    let chunksWritten = 0;
     let handlerError: unknown;
+    const serverReady = Promise.withResolvers<void>();
 
     await using server = http.createServer(async (req, res) => {
       try {
-        res.writeHead(200, { "Content-Type": "application/octet-stream" });
-
-        // Loop until the kernel buffer fills and write() returns false. Bound
-        // the attempts so a regression that never reports backpressure fails
-        // fast instead of spinning.
-        for (let i = 0; i < 8; i++) {
-          chunksWritten++;
-          if (!res.write(payload)) break;
-        }
-        // Only probe the pin when the native layer is actually holding a tail
-        // (write() can also return false for the writableHighWaterMark check
-        // with nothing buffered natively).
-        writableLengthAfterBackpressure = res.writableLength;
-        if (writableLengthAfterBackpressure === 0) return res.end();
+        res.writeHead(200, {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(CHUNK_SIZE),
+        });
+        // The client is a paused net.Socket so the kernel send buffer fills
+        // and write() reports native backpressure on every platform (Windows
+        // loopback can otherwise absorb the whole payload in one send()).
+        res.write(payload);
 
         // While the tail is in-flight, the underlying ArrayBuffer is pinned so a
         // transfer() copies instead of detaching. Without the pin the server
@@ -58,6 +52,7 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         detachedWhilePending = payload.buffer.detached;
         copyByteLength = copy.byteLength;
         originalByteLength = payload.buffer.byteLength;
+        serverReady.resolve();
 
         await once(res, "drain");
 
@@ -68,23 +63,32 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
         res.end();
       } catch (e) {
         handlerError = e;
+        serverReady.resolve();
         res.destroy();
       }
     });
     await once(server.listen(0), "listening");
     const port = (server.address() as AddressInfo).port;
 
-    const response = await fetch(`http://localhost:${port}/`);
-    const body = Buffer.from(await response.arrayBuffer());
+    const socket = net.connect(port, "127.0.0.1");
+    await once(socket, "connect");
+    socket.pause();
+    socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+    await serverReady.promise;
+
+    // Now drain the client side and verify the body.
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk));
+    const closed = once(socket, "close");
+    socket.resume();
+    await closed;
+    const received = Buffer.concat(chunks);
 
     expect(handlerError).toBeUndefined();
-    expect(writableLengthAfterBackpressure).toBeGreaterThan(0);
-    expect(body.length).toBe(CHUNK_SIZE * chunksWritten);
-    // Every CHUNK_SIZE slice is the same cycling pattern; hash-compare to avoid
-    // multi-million-iteration JS loops in debug builds.
-    for (let i = 0; i < chunksWritten; i++) {
-      expect(sha1(body.subarray(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE))).toBe(expectedChunkHash);
-    }
+    // Strip the HTTP response head; the body is the last CHUNK_SIZE bytes.
+    const body = received.subarray(received.length - CHUNK_SIZE);
+    expect(body.length).toBe(CHUNK_SIZE);
+    expect(sha1(body)).toBe(expectedHash);
     expect(copyByteLength).toBe(originalByteLength);
     expect(detachedWhilePending).toBe(false);
     expect(detachedAfterDrain).toBe(true);

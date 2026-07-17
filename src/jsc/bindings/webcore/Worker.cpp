@@ -447,30 +447,28 @@ void Worker::rejectAllCrossVMRequests(JSC::JSGlobalObject* globalObject)
 
 // ---- Worker-thread entry points ---------------------------------------------
 
-void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
+// Posted before the entry point runs, matching node's 'online', so a worker whose
+// top-level never returns still reports online. Deliberately leaves m_state alone:
+// Pending queues in postTaskToWorkerGlobalScope, it does not reject.
+void Worker::dispatchOnlineEvent()
 {
-    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
-    // a message post racing this transition either queues (drained below by
-    // fireEarlyMessages) or posts directly — never both, never neither.
-    //
-    // This MUST happen BEFORE the open event is posted to the parent: the
-    // parent's `online` handler may immediately call getHeapSnapshot() (or
-    // anything else gated on isOnline() / postTaskToWorkerGlobalScope()). If
-    // the state flip happens after the post, a fast parent thread can run the
-    // open task while m_state is still Pending and observe
-    // ERR_WORKER_NOT_RUNNING — flaky `await once(worker, "online");
-    // worker.getHeapSnapshot()` in worker_threads.test.ts.
-    {
-        Locker lock(m_pendingTasksMutex);
-        m_state.store(State::Running);
-    }
-
     postTaskToParent([protectedThis = Ref { *this }](ScriptExecutionContext&) {
         if (protectedThis->hasEventListeners(eventNames().openEvent)) {
             auto event = Event::create(eventNames().openEvent, Event::CanBubble::No, Event::IsCancelable::No);
             protectedThis->dispatchEvent(event);
         }
     });
+}
+
+void Worker::dispatchOnline(Zig::GlobalObject* workerGlobalObject)
+{
+    // Pending→Running under the same lock postTaskToWorkerGlobalScope uses, so
+    // a message post racing this transition either queues (drained below by
+    // fireEarlyMessages) or posts directly — never both, never neither.
+    {
+        Locker lock(m_pendingTasksMutex);
+        m_state.store(State::Running);
+    }
 
     auto* thisContext = workerGlobalObject->scriptExecutionContext();
     if (!thisContext) {
@@ -725,6 +723,11 @@ extern "C" void WebWorker__entrySettled(Zig::GlobalObject* globalObject)
     JSC::MarkedArgumentBuffer args;
     JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
     CLEAR_IF_EXCEPTION(scope);
+}
+
+extern "C" void WebWorker__dispatchOnlineEvent(Worker* worker)
+{
+    worker->dispatchOnlineEvent();
 }
 
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)

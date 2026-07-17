@@ -130,6 +130,7 @@ public:
     WorkerOptions& options() { return m_options; }
 
     // -- Worker-thread entry points (each posts to m_parentContextId) --------
+    void dispatchOnlineEvent();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
     void dispatchErrorWithMessage(WTF::String message);

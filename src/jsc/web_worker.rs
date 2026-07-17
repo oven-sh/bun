@@ -30,7 +30,7 @@
 //! Lifecycle of the worker thread (`threadMain`):
 //!   1. `startVM()`  — build a mimalloc arena, clone env, initialise a
 //!      `jsc.VirtualMachine`, publish `vm` under `vm_lock`.
-//!   2. `spin()`     — load the entry point, call `dispatchOnline` +
+//!   2. `spin()`     — post 'online', load the entry point, call `dispatchOnline` +
 //!      `fireEarlyMessages`, run the event loop until it drains or
 //!      `requested_terminate` is observed, run `beforeExit`.
 //!   3. `shutdown()` — call `vm.onExit()`, tear down the JSC VM, post
@@ -218,6 +218,7 @@ unsafe extern "C" {
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
     // API lock as a raw FFI call with NO RAII guard — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
+    safe fn WebWorker__dispatchOnlineEvent(cpp_worker: *mut c_void);
     safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
@@ -1091,6 +1092,11 @@ impl WebWorker {
             return self.shutdown();
         }
 
+        // node reports 'online' before user code runs, so a worker whose entry
+        // point never returns still goes online. Only the event goes out here:
+        // the Pending→Running flip stays put, so message routing is unchanged.
+        WebWorker__dispatchOnlineEvent(self.cpp_worker);
+
         // `path` borrows the resolver's process-lifetime string store, the
         // standalone module graph, or `self.unresolved_specifier` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
@@ -1143,13 +1149,9 @@ impl WebWorker {
 
         self.flush_logs(vm);
         log!("[{}] event loop start", self.execution_context_id);
-        // dispatchOnline fires the parent-side 'open' event and flips the C++
-        // state to Running (which routes postMessage directly instead of
-        // queuing). It is placed after the entry point has loaded so the parent
-        // observes 'online' only once the worker's top-level code has completed;
-        // moving it earlier would change that observable ordering.
-        // `cpp_worker` is the opaque C++-owned handle round-tripped via `safe fn`;
-        // `vm.global()` yields the live `&JSGlobalObject` published in start_vm.
+        // Flips the C++ state to Running, which routes postMessage directly
+        // instead of queuing; the 'online' event already went out before the
+        // entry point loaded.
         WebWorker__dispatchOnline(self.cpp_worker, vm.global());
         WebWorker__fireEarlyMessages(self.cpp_worker, vm.global());
         self.set_status(Status::Running);

@@ -1383,7 +1383,7 @@ describe("Bun.sliceAnsi", () => {
       // original start): stays empty, no ellipsis.
       expect(Bun.sliceAnsi("Ж", 1, 3, { ellipsis: E })).toBe("");
       expect(Bun.sliceAnsi("Ж\x1b[31m", 1, 3, { ellipsis: E })).toBe("");
-      expect(Bun.sliceAnsi("Ж", 1, 2, e)).toBe("");
+      expect(Bun.sliceAnsi("Ж\x1b[31m", 1, 2, e)).toBe("");
       // No cut on either side: content returned, no ellipsis.
       expect(Bun.sliceAnsi("Ж", 0, 1, e)).toBe("Ж");
       expect(Bun.sliceAnsi("Ж\n", 0, 1, e)).toBe("Ж");

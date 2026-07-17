@@ -756,6 +756,33 @@ describe("should not hang", () => {
   }
 });
 
+it("await exited resolves after unref() when nothing else is ref'd (Windows)", async () => {
+  // On Windows, uv_unref() on the process handle drops it from
+  // loop->active_handles. With nothing else ref'd, uv_run() skips its body
+  // and never calls uv__poll, so the wait-thread's IOCP exit packet is never
+  // dequeued and on_exit_uv never fires. Before the fix, the child below
+  // would busy-spin forever with `exited` never resolving.
+  await using child = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const p = Bun.spawn({ cmd: [${JSON.stringify(bunExe())}, "-e", ""], stdio: ["ignore", "ignore", "ignore"] });
+       p.unref();
+       await p.exited;
+       console.log("resolved");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 20_000,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("resolved\n");
+  expect(child.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 it("#3480", async () => {
   {
     using server = Bun.serve({

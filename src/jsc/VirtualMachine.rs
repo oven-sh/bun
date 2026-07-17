@@ -374,6 +374,7 @@ unsafe extern "C" {
     safe fn Process__dispatchOnBeforeExit(global: &JSGlobalObject, code: u8);
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
+    safe fn Bun__closeAllNodeSqliteDatabasesForTermination(global: &JSGlobalObject);
     safe fn Bun__WebView__closeAllForTermination();
     safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
@@ -510,6 +511,7 @@ impl ExitHandler {
         Process__dispatchOnExit(vm.global(), exit_code);
         if vm.worker.is_none() {
             Bun__closeAllSQLiteDatabasesForTermination();
+            Bun__closeAllNodeSqliteDatabasesForTermination(vm.global());
             Bun__WebView__closeAllForTermination();
         }
     }

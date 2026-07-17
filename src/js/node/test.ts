@@ -450,8 +450,10 @@ class TestContext {
   }
 
   get mock() {
-    throwNotImplemented("mock", 5090, "Use `bun:test` in the interim.");
-    return undefined;
+    // Node gives each TestContext its own tracker so after-test restoration
+    // is scoped; sharing the module-level tracker is enough for what's
+    // implemented today (Node's own sqlite tests use t.mock.fn()).
+    return mock;
   }
 
   runOnly(_value?: boolean) {

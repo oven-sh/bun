@@ -8,7 +8,7 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(builtinModules)).toBe(true);
     // "bun:wrap" is no longer listed: it is internal transpiler plumbing,
     // not a requireable public module.
-    expect(builtinModules).toHaveLength(75);
+    expect(builtinModules).toHaveLength(76);
   });
 
   test("isBuiltin() works", () => {

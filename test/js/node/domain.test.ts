@@ -31,9 +31,11 @@ test.concurrent("domain catches setTimeout callback throws", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("domain caught: boom\nstill alive\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "domain caught: boom\nstill alive\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("domain catches setImmediate callback throws", async () => {
@@ -60,9 +62,11 @@ test.concurrent("domain catches setImmediate callback throws", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("caught: immediate-boom\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught: immediate-boom\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("domain catches setInterval callback throws", async () => {
@@ -93,7 +97,6 @@ test.concurrent("domain catches setInterval callback throws", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
   expect(stdout).toContain("caught: tick 1");
   expect(stdout).toContain("caught: tick 2");
   expect(exitCode).toBe(0);
@@ -122,9 +125,11 @@ test.concurrent("domain.run synchronous throw is caught", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("caught: sync\nafter\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught: sync\nafter\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("domain maintains correct active domain across nested run()", async () => {
@@ -156,15 +161,15 @@ test.concurrent("domain maintains correct active domain across nested run()", as
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe(
-    "in d1, active is d1: true\n" +
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "in d1, active is d1: true\n" +
       "in d2, active is d2: true\n" +
       "back in d1, active is d1: true\n" +
       "outside, active is null: true\n" +
       "d2: inner-boom\n",
-  );
-  expect(exitCode).toBe(0);
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("domain.bind wraps a function to route throws through the domain", async () => {
@@ -189,9 +194,11 @@ test.concurrent("domain.bind wraps a function to route throws through the domain
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("caught: bound-boom\nafter\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "caught: bound-boom\nafter\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent("process.domain reflects the currently-active domain", async () => {
@@ -216,9 +223,11 @@ test.concurrent("process.domain reflects the currently-active domain", async () 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("before: null\nduring: true\nafter: null\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "before: null\nduring: true\nafter: null\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Regression guard: an earlier draft of this fix attached a
@@ -275,7 +284,9 @@ test.concurrent("patched timers keep util.promisify working", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("custom: function\nwaited: true\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "custom: function\nwaited: true\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

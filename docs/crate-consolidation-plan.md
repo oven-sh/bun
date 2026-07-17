@@ -13,7 +13,7 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 | `*_types` split crates                                               | 3              | 0                                      |
 | Facade/re-export crates                                              | 3              | 0                                      |
 | Manual hook vtables (`RuntimeHooks`/`LoaderHooks`/`SqlRuntimeHooks`) | 3              | 0                                      |
-| `PORTING.md` comment refs                                            | 396            | 0                                      |
+| `PORTING.md` comment refs                                            | 396            | 1 (the external BoringSSL URL; see §5) |
 | `LAYERING:` comment refs                                             | 92             | 0                                      |
 | Net LOC deleted                                                      | —              | ~10,000 (see §6 for honest accounting) |
 | LOC relocated                                                        | —              | ~440,000                               |
@@ -75,13 +75,13 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 | `bun_resolver` | `bun_resolver`, `bun_router`                            | ~20,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_js`, `bun_jsc`                                                                                 |
 | `bun_http`     | `bun_http`                                              | ~18,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`                                                                 |
 | `bun_bundler`  | `bun_bundler`, `bun_transpiler`, `bun_standalone_graph` | ~50,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`, `bun_js`, `bun_css`, `bun_resolver`, `bun_jsc`, `bun_http`     |
-| `bun_install`  | `bun_install`, `bun_bunfig`                             | ~82,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`, `bun_js`, `bun_resolver`, `bun_jsc`, `bun_http`, `bun_bundler` |
+| `bun_install`  | `bun_install`, `bun_bunfig`                             | ~82,000 | `bun_core`, `bun_sys`, `bun_ast`, `bun_crypto`, `bun_uws`, `bun_loop`, `bun_js`, `bun_resolver`, `bun_http`, `bun_bundler`            |
 
 ### Tier 6: top
 
 | Crate           | Absorbs                                                                                   | LOC      | Depends on                                           |
 | --------------- | ----------------------------------------------------------------------------------------- | -------- | ---------------------------------------------------- |
-| `bun_runtime`   | `bun_runtime`, group-B of `bun_jsc`, all 11 `*_jsc` crates, `bun_sql_jsc`, `bun_http_jsc` | ~392,000 | (all of the above except `bun_bin`, `bun_shim_impl`) |
+| `bun_runtime`   | `bun_runtime`, group-B of `bun_jsc`, all 11 `*_jsc` crates                                | ~392,000 | (all of the above except `bun_bin`, `bun_shim_impl`) |
 | `bun_bin`       | (unchanged)                                                                               | 260      | `bun_core`, `bun_sys`, `bun_runtime`                 |
 | `bun_shim_impl` | (unchanged, separate binary)                                                              | 400      | `bun_opaque`, `bun_windows_sys`                      |
 
@@ -103,7 +103,7 @@ Plus, after trivial edits (≤3 lines each): `JSGlobalObject` (delete the `pub u
 
 **No migration needed:** `generated_classes_list.rs` is already `#[path]`-mounted from `src/runtime/lib.rs:51` (not from `src/jsc/lib.rs`) precisely because every alias is a `bun_runtime` module path; it stays where it is.
 
-**What this unlocks:** `bun_bundler` and `bun_install` can now depend on `bun_jsc` directly (for `RegularExpression`, `CachedBytecode::generate`), and `bun_runtime` can have `VirtualMachine { transpiler: Transpiler, package_manager: Option<Box<PackageManager>>, entry_point: ServerEntryPoint, timer: timer::All, … }` with real types.
+**What this unlocks:** `bun_bundler` can now depend on `bun_jsc` directly (for `CachedBytecode::generate`), and `bun_runtime` can have `VirtualMachine { transpiler: Transpiler, package_manager: Option<Box<PackageManager>>, entry_point: ServerEntryPoint, timer: timer::All, … }` with real types.
 
 ### 2.2 `bun_core` — the foundation merge
 
@@ -158,7 +158,7 @@ Absorbs `bun_transpiler` (pure re-export, 10 LOC) and `bun_standalone_graph`. No
 
 ### 2.7 `bun_install`
 
-Absorbs `bun_bunfig`. Declares `[features] shim_standalone = []` for the `#[path]`-mounted shim source. The `create_matcher`/`PnpmMatcher` regex path stays routed through `bun_ast::REGEX_ENGINE` (§2.4); `bun_install` does not call `bun_jsc::RegularExpression` directly (the `bun_jsc` dep is for the `bun_ast` → `bun_jsc` transitive chain only, not a direct import).
+Absorbs `bun_bunfig`. Declares `[features] shim_standalone = []` for the `#[path]`-mounted shim source. The `create_matcher`/`PnpmMatcher` regex path stays routed through `bun_ast::REGEX_ENGINE` (§2.4); `bun_install` does not call `bun_jsc::RegularExpression` directly and has no direct `bun_jsc` dep (it reaches `bun_jsc` transitively via `bun_bundler`/`bun_resolver`).
 
 `__bun_resolver_init_package_manager` is deleted. Control inverts: `bun_install` constructs its `PackageManager`, then hands `Some(&*pm as &dyn AutoInstaller)` to the `Resolver`. The `dyn AutoInstaller` trait (defined in `bun_ast::resolver_hooks`) stays; it is a legitimate optional-capability trait object with one impl, and the alternative (making `Resolver<A: AutoInstaller>` generic) would monomorphize 17k LOC twice.
 
@@ -309,7 +309,7 @@ The cache entry stores `js_parser::Options` but lives in `bun_ast` (below `bun_j
 
 Separate mechanical pass, independent of the crate moves. Two overlapping populations are covered (the exec-summary rows count each independently):
 
-**Population A: comments containing `PORTING.md` (396 matches).** 327 historical §rule citations (§Forbidden, §Allocators, §Global mutable state, §Concurrency, §Idiom map, §JSC types, §Strings, §Pointers, §FFI, §Comptime reflection, §Collections, §Logging) + 57 layering-workaround annotations + 11 lifetime-threading notes that cite PORTING.md + 1 external BoringSSL URL. Disposition: delete the 327 historical citations (the referenced document no longer exists); delete 46 of the 57 layering annotations with the code they annotate; rewrite the remaining 11 layering annotations to name the `OnceLock`/`dyn` that now carries the seam; keep the 11 lifetime-threading notes; keep the BoringSSL URL.
+**Population A: comments containing `PORTING.md` (396 matches).** 327 historical §rule citations (§Forbidden, §Allocators, §Global mutable state, §Concurrency, §Idiom map, §JSC types, §Strings, §Pointers, §FFI, §Comptime reflection, §Collections, §Logging) + 57 layering-workaround annotations + 11 lifetime-threading notes that cite PORTING.md + 1 external BoringSSL URL. Disposition: delete the 327 historical citations (the referenced document no longer exists); delete 46 of the 57 layering annotations with the code they annotate; rewrite the remaining 11 layering annotations to name the `OnceLock`/`dyn` that now carries the seam; keep the 11 lifetime-threading notes but strip their `PORTING.md` citation (the note body stays, tracked in §8.3); keep the BoringSSL URL (external link, not a citation of the deleted doc).
 
 **Population B: comments containing `LAYERING:` (92 matches).** These partially overlap the 57 layering annotations above. Same disposition applies.
 

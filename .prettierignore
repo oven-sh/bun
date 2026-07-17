@@ -25,3 +25,7 @@ docs/bundler/minifier.mdx
 # `_`/`*` differently every pass), so autofix.ci ping-pongs commits forever.
 # Not authored by hand; no value in normalizing it.
 docs/.rust-rewrite-verified-claims.md
+# same prettier `_`/`*` mis-pairing failure mode: frozen historical research
+# docs (see docs/crate-consolidation/README.md); the canonical plan is
+# docs/crate-consolidation-plan.md.
+docs/crate-consolidation/

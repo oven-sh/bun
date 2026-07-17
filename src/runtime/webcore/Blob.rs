@@ -202,7 +202,7 @@ pub trait BlobExt {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: jsc::ConsoleFormatter,
+        F: crate::vm::ConsoleFormatter,
         W: core::fmt::Write;
     fn get_stream(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_stream_with_cache(
@@ -1005,7 +1005,7 @@ impl BlobExt for Blob {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: jsc::ConsoleFormatter,
+        F: crate::vm::ConsoleFormatter,
         W: core::fmt::Write,
     {
         if self.is_detached() {
@@ -1327,7 +1327,7 @@ impl BlobExt for Blob {
     fn do_write(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<3>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = crate::vm::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1400,7 +1400,7 @@ impl BlobExt for Blob {
     fn do_unlink(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() never returns null for a Bun-owned global.
-        let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
+        let mut args = crate::vm::ArgumentsSlice::init(global_this.bun_vm(), arguments.slice());
 
         validate_writable_blob(global_this, self)?;
 
@@ -1548,7 +1548,7 @@ impl BlobExt for Blob {
                 };
                 let sink = webcore::FileSink::init(
                     fd,
-                    jsc::EventLoopHandle::init(
+                    crate::vm::EventLoopHandle::init(
                         self.global_this()
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
@@ -1596,7 +1596,7 @@ impl BlobExt for Blob {
             {
                 let sink = webcore::FileSink::init(
                     Fd::INVALID,
-                    jsc::EventLoopHandle::init(
+                    crate::vm::EventLoopHandle::init(
                         self.global_this()
                             .expect("Blob.global_this set at construction")
                             .bun_vm()
@@ -1903,7 +1903,7 @@ impl BlobExt for Blob {
 
             let sink = webcore::FileSink::init(
                 fd,
-                jsc::EventLoopHandle::init(
+                crate::vm::EventLoopHandle::init(
                     self.global_this()
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
@@ -1941,7 +1941,7 @@ impl BlobExt for Blob {
         {
             let sink = webcore::FileSink::init(
                 bun_sys::Fd::INVALID,
-                jsc::EventLoopHandle::init(
+                crate::vm::EventLoopHandle::init(
                     self.global_this()
                         .expect("Blob.global_this set at construction")
                         .bun_vm()
@@ -2063,7 +2063,7 @@ impl BlobExt for Blob {
             args[1] = JSValue::ZERO;
         }
 
-        let mut args_iter = jsc::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
+        let mut args_iter = crate::vm::ArgumentsSlice::init(global_this.bun_vm(), &arguments_.ptr[..3]);
         if let Some(start_) = args_iter.next_eat() {
             if start_.is_number() {
                 let start = start_.to_int64();
@@ -3036,7 +3036,7 @@ impl BlobExt for Blob {
             Lifetime::Clone => {
                 if TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer {
                     // ArrayBuffer doesn't have this limit.
-                    if buf_len > jsc::virtual_machine::synthetic_allocation_limit() {
+                    if buf_len > crate::vm::virtual_machine::synthetic_allocation_limit() {
                         self.detach();
                         return Err(global.throw_out_of_memory());
                     }
@@ -3092,7 +3092,7 @@ impl BlobExt for Blob {
                 jsc::ArrayBuffer::create::<TYPED_ARRAY_VIEW>(global, unsafe { &*buf })
             }
             Lifetime::Share => {
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
+                if buf_len > crate::vm::virtual_machine::synthetic_allocation_limit()
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
                     return Err(global.throw_out_of_memory());
@@ -3122,7 +3122,7 @@ impl BlobExt for Blob {
                     self.detach();
                     return copied;
                 }
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
+                if buf_len > crate::vm::virtual_machine::synthetic_allocation_limit()
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
                     self.detach();
@@ -3141,7 +3141,7 @@ impl BlobExt for Blob {
                 }
             }
             Lifetime::Temporary => {
-                if buf_len > jsc::virtual_machine::synthetic_allocation_limit()
+                if buf_len > crate::vm::virtual_machine::synthetic_allocation_limit()
                     && TYPED_ARRAY_VIEW != jsc::JSType::ArrayBuffer
                 {
                     // SAFETY: `Temporary` ⇒ `buf` is a leaked default-allocator `Box<[u8]>`.
@@ -5361,7 +5361,7 @@ fn validate_writable_blob(global_this: &JSGlobalObject, blob: &Blob) -> JsResult
 pub fn write_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let arguments = callframe.arguments();
     // SAFETY: `bun_vm()` returns a live VM pointer for the calling JS context.
-    let mut args = jsc::ArgumentsSlice::init(global_this.bun_vm(), arguments);
+    let mut args = crate::vm::ArgumentsSlice::init(global_this.bun_vm(), arguments);
 
     // accept a path or a blob
     // `defer if (.path) path.deinit()` → `Drop for PathLike` (via PathOrBlob).
@@ -5741,7 +5741,7 @@ pub fn construct_bun_file(
     let vm = global_object.bun_vm();
     let arguments = callframe.arguments_old::<2>();
     let arguments_slice = arguments.slice();
-    let mut args = jsc::ArgumentsSlice::init(vm, arguments_slice);
+    let mut args = crate::vm::ArgumentsSlice::init(vm, arguments_slice);
 
     let Some(mut path) = PathOrFileDescriptor::from_js(global_object, &mut args)? else {
         return Err(global_object.throw_invalid_arguments(format_args!(

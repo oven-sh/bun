@@ -51,42 +51,55 @@ const kRunChildEnv = "NODE_TEST_CONTEXT";
 const kRunChildEnvValue = "child-v8";
 const kRunEventPrefix = "\0bun:test:run\0";
 
-class TestsStream extends (require("node:stream").Readable as typeof import("node:stream").Readable) {
-  #buffer;
-  #canPush = true;
+// Created lazily on the first run() call so the common test()/describe()
+// path never loads node:stream.
+type TestsStream = InstanceType<ReturnType<typeof getTestsStreamClass>>;
+let TestsStreamClass: ReturnType<typeof getTestsStreamClass> | undefined;
 
-  constructor() {
-    super({ objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
-    // $createFIFO cannot appear in a class-field initializer: the builtin
-    // bundler mis-emits the intrinsic there.
-    this.#buffer = $createFIFO();
-  }
+function getTestsStreamClass() {
+  const { Readable } = require("node:stream");
+  return class TestsStream extends (Readable as typeof import("node:stream").Readable) {
+    #buffer;
+    #canPush = true;
 
-  _read() {
-    this.#canPush = true;
-    while (!this.#buffer.isEmpty()) {
-      const obj = this.#buffer.shift();
-      if (!this.#tryPush(obj)) return;
+    constructor() {
+      super({ objectMode: true, highWaterMark: Number.MAX_SAFE_INTEGER });
+      // $createFIFO cannot appear in a class-field initializer: the builtin
+      // bundler mis-emits the intrinsic there.
+      this.#buffer = $createFIFO();
     }
-  }
 
-  #tryPush(message: unknown) {
-    if (this.#canPush) {
-      this.#canPush = this.push(message);
-    } else {
-      this.#buffer.push(message);
+    _read() {
+      this.#canPush = true;
+      while (!this.#buffer.isEmpty()) {
+        const obj = this.#buffer.shift();
+        if (!this.#tryPush(obj)) return;
+      }
     }
-    return this.#canPush;
-  }
 
-  emitMessage(type: string, data?: unknown) {
-    this.emit(type, data);
-    this.#tryPush({ __proto__: null, type, data });
-  }
+    #tryPush(message: unknown) {
+      if (this.#canPush) {
+        this.#canPush = this.push(message);
+      } else {
+        this.#buffer.push(message);
+      }
+      return this.#canPush;
+    }
 
-  endStream() {
-    this.#tryPush(null);
-  }
+    emitMessage(type: string, data?: unknown) {
+      this.emit(type, data);
+      this.#tryPush({ __proto__: null, type, data });
+    }
+
+    endStream() {
+      this.#tryPush(null);
+    }
+  };
+}
+
+function createTestsStream(): TestsStream {
+  TestsStreamClass ??= getTestsStreamClass();
+  return new TestsStreamClass();
 }
 
 function validateStringArray(value: unknown, name: string) {
@@ -245,7 +258,7 @@ function validateRunOptions(options: Record<string, unknown>) {
 
 function run(options: Record<string, unknown> = kEmptyObject) {
   const opts = validateRunOptions(options);
-  const reporter = new TestsStream();
+  const reporter = createTestsStream();
 
   // A test file that calls run() on itself would otherwise fork forever; node
   // skips the files and returns an empty stream instead.
@@ -1825,7 +1838,6 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
   if (failure !== undefined) {
     const validation = expectation.match;
     if (validation !== undefined) {
-      const assert = require("node:assert");
       // Only a wrapped test-code failure has an inner cause to validate; a bare
       // ERR_TEST_FAILURE (a timeout, a plan mismatch) has none and is itself
       // the error to check.
@@ -1836,7 +1848,7 @@ function applyExpectFailure(node: TestNode, failure: unknown): unknown {
         wrapped.cause !== undefined;
       const errorToCheck = unwrap ? wrapped.cause : failure;
       try {
-        assert.throws(() => {
+        nodeAssert.throws(() => {
           throw errorToCheck;
         }, validation);
       } catch (e) {

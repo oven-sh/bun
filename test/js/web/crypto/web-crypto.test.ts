@@ -700,6 +700,30 @@ it("X25519 deriveBits with an ECDH public key reports 'key algorithm mismatch'",
   });
 });
 
+// The RSA importKey usage guards are the same shape as ECDSA/Ed25519's, which
+// got Node's message; the RSA parallels carried the empty-message SyntaxError.
+// RSAES-PKCS1-v1_5 is deprecated in Bun and blocked at normalize, so untested.
+it("RSA importKey with an unsupported usage names the algorithm", async () => {
+  const { publicKey } = await crypto.subtle.generateKey(
+    { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"],
+  );
+  const spki = await crypto.subtle.exportKey("spki", publicKey);
+  const rejection = (p: Promise<unknown>) => p.then(() => "resolved", e => `${e.name}: ${e.message}`);
+  expect({
+    pss: await rejection(crypto.subtle.importKey("spki", spki, { name: "RSA-PSS", hash: "SHA-256" }, true, ["encrypt"])),
+    rsassa: await rejection(
+      crypto.subtle.importKey("spki", spki, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, true, ["encrypt"]),
+    ),
+    oaep: await rejection(crypto.subtle.importKey("spki", spki, { name: "RSA-OAEP", hash: "SHA-256" }, true, ["sign"])),
+  }).toEqual({
+    pss: "SyntaxError: Unsupported key usage for an RSA-PSS key",
+    rsassa: "SyntaxError: Unsupported key usage for an RSASSA-PKCS1-v1_5 key",
+    oaep: "SyntaxError: Unsupported key usage for an RSA-OAEP key",
+  });
+});
+
 // CryptoKey.usages and the JWK key_ops it is built from are ordered by the
 // KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
 // alphabetically, and not by the order the caller passed them in.

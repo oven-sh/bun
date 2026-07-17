@@ -666,14 +666,13 @@ function encodeRealpathResult(result, encoding) {
 }
 
 let assertEncodingForWindows: any = undefined;
-// process.platform is a compile-time constant; on non-Windows the probe is
-// dead-code-eliminated and this folds to `false`.
-const insideAppContainer = process.platform === "win32" && fs.isInsideAppContainer();
+let insideAppContainer: boolean | undefined;
 // Defer a denied component to the native resolver only inside an AppContainer
 // (denied ancestors are the sandbox norm there and can hide links). Outside
-// one, Node parity: the walk's own error propagates unchanged.
+// one, Node parity: the walk's own error propagates unchanged. Lazy so the
+// token probe only runs on the first denied component, not at module load.
 function shouldDeferDeniedComponent(err: any) {
-  if (!insideAppContainer) return false;
+  if (!(insideAppContainer ??= fs.isInsideAppContainer())) return false;
   const code = err?.code;
   return code === "EPERM" || code === "EACCES";
 }

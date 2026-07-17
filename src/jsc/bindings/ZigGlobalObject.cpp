@@ -42,6 +42,7 @@
 #include "JavaScriptCore/JSModuleNamespaceObjectInlines.h"
 #include "JavaScriptCore/JSModuleRecord.h"
 #include "JavaScriptCore/JSNativeStdFunction.h"
+#include "JavaScriptCore/JSIteratorPrototype.h"
 #include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 #include "JavaScriptCore/JSPromise.h"
@@ -134,6 +135,7 @@
 #include "JSReactElement.h"
 #include "BunMarkdownMeta.h"
 #include "JSSQLStatement.h"
+#include "sqlite/NodeSqlite.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
 #include "streams/JSTextEncoderStream.h"
@@ -2701,6 +2703,76 @@ void GlobalObject::finishCreation(VM& vm)
             auto* structure = JSStringDecoder::createStructure(init.vm, init.global, prototype);
             auto* constructor = JSStringDecoderConstructor::create(
                 init.vm, init.global, JSStringDecoderConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSDatabaseSyncClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSDatabaseSyncPrototype::create(
+                init.vm, init.global, Bun::JSDatabaseSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSDatabaseSync::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSDatabaseSyncConstructor::create(
+                init.vm, init.global, Bun::JSDatabaseSyncConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSStatementSyncClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSStatementSyncPrototype::create(
+                init.vm, init.global, Bun::JSStatementSyncPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSStatementSync::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSStatementSyncConstructor::create(
+                init.vm, init.global, Bun::JSStatementSyncConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSStatementSyncIteratorClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            // Prototype chain: instance → iterator prototype → %IteratorPrototype%
+            // so for-of / spread / Iterator helpers all work out of the box.
+            auto* prototype = Bun::JSStatementSyncIteratorPrototype::create(
+                init.vm, init.global, Bun::JSStatementSyncIteratorPrototype::createStructure(init.vm, init.global, init.global->iteratorPrototype()));
+            auto* structure = Bun::JSStatementSyncIterator::createStructure(init.vm, init.global, prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+        });
+
+    m_JSNodeSqliteSessionClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSNodeSqliteSessionPrototype::create(
+                init.vm, init.global, Bun::JSNodeSqliteSessionPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSNodeSqliteSession::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSNodeSqliteSessionConstructor::create(
+                init.vm, init.global, Bun::JSNodeSqliteSessionConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+            init.setConstructor(constructor);
+        });
+
+    m_JSNodeSqliteLimitsClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            // Node's DatabaseSyncLimits is a V8 ObjectTemplate: instances get a
+            // per-template prototype whose own [[Prototype]] is Object.prototype.
+            // Match the observable chain (limits → {} → Object.prototype).
+            auto* prototype = JSC::constructEmptyObject(init.global, init.global->objectPrototype());
+            auto* structure = Bun::JSNodeSqliteLimits::createStructure(init.vm, init.global, prototype);
+            init.setPrototype(prototype);
+            init.setStructure(structure);
+        });
+
+    m_JSNodeSqliteTagStoreClassStructure.initLater(
+        [](LazyClassStructure::Initializer& init) {
+            auto* prototype = Bun::JSNodeSqliteTagStorePrototype::create(
+                init.vm, init.global, Bun::JSNodeSqliteTagStorePrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
+            auto* structure = Bun::JSNodeSqliteTagStore::createStructure(init.vm, init.global, prototype);
+            auto* constructor = Bun::JSNodeSqliteTagStoreConstructor::create(
+                init.vm, init.global, Bun::JSNodeSqliteTagStoreConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
             init.setPrototype(prototype);
             init.setStructure(structure);
             init.setConstructor(constructor);

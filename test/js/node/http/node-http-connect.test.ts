@@ -555,20 +555,15 @@ describe("HTTP server CONNECT", () => {
     }
   });
 
-  // https CONNECT: server socket.end() after peer FIN must also FIN at the TCP
-  // layer. us_internal_ssl_shutdown with SSL_RECEIVED_SHUTDOWN already set
-  // (peer's half-close) reaches SSL_shutdown() == 1 and previously returned
-  // without the raw TCP shutdown, so the poll type never moved to SHUT_DOWN
-  // and (on epoll, with autoDestroy disabled) nothing ever closed the socket.
-  // Linux-only: the close is reported via EPOLLHUP once both halves have FIN'd;
-  // kqueue/libuv need the readable_ended re-arm to re-derive it.
+  // https CONNECT: server socket.end() after peer FIN must also FIN the TCP
+  // write side. Linux-only: the close is observed via EPOLLHUP once both halves
+  // have FIN'd; kqueue/libuv need the readable_ended re-arm to re-derive it.
   test.skipIf(!isLinux)(
     "https CONNECT socket.end() after peer FIN half-closes TCP so the socket can close",
     async () => {
-      // The client uses tls.connect({ socket: rawNetSocket }) so end() routes
-      // through the raw FIN path (not a TLS close_notify first), which is the
-      // ordering that leaves the server's eof already consumed by the
-      // allow_half_open branch before the deferred socket.end() runs.
+      // tls.connect wraps a raw net.Socket so end() sends a raw FIN (not
+      // close_notify first): that ordering has the server's eof already
+      // consumed by allow_half_open before the deferred socket.end() runs.
       const fixture = /* js */ `
       const https = require("node:https");
       const net = require("node:net");
@@ -576,9 +571,8 @@ describe("HTTP server CONNECT", () => {
 
       const server = https.createServer({ cert: process.env.CERT, key: process.env.KEY }, () => {});
       server.on("connect", (req, socket) => {
-        // Disable autoDestroy so the only thing that can close this socket is
-        // the transport reporting both directions shut (EPOLLHUP once our FIN
-        // answers the peer's). With the missing raw_shutdown, that never fires.
+        // autoDestroy off: only the transport (EPOLLHUP once our FIN answers
+        // the peer's) can close this socket.
         socket._readableState.autoDestroy = false;
         socket._writableState.autoDestroy = false;
         socket.write("HTTP/1.1 200 Connection Established\\r\\n\\r\\n");

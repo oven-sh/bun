@@ -313,11 +313,11 @@ class InspectorCDPAdapter {
         // JSC requires an objectId, so fetch the global's first. JSC has a
         // single execution context and rejects contextId, so omit it.
         this.#sendToBackend("Runtime.evaluate", { expression: "globalThis" }, null, method, (result, error) => {
-            const objectId = result.result?.objectId;
-            if (error || !objectId) {
-              this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
-              return;
-            }
+          const objectId = result.result?.objectId;
+          if (error || !objectId) {
+            this.#replyErrorToClient(id, error?.code ?? -32000, error?.message ?? "Failed to resolve global object");
+            return;
+          }
           forward(objectId);
         });
         return;

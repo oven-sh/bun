@@ -170,8 +170,7 @@ fn rewrite(fmt: &str, is_enabled: bool) -> Result<String, String> {
 /// `pretty_fmt!("<red>hi {s}<r>", false)` → `"hi {}"`
 ///
 /// Expands to a string literal — valid in `format_args!` / `concat!` position.
-#[proc_macro]
-pub fn pretty_fmt(input: TokenStream) -> TokenStream {
+pub fn pretty_fmt_impl(input: TokenStream) -> TokenStream {
     let PrettyFmtInput { fmt, enabled } = parse_macro_input!(input as PrettyFmtInput);
 
     let mut template = String::new();
@@ -188,12 +187,12 @@ pub fn pretty_fmt(input: TokenStream) -> TokenStream {
     }
 }
 
+#[path = "comptime_string_map.rs"]
 mod comptime_string_map;
 
 /// Implementation detail of `bun_core::comptime_string_map!` — invoke that
 /// `macro_rules!` wrapper instead (it injects the `@crate_path` prefix).
-#[proc_macro]
-pub fn comptime_string_map_impl(input: TokenStream) -> TokenStream {
+pub fn comptime_string_map_impl_impl(input: TokenStream) -> TokenStream {
     comptime_string_map::expand_map(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
@@ -201,8 +200,7 @@ pub fn comptime_string_map_impl(input: TokenStream) -> TokenStream {
 
 /// Implementation detail of `bun_core::comptime_string_set!` — invoke that
 /// `macro_rules!` wrapper instead (it injects the `@crate_path` prefix).
-#[proc_macro]
-pub fn comptime_string_set_impl(input: TokenStream) -> TokenStream {
+pub fn comptime_string_set_impl_impl(input: TokenStream) -> TokenStream {
     comptime_string_map::expand_set(input.into())
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
@@ -292,8 +290,7 @@ fn find_destroy_path(attrs: &[syn::Attribute]) -> Result<Option<syn::Expr>, syn:
 }
 
 /// `#[derive(CellRefCounted)]` — see module comment above.
-#[proc_macro_derive(CellRefCounted, attributes(ref_count))]
-pub fn derive_cell_ref_counted(input: TokenStream) -> TokenStream {
+pub fn derive_cell_ref_counted_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
@@ -447,8 +444,7 @@ fn find_live_marker_field(fields: &Fields) -> Result<&syn::Ident, syn::Error> {
 }
 
 /// `#[derive(Anchored)]` — see `bun_ptr::parent_ref` module docs.
-#[proc_macro_derive(Anchored, attributes(live_marker))]
-pub fn derive_anchored(input: TokenStream) -> TokenStream {
+pub fn derive_anchored_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
@@ -478,8 +474,7 @@ pub fn derive_anchored(input: TokenStream) -> TokenStream {
 /// `#[derive(ThreadSafeRefCounted)]` — locates the embedded
 /// `ThreadSafeRefCount<Self>` field and emits the trait impl plus the
 /// `AnyRefCounted` bridge. Custom destructor via `#[ref_count(destroy = …)]`.
-#[proc_macro_derive(ThreadSafeRefCounted, attributes(ref_count))]
-pub fn derive_thread_safe_ref_counted(input: TokenStream) -> TokenStream {
+pub fn derive_thread_safe_ref_counted_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
@@ -617,8 +612,7 @@ fn parse_ref_count_attrs(
 }
 
 /// `#[derive(RefCounted)]` — see module comment above.
-#[proc_macro_derive(RefCounted, attributes(ref_count))]
-pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
+pub fn derive_ref_counted_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let (impl_g, ty_g, where_g) = input.generics.split_for_impl();
@@ -707,8 +701,7 @@ pub fn derive_ref_counted(input: TokenStream) -> TokenStream {
 // (unit / tuple / struct) by using `Self::V { .. }` arms.
 
 /// `#[derive(EnumTag)]` — see module comment above.
-#[proc_macro_derive(EnumTag, attributes(enum_tag))]
-pub fn derive_enum_tag(input: TokenStream) -> TokenStream {
+pub fn derive_enum_tag_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
     let (impl_g, ty_g, where_g) = input.generics.split_for_impl();

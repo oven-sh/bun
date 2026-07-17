@@ -1292,6 +1292,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_macros"
+version = "0.0.0"
+dependencies = [
+ "bun_output_tags",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "bun_md"
 version = "0.0.0"
 dependencies = [

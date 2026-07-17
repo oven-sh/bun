@@ -423,8 +423,7 @@ impl Parse for ParseParamInput {
 }
 
 /// `__parse_param_impl!($crate, "…")` → const `Param<Help>` literal.
-#[proc_macro]
-pub fn __parse_param_impl(input: TokenStream) -> TokenStream {
+pub fn __parse_param_impl_impl(input: TokenStream) -> TokenStream {
     let ParseParamInput { krate, lit } = parse_macro_input!(input as ParseParamInput);
     let line = lit.value();
     match parse_param(line.as_bytes()) {
@@ -450,8 +449,7 @@ impl Parse for ParseParamsInput {
 }
 
 /// `__parse_params_impl!($crate, "…"; "…"; …)` → `&'static [Param<Help>]`.
-#[proc_macro]
-pub fn __parse_params_impl(input: TokenStream) -> TokenStream {
+pub fn __parse_params_impl_impl(input: TokenStream) -> TokenStream {
     let ParseParamsInput { krate, lits } = parse_macro_input!(input as ParseParamsInput);
 
     let mut items = Vec::with_capacity(lits.len());

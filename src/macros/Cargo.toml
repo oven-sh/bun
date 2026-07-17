@@ -1,0 +1,17 @@
+[package]
+name = "bun_macros"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+proc-macro = true
+
+[lints]
+workspace = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits", "fold"] }
+bun_output_tags.workspace = true

@@ -101,8 +101,7 @@ fn jsc_extern_fn(
     }
 }
 
-#[proc_macro_attribute]
-pub fn host_fn(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn host_fn_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as HostFnArgs);
     let func = parse_macro_input!(item as ItemFn);
     expand_host_fn(&args, &func)
@@ -288,8 +287,7 @@ impl Parse for CachedAccessorsInput {
     }
 }
 
-#[proc_macro]
-pub fn codegen_cached_accessors(input: TokenStream) -> TokenStream {
+pub fn codegen_cached_accessors_impl(input: TokenStream) -> TokenStream {
     let CachedAccessorsInput { type_name, props } =
         parse_macro_input!(input as CachedAccessorsInput);
     let ty = type_name.value();
@@ -443,8 +441,7 @@ fn camel_to_snake(s: &str) -> String {
 // (e.g. `hasPendingActivity: extern fn(*mut Self) -> bool`).
 // ──────────────────────────────────────────────────────────────────────────
 
-#[proc_macro_attribute]
-pub fn host_call(_attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn host_call_impl(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let func = parse_macro_input!(item as ItemFn);
     let vis = &func.vis;
     let sig = &func.sig;
@@ -535,8 +532,7 @@ impl Parse for JsClassArgs {
 }
 
 #[allow(non_snake_case)]
-#[proc_macro_attribute]
-pub fn JsClass(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn JsClass_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as JsClassArgs);
     // Accept both `struct` and `enum` payloads — `.classes.ts` `m_ctx`
     // payloads are frequently sum types, which map to Rust `enum`s.
@@ -553,8 +549,7 @@ pub fn JsClass(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// `#[derive(JsClass)]` form — same expansion, for callers that prefer derive
 /// syntax. Field-level `#[js(...)]` attrs are accepted (and currently ignored;
 /// method/getter shims live on the `impl` via `#[host_fn]`).
-#[proc_macro_derive(JsClassDerive, attributes(js))]
-pub fn js_class_derive(item: TokenStream) -> TokenStream {
+pub fn js_class_derive_impl(item: TokenStream) -> TokenStream {
     let strukt = parse_macro_input!(item as ItemStruct);
     // Derive can't see the struct tokens to re-emit them, so only emit the
     // hooks + trait impl.
@@ -810,8 +805,7 @@ impl Parse for UwsCallbackArgs {
     }
 }
 
-#[proc_macro_attribute]
-pub fn uws_callback(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn uws_callback_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = parse_macro_input!(attr as UwsCallbackArgs);
     let func = parse_macro_input!(item as ItemFn);
     expand_uws_callback(&args, &func)

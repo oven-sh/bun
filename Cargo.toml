@@ -82,6 +82,7 @@ members = [
   "src/boringssl_sys",
   "src/bun_core",
   "src/bun_core_macros",
+  "src/macros",
   "src/bun_output_tags",
   "src/patch_jsc",
   "src/router",

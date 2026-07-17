@@ -43,8 +43,7 @@ use syn::{
 // Nothing is added here; this comment is the contract surface the
 // `css-value-enum-to_css-deep_clone-hand-dispatch` migration relies on.
 
-#[proc_macro_derive(DeepClone)]
-pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
+pub fn derive_deep_clone_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_deep_clone(&input)
         .unwrap_or_else(|e| e.to_compile_error())
@@ -65,16 +64,14 @@ pub fn derive_deep_clone(input: TokenStream) -> TokenStream {
 // Enums: the derive feeds the variant index into the hash as a `u32` (CSS
 // hashing is in-process dedup only — self-consistency is the contract).
 
-#[proc_macro_derive(CssEql, attributes(css))]
-pub fn derive_css_eql(input: TokenStream) -> TokenStream {
+pub fn derive_css_eql_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_css_eql(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-#[proc_macro_derive(CssHash, attributes(css))]
-pub fn derive_css_hash(input: TokenStream) -> TokenStream {
+pub fn derive_css_hash_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_css_hash(&input)
         .unwrap_or_else(|e| e.to_compile_error())
@@ -359,8 +356,7 @@ fn expand_css_hash(input: &DeriveInput) -> syn::Result<TokenStream2> {
 // resolves only through the trait — every payload type must carry an
 // `IsCompatible` impl (blanket or derived); inherent methods are ignored.
 
-#[proc_macro_derive(IsCompatible, attributes(css))]
-pub fn derive_is_compatible(input: TokenStream) -> TokenStream {
+pub fn derive_is_compatible_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_is_compatible(&input)
         .unwrap_or_else(|e| e.to_compile_error())
@@ -653,8 +649,7 @@ fn variant_keyword(ident: &syn::Ident, attrs: &[Attribute]) -> String {
     css_keyword_attr(attrs).unwrap_or_else(|| pascal_to_kebab(&ident.to_string()))
 }
 
-#[proc_macro_derive(DefineEnumProperty, attributes(css))]
-pub fn derive_define_enum_property(input: TokenStream) -> TokenStream {
+pub fn derive_define_enum_property_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_enum_property(&input)
         .unwrap_or_else(|e| e.to_compile_error())
@@ -773,16 +768,14 @@ fn expand_enum_property(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
 // ───────────────────────── Parse / ToCss ─────────────────────────
 
-#[proc_macro_derive(Parse, attributes(css))]
-pub fn derive_parse(input: TokenStream) -> TokenStream {
+pub fn derive_parse_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_derive_parse(&input)
         .unwrap_or_else(|e| e.to_compile_error())
         .into()
 }
 
-#[proc_macro_derive(ToCss, attributes(css))]
-pub fn derive_to_css(input: TokenStream) -> TokenStream {
+pub fn derive_to_css_impl(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     expand_derive_to_css(&input)
         .unwrap_or_else(|e| e.to_compile_error())

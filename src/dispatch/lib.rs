@@ -133,8 +133,7 @@ fn aliasable(t: &Type) -> Type {
 }
 
 /// See the crate docs.
-#[proc_macro]
-pub fn link_interface(input: TokenStream) -> TokenStream {
+pub fn link_interface_impl(input: TokenStream) -> TokenStream {
     let Interface {
         vis,
         name,

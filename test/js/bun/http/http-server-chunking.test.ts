@@ -277,10 +277,12 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrentIf(!isASAN)("accepts small chunk extensions on every chunk (cap is per chunk, not per message)", async () => {
-    // 10 chunks x 8 KiB extension each = 80 KiB total extension bytes, but each
-    // chunk-size line is under the 16 KiB cap so the request must succeed.
-    const script = `
+  test.concurrentIf(!isASAN)(
+    "accepts small chunk extensions on every chunk (cap is per chunk, not per message)",
+    async () => {
+      // 10 chunks x 8 KiB extension each = 80 KiB total extension bytes, but each
+      // chunk-size line is under the 16 KiB cap so the request must succeed.
+      const script = `
       const server = Bun.serve({
         port: 0,
         async fetch(req) { return new Response("Got: " + (await req.text())); },
@@ -308,14 +310,15 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
       server.stop();
     `;
 
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toContain("200 OK");
-    expect(stdout).toContain("Got: AAAAAAAAAA");
-    expect(exitCode).toBe(0);
-  });
+      expect(stderr).toBe("");
+      expect(stdout).toContain("200 OK");
+      expect(stdout).toContain("Got: AAAAAAAAAA");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test.concurrentIf(!isASAN)("rejects bare LF in chunk-size position (invalid byte not stranded)", async () => {
     // A byte <=32 that isn't \r in chunk-size position must error immediately.

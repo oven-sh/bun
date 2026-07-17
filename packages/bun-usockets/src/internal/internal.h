@@ -310,11 +310,10 @@ struct us_socket_t {
    * the sweep escalates via SO_ERROR when the peer later resets). */
   unsigned char unclassified_send_failures : 7;
   unsigned char fin_deferred : 1;
-  /* Nonzero when a send() from the writable dispatch failed with an errno
-   * that cannot recover (peer-gone, or the unclassified retry ceiling). The
-   * write helpers that hit it stop re-arming the writable poll; loop.c closes
-   * the socket with this code after the dispatch returns. POSIX errnos fit in
-   * a byte, and this lives in the existing pad-to-pointer gap. */
+  /* Nonzero when a send() from a us_socket_*write* helper failed with an
+   * errno that cannot recover (peer-gone, or the unclassified retry ceiling).
+   * loop.c closes the socket with this code on the next writable dispatch.
+   * POSIX errnos fit in a byte; lives in the pad-to-pointer gap. */
   unsigned char fatal_send_errno;
 
   struct us_socket_group_t *group;

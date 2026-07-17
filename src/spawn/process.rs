@@ -946,11 +946,9 @@ impl PollerWindows {
     }
 
     pub fn disable_keeping_event_loop_alive(&mut self, _event_loop: bun_io::EventLoopCtx) {
-        // uv_unref() drops this handle from loop->active_handles. With nothing
-        // else ref'd, uv__loop_alive() is 0 and uv_run() skips its body, so the
-        // wait-thread's IOCP exit packet is never dequeued and on_exit_uv never
-        // fires. Subprocess::get_exited re-refs the handle when .exited is
-        // observed while still Running, so awaiting it still resolves.
+        // uv_unref() drops this handle from active_handles; with nothing else
+        // ref'd, uv_run() skips its body and never dequeues the IOCP exit
+        // packet. Subprocess::get_exited re-refs once .exited is observed.
         match self {
             PollerWindows::Uv(p) => {
                 p.unref();

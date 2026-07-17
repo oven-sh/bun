@@ -754,13 +754,9 @@ describe("should not hang", () => {
 });
 
 describe("await exited resolves after unref() when nothing else is ref'd (Windows)", () => {
-  // On Windows, uv_unref() on the process handle drops it from
-  // loop->active_handles. With nothing else ref'd, uv_run() skips its body
-  // and never calls uv__poll, so the wait-thread's IOCP exit packet is never
-  // dequeued and on_exit_uv never fires. Before the fix, the children below
-  // would busy-spin forever with `exited` never resolving. Accessing .exited
-  // while the child is still running now re-refs the handle so the exit
-  // callback is delivered, regardless of unref() ordering.
+  // Windows: uv_unref() drops the uv_process_t from active_handles; with
+  // nothing else ref'd, uv_run() skips its body and never dequeues the IOCP
+  // exit packet, so the children below used to busy-spin forever.
   for (const [name, body] of [
     ["unref() then .exited", `p.unref(); await p.exited;`],
     [".exited then unref()", `const done = p.exited; p.unref(); await done;`],
@@ -777,7 +773,6 @@ describe("await exited resolves after unref() when nothing else is ref'd (Window
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
-        timeout: 20_000,
       });
       const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
       expect({ stdout, stderr, exitCode, signalCode: child.signalCode }).toEqual({

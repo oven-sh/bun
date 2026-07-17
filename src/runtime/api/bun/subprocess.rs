@@ -547,9 +547,8 @@ impl Subprocess<'_> {
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
     pub fn js_unref(&self) {
-        // See `get_exited`: on Windows the uv_process_t must stay ref'd while a
-        // pending `.exited` promise exists, otherwise uv_run() never dequeues
-        // the wait-thread's IOCP exit packet and the promise never resolves.
+        // See `get_exited`: on Windows the uv_process_t stays ref'd while a
+        // pending `.exited` promise exists so uv_run() dequeues its exit packet.
         #[cfg(windows)]
         let skip_poller = self.flags.get().contains(Flags::EXITED_PROMISE_PENDING);
         #[cfg(not(windows))]
@@ -1375,14 +1374,9 @@ impl Subprocess<'_> {
                 )
             }
             _ => {
-                // On Windows, an unref'd uv_process_t drops out of
-                // loop->active_handles; with nothing else ref'd, uv_run() skips
-                // its body and never dequeues the wait-thread's IOCP exit
-                // packet, so on_exit_uv never fires and this promise never
-                // resolves. Accessing .exited while the child is still running
-                // is explicit intent to wait, so keep the handle ref'd; js_unref
-                // honours the flag so a later unref() cannot re-introduce the
-                // hang.
+                // Windows: an unref'd uv_process_t drops out of active_handles,
+                // uv_run() skips its body, and the IOCP exit packet is never
+                // dequeued. Re-ref so awaiting this promise actually resolves.
                 #[cfg(windows)]
                 {
                     self.update_flags(|f| f.insert(Flags::EXITED_PROMISE_PENDING));

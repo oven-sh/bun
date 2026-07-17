@@ -133,7 +133,8 @@ public:
     void dispatchOnlineEvent();
     void dispatchOnline(Zig::GlobalObject* workerGlobalObject);
     void fireEarlyMessages(Zig::GlobalObject* workerGlobalObject);
-    void dispatchErrorWithMessage(WTF::String message);
+    void dispatchErrorWithMessage(WTF::String message, WTF::String code);
+    static WTF::String errorCodeOf(JSC::JSGlobalObject*, JSC::JSValue);
     bool dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value);
     bool dispatchExit(int32_t exitCode);
 

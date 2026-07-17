@@ -1213,7 +1213,8 @@ describe("async generators", () => {
         for await (const _ of gen()) {
           expect(als.getStore()).toBe("STORE_X");
         }
-      } catch {
+      } catch (e) {
+        expect((e as Error).message).toBe("boom");
         caughtStore = als.getStore();
       }
     });

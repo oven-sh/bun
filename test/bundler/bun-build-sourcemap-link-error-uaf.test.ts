@@ -37,7 +37,7 @@ test.skipIf(!isASAN)(
 
     // Inline runner so a single child process performs every iteration.
     files["run.ts"] = `
-const { join } = require("path");
+import { join } from "node:path";
 const dir = process.argv[2];
 const iters = parseInt(process.argv[3], 10);
 let failed = 0;
@@ -50,7 +50,13 @@ for (let i = 0; i < iters; i++) {
     });
     console.error("unexpected success at iter", i);
     process.exit(1);
-  } catch {
+  } catch (error) {
+    if (
+      !(error instanceof AggregateError) ||
+      !error.errors.some(e => String(e?.message).includes("No matching export"))
+    ) {
+      throw error;
+    }
     failed++;
   }
 }

@@ -30,6 +30,7 @@ it("clock_res_get writes the resolution little-endian and works as the first hos
   const view = new DataView(wasi.memory.buffer);
 
   const WASI_ESUCCESS = 0;
+  const WASI_EINVAL = 28;
   const WASI_CLOCK_REALTIME = 0;
   const WASI_CLOCK_MONOTONIC = 1;
 
@@ -40,6 +41,9 @@ it("clock_res_get writes the resolution little-endian and works as the first hos
 
   expect(wasi.wasiImport.clock_res_get(WASI_CLOCK_REALTIME, 80)).toBe(WASI_ESUCCESS);
   expect(view.getBigUint64(80, true)).toBe(1000n);
+
+  // an unrecognized clock returns EINVAL to the guest (matching clock_time_get), not a host-side throw
+  expect(wasi.wasiImport.clock_res_get(99, 96)).toBe(WASI_EINVAL);
 });
 
 it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {

@@ -1040,7 +1040,7 @@ var require_wasi = __commonJS({
               }
             }
             if (!res) {
-              throw Error("invalid clockId");
+              return constants_1.WASI_EINVAL;
             }
             this.view.setBigUint64(resolution, res, true);
             return constants_1.WASI_ESUCCESS;

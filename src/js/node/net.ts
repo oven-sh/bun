@@ -2667,7 +2667,7 @@ function lookupAndConnect(self, options) {
     if (!self.connecting) return;
     if (err) {
       process.nextTick(destroyNT, self, err);
-    } else if (!isIP(ip)) {
+    } else if (typeof ip !== "string" || !isIP(ip)) {
       err = $ERR_INVALID_IP_ADDRESS(ip);
       process.nextTick(destroyNT, self, err);
     } else if (addressType !== 4 && addressType !== 6) {

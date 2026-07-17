@@ -82,9 +82,8 @@ test.concurrent("domain catches setInterval callback throws", async () => {
         console.log("caught:", err.message, count);
         if (count >= 2) process.exit(0);
       });
-      let handle;
       domain.run(() => {
-        handle = setInterval(() => {
+        setInterval(() => {
           throw new Error("tick");
         }, 5);
       });

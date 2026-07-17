@@ -57,6 +57,8 @@ const noop = () => {};
 const hasCrypto = Boolean(process.versions.openssl) &&
                   !process.env.NODE_SKIP_CRYPTO;
 
+const hasSQLite = Boolean(process.versions.sqlite);
+
 // Synthesize OPENSSL_VERSION_NUMBER format with the layout 0xMNN00PPSL
 const opensslVersionNumber = (major = 0, minor = 0, patch = 0) => {
   assert(major >= 0 && major <= 0xf);
@@ -154,6 +156,11 @@ if (process.argv.length === 2 &&
         process.env.SKIP_FLAG_CHECK = "1";
         installBunExposeInternalsRequireInterceptor();
         break;
+      }
+      if ((flag === "--experimental-sqlite" || flag === "--no-experimental-sqlite") && process.versions.bun) {
+        // node:sqlite is always available in Bun; the Node experimental gate
+        // does not exist, so don't re-spawn just to pass the flag through.
+        continue;
       }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
@@ -845,6 +852,12 @@ function skipIfWorker() {
   }
 }
 
+function skipIfSQLiteMissing() {
+  if (!hasSQLite) {
+    skip('missing SQLite');
+  }
+}
+
 function getArrayBufferViews(buf) {
   const { buffer, byteOffset, byteLength } = buf;
 
@@ -1114,6 +1127,7 @@ const common = {
   hasCrypto,
   hasOpenSSL,
   hasQuic,
+  hasSQLite,
   hasMultiLocalhost,
   invalidArgTypeHelper,
   isAlive,
@@ -1148,6 +1162,7 @@ const common = {
   skipIfDumbTerminal,
   skipIfEslintMissing,
   skipIfInspectorDisabled,
+  skipIfSQLiteMissing,
   skipIfWorker,
   spawnPromisified,
 
@@ -1327,7 +1342,9 @@ function installBunExposeInternalsShim() {
       }));
       build.module("internal/timers", () => ({
         loader: "object",
-        exports: { kTimeout: Symbol.for("::buntimeout::") },
+        // TIMEOUT_MAX mirrors Node's internal/timers (2 ** 31 - 1) so vendored
+        // tests exercising the > TIMEOUT_MAX clamp use the real threshold.
+        exports: { kTimeout: Symbol.for("::buntimeout::"), TIMEOUT_MAX: 2 ** 31 - 1 },
       }));
       // node's internal/http: serve the very same symbols Bun's _http_outgoing
       // attaches to OutgoingMessage instances, so tests poke at real state.

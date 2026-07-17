@@ -418,13 +418,13 @@ describe("Bun.sliceAnsi", () => {
 
     test("does not split Hangul Jamo grapheme clusters when styles appear inside sequence", () => {
       const input = "\u001B[31m\u1100\u001B[39m\u1161B";
-      // Decomposed L-jamo (U+1100, width 2) + V-jamo (U+1161, width 1) form one
-      // grapheme cluster with accumulated width 3 — matches Bun.stringWidth.
-      expect(Bun.stringWidth("\u1100\u1161")).toBe(3);
-      // [0, 3): the full cluster (normalizes to 가)
-      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 0, 3)).normalize("NFC")).toBe("가");
-      // B is at column 3
-      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 3, 4))).toBe("B");
+      // Decomposed L-jamo (U+1100, wide) + V-jamo (U+1161, zero-width) form one
+      // grapheme cluster of width 2 — matches Bun.stringWidth.
+      expect(Bun.stringWidth("\u1100\u1161")).toBe(2);
+      // [0, 2): the full cluster (normalizes to 가)
+      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 0, 2)).normalize("NFC")).toBe("가");
+      // B is at column 2
+      expect(stripForVisibleComparison(Bun.sliceAnsi(input, 2, 3))).toBe("B");
     });
 
     test("keeps style opens inside grapheme continuation past end boundary", () => {
@@ -508,7 +508,7 @@ describe("Bun.sliceAnsi", () => {
     });
 
     test("can slice a string with unknown ANSI color", () => {
-      expect(Bun.sliceAnsi("\u001B[20mTEST\u001B[49m", 0, 4)).toBe("\u001B[20mTEST\u001B[0m");
+      expect(Bun.sliceAnsi("\u001B[199mTEST\u001B[49m", 0, 4)).toBe("\u001B[199mTEST\u001B[0m");
       expect(Bun.sliceAnsi("\u001B[1001mTEST\u001B[49m", 0, 3)).toBe("\u001B[1001mTES\u001B[0m");
       expect(Bun.sliceAnsi("\u001B[1001mTEST\u001B[49m", 0, 2)).toBe("\u001B[1001mTE\u001B[0m");
     });
@@ -575,6 +575,75 @@ describe("Bun.sliceAnsi", () => {
       const input = `a\u001B[31mb\u001B[39m`;
       expect(Bun.sliceAnsi(input, 0, 1)).toBe("a");
     });
+
+    test("bold and dim are independent attributes that both close with 22", () => {
+      // Both intensity flags must survive re-synthesis at the slice start.
+      const input = "\x1b[1m\x1b[2mLoading dependencies...\x1b[22m";
+      const once = Bun.sliceAnsi(input, 0, 10);
+      expect(once).toBe("\x1b[1m\x1b[2mLoading de\x1b[22m");
+      expect(Bun.sliceAnsi(once, 0, 5)).toBe("\x1b[1m\x1b[2mLoadi\x1b[22m");
+      expect(Bun.sliceAnsi(input, 8, 15)).toBe("\x1b[1m\x1b[2mdepende\x1b[22m");
+      expect(Bun.sliceAnsi("\x1b[1;2mLoading dependencies...\x1b[22m", 0, 10)).toBe("\x1b[1m\x1b[2mLoading de\x1b[22m");
+      // dim then bold: both kept, in order.
+      expect(Bun.sliceAnsi("\x1b[2m\x1b[1mtext\x1b[22m", 1, 3)).toBe("\x1b[2m\x1b[1mex\x1b[22m");
+      // A 22 inside the slice clears both flags.
+      expect(Bun.sliceAnsi("\x1b[1m\x1b[2mAB\x1b[22mCD", 1, 4)).toBe("\x1b[1m\x1b[2mB\x1b[22mCD");
+    });
+
+    test("supports SGR 58 underline color and its reset 59", () => {
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[58;5;196mERROR: file not found\x1b[59m\x1b[24m", 7, 21)).toBe(
+        "\x1b[4m\x1b[58;5;196mfile not found\x1b[59m\x1b[24m",
+      );
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[58;2;255;128;0mwarning text here\x1b[59m\x1b[24m", 0, 7)).toBe(
+        "\x1b[4m\x1b[58;2;255;128;0mwarning\x1b[59m\x1b[24m",
+      );
+      // Colon sub-parameter forms are kept opaque and close with 59.
+      expect(Bun.sliceAnsi("\x1b[58:5:196mERROR text\x1b[59m", 0, 5)).toBe("\x1b[58:5:196mERROR\x1b[59m");
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[58:2::255:128:0mwarning text\x1b[59m\x1b[24m", 0, 7)).toBe(
+        "\x1b[4m\x1b[58:2::255:128:0mwarning\x1b[59m\x1b[24m",
+      );
+      // 59 alone is a close, not an opener.
+      expect(Bun.sliceAnsi("\x1b[59mtext", 1, 3)).toBe("ex");
+    });
+
+    test("underline color is independent of foreground color and survives re-slicing", () => {
+      const input = "\x1b[58;5;196munder\x1b[59mplain";
+      expect(Bun.sliceAnsi(input, 5, 10)).toBe("plain");
+      const once = Bun.sliceAnsi(input, 0, 5);
+      expect(once).toBe("\x1b[58;5;196munder\x1b[59m");
+      expect(Bun.sliceAnsi(once, 0, 2)).toBe("\x1b[58;5;196mun\x1b[59m");
+      expect(Bun.sliceAnsi("\x1b[31m\x1b[58;2;1;2;3mAB\x1b[59m\x1b[39m", 1, 2)).toBe(
+        "\x1b[31m\x1b[58;2;1;2;3mB\x1b[59m\x1b[39m",
+      );
+    });
+
+    test("closes double underline, fraktur, framed/encircled and super/subscript", () => {
+      // 4 single and 21 double underline are independent flags; both close with 24.
+      expect(Bun.sliceAnsi("\x1b[21mdouble\x1b[24m normal", 7, 13)).toBe("normal");
+      expect(Bun.sliceAnsi("\x1b[21mdouble\x1b[24m normal", 0, 6)).toBe("\x1b[21mdouble\x1b[24m");
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[21mtext\x1b[24m", 1, 3)).toBe("\x1b[4m\x1b[21mex\x1b[24m");
+      expect(Bun.sliceAnsi("\x1b[21m\x1b[4mtext\x1b[24m", 1, 3)).toBe("\x1b[21m\x1b[4mex\x1b[24m");
+      expect(Bun.sliceAnsi("\x1b[4m\x1b[21mAB\x1b[24mCD", 1, 4)).toBe("\x1b[4m\x1b[21mB\x1b[24mCD");
+      // 20 fraktur closes with 23, independently of italic.
+      expect(Bun.sliceAnsi("\x1b[20mfraktur\x1b[23m text", 8, 12)).toBe("text");
+      expect(Bun.sliceAnsi("\x1b[3m\x1b[20mtext\x1b[23m", 0, 2)).toBe("\x1b[3m\x1b[20mte\x1b[23m");
+      // 51 framed and 52 encircled are independent flags; both close with 54.
+      expect(Bun.sliceAnsi("\x1b[51mframed\x1b[54m rest", 0, 3)).toBe("\x1b[51mfra\x1b[54m");
+      expect(Bun.sliceAnsi("\x1b[52mcircled\x1b[54m", 1, 4)).toBe("\x1b[52mirc\x1b[54m");
+      expect(Bun.sliceAnsi("\x1b[51m\x1b[52mtext\x1b[54m", 1, 3)).toBe("\x1b[51m\x1b[52mex\x1b[54m");
+      // 73 superscript / 74 subscript close with 75.
+      expect(Bun.sliceAnsi("x\x1b[73m2\x1b[75m + y", 0, 2)).toBe("x\x1b[73m2\x1b[75m");
+      expect(Bun.sliceAnsi("\x1b[74msub\x1b[75m text", 4, 8)).toBe("text");
+    });
+
+    test("empty SGR parameters default to 0 (reset)", () => {
+      expect(Bun.sliceAnsi("\x1b[31;mabc", 1, 3)).toBe("bc");
+      expect(Bun.sliceAnsi("\x1b[31;mabc", 0, 3)).toBe("abc");
+      expect(Bun.sliceAnsi("\x9b31;mabc", 1, 3)).toBe("bc");
+      expect(Bun.sliceAnsi("\x1b[;31mabc", 1, 3)).toBe("\x1b[31mbc\x1b[39m");
+      expect(Bun.sliceAnsi("\x1b[1;;31mabc", 1, 3)).toBe("\x1b[31mbc\x1b[39m");
+      expect(Bun.sliceAnsi("\x1b[31mred\x1b[mplain", 3, 8)).toBe("plain");
+    });
   });
 
   // ======================================================================
@@ -602,22 +671,19 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("\u009B31", 0, 1)).toBe("");
     });
 
-    test("does not swallow visible text after malformed CSI bytes", () => {
-      const input = "\u001B[31\u0100A";
-      expect(Bun.sliceAnsi(input, 0, 1)).toBe("\u0100");
-      expect(Bun.sliceAnsi(input, 1, 2)).toBe("A");
-    });
-
-    test("does not swallow visible text after malformed CSI prefix", () => {
-      const input = "\u001B[\u0100A";
-      expect(Bun.sliceAnsi(input, 0, 1)).toBe("\u0100");
-      expect(Bun.sliceAnsi(input, 1, 2)).toBe("A");
-    });
-
-    test("does not swallow visible text after malformed C1 CSI prefix", () => {
-      const input = "\u009B\u0100A";
-      expect(Bun.sliceAnsi(input, 0, 1)).toBe("\u0100");
-      expect(Bun.sliceAnsi(input, 1, 2)).toBe("A");
+    test("non-ASCII inside a CSI is payload; 'A' is the final byte (matches stringWidth/stripANSI)", () => {
+      // A codepoint outside 0x20-0x7E cannot end a CSI, so the recognizer
+      // scans past it to the first final byte — here the "A" (0x41).
+      for (const input of ["\u001B[31\u0100A", "\u001B[\u0100A", "\u009B\u0100A"]) {
+        expect({ input, slice: Bun.sliceAnsi(input, 0, 5), width: Bun.stringWidth(input) }).toEqual({
+          input,
+          slice: "",
+          width: 0,
+        });
+        expect(Bun.stripANSI(input)).toBe("");
+      }
+      // Visible text after the completed CSI stays visible.
+      expect(Bun.sliceAnsi("\u001B[\u0100Axy", 0, 5)).toBe("xy");
     });
 
     test("treats generic OSC control sequences as non-visible control codes", () => {
@@ -653,6 +719,16 @@ describe("Bun.sliceAnsi", () => {
     test("treats standalone ST control sequences as non-visible control codes", () => {
       expect(Bun.sliceAnsi("\u001B\\A", 0, 1)).toBe("A");
       expect(Bun.sliceAnsi("\u009CA", 0, 1)).toBe("A");
+    });
+
+    test("treats two-byte and nF escape sequences as non-visible control codes", () => {
+      expect(Bun.sliceAnsi("\u001B7A", 0, 1)).toBe("A"); // DECSC
+      expect(Bun.sliceAnsi("\u001BcA", 0, 1)).toBe("A"); // RIS
+      expect(Bun.sliceAnsi("\u001B=A", 0, 1)).toBe("A"); // keypad application mode
+      expect(Bun.sliceAnsi("\u001B(BA", 0, 1)).toBe("A"); // charset designation
+      expect(Bun.sliceAnsi("\u001B#8A", 0, 1)).toBe("A"); // DECALN
+      // ESC restarts the sequence: ESC ESC c is one escape, not a visible 'c'.
+      expect(Bun.sliceAnsi("\u001B\u001BcA", 0, 1)).toBe("A");
     });
 
     test("preserves style state across private CSI m control codes", () => {
@@ -1156,6 +1232,222 @@ describe("Bun.sliceAnsi", () => {
       expect(Bun.sliceAnsi("unicorn", 0, 4, E)).toBe("uni" + E);
       expect(Bun.sliceAnsi("unicorn", -4, undefined, E)).toBe(E + "orn");
       expect(Bun.sliceAnsi("unicorn", 0, 4, ".")).toBe("uni.");
+    });
+
+    test("trailing zero-width clusters do not trigger the end ellipsis", () => {
+      // A zero-width cluster (LF/CR/ZWSP/tab) landing exactly at the end
+      // boundary must not count as a cut: nothing visible was discarded.
+      // Each non-ASCII case is paired with its ASCII fast-path equivalent
+      // (same column shape) which was already correct.
+      expect(Bun.sliceAnsi("abcX", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\r\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\u200b", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\t", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("abcX\n\n\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      expect(Bun.sliceAnsi("ЖЗИК\n", 0, 4, { ellipsis: E })).toBe("ЖЗИК");
+      expect(Bun.sliceAnsi("ЖЗИ\n", 0, 3, { ellipsis: ">>" })).toBe("ЖЗИ");
+      expect(Bun.sliceAnsi("ab漢\n", 0, 4, { ellipsis: E })).toBe("ab漢");
+      expect(Bun.sliceAnsi("hi\n", 0, 2, { ellipsis: ">>" })).toBe("hi");
+      expect(Bun.sliceAnsi("ЖЗ\n", 0, 2, { ellipsis: ">>" })).toBe("ЖЗ");
+      expect(Bun.sliceAnsi("h\n", 0, 1, { ellipsis: E })).toBe("h");
+      expect(Bun.sliceAnsi("a\u200b", 0, 1, { ellipsis: ">>" })).toBe("a");
+      // Negative start with no end cut is unbounded: trailing zero-width kept.
+      expect(Bun.sliceAnsi("a\n", -1, undefined, { ellipsis: ">>" })).toBe("a\n");
+      // Leading ANSI forces the streaming walk even for ASCII visible chars.
+      expect(Bun.sliceAnsi("\x1b[0mabcX\n", 0, 4, { ellipsis: E })).toBe("abcX");
+      // Visible content after the zero-width tail IS a cut.
+      expect(Bun.sliceAnsi("abcX\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("abcX\n\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\nЛ", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("\x1b[0mabcX\nY", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      // A zero-width codepoint at end that leads a visible cluster (GB9b
+      // Prepend, keycap via Extend, SpacingMark) is a cut once the cluster
+      // width resolves at EOF.
+      expect(Bun.sliceAnsi("abcX\u0600Y", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("abcX\u0600YZ", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u0600\u0661", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\n\u20E3", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("ЖЗИК\u200b\u0903", 0, 4, { ellipsis: E })).toBe("ЖЗИ" + E);
+      expect(Bun.sliceAnsi("abcX\u0600", 0, 4, { ellipsis: E })).toBe("abcX");
+      // start > 0 (start ellipsis budgeted) with a zero-width tail: spec
+      // zone kept, no end ellipsis.
+      expect(Bun.sliceAnsi("ЖЗИКЛ\n", 1, 5, { ellipsis: E })).toBe(E + "ИКЛ");
+      expect(Bun.sliceAnsi("abcde\n", 1, 5, { ellipsis: E })).toBe(E + "cde");
+      expect(Bun.sliceAnsi("\x1b[0mabcde\n", 1, 5, { ellipsis: E })).toBe(E + "cde");
+      expect(Bun.sliceAnsi("ЖЗИКЛ\nМ", 1, 5, { ellipsis: E })).toBe(E + "ИК" + E);
+      // Trailing close SGR after spec-zone content keeps input order when
+      // the zone is kept.
+      expect(Bun.sliceAnsi("\x1b[31mЖЗИК\x1b[0m", 0, 4, { ellipsis: E })).toBe("\x1b[31mЖЗИК\x1b[0m");
+      expect(Bun.sliceAnsi("\x1b[31mЖЗИК\n\x1b[0m", 0, 4, { ellipsis: E })).toBe("\x1b[31mЖЗИК\x1b[0m");
+      expect(Bun.sliceAnsi("\x1b[31mЖЗИК\x1b[39m\n", 0, 4, { ellipsis: E })).toBe("\x1b[31mЖЗИК\x1b[39m");
+    });
+
+    test("wide char overflowing end at EOF is a cut (lazy path)", () => {
+      // U+6F22 is width 2. When it is the last cluster and its width extends
+      // past the requested end, the lazy-cutEnd path must emit the ellipsis
+      // just like the ASCII fast path and the negative-index path do.
+      expect(Bun.sliceAnsi("ab漢", 0, 3, { ellipsis: E })).toBe("ab" + E);
+      expect(Bun.sliceAnsi("abc漢", 0, 4, { ellipsis: E })).toBe("abc" + E);
+      expect(Bun.sliceAnsi("漢漢", 0, 3, { ellipsis: E })).toBe("漢" + E);
+      expect(Bun.sliceAnsi("ab漢漢", 0, 5, { ellipsis: E })).toBe("ab漢" + E);
+      // Multi-column ellipsis budget.
+      expect(Bun.sliceAnsi("abcd漢", 0, 5, { ellipsis: ">>" })).toBe("abc>>");
+      // The ellipsis inherits the active SGR (matches the end=-1 path). A
+      // close that follows the cut cluster is dropped and re-synthesized.
+      const red = "\x1b[31m",
+        reset = "\x1b[39m";
+      expect(Bun.sliceAnsi(red + "ab漢", 0, 3, { ellipsis: E })).toBe(red + "ab" + E + reset);
+      expect(Bun.sliceAnsi(red + "ab漢" + reset, 0, 3, { ellipsis: E })).toBe(red + "ab" + E + reset);
+      expect(Bun.sliceAnsi(red + "ab漢" + reset + "x", 0, 3, { ellipsis: E })).toBe(red + "ab" + E + reset);
+      expect(Bun.sliceAnsi(red + "ab漢\x1b[0m", 0, 3, { ellipsis: E })).toBe(red + "ab" + E + reset);
+      // A close that lands BEFORE the cut cluster is passed through in
+      // order and the ellipsis follows it (matches the known-cutEnd path).
+      expect(Bun.sliceAnsi(red + "ab漢" + reset + "xy", 0, 4, { ellipsis: E })).toBe(red + "ab漢" + reset + E);
+      // start > 0: start ellipsis budgeted first, same EOF overflow detection.
+      expect(Bun.sliceAnsi("xyab漢", 2, 5, { ellipsis: E })).toBe(E + "b" + E);
+      expect(Bun.sliceAnsi("xyab漢", 2, 6, { ellipsis: E })).toBe(E + "b漢");
+      // 8-bit (LChar) instantiation: U+00A7 is width 2 under ambiguousIsNarrow:false.
+      expect(Bun.sliceAnsi("ab\u00A7", 0, 3, { ellipsis: ".", ambiguousIsNarrow: false })).toBe("ab.");
+      expect(Bun.sliceAnsi("ab\u00A7", 0, 4, { ellipsis: ".", ambiguousIsNarrow: false })).toBe("ab\u00A7");
+      // Exact fit (total width == end) is not a cut.
+      expect(Bun.sliceAnsi("ab漢", 0, 4, { ellipsis: E })).toBe("ab漢");
+      expect(Bun.sliceAnsi("a漢", 0, 3, { ellipsis: E })).toBe("a漢");
+      expect(Bun.sliceAnsi("a漢b", 0, 4, { ellipsis: E })).toBe("a漢b");
+      expect(Bun.sliceAnsi("abcd漢", 0, 6, { ellipsis: ">>" })).toBe("abcd漢");
+      // Equivalence with the paths that already got this right.
+      expect(Bun.sliceAnsi("ab漢", 0, 3, { ellipsis: E })).toBe(Bun.sliceAnsi("ab漢", 0, -1, { ellipsis: E }));
+      expect(Bun.sliceAnsi("ab漢", 0, 3, { ellipsis: E })).toBe(Bun.sliceAnsi("ab漢x", 0, 3, { ellipsis: E }));
+      expect(Bun.sliceAnsi("xyab漢", 2, 5, { ellipsis: E })).toBe(Bun.sliceAnsi("xyab漢", 2, -1, { ellipsis: E }));
+      expect(Bun.sliceAnsi(red + "ab漢" + reset, 0, 3, { ellipsis: E })).toBe(
+        Bun.sliceAnsi(red + "ab漢" + reset, 0, -1, { ellipsis: E }),
+      );
+      expect(Bun.sliceAnsi(red + "ab漢" + reset + "x", 0, 3, { ellipsis: E })).toBe(
+        Bun.sliceAnsi(red + "ab漢" + reset + "x", 0, -2, { ellipsis: E }),
+      );
+      expect(Bun.stringWidth(Bun.sliceAnsi("ab漢", 0, 3, { ellipsis: E }))).toBe(3);
+    });
+
+    test("degenerate ranges return the bare ellipsis (matches ASCII fast path)", () => {
+      // When a side is cut but the ellipsis leaves no room, the ASCII fast
+      // path returns just the ellipsis; the streaming walk must agree.
+      const e = { ellipsis: ">>" };
+      // Start cut, start budget pushes `start` past all content.
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 4)).toBe("ЗИ");
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 4, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 2, 5, e)).toBe(">>");
+      expect(Bun.sliceAnsi("abc", 1, 4, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", -2, undefined, e)).toBe(">>");
+      // Original range empty (start >= totalW): still empty, no ellipsis.
+      expect(Bun.sliceAnsi("ЖЗИ", 3, 6, e)).toBe("");
+      expect(Bun.sliceAnsi("Ж", 1, 2, e)).toBe("");
+      // End cut only.
+      expect(Bun.sliceAnsi("abc", 0, 1, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 0, 1, e)).toBe(">>");
+      expect(Bun.sliceAnsi("abc", 0, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 0, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("\x1b[0mabc", 0, 1, e)).toBe(">>");
+      expect(Bun.sliceAnsi("Ж\u0600Y", 0, 1, e)).toBe(">>");
+      // Start cut only (string ends exactly at the range end).
+      expect(Bun.sliceAnsi("abc", 1, 3, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 3, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗ", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ab", 1, 2, e)).toBe(">>");
+      // Both sides cut.
+      expect(Bun.sliceAnsi("abc", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("ЖЗИ", 1, 2, e)).toBe(">>");
+      // Start-cut with a trailing newline still returns the ellipsis
+      // (the start cut is what makes it degenerate, not the end).
+      expect(Bun.sliceAnsi("ЖЗ\n", 1, 2, e)).toBe(">>");
+      // Start budget consumed the whole range and only zero-width clusters
+      // (tab/LF/ZWSP) lie at the original start: still the bare ellipsis,
+      // same as the visible-content case above. Plain slice is non-empty.
+      expect(Bun.sliceAnsi("a\t", 1, 3)).toBe("\t");
+      expect(Bun.sliceAnsi("a\t", 1, 3, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("a\x1b[31m\t", 1, 3, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("Ж\t", 1, 3, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("a\n", 1, 3, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("a\u200b", 1, 3, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("ab\t", 2, 4, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("ЖЗ\t", 2, 4, { ellipsis: E })).toBe(E);
+      expect(Bun.sliceAnsi("a\t\t", 1, 3, { ellipsis: E })).toBe(E);
+      // Same, but ellipsisWidth >= range so no start budget was applied and
+      // `include` flipped true on the zero-width cluster: still the ellipsis.
+      expect(Bun.sliceAnsi("Ж\t", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\t", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\u200b", 1, 2, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\x1b[31m\t", 1, 3, e)).toBe(">>");
+      expect(Bun.sliceAnsi("a\t\t", 1, 2, e)).toBe(">>");
+      // Same zero-width range but the plain slice is empty (nothing at the
+      // original start): stays empty, no ellipsis.
+      expect(Bun.sliceAnsi("Ж", 1, 3, { ellipsis: E })).toBe("");
+      expect(Bun.sliceAnsi("Ж\x1b[31m", 1, 3, { ellipsis: E })).toBe("");
+      expect(Bun.sliceAnsi("Ж\x1b[31m", 1, 2, e)).toBe("");
+      // No cut on either side: content returned, no ellipsis.
+      expect(Bun.sliceAnsi("Ж", 0, 1, e)).toBe("Ж");
+      expect(Bun.sliceAnsi("Ж\n", 0, 1, e)).toBe("Ж");
+      expect(Bun.sliceAnsi("Ж\r\n", 0, 1, e)).toBe("Ж");
+      expect(Bun.sliceAnsi("a", 0, 1, e)).toBe("a");
+      expect(Bun.sliceAnsi("a\n", 0, 1, e)).toBe("a");
+      expect(Bun.sliceAnsi("ЖЗ", 0, 2, e)).toBe("ЖЗ");
+      expect(Bun.sliceAnsi("ЖЗ\n", 0, 2, e)).toBe("ЖЗ");
+    });
+
+    test("trailing ANSI stays after speculative-zone content when string fits exactly", () => {
+      const red = "\x1b[31m";
+      const green = "\x1b[32m";
+      const reset = "\x1b[39m";
+      // End budget lands exactly at EOF: speculative zone ("d") is kept. The
+      // trailing close code must come AFTER that content, not before it.
+      expect(Bun.sliceAnsi(`${red}abcd${reset}`, 0, 4, { ellipsis: E })).toBe(`${red}abcd${reset}`);
+      expect(Bun.sliceAnsi(`${red}abcd${reset}`, 0, 4, { ellipsis: "..." })).toBe(`${red}abcd${reset}`);
+      // SGR change between speculative-zone chars must stay interleaved.
+      expect(Bun.sliceAnsi(`${red}abcde${green}fg${reset}`, 0, 7, { ellipsis: "..." })).toBe(
+        `${red}abcde${green}fg${reset}`,
+      );
+      // Same for OSC 8 hyperlink close.
+      const hl = createHyperlink("abcd", "http://x");
+      expect(Bun.sliceAnsi(hl, 0, 4, { ellipsis: E })).toBe(hl);
+      // UTF-16 input path (force a non-ASCII char before the styled run).
+      expect(Bun.sliceAnsi(`安${red}bcd${reset}`, 0, 5, { ellipsis: E })).toBe(`安${red}bcd${reset}`);
+    });
+
+    test("SGR between speculative-zone chars is discarded with the zone when cut", () => {
+      const red = "\x1b[31m";
+      const green = "\x1b[32m";
+      const bold = "\x1b[1m";
+      const reset = "\x1b[39m";
+      const resetAll = "\x1b[0m";
+      // 'efg' fall in the speculative zone and are replaced by the ellipsis;
+      // the \e[32m between them applies only to discarded chars and must not
+      // leak into the output. The negative-index path already behaves this
+      // way; the lazy (positive-index) path should match.
+      const text = `${red}abcde${green}fghijk${reset}`;
+      expect(Bun.stringWidth(text)).toBe(11);
+      const viaLazy = Bun.sliceAnsi(text, 0, 7, { ellipsis: "..." });
+      const viaKnown = Bun.sliceAnsi(text, -11, -4, { ellipsis: "..." });
+      expect(viaLazy).toBe(`${red}abcd...${reset}`);
+      expect(viaLazy).toBe(viaKnown);
+      // SGR 0 (full reset) between zone chars: the snapshot restore must bring
+      // back every active slot so emitCloseCodes closes them individually.
+      const multi = `${red}${bold}abcde${resetAll}fghij`;
+      expect(Bun.sliceAnsi(multi, 0, 7, { ellipsis: "..." })).toBe(`${red}${bold}abcd...\x1b[22m${reset}`);
+      expect(Bun.sliceAnsi(multi, 0, 7, { ellipsis: "..." })).toBe(Bun.sliceAnsi(multi, -10, -3, { ellipsis: "..." }));
+    });
+
+    test("hyperlink state is restored when speculative zone is discarded", () => {
+      // OSC 8 open lands between two speculative-zone chars and every linked
+      // character is discarded: no OSC 8 bytes should appear in the output.
+      const inner = "abcde" + createHyperlink("fghij", "http://x");
+      expect(Bun.sliceAnsi(inner, 0, 7, { ellipsis: "..." })).toBe("abcd...");
+      expect(Bun.sliceAnsi(inner, 0, 7, { ellipsis: "..." })).toBe(Bun.sliceAnsi(inner, -10, -3, { ellipsis: "..." }));
+      // Link open before the zone and close between zone chars: restoring the
+      // snapshot keeps the link active so a close is still synthesized before
+      // the ellipsis.
+      const outer = createHyperlink("abcde", "http://x") + "fghij";
+      expect(Bun.sliceAnsi(outer, 0, 7, { ellipsis: "..." })).toBe(createHyperlink("abcd", "http://x") + "...");
+      expect(Bun.sliceAnsi(outer, 0, 7, { ellipsis: "..." })).toBe(Bun.sliceAnsi(outer, -10, -3, { ellipsis: "..." }));
     });
   });
 

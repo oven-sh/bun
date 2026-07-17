@@ -55,6 +55,7 @@ static constexpr ASCIILiteral builtinModuleNamesSortedLength[] = {
     "_tls_common"_s,
     "async_hooks"_s,
     "fs/promises"_s,
+    "node:sqlite"_s,
     "querystring"_s,
     "_http_client"_s,
     "_http_common"_s,

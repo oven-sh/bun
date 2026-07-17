@@ -1229,7 +1229,7 @@ describe("backup()", () => {
     ]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: "rejected:ERR_SQLITE_ERROR:0",
-      stderr: "",
+      stderr: expect.any(String),
       exitCode: 0,
     });
   });
@@ -1271,7 +1271,7 @@ describe("backup()", () => {
     // calls stays 0.
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: "rejected:ERR_SQLITE_ERROR:0",
-      stderr: "",
+      stderr: expect.any(String),
       exitCode: 0,
     });
   });

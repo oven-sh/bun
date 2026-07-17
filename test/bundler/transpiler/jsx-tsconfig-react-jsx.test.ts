@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-// tsconfig "jsx": "react-jsx" must select the production automatic runtime
-// (jsx/jsxs from <pkg>/jsx-runtime), and "react-jsxdev" must select the
-// development runtime (jsxDEV from <pkg>/jsx-dev-runtime). These mirror
-// TypeScript/esbuild semantics; previously both values mapped to the dev
-// runtime, so the production transform was unreachable via tsconfig.
+// tsconfig "jsx": "react-jsx" selects the production automatic runtime (jsx/jsxs),
+// "react-jsxdev" selects the development runtime (jsxDEV), matching TypeScript/esbuild.
+// https://github.com/oven-sh/bun/issues/4227
 
 const shimFiles = {
   "node_modules/shim/package.json": JSON.stringify({
@@ -46,7 +44,7 @@ describe("tsconfig compilerOptions.jsx", () => {
     {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "run", "m.jsx"],
-        env: { ...bunEnv, NODE_ENV: undefined },
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "inherit",
@@ -59,7 +57,7 @@ describe("tsconfig compilerOptions.jsx", () => {
     {
       await using proc = Bun.spawn({
         cmd: [bunExe(), "build", "m.jsx", "--external", "shim*"],
-        env: { ...bunEnv, NODE_ENV: undefined },
+        env: { ...bunEnv, NODE_ENV: undefined, BUN_ENV: undefined },
         cwd: String(dir),
         stdout: "pipe",
         stderr: "inherit",

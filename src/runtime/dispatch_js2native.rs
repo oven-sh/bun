@@ -72,19 +72,18 @@ pub(crate) fn bun_get_use_system_ca(
     _global: &JSGlobalObject,
     _frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    Ok(match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
-        Some(v) => JSValue::js_boolean(v),
-        None => JSValue::UNDEFINED,
-    })
+    Ok(
+        match bun_jsc::virtual_machine::VirtualMachine::get().use_system_ca {
+            Some(v) => JSValue::js_boolean(v),
+            None => JSValue::UNDEFINED,
+        },
+    )
 }
 
 /// `[elapsedSinceLoopStartMs, idleMs]` for THIS thread's loop — the two numbers
 /// performance.eventLoopUtilization() is defined in terms of (node derives
 /// active as now - loopStart - idle).
-pub(crate) fn bun_get_loop_elu(
-    global: &JSGlobalObject,
-    _frame: &CallFrame,
-) -> JsResult<JSValue> {
+pub(crate) fn bun_get_loop_elu(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     let vm = bun_jsc::virtual_machine::VirtualMachine::get();
     // SAFETY: the VM owns this loop and this runs on its thread.
     let loop_ = unsafe { (*vm.event_loop).usockets_loop().as_ref() };

@@ -2329,7 +2329,17 @@ function renderNativeHeaders(res) {
         closeDelimited = true;
         res[kMustCloseConnection] = true;
       } else if (res._removedContLen) {
-        forceChunked = true;
+        // Node's _storeHeader only falls through to chunked when
+        // useChunkedEncodingByDefault is set (false for HTTP/1.0 requests),
+        // and the native writer never chunk-frames an HTTP/1.0 response, so
+        // everything else is close-delimited like the _removedTE case.
+        const req = res.req;
+        if (res.useChunkedEncodingByDefault && req.httpVersionMajor >= 1 && req.httpVersionMinor >= 1) {
+          forceChunked = true;
+        } else {
+          closeDelimited = true;
+          res[kMustCloseConnection] = true;
+        }
       }
     }
 

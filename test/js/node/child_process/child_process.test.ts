@@ -919,4 +919,31 @@ console.log(JSON.stringify({ uid: process.getuid(), threwCode: thrown?.code, thr
     const r = spawnSync("cmd.exe", ["/c", "exit 0"], { gid: 0 });
     expect(r.error?.code).toBe("ENOTSUP");
   });
+
+  // A subprocess's `.stdin` is a WriteStream over a FileSink with no `fd` of
+  // its own; the sink knows the pipe's write end. Windows hands back a raw
+  // HANDLE rather than a descriptor, so there is nothing to pass along there.
+  it.if(!isWindows)("accepts another subprocess's stdin as a stdio target", async () => {
+    // (cat [p1] ; cat [p2]) | cat [p3] — node's test-child-process-stdio-merge-stdouts-into-cat
+    const p3 = spawn("cat", { stdio: ["pipe", "pipe", "inherit"] });
+    const p1 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
+    const p2 = spawn("cat", { stdio: ["pipe", p3.stdin, "inherit"] });
+    try {
+      p3.stdout.setEncoding("utf8");
+
+      const firstChunk = once(p3.stdout, "data");
+      p1.stdin.end("hello\n");
+      expect((await firstChunk)[0]).toBe("hello\n");
+
+      const secondChunk = once(p3.stdout, "data");
+      p2.stdin.end("world\n");
+      expect((await secondChunk)[0]).toBe("world\n");
+
+      const thirdChunk = once(p3.stdout, "data");
+      p3.stdin.end("foobar\n");
+      expect((await thirdChunk)[0]).toBe("foobar\n");
+    } finally {
+      for (const p of [p1, p2, p3]) p.kill();
+    }
+  });
 });

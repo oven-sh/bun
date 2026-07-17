@@ -8,7 +8,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 // event so the middleware cannot swallow it; otherwise the next keep-alive
 // request on the same socket throws ERR_HTTP_SOCKET_ASSIGNED and the server
 // process dies.
-test("keep-alive requests survive middleware that wraps res.on/write/end", async () => {
+test.concurrent("keep-alive requests survive middleware that wraps res.on/write/end", async () => {
   using dir = tempDir("issue-34485", {
     "server.js": `
       const http = require("http");
@@ -84,20 +84,21 @@ test("keep-alive requests survive middleware that wraps res.on/write/end", async
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe(
-    "request 0: 200 4096 bytes ok=true\n" +
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout:
+      "request 0: 200 4096 bytes ok=true\n" +
       "request 1: 200 4096 bytes ok=true\n" +
       "request 2: 200 4096 bytes ok=true\n" +
       "sockets used: 1\n",
-  );
-  expect(exitCode).toBe(0);
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Same middleware pattern, but the requests are pipelined (all sent in one
 // packet). Queued responses rely on the same pre-registered detach-on-finish
 // listener to advance the pipeline; pre-fix this crashed identically.
-test("pipelined requests survive middleware that wraps res.on/write/end", async () => {
+test.concurrent("pipelined requests survive middleware that wraps res.on/write/end", async () => {
   using dir = tempDir("issue-34485-pipelined", {
     "server.js": `
       const http = require("http");
@@ -164,7 +165,9 @@ test("pipelined requests survive middleware that wraps res.on/write/end", async 
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(stdout).toBe("statuses: 3 ordered: true\n");
-  expect(exitCode).toBe(0);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "statuses: 3 ordered: true\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

@@ -238,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBRequestPrototypeFunction_respond, (
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: This BYOB request has been invalidated"_s);
     ASSERT(request->m_view);
     if (request->m_view->isDetached())
-        return throwVMTypeError(lexicalGlobalObject, scope, "Cannot respond to a ReadableStreamBYOBRequest whose view has a detached ArrayBuffer"_s);
+        return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: Cannot respond to a ReadableStreamBYOBRequest whose view has a detached ArrayBuffer"_s);
     ASSERT(request->m_view->byteLength() > 0);
 
     readableByteStreamControllerRespond(lexicalGlobalObject, request->m_controller.get(), bytesWritten);

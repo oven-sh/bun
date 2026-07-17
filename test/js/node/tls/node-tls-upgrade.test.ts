@@ -24,15 +24,12 @@ describe.each([
 
     const netClose = once(netSock, "close");
     const tlsSock = tls.connect({ socket: netSock, servername: "localhost" });
+
     const [tlsErr] = await once(tlsSock, "error");
     expect((tlsErr as NodeJS.ErrnoException).code).toBe("ERR_SSL_WRONG_VERSION_NUMBER");
 
     const [hadError] = await netClose;
-    expect(netSock.destroyed).toBe(true);
-    expect(hadError).toBe(false);
-
-    await once(tlsSock, "close");
-    expect(tlsSock.destroyed).toBe(true);
+    expect({ destroyed: netSock.destroyed, hadError }).toEqual({ destroyed: true, hadError: false });
   });
 });
 

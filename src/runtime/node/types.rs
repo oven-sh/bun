@@ -17,7 +17,7 @@ pub use bun_core::SliceWithUnderlyingString;
 pub use jsc::MarkedArrayBuffer as Buffer;
 
 // `jsc.ArgumentsSlice` — cursor over CallFrame args.
-pub use jsc::ArgumentsSlice;
+pub use crate::vm::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
 // canonical `crate::sys_jsc::FdJsc` extension trait (full range/type

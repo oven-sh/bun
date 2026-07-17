@@ -8,7 +8,7 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 | -------------------------------------------------------------------- | -------------- | -------------------------------------- |
 | Workspace crates                                                     | 98             | 22                                     |
 | `extern "Rust"` symbols                                              | 36 (20 blocks) | 0                                      |
-| `link_interface!` sites                                              | 10             | 4 (folded into `bun_macros`, see §4)   |
+| `link_interface!` sites                                              | 10             | 2 (folded into `bun_macros`, see §4)   |
 | `*_jsc` split crates                                                 | 11             | 0                                      |
 | `*_types` split crates                                               | 3              | 0                                      |
 | Facade/re-export crates                                              | 3              | 0                                      |
@@ -20,7 +20,7 @@ This document is the complete, reviewed plan for collapsing Bun's Rust workspace
 
 **Load-bearing change:** `bun_jsc` is split. The pure JSC FFI bindings (~17k LOC: `JSValue`, `JSGlobalObject`, `Strong`, `Weak`, `host_fn`, `array_buffer`, etc.) stay as `bun_jsc` and depend on nothing above `bun_core`/`bun_sys`/`bun_ast`. The runtime machinery (~37k LOC: `VirtualMachine`, `ModuleLoader`, `ConsoleObject`, `event_loop`, `ipc`, `web_worker`, `hot_reloader`, `rare_data`) moves into `bun_runtime`. This inverts the graph so that `VirtualMachine` can hold a `Transpiler`, `PackageManager`, and `ServerEntryPoint` as real typed fields instead of `*mut c_void` + function-pointer hook tables.
 
-**What this plan does not do** (with evidence in §4): it does not eliminate every `dyn`, every vtable, or every cross-crate dispatch mechanism. Four dispatch sites are kept because converting them would introduce unsoundness (Stacked Borrows violations), wrong ownership semantics, or lose C-ABI compatibility. The `bun_dispatch` crate is not deleted; it is folded into `bun_macros` and used at 4 remaining sites instead of 10. The −100,000 LOC target is not achievable through relayering alone; the honest figure is ~15k deleted (see §6).
+**What this plan does not do** (with evidence in §4): it does not eliminate every `dyn`, every vtable, or every cross-crate dispatch mechanism. Four dispatch sites are kept because converting them would introduce unsoundness (Stacked Borrows violations), wrong ownership semantics, or lose C-ABI compatibility. The `bun_dispatch` crate is not deleted; it is folded into `bun_macros` and used at 2 remaining sites instead of 10. The −100,000 LOC target is not achievable through relayering alone; the honest figure is ~15k deleted (see §6).
 
 ---
 
@@ -206,7 +206,7 @@ Every `extern "Rust"` symbol, `link_interface!`, and manual hook vtable, with it
 
 **Result:** zero `extern "Rust"` blocks remain. They are replaced by: 11 direct calls (same-crate after merge/split), 7 `OnceLock<struct of fn>` single-registration tables, 2 `AtomicPtr<fn>` hooks, 2 `dyn Trait` trait objects.
 
-### 3.2 `link_interface!` (10 sites) → 4
+### 3.2 `link_interface!` (10 sites) → 2
 
 | Interface                        | Disposition                                                                   |
 | -------------------------------- | ----------------------------------------------------------------------------- |
@@ -478,7 +478,7 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 1. `src/codegen/generate-host-exports.ts:59-60`: `scanRoots` stays `[{dir: src/runtime, crate: "bun_runtime"}, {dir: src/jsc, crate: "bun_jsc"}]` (group-B files are `#[path]`-mounted so they're scanned under `src/jsc/` disk path but emit `bun_runtime::` crate prefix — add a `mountedIn` override map for the 38 group-B filenames). `:503-506` import table: `["bun_jsc::virtual_machine", …]` → `["bun_runtime::vm", "VirtualMachine"]`, `["bun_runtime::vm::debugger", "LifecycleHandle"]`, `["bun_runtime::vm::debugger", "TestReporterHandle"]`.
 2. `src/codegen/generate-js2native.ts:98`: `"virtual_machine_exports.rs": "jsc/virtual_machine_exports.rs"` → `"runtime/vm/virtual_machine_exports.rs"` (or keep disk path, update crate prefix). `:330`: `crate::dispatch::` → `crate::task_dispatch::` is wrong (js2native lands in `dispatch_js2native.rs`); leave as-is, ensure `mod dispatch { pub mod js2native; }` alias stays in `runtime/lib.rs`.
-3. `src/codegen/generate-classes.ts:2141-2143`: `src/jsc/*.classes.ts` routing via `bun_jsc::` re-exports: update `src/runtime/api.rs:38-39` `pub use bun_jsc::{BuildMessage, ResolveMessage}` → `pub use crate::vm::{BuildMessage, ResolveMessage}` (these moved to group B). Or move the two `.classes.ts` files to `src/runtime/`.
+3. `src/codegen/generate-classes.ts:2141-2143`: `src/jsc/*.classes.ts` routing via `bun_jsc::` re-exports: no change needed. `BuildMessage`/`ResolveMessage` stay in group-A `bun_jsc` (per §2.1), so the existing `pub use bun_jsc::{BuildMessage, ResolveMessage}` at `src/runtime/api.rs:38-39` remains correct.
 
 ### Step 11: Build scripts & CI
 

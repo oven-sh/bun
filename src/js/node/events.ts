@@ -793,13 +793,6 @@ class EventEmitterAsyncResource extends EventEmitter {
     }
     super(options);
     this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
-    // EventEmitter's constructor stamps `this.emit = emitWithRejectionCapture`
-    // as an OWN property when captureRejections is on, which would shadow the
-    // prototype's runInAsyncScope-wrapped emit below. Remove it so listeners
-    // still run in the resource's async scope; the prototype emit re-checks
-    // this[kCapture] on every call, so rejection capture is preserved. delete
-    // is a no-op when the property is absent, so no own-property check needed.
-    delete (this as { emit? }).emit;
   }
 
   // No explicit receiver guards: like node v26 (lib/events.js), the private
@@ -819,13 +812,11 @@ class EventEmitterAsyncResource extends EventEmitter {
 
   emit(event, ...args) {
     const asyncResource = this.#asyncResource;
-    // The base EventEmitter picks its emit variant by stamping an own property;
-    // that own property is deleted in the constructor above, so pick per-call
-    // from this[kCapture]. The default branch reads super.emit at call time
-    // (Node routes through super.emit) so a userland monkeypatch of
-    // EventEmitter.prototype.emit is observed like it is for plain emitters.
-    const emit = this[kCapture] ? emitWithRejectionCapture : super.emit;
-    ArrayPrototypeUnshift.$call(args, emit, this, event);
+    // Node routes through super.emit; the single prototype emit already gates
+    // rejection capture on this[kCapture], and reading super.emit at call time
+    // means a userland monkeypatch of EventEmitter.prototype.emit is observed
+    // like it is for plain emitters.
+    ArrayPrototypeUnshift.$call(args, super.emit, this, event);
     return asyncResource.runInAsyncScope.$apply(asyncResource, args);
   }
 

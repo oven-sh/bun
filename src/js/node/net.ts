@@ -582,6 +582,7 @@ function SocketEmitEndNT(self, _err?) {
     }
     self[kended] = true;
     self.push(null);
+    self.read(0);
   } else if (_err && !self.destroyed) {
     // An error excluded from the synthesis above (teardown noise, or no
     // listener attached): nothing more is coming, but the socket still has to
@@ -3966,6 +3967,9 @@ function onClusterConnection(err, clientHandle) {
     self.prependOnceListener("connection", connectionListener);
   }
   self.emit("connection", socket);
+  if (!self.pauseOnConnect) {
+    socket.resume();
+  }
 }
 
 function createServer(options, connectionListener) {

@@ -2280,7 +2280,13 @@ function deferWriteCallbackForSocket(nativeSocket) {
 // ride the trailer HEADERS instead). node packs END_STREAM onto that final DATA frame
 // rather than emitting an empty one after it.
 function isFinalWrite(stream: Http2Stream, pendingLength: number) {
-  return stream._writableState.ending && stream.writableLength === pendingLength && !stream[bunHTTP2WaitForTrailers];
+  // `ending` is set only after end()'s own synchronous write has already dispatched, so
+  // end(chunk) — the common case — needs kEndingWithChunk to see the last chunk as final.
+  return (
+    (stream._writableState.ending || stream[kEndingWithChunk] === true) &&
+    stream.writableLength === pendingLength &&
+    !stream[bunHTTP2WaitForTrailers]
+  );
 }
 
 // writeStream settled the stream to HALF_CLOSED_LOCAL synchronously with the dispatch
@@ -2315,6 +2321,9 @@ function publishStreamCloseChannel(stream: Http2Stream) {
     onServerStreamCloseChannel.publish({ stream });
   }
 }
+// Set across end(chunk)'s synchronous super.end() only: bridges the window where the final
+// chunk dispatches before Writable marks the stream ending.
+const kEndingWithChunk = Symbol("http2EndingWithChunk");
 const kPerfStats = Symbol("http2PerfStats");
 const kPerfState = Symbol("http2PerfState");
 
@@ -3009,7 +3018,15 @@ class Http2Stream extends Duplex {
     // Don't create an empty buffer for end() without data - let the Duplex stream
     // handle it naturally (just calls _final without _write for empty data).
     // Creating an empty buffer here causes an extra empty DATA frame to be sent.
-    return super.end(chunk, encoding, callback);
+    const hasChunk = chunk !== undefined && chunk !== null && chunk.length > 0;
+    if (hasChunk) this[kEndingWithChunk] = true;
+    try {
+      return super.end(chunk, encoding, callback);
+    } finally {
+      // Only the synchronous window is bridged: a chunk buffered behind an in-flight
+      // write dispatches later, when `ending` is already set.
+      if (hasChunk) this[kEndingWithChunk] = false;
+    }
   }
 
   _writev(data, callback) {
@@ -4289,6 +4306,7 @@ class ServerHttp2Session extends Http2Session {
           stream.destroy();
         }
         if (self.#connections === 0 && self.#closed) {
+          captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
           self.destroy();
         }
       } else if (state === 5) {
@@ -5250,10 +5268,17 @@ class ClientHttp2Session extends Http2Session {
         if (self.#connections === 0 && self.#closed) {
           // Deferred like close()'s own destroy: this runs inside a native dispatch
           // batch, and frames the engine already received but has not dispatched yet
-          // must still reach JS. An outstanding settings() ACK gets a bounded grace
-          // (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
-          if (self.#pendingSettingsAckCount > 0) scheduleSettingsAckGraceNT(self);
-          else setImmediate(destroyIfNotDestroyedNT, self);
+          // must still reach JS. An outstanding settings() ACK or ping gets a bounded
+          // grace (see scheduleSettingsAckGraceNT); its arrival completes the destroy.
+          if (
+            self.#pendingSettingsAckCount > 0 ||
+            (self.#pingCallbacks !== null && self.#pingCallbacks.length > 0)
+          ) {
+            scheduleSettingsAckGraceNT(self);
+          } else {
+            captureHttp2PerfFrameSnapshot(self, self[bunHTTP2Native]);
+            setImmediate(destroyIfNotDestroyedNT, self);
+          }
         }
       } else if (state === 5) {
         // 5 = local closed aka write is closed

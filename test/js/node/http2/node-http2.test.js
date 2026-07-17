@@ -3628,3 +3628,41 @@ it("PerformanceObserver receives http2 session and stream entries", async () => 
     server.close();
   }
 });
+
+it("packs END_STREAM onto the DATA frame produced by end(chunk)", async () => {
+  // node sends one DATA frame with END_STREAM for stream.end(data); bun used to append a
+  // separate empty END_STREAM frame after it. Counted through the client's own
+  // perf_hooks frame stats (which exclude the GOAWAY, as node's do).
+  const { PerformanceObserver } = require("node:perf_hooks");
+  const server = http2.createServer();
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("OK");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+
+    const received = Promise.withResolvers();
+    const observer = new PerformanceObserver((list, obs) => {
+      for (const entry of list.getEntries()) {
+        if (entry.name !== "Http2Session" || entry.detail.type !== "client") continue;
+        obs.disconnect();
+        received.resolve(entry.detail.framesReceived);
+        return;
+      }
+    });
+    observer.observe({ type: "http2" });
+
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    req.on("end", () => client.close());
+    req.end();
+
+    // SETTINGS + SETTINGS ack + HEADERS + one DATA carrying END_STREAM.
+    expect(await received.promise).toBe(4);
+  } finally {
+    server.close();
+  }
+});

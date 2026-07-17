@@ -590,8 +590,12 @@ impl Connection {
 
     /// Dispatch one fully-buffered frame. Returns true if the connection is now fatally closing.
     fn dispatch(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
-        self.frames_received += 1;
-        sink.on_frame_counters(self.frames_received, self.frames_sent);
+        // GOAWAY is excluded: it terminates the session, so node's statistics — which are
+        // read off a session that stopped processing at that frame — never include it.
+        if !matches!(hdr.typ(), Some(FrameType::GoAway)) {
+            self.frames_received += 1;
+            sink.on_frame_counters(self.frames_received, self.frames_sent);
+        }
         // RFC 9113 §4.3 / §6.10: once a HEADERS/PUSH_PROMISE without END_HEADERS is received, the
         // ONLY permitted frame is a CONTINUATION for that same stream until the block completes.
         // Checked before structural validation: a malformed non-CONTINUATION frame mid-block is a

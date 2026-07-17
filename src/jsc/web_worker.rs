@@ -1485,7 +1485,7 @@ impl WebWorker {
             // `Exception` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
             // centralised non-null-ZST deref proof (`exc` is non-null per the
             // `expect` above).
-            let _ = jsc::js_global_object::report_uncaught_exception(
+            let _ = VirtualMachine::report_uncaught_exception(
                 global,
                 jsc::Exception::opaque_ref(exc),
             );

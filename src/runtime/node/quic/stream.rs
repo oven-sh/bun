@@ -882,9 +882,18 @@ impl QuicStream {
     ) -> JsResult<JSValue> {
         let packed = frame.arguments_as_array::<1>()[0].coerce_to_i32(global)? as u32;
         let (urgency, incremental) = ((packed >> 1) as u8, packed & 1 != 0);
-        self.priority.set((urgency, incremental));
-        if let Some(s) = self.ls() {
-            let _ = s.set_http_prio(urgency, incremental);
+        let previous = self.priority.replace((urgency, incremental));
+        // Only an actual change goes on the wire. createBidirectionalStream
+        // calls this for every stream (node's quic.js does too), and a stream
+        // starts at RFC 9218's default, so the usual call is a no-op -- but
+        // lsquic's set_http_prio writes a PRIORITY_UPDATE unconditionally where
+        // nghttp3 writes nothing. That was a control-stream frame per request
+        // node never sends, and a node server answers the one naming a stream
+        // id at its MAX_STREAMS edge with H3_ID_ERROR, killing the session.
+        if (urgency, incremental) != previous {
+            if let Some(s) = self.ls() {
+                let _ = s.set_http_prio(urgency, incremental);
+            }
         }
         Ok(JSValue::UNDEFINED)
     }

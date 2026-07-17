@@ -1717,14 +1717,20 @@ impl QuicEndpoint {
         }
         // A graceful close() has to stop accepting: a session promoted now
         // keeps `sessions` non-empty, so the `closing && sessions.is_empty()`
-        // finish gate never trips and `endpoint.closed` never resolves. Close
-        // rather than refuse, as bun's own HTTP/3 listener does
-        // (us_quic_on_new_conn): CONNECTION_REFUSED would reject the peer's
-        // session, and this is not a busy refusal either, so serverBusyCount
-        // stays put.
+        // finish gate never trips and `endpoint.closed` never resolves. Send
+        // CONNECTION_REFUSED so the client's close_wins rule rejects `opened`
+        // (a code-0 close reads as accepted-then-closed), matching the busy
+        // path and test-quic-endpoint-busy.mjs. serverBusyCount stays put.
         if self.closing.get() {
             // SAFETY: `conn` is the live conn lsquic just created.
-            unsafe { lsquic::lsquic_conn_close(conn) };
+            unsafe {
+                lsquic::lsquic_conn_abort_error(
+                    conn,
+                    0,
+                    QUIC_TRANSPORT_CONNECTION_REFUSED,
+                    core::ptr::null(),
+                );
+            }
             return null_mut();
         }
         let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));

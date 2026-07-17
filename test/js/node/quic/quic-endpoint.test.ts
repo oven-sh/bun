@@ -255,7 +255,8 @@ describe("endpoint.close() while a session is live", () => {
       verifyPeer: "manual",
       transportParams: tp,
     });
-    await expect(late.opened).rejects.toThrow();
+    late.closed.catch(() => {});
+    await expect(late.opened).rejects.toThrow(expect.objectContaining({ code: "ERR_QUIC_TRANSPORT_ERROR" }));
 
     // Releasing the held session is now the last one, so close finishes.
     held.close();

@@ -332,6 +332,7 @@ impl Config {
                     &mut self.log,
                     &bun_ast::Source::init_path_string(b"tsconfig.json", &self.tsconfig_buf[..]),
                     &mut vm.transpiler.resolver.caches.json,
+                    false,
                 ) {
                     self.tsconfig = Some(parsed_tsconfig);
                 }

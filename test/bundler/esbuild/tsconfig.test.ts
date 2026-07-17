@@ -853,6 +853,36 @@ describe("bundler", () => {
       api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
     },
   });
+  // The package config itself extends a sibling file, and the effective
+  // options live only in the base (the @adonisjs/tsconfig layout). The chain
+  // must keep going even though the config sits inside node_modules.
+  itBundled("tsconfig/ExtendsPackageLayered", {
+    files: {
+      "/Users/user/project/src/app/entry.tsx": `console.log(<div/>)`,
+      "/Users/user/project/src/tsconfig.json": /* json */ `
+        {
+          "extends": "my-configs/tsconfig.app.json"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/tsconfig.app.json": /* json */ `
+        {
+          "extends": "./tsconfig.base.json"
+        }
+      `,
+      "/Users/user/project/node_modules/my-configs/tsconfig.base.json": /* json */ `
+        {
+          "compilerOptions": {
+            "jsx": "react",
+            "jsxFactory": "worked"
+          }
+        }
+      `,
+    },
+    outfile: "/Users/user/project/out.js",
+    onAfterBundle(api) {
+      api.expectFile("/Users/user/project/out.js").toContain(`worked("div", null)`);
+    },
+  });
   return;
   itBundled("tsconfig/PathsTypeOnly", {
     // GENERATED

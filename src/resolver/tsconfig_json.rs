@@ -311,6 +311,7 @@ impl TSConfigJSON {
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         json_cache: &mut JsonCache,
+        from_extends: bool,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the
@@ -359,7 +360,10 @@ impl TSConfigJSON {
         }
 
         if let Some(extends_value) = extends_value {
-            if !source.path.is_node_module() {
+            // Configs merely discovered inside node_modules during directory
+            // walks keep `extends` suppressed, but a config reached through an
+            // explicit extends reference follows the full chain like tsc.
+            if from_extends || !source.path.is_node_module() {
                 if let Some(str) = extends_value.as_str() {
                     result.extends = Box::from(str);
                 }

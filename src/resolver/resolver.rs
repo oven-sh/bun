@@ -3981,6 +3981,7 @@ impl<'a> Resolver<'a> {
         &mut self,
         file: &[u8],
         dirname_fd: FD,
+        from_extends: bool,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
@@ -4025,12 +4026,15 @@ impl<'a> Resolver<'a> {
 
         // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
-        let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
-                Some(r) => r,
-                None => return Ok(None),
-            };
+        let mut result = match TSConfigJSON::parse(
+            unsafe { &mut *self.log() },
+            &source,
+            &mut self.caches.json,
+            from_extends,
+        )? {
+            Some(r) => r,
+            None => return Ok(None),
+        };
 
         if result.has_base_url() {
             // this might leak
@@ -4090,7 +4094,7 @@ impl<'a> Resolver<'a> {
                         parts,
                         bun_paths::Platform::AUTO,
                     );
-                    match self.parse_tsconfig(abs_path, FD::INVALID) {
+                    match self.parse_tsconfig(abs_path, FD::INVALID, true) {
                         // Candidate is missing or not a regular file: keep looking.
                         Err(crate::Error::Sys(
                             bun_errno::SystemErrno::ENOENT
@@ -6471,6 +6475,7 @@ impl<'a> Resolver<'a> {
                     } else {
                         FD::ZERO
                     },
+                    false,
                 ) {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err(err) => {
@@ -6532,7 +6537,7 @@ impl<'a> Resolver<'a> {
                                 &[ts_dir_name, &current.extends],
                                 bun_paths::Platform::AUTO,
                             );
-                            self.parse_tsconfig(abs_path, FD::INVALID)
+                            self.parse_tsconfig(abs_path, FD::INVALID, true)
                         };
                         let parent_config_maybe: Option<*mut TSConfigJSON> = match parse_result {
                             Ok(v) => v.map(bun_core::heap::into_raw),

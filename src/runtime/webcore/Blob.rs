@@ -202,7 +202,7 @@ pub trait BlobExt {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: crate::vm::ConsoleFormatter,
+        F: crate::jsc_ext::ConsoleFormatter,
         W: core::fmt::Write;
     fn get_stream(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_stream_with_cache(
@@ -1005,7 +1005,7 @@ impl BlobExt for Blob {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: crate::vm::ConsoleFormatter,
+        F: crate::jsc_ext::ConsoleFormatter,
         W: core::fmt::Write,
     {
         if self.is_detached() {

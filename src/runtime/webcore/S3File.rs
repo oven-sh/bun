@@ -34,7 +34,7 @@ pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
     offset: u64,
 ) -> core::fmt::Result
 where
-    F: crate::vm::ConsoleFormatter,
+    F: crate::jsc_ext::ConsoleFormatter,
 {
     writer.write_str(pfmt!("<r>S3Ref<r>", ENABLE_ANSI_COLORS))?;
     let credentials = s3.get_credentials();

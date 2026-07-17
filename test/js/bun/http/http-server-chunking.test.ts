@@ -250,9 +250,9 @@ describe.if(isPosix)("HTTP server handles split chunk-size CRLF", () => {
         socket: {
           data(s, d) { received += d.toString(); },
           open(s) {
-            // 64 KiB of extension bytes on one chunk-size line (cap is 16 KiB).
+            // 20 KiB of extension bytes on one chunk-size line (cap is 16 KiB).
             // Body is 2 bytes, well under maxRequestBodySize.
-            const ext = Buffer.alloc(64 * 1024, "e").toString();
+            const ext = Buffer.alloc(20 * 1024, "e").toString();
             s.write("POST / HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\nTransfer-Encoding: chunked\\r\\n\\r\\n2;" + ext + "\\r\\nhi\\r\\n0\\r\\n\\r\\n");
             s.flush();
           },

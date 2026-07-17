@@ -25,8 +25,7 @@ describe("https://github.com/oven-sh/bun/issues/10139", async () => {
   });
 
   afterAll(async () => {
-    $.cwd(undefined);
-    await rm(temp, { recursive: true, force: true });
+    rm(temp, { recursive: true, force: true });
   });
 
   test("Bun.build", async () => {
@@ -46,7 +45,8 @@ describe("https://github.com/oven-sh/bun/issues/10139", async () => {
   });
 
   test("CLI", async () => {
-    await $`${bunExe()} build ./huge-asset.js --outdir=out --sourcemap=external --minify`.cwd(temp);
+    $.cwd(temp);
+    await $`${bunExe()} build ./huge-asset.js --outdir=out --sourcemap=external --minify`;
     readdirSync(path.join(temp, "out")).forEach(file => {
       const size = statSync(path.join(temp, "out", file)).size;
       if (file.includes(".map")) {

@@ -24,6 +24,24 @@ it("Should support printing 'hello world'", () => {
   });
 });
 
+it("clock_res_get writes the resolution little-endian and works as the first hostcall", () => {
+  const wasi = new WASI({});
+  wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+  const view = new DataView(wasi.memory.buffer);
+
+  const WASI_ESUCCESS = 0;
+  const WASI_CLOCK_REALTIME = 0;
+  const WASI_CLOCK_MONOTONIC = 1;
+
+  // clock_res_get as the very first wasiImport call must not throw on an uninitialized view
+  expect(wasi.wasiImport.clock_res_get(WASI_CLOCK_MONOTONIC, 64)).toBe(WASI_ESUCCESS);
+  // wasm linear memory is little-endian; the guest must read 1ns, not a byte-swapped value
+  expect(view.getBigUint64(64, true)).toBe(1n);
+
+  expect(wasi.wasiImport.clock_res_get(WASI_CLOCK_REALTIME, 80)).toBe(WASI_ESUCCESS);
+  expect(view.getBigUint64(80, true)).toBe(1000n);
+});
+
 it("fd_fdstat_set_rights only narrows the rights of a descriptor", () => {
   using dir = tempDir("wasi-set-rights", {
     "inside.txt": "inside",

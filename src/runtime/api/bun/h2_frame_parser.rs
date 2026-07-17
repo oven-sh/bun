@@ -418,7 +418,8 @@ impl Default for FrameHeader {
 impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
-    fn write(&self, writer: &mut impl WireWriter) -> bool {
+    fn write(&self, writer: &mut impl WireWriter, frames_sent: &Cell<u64>) -> bool {
+        frames_sent.set(frames_sent.get() + 1);
         let mut buf = [0u8; Self::BYTE_SIZE];
         buf[0] = ((self.length >> 16) & 0xFF) as u8;
         buf[1] = ((self.length >> 8) & 0xFF) as u8;
@@ -1468,6 +1469,12 @@ pub struct H2FrameParser {
     /// An outbound header block the HPACK encoder could not emit. Latched once; the deferred
     /// tick reports it, because it is detected inside a user submit call.
     pending_header_compression_error: Cell<bool>,
+    /// Frames written by the legacy outbound encoder (perf_hooks http2 session stats).
+    frames_sent_legacy: Cell<u64>,
+    /// Engine counters mirrored at the end of each rewrite_read batch, so reading them
+    /// never contends with the engine borrow.
+    engine_frames_received: Cell<u64>,
+    engine_frames_sent: Cell<u64>,
     ref_count: bun_ptr::RefCount<Self>, // intrusive — bun.ptr.RefCount(@This(), "ref_count", deinit, .{})
     /// Number of live `Keepalive` guards: the `+1`s held by native frames currently on the stack.
     /// Read only by `release_refs_stranded_by_exit()`.
@@ -1826,7 +1833,7 @@ impl Stream {
                     length: 0,
                 };
                 owned_frame = Some(frame);
-                break 'brk data_header.write(&mut writer);
+                break 'brk data_header.write(&mut writer, &client.frames_sent_legacy);
             } else {
                 let max_size = frame_remaining
                     .min(
@@ -1906,7 +1913,7 @@ impl Stream {
                         stream_identifier: self.id,
                         length: u32::try_from(payload_size).expect("int cast"),
                     };
-                    let _ = data_header.write(&mut writer);
+                    let _ = data_header.write(&mut writer, &client.frames_sent_legacy);
                     if padding != 0 {
                         break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
                             // SAFETY: src/dst may overlap — use ptr::copy (memmove)
@@ -1970,7 +1977,7 @@ impl Stream {
                         stream_identifier: self.id,
                         length: u32::try_from(payload_size).expect("int cast"),
                     };
-                    let _ = data_header.write(&mut writer);
+                    let _ = data_header.write(&mut writer, &client.frames_sent_legacy);
                     if padding != 0 {
                         break 'brk SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
                             // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
@@ -2561,7 +2568,7 @@ impl H2FrameParser {
             stream_identifier: 0,
             length: payload_len as u32,
         };
-        let _ = settings_header.write(&mut stream);
+        let _ = settings_header.write(&mut stream, &self.frames_sent_legacy);
         let _ = stream.write_all(&payload[..payload_len]);
 
         self.outstanding_settings
@@ -2595,7 +2602,7 @@ impl H2FrameParser {
             stream_identifier: stream.id,
             length: 4,
         };
-        let _ = frame.write(&mut writer_stream);
+        let _ = frame.write(&mut writer_stream, &self.frames_sent_legacy);
         let mut value: u32 = ErrorCode::CANCEL.0;
         stream.rst_code = value;
         value = value.swap_bytes();
@@ -2633,7 +2640,7 @@ impl H2FrameParser {
             stream_identifier: stream.id,
             length: 4,
         };
-        let _ = frame.write(&mut writer_stream);
+        let _ = frame.write(&mut writer_stream, &self.frames_sent_legacy);
         let mut value: u32 = rst_code.0;
         stream.rst_code = value;
         value = value.swap_bytes();
@@ -2690,7 +2697,7 @@ impl H2FrameParser {
             stream_identifier: 0,
             length: u32::try_from(8 + debug_data.len()).expect("int cast"),
         };
-        let _ = frame.write(&mut stream);
+        let _ = frame.write(&mut stream, &self.frames_sent_legacy);
         let last_id = UInt31WithReserved::init(last_stream_id, false);
         let _ = last_id.write(&mut stream);
         let mut value: u32 = rst_code.0;
@@ -2748,7 +2755,7 @@ impl H2FrameParser {
             stream_identifier,
             length: u32::try_from(origin_str.len() + alt.len() + 2).expect("int cast"),
         };
-        let _ = frame.write(&mut stream);
+        let _ = frame.write(&mut stream, &self.frames_sent_legacy);
         let _ = stream.write_all(
             &u16::try_from(origin_str.len())
                 .expect("int cast")
@@ -2783,7 +2790,7 @@ impl H2FrameParser {
             stream_identifier: 0,
             length: 8,
         };
-        let _ = frame.write(&mut stream);
+        let _ = frame.write(&mut stream, &self.frames_sent_legacy);
         let _ = stream.write_all(payload);
         let _ = self.write(&buffer);
     }
@@ -2809,7 +2816,7 @@ impl H2FrameParser {
                 settings: self.local_settings.get().to_engine_settings(),
             })
         });
-        let _ = settings_header.write(&mut preface_stream);
+        let _ = settings_header.write(&mut preface_stream, &self.frames_sent_legacy);
         let _ = preface_stream.write_all(&payload[..payload_len]);
         let _ = self.write(&preface_buffer[..24 + FrameHeader::BYTE_SIZE + payload_len]);
     }
@@ -2824,7 +2831,7 @@ impl H2FrameParser {
             stream_identifier: 0,
             length: 0,
         };
-        let _ = settings_header.write(&mut stream);
+        let _ = settings_header.write(&mut stream, &self.frames_sent_legacy);
         let _ = self.write(&buffer);
     }
 
@@ -2847,7 +2854,7 @@ impl H2FrameParser {
             stream_identifier,
             length: 4,
         };
-        let _ = settings_header.write(&mut stream);
+        let _ = settings_header.write(&mut stream, &self.frames_sent_legacy);
         let _ = window_size.write(&mut stream);
         let _ = self.write(&buffer);
     }
@@ -5696,6 +5703,17 @@ impl H2FrameParser {
     }
 
     /// Feed inbound bytes through the rewrite engine, buffering the unconsumed tail (design B).
+    /// Mirror the engine's frame counters into plain Cells so getFrameCounters() never
+    /// contends with the engine borrow (destroy can run inside a dispatch).
+    fn sync_engine_frame_counters(&self) {
+        if let Ok(guard) = self.engine.try_borrow() {
+            if let Some(engine) = guard.as_ref() {
+                self.engine_frames_received.set(engine.frames_received);
+                self.engine_frames_sent.set(engine.frames_sent);
+            }
+        }
+    }
+
     fn rewrite_read(&self, bytes: &[u8]) {
         bun_output::scoped_log!(H2FrameParser, "rewriteRead {}", bytes.len());
         // Re-entrancy guard: receive() dispatches into JS between frames, and user code can feed
@@ -5848,6 +5866,11 @@ impl H2FrameParser {
 
 /// The from-scratch engine calls back into H2FrameParser (the embedder) through this.
 impl crate::api::h2::connection::Sink for H2FrameParser {
+    fn on_frame_counters(&self, received: u64, sent: u64) {
+        self.engine_frames_received.set(received);
+        self.engine_frames_sent.set(sent);
+    }
+
     fn write(&self, bytes: &[u8]) -> crate::api::h2::connection::WriteResult {
         if self.write(bytes) {
             crate::api::h2::connection::WriteResult::Sent
@@ -6706,6 +6729,29 @@ impl H2FrameParser {
     }
 
     #[bun_jsc::host_fn(method)]
+    pub(crate) fn get_frame_counters(
+        this: &Self,
+        global_object: &JSGlobalObject,
+        _callframe: &CallFrame,
+    ) -> JsResult<JSValue> {
+        this.sync_engine_frame_counters();
+        let result = JSValue::create_empty_object(global_object, 2);
+        result.put(
+            global_object,
+            b"framesReceived",
+            JSValue::js_number(this.engine_frames_received.get() as f64),
+        );
+        result.put(
+            global_object,
+            b"framesSent",
+            JSValue::js_number(
+                (this.frames_sent_legacy.get() + this.engine_frames_sent.get()) as f64,
+            ),
+        );
+        Ok(result)
+    }
+
+    #[bun_jsc::host_fn(method)]
     pub(crate) fn get_current_state(
         this: &Self,
         global_object: &JSGlobalObject,
@@ -6869,7 +6915,7 @@ impl H2FrameParser {
                 stream_identifier: 0,
                 length: 0,
             };
-            let _ = frame.write(&mut stream);
+            let _ = frame.write(&mut stream, &this.frames_sent_legacy);
             let _ = this.write(&buffer);
             return Ok(JSValue::UNDEFINED);
         }
@@ -6894,7 +6940,7 @@ impl H2FrameParser {
                 stream_identifier: 0,
                 length: u32::try_from(slice.len() + 2).expect("int cast"),
             };
-            let _ = frame.write(&mut stream);
+            let _ = frame.write(&mut stream, &this.frames_sent_legacy);
             let _ = stream.write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes());
             let _ = this.write(&buffer);
             if !slice.is_empty() {
@@ -6943,7 +6989,7 @@ impl H2FrameParser {
                 length: total_length - FrameHeader::BYTE_SIZE as u32, // payload length
             };
             stream.reset();
-            let _ = frame.write(&mut stream);
+            let _ = frame.write(&mut stream, &this.frames_sent_legacy);
             let _ = this.write(&buffer[0..total_length as usize]);
         }
         Ok(JSValue::UNDEFINED)
@@ -7240,7 +7286,7 @@ impl H2FrameParser {
             };
 
             let mut writer = this.to_writer();
-            let _ = frame.write(&mut writer);
+            let _ = frame.write(&mut writer, &this.frames_sent_legacy);
             let _ = priority.write(&mut writer);
         }
         Ok(JSValue::TRUE)
@@ -7411,7 +7457,7 @@ impl H2FrameParser {
                 stream.queue_frame(self, b"", callback, close);
             } else {
                 let mut writer = self.to_writer();
-                let _ = data_header.write(&mut writer);
+                let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
             }
         } else {
             let mut offset: usize = 0;
@@ -7501,7 +7547,7 @@ impl H2FrameParser {
                     if payload.len() <= MAX_PAYLOAD_SIZE_WITHOUT_FRAME {
                         // Single-frame payload: the cork coalesces it with neighbors.
                         let mut writer = self.to_writer();
-                        let _ = data_header.write(&mut writer);
+                        let _ = data_header.write(&mut writer, &self.frames_sent_legacy);
                         if padding != 0 {
                             SHARED_REQUEST_BUFFER.with_borrow_mut(|buffer| {
                                 // SAFETY: src/dst may overlap — ptr::copy is memmove; dst capacity covers payload_size
@@ -7550,7 +7596,7 @@ impl H2FrameParser {
                                 }
                             }
                             let header_off = batch.len();
-                            let _ = data_header.write(batch);
+                            let _ = data_header.write(batch, &self.frames_sent_legacy);
                             if padding != 0 {
                                 batch.push(padding);
                                 batch.extend_from_slice(slice);
@@ -8080,7 +8126,7 @@ impl H2FrameParser {
                 stream_identifier: stream.id,
                 length: u32::try_from(encoded_size).expect("int cast"),
             };
-            let _ = frame.write(&mut writer);
+            let _ = frame.write(&mut writer, &this.frames_sent_legacy);
             let _ = writer.write_all(encoded_data);
         } else {
             bun_output::scoped_log!(
@@ -8098,7 +8144,7 @@ impl H2FrameParser {
                 stream_identifier: stream.id,
                 length: u32::try_from(first_chunk_size).expect("int cast"),
             };
-            let _ = headers_frame.write(&mut writer);
+            let _ = headers_frame.write(&mut writer, &this.frames_sent_legacy);
             let _ = writer.write_all(&encoded_data[0..first_chunk_size]);
 
             let mut offset: usize = first_chunk_size;
@@ -8117,7 +8163,7 @@ impl H2FrameParser {
                     stream_identifier: stream.id,
                     length: u32::try_from(chunk_size).expect("int cast"),
                 };
-                let _ = cont_frame.write(&mut writer);
+                let _ = cont_frame.write(&mut writer, &this.frames_sent_legacy);
                 let _ = writer.write_all(&encoded_data[offset..offset + chunk_size]);
 
                 offset += chunk_size;
@@ -8433,9 +8479,10 @@ impl H2FrameParser {
                     )
                     .is_err()
                 {
-                    return Err(
-                        global_object.throw(format_args!("Failed to encode push promise headers"))
-                    );
+                    // Same as the request/respond encode failures: nghttp2 fails the whole
+                    // session, and node never surfaces this through the pushStream callback.
+                    this.schedule_header_compression_session_error();
+                    return Ok(JSValue::js_number(-1.0));
                 }
             }
         }
@@ -8456,7 +8503,7 @@ impl H2FrameParser {
                 stream_identifier: parent_id,
                 length: payload_size as u32,
             };
-            let _ = frame.write(&mut ws);
+            let _ = frame.write(&mut ws, &this.frames_sent_legacy);
             let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
             let _ = ws.write_all(&promised_be.to_ne_bytes());
             let _ = this.write(&hdr_buf);
@@ -8475,7 +8522,7 @@ impl H2FrameParser {
                 stream_identifier: parent_id,
                 length: max_frame as u32,
             };
-            let _ = frame.write(&mut ws);
+            let _ = frame.write(&mut ws, &this.frames_sent_legacy);
             let promised_be = (promised_id & 0x7fff_ffff).swap_bytes();
             let _ = ws.write_all(&promised_be.to_ne_bytes());
             let _ = this.write(&hdr_buf);
@@ -8493,7 +8540,7 @@ impl H2FrameParser {
                     stream_identifier: parent_id,
                     length: chunk as u32,
                 };
-                let _ = cont.write(&mut cs);
+                let _ = cont.write(&mut cs, &this.frames_sent_legacy);
                 let _ = this.write(&cont_buf);
                 let _ = this.write(&encoded_headers[offset..offset + chunk]);
                 offset += chunk;
@@ -9437,7 +9484,7 @@ impl H2FrameParser {
                 stream_identifier: stream.id,
                 length: u32::try_from(payload_size).expect("int cast"),
             };
-            let _ = frame.write(&mut writer);
+            let _ = frame.write(&mut writer, &this.frames_sent_legacy);
 
             // Write priority data if present
             if has_priority {
@@ -9493,7 +9540,7 @@ impl H2FrameParser {
                 stream_identifier: stream.id,
                 length: u32::try_from(first_chunk_size + priority_overhead).expect("int cast"),
             };
-            let _ = headers_frame.write(&mut writer);
+            let _ = headers_frame.write(&mut writer, &this.frames_sent_legacy);
 
             if has_priority {
                 let stream_identifier =
@@ -9524,7 +9571,7 @@ impl H2FrameParser {
                     stream_identifier: stream.id,
                     length: u32::try_from(chunk_size).expect("int cast"),
                 };
-                let _ = cont_frame.write(&mut writer);
+                let _ = cont_frame.write(&mut writer, &this.frames_sent_legacy);
                 let _ = writer.write_all(&encoded_headers[offset..offset + chunk_size]);
 
                 offset += chunk_size;
@@ -9791,6 +9838,9 @@ impl H2FrameParser {
             has_nonnative_backpressure: Cell::new(false),
             transport_write_fatal: Cell::new(false),
             pending_header_compression_error: Cell::new(false),
+            frames_sent_legacy: Cell::new(0),
+            engine_frames_received: Cell::new(0),
+            engine_frames_sent: Cell::new(0),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             padding_strategy: Cell::new(PaddingStrategy::None),
             engine: core::cell::RefCell::new(None),

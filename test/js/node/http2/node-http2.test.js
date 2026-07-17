@@ -3549,3 +3549,82 @@ it("delivers a session error from the event loop, not inside the call that detec
     server.close();
   }
 });
+
+it("delivers the reserved push stream and fails the session when its headers cannot be encoded", async () => {
+  // Verified against node v26.3.0: pushStream's callback still receives the reserved
+  // stream (so the caller can attach handlers), and the session then dies with
+  // COMPRESSION_ERROR (9); the callback never sees an error.
+  const server = http2.createServer({ maxSendHeaderBlockLength: 100000 });
+  try {
+    const sessionError = new Promise(resolve => server.on("sessionError", resolve));
+    const pushCallback = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.pushStream({ ":path": "/pushed", "x-big": Buffer.alloc(90000, "A").toString() }, (err, push) => {
+        push?.on("error", () => {});
+        pushCallback.resolve(err ?? null);
+      });
+      stream.respond();
+      stream.end("x");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`);
+    client.on("error", () => {});
+    const req = client.request();
+    req.on("error", () => {});
+    req.resume();
+    req.end();
+
+    const [cbErr, err] = await Promise.all([pushCallback.promise, sessionError]);
+    expect(cbErr).toBeNull();
+    expect(err.code).toBe("ERR_HTTP2_SESSION_ERROR");
+    expect(err.message).toBe("Session closed with error code 9");
+    client.destroy();
+  } finally {
+    server.close();
+  }
+});
+
+it("PerformanceObserver receives http2 session and stream entries", async () => {
+  const { PerformanceObserver } = require("node:perf_hooks");
+  const entries = [];
+  const observer = new PerformanceObserver(list => {
+    for (const entry of list.getEntries()) entries.push(entry);
+  });
+  observer.observe({ type: "http2" });
+  const server = http2.createServer();
+  try {
+    server.on("stream", stream => {
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    const client = http2.connect(`http://localhost:${port}`);
+    const req = client.request({ ":path": "/" });
+    req.resume();
+    await new Promise(resolve => req.on("end", resolve));
+    await new Promise(resolve => {
+      client.on("close", resolve);
+      client.close();
+    });
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const sessions = entries.filter(e => e.name === "Http2Session");
+    const streams = entries.filter(e => e.name === "Http2Stream");
+    expect(sessions.length).toBeGreaterThanOrEqual(2);
+    expect(streams.length).toBeGreaterThanOrEqual(2);
+    const clientSession = sessions.find(e => e.detail.type === "client");
+    expect(clientSession.entryType).toBe("http2");
+    expect(clientSession.detail.streamCount).toBe(1);
+    expect(clientSession.detail.framesReceived).toBeGreaterThanOrEqual(4);
+    expect(typeof clientSession.detail.framesSent).toBe("number");
+    expect(typeof clientSession.detail.streamAverageDuration).toBe("number");
+    const streamEntry = streams[0];
+    expect(typeof streamEntry.detail.bytesRead).toBe("number");
+    expect(typeof streamEntry.detail.bytesWritten).toBe("number");
+    expect(typeof streamEntry.detail.timeToFirstHeader).toBe("number");
+  } finally {
+    observer.disconnect();
+    server.close();
+  }
+});

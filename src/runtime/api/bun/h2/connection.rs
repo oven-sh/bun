@@ -154,6 +154,10 @@ pub trait Sink {
     /// The peer exceeded the session's invalid-frame allowance (node's maxSessionInvalidFrames):
     /// the embedder should destroy the session with ERR_HTTP2_TOO_MANY_INVALID_FRAMES.
     fn on_too_many_invalid_frames(&self) {}
+    /// Frame-counter update (perf_hooks http2 session stats). Called whenever either
+    /// counter moves, while the connection is mutably borrowed — the embedder must only
+    /// store the values.
+    fn on_frame_counters(&self, _received: u64, _sent: u64) {}
     /// Transition shim while the outbound path still flows through the embedder's legacy encoder:
     /// returns true if `stream_id` was initiated locally (HEADERS already sent by the embedder), so
     /// inbound frames for it are not treated as frames on an idle stream.
@@ -179,6 +183,10 @@ pub trait Sink {
 
 pub struct Connection {
     pub is_server: bool,
+    /// Wire frames fully accepted from the peer (perf_hooks http2 session stats).
+    pub frames_received: u64,
+    /// Wire frames this engine itself has written (the embedder counts its own).
+    pub frames_sent: u64,
 
     pub local_settings: Settings,
     pub remote_settings: Settings,
@@ -269,6 +277,8 @@ impl Connection {
             remote_settings: Settings::default(),
             local_settings_acked: false,
             max_header_list_pairs: 128,
+            frames_received: 0,
+            frames_sent: 0,
             max_invalid_frames: 1000,
             acked_local_initial_window: 65_535,
             enforced_max_header_list_size: local.max_header_list_size,
@@ -309,6 +319,8 @@ impl Connection {
         stream_id: u32,
         payload: &[u8],
     ) {
+        self.frames_sent += 1;
+        sink.on_frame_counters(self.frames_received, self.frames_sent);
         let mut hdr_buf = [0u8; wire::FRAME_HEADER_SIZE];
         let hdr = FrameHeader {
             length: payload.len() as u32,
@@ -578,6 +590,8 @@ impl Connection {
 
     /// Dispatch one fully-buffered frame. Returns true if the connection is now fatally closing.
     fn dispatch(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+        self.frames_received += 1;
+        sink.on_frame_counters(self.frames_received, self.frames_sent);
         // RFC 9113 §4.3 / §6.10: once a HEADERS/PUSH_PROMISE without END_HEADERS is received, the
         // ONLY permitted frame is a CONTINUATION for that same stream until the block completes.
         // Checked before structural validation: a malformed non-CONTINUATION frame mid-block is a
@@ -1344,6 +1358,10 @@ impl Connection {
         };
         debug_assert!(inflight.payload_remaining > 0);
         self.data_in_flight = Some(inflight);
+        // An incrementally-streamed DATA frame never reaches dispatch(); count it here,
+        // once, when its header is accepted.
+        self.frames_received += 1;
+        sink.on_frame_counters(self.frames_received, self.frames_sent);
         StreamedDataStart::Consumed(wire::FRAME_HEADER_SIZE + consumed_payload)
     }
 

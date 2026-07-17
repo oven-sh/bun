@@ -158,7 +158,9 @@ pub(crate) fn new_detached_socket(global: &JSGlobalObject, frame: &CallFrame) ->
             twin: JsCell::new(None),
             verify_error: JsCell::new(None),
         });
-        socket.get_this_value(global)
+        // SAFETY: `socket` is the fresh heap allocation from `NewSocket::new`
+        // above; no wrapper exists yet.
+        unsafe { socket.get_this_value(global) }
     }
 
     Ok(if !is_ssl {

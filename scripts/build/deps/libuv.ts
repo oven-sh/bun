@@ -51,7 +51,7 @@ export const libuv: Dependency = {
   // comment as the rationale.
   patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
 
-  build: () => ({
+  build: cfg => ({
     kind: "direct",
     sources: [...SHARED.map(s => `src/${s}.c`), ...WIN.map(s => `src/win/${s}.c`)],
     includes: ["include", "src"],
@@ -67,6 +67,9 @@ export const libuv: Dependency = {
       "/clang:-fno-strict-aliasing",
       "-Wno-int-conversion",
       "/wd4996",
+      // globalFlags sets -DNDEBUG for release; undo it here so libuv's own
+      // assert()s stay live in assertions builds (release-asan included).
+      ...(cfg.assertions ? ["-UNDEBUG"] : []),
     ],
   }),
 

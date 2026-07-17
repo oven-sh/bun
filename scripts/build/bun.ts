@@ -472,6 +472,13 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // builds in ~30s), so the upload overlaps the cxx compile instead of
     // waiting for it. Own pool so it doesn't take a compile slot. ci.ts's
     // uploadArtifacts() then only handles the archive.
+    // Windows ASAN: also upload the runtime DLL so link-only's
+    // emitWindowsAsanRuntime can copy it next to the exe. The DLL is not a
+    // declared fetch output (only provides.libs are; putting the DLL there
+    // would flow it into link inputs), so it's only in the paths variable —
+    // the import lib in `inputs` proves the fetch has placed the sibling DLL.
+    const uploadPaths =
+      cfg.windows && cfg.asan && cfg.webkit === "prebuilt" ? [...depLibs, windowsAsanRuntime(cfg).dll] : depLibs;
     let depUploadStamp: string | undefined;
     if (cfg.buildkite && depLibs.length > 0) {
       n.pool("bk_upload", 1);
@@ -493,7 +500,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
         outputs: [depUploadStamp],
         rule: "bk_upload",
         inputs: depLibs,
-        vars: { paths: depLibs.map(p => relative(cfg.buildDir, p)).join(";") },
+        vars: { paths: uploadPaths.map(p => relative(cfg.buildDir, p)).join(";") },
       });
     }
 

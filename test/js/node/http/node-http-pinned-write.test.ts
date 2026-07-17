@@ -27,76 +27,79 @@ describe("node:http large Buffer writes are sent zero-copy", () => {
   // payload in one nonblocking send(), so the pinned-tail state is never
   // reached on Windows (the bytes go straight to the kernel instead). The
   // correctness tests below still cover the write path there.
-  test.skipIf(isWindows)("the buffer backing store is pinned while the write is pending, then released on drain", async () => {
-    const payload = makePayload(CHUNK_SIZE);
-    const expectedHash = sha1(payload);
+  test.skipIf(isWindows)(
+    "the buffer backing store is pinned while the write is pending, then released on drain",
+    async () => {
+      const payload = makePayload(CHUNK_SIZE);
+      const expectedHash = sha1(payload);
 
-    let detachedWhilePending: boolean | undefined;
-    let detachedAfterDrain: boolean | undefined;
-    let copyByteLength: number | undefined;
-    let originalByteLength: number | undefined;
-    let handlerError: unknown;
-    const serverReady = Promise.withResolvers<void>();
+      let detachedWhilePending: boolean | undefined;
+      let detachedAfterDrain: boolean | undefined;
+      let copyByteLength: number | undefined;
+      let originalByteLength: number | undefined;
+      let handlerError: unknown;
+      const serverReady = Promise.withResolvers<void>();
 
-    await using server = http.createServer(async (req, res) => {
-      try {
-        res.writeHead(200, {
-          "Content-Type": "application/octet-stream",
-          "Content-Length": String(CHUNK_SIZE),
-        });
-        // The client is a paused net.Socket so the kernel send buffer fills
-        // and write() reports native backpressure on every platform (Windows
-        // loopback can otherwise absorb the whole payload in one send()).
-        res.write(payload);
+      await using server = http.createServer(async (req, res) => {
+        try {
+          res.writeHead(200, {
+            "Content-Type": "application/octet-stream",
+            "Content-Length": String(CHUNK_SIZE),
+          });
+          // The client is a paused net.Socket so the kernel send buffer fills
+          // and write() reports native backpressure on every platform (Windows
+          // loopback can otherwise absorb the whole payload in one send()).
+          res.write(payload);
 
-        // While the tail is in-flight, the underlying ArrayBuffer is pinned so a
-        // transfer() copies instead of detaching. Without the pin the server
-        // would serve garbage for the bytes still to be written.
-        const copy = payload.buffer.transfer();
-        detachedWhilePending = payload.buffer.detached;
-        copyByteLength = copy.byteLength;
-        originalByteLength = payload.buffer.byteLength;
-        serverReady.resolve();
+          // While the tail is in-flight, the underlying ArrayBuffer is pinned so a
+          // transfer() copies instead of detaching. Without the pin the server
+          // would serve garbage for the bytes still to be written.
+          const copy = payload.buffer.transfer();
+          detachedWhilePending = payload.buffer.detached;
+          copyByteLength = copy.byteLength;
+          originalByteLength = payload.buffer.byteLength;
+          serverReady.resolve();
 
-        await once(res, "drain");
+          await once(res, "drain");
 
-        // After the tail has flushed the pin is released and transfer() detaches.
-        payload.buffer.transfer();
-        detachedAfterDrain = payload.buffer.detached;
+          // After the tail has flushed the pin is released and transfer() detaches.
+          payload.buffer.transfer();
+          detachedAfterDrain = payload.buffer.detached;
 
-        res.end();
-      } catch (e) {
-        handlerError = e;
-        serverReady.resolve();
-        res.destroy();
-      }
-    });
-    await once(server.listen(0), "listening");
-    const port = (server.address() as AddressInfo).port;
+          res.end();
+        } catch (e) {
+          handlerError = e;
+          serverReady.resolve();
+          res.destroy();
+        }
+      });
+      await once(server.listen(0), "listening");
+      const port = (server.address() as AddressInfo).port;
 
-    const socket = net.connect(port, "127.0.0.1");
-    await once(socket, "connect");
-    socket.pause();
-    socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
-    await serverReady.promise;
+      const socket = net.connect(port, "127.0.0.1");
+      await once(socket, "connect");
+      socket.pause();
+      socket.write(`GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`);
+      await serverReady.promise;
 
-    // Now drain the client side and verify the body.
-    const chunks: Buffer[] = [];
-    socket.on("data", chunk => chunks.push(chunk));
-    const closed = once(socket, "close");
-    socket.resume();
-    await closed;
-    const received = Buffer.concat(chunks);
+      // Now drain the client side and verify the body.
+      const chunks: Buffer[] = [];
+      socket.on("data", chunk => chunks.push(chunk));
+      const closed = once(socket, "close");
+      socket.resume();
+      await closed;
+      const received = Buffer.concat(chunks);
 
-    expect(handlerError).toBeUndefined();
-    // Strip the HTTP response head; the body is the last CHUNK_SIZE bytes.
-    const body = received.subarray(received.length - CHUNK_SIZE);
-    expect(body.length).toBe(CHUNK_SIZE);
-    expect(sha1(body)).toBe(expectedHash);
-    expect(copyByteLength).toBe(originalByteLength);
-    expect(detachedWhilePending).toBe(false);
-    expect(detachedAfterDrain).toBe(true);
-  });
+      expect(handlerError).toBeUndefined();
+      // Strip the HTTP response head; the body is the last CHUNK_SIZE bytes.
+      const body = received.subarray(received.length - CHUNK_SIZE);
+      expect(body.length).toBe(CHUNK_SIZE);
+      expect(sha1(body)).toBe(expectedHash);
+      expect(copyByteLength).toBe(originalByteLength);
+      expect(detachedWhilePending).toBe(false);
+      expect(detachedAfterDrain).toBe(true);
+    },
+  );
 
   test("Content-Length (non-chunked) path delivers the exact bytes", async () => {
     const payload = makePayload(CHUNK_SIZE);

@@ -848,9 +848,10 @@ function Prefetch-Build-Deps {
 
   # The installs leave ~2 GB of node_modules in the clone (test/ uses the
   # isolated linker); cmd's rmdir handles the junctions/deep paths that
-  # Remove-Item -Recurse trips over. The clone lives under $env:TEMP so a
-  # leftover is wiped at sysprep anyway.
-  & cmd /c rmdir /s /q $cloneDir 2>$null
+  # Remove-Item -Recurse trips over. Redirect inside cmd so 5.1's
+  # NativeCommandError-under-Stop quirk never sees stderr. The clone lives
+  # under $env:TEMP so a leftover is wiped at sysprep anyway.
+  & cmd /c "rmdir /s /q `"$cloneDir`" 2>nul"
   Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
 }
 

@@ -676,6 +676,24 @@ describe("empty usages on a private or secret key", () => {
   });
 });
 
+// X25519 deriveBits is a line-for-line parallel of ECDH's; ECDH got Node's
+// mismatch messages but the X25519 twin was left with the empty-message
+// InvalidAccessError. The cfrg vendored test only covers this under X448.
+it("X25519 deriveBits with an ECDH public key reports 'key algorithm mismatch'", async () => {
+  const x = await crypto.subtle.generateKey("X25519", false, ["deriveBits"]);
+  const ec = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
+  const rejection = (p: Promise<unknown>) => p.then(() => "resolved", e => `${e.name}: ${e.message}`);
+  expect({
+    x25519WithEcdhPublic: await rejection(crypto.subtle.deriveBits({ name: "X25519", public: ec.publicKey }, x.privateKey, 256)),
+    ecdhWithX25519Public: await rejection(
+      crypto.subtle.deriveBits({ name: "ECDH", namedCurve: "P-256", public: x.publicKey }, ec.privateKey, 256),
+    ),
+  }).toEqual({
+    x25519WithEcdhPublic: "InvalidAccessError: key algorithm mismatch",
+    ecdhWithX25519Public: "InvalidAccessError: key algorithm mismatch",
+  });
+});
+
 // CryptoKey.usages and the JWK key_ops it is built from are ordered by the
 // KeyUsage enum in https://w3c.github.io/webcrypto/#dfn-KeyUsage, not
 // alphabetically, and not by the order the caller passed them in.

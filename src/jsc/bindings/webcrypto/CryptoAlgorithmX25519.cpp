@@ -83,13 +83,13 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
         return;
     }
     if (baseKey->algorithmIdentifier() != ecParameters.publicKey->algorithmIdentifier()) {
-        exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
+        exceptionCallback(ExceptionCode::InvalidAccessError, "key algorithm mismatch"_s);
         return;
     }
     auto& ecBaseKey = downcast<CryptoKeyOKP>(baseKey.get());
     auto& ecPublicKey = downcast<CryptoKeyOKP>(*(ecParameters.publicKey.get()));
     if (ecBaseKey.namedCurve() != ecPublicKey.namedCurve()) {
-        exceptionCallback(ExceptionCode::InvalidAccessError, ""_s);
+        exceptionCallback(ExceptionCode::InvalidAccessError, "Named curve mismatch"_s);
         return;
     }
 

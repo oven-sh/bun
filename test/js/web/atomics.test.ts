@@ -201,11 +201,13 @@ describe("Atomics", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      const { delta } = JSON.parse(stdout);
+      expect({ stdout, stderr, exitCode }).toMatchObject({
+        stdout: expect.stringMatching(/"delta":/),
+        exitCode: 0,
+      });
       // Without the fix the four measured batches leak ~15 MB under ASAN and
       // well over 30 MB in release; with the fix rss is flat after warm-up.
-      expect(delta).toBeLessThan(6 * 1024 * 1024);
+      expect(JSON.parse(stdout).delta).toBeLessThan(6 * 1024 * 1024);
     }, 30_000);
   });
 

@@ -163,6 +163,8 @@ describe("ClipboardItem", () => {
     const item = new ClipboardItem({ "text/plain": "a", "text/html": "<b>a</b>" }, { presentationStyle: "inline" });
     expect(item.types).toEqual(["text/plain", "text/html"]);
     expect(Object.isFrozen(item.types)).toBe(true);
+    // WebIDL FrozenArray [SameObject]: the same JSArray on every get.
+    expect(item.types).toBe(item.types);
     expect(item.presentationStyle).toBe("inline");
     expect(new ClipboardItem({ "text/plain": "a" }).presentationStyle).toBe("unspecified");
   });

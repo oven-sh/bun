@@ -556,7 +556,8 @@ int64_t bun_coregraphics_clipboard_change_count()
 // with `bun_coregraphics_clipboard_take_data`, which releases the retain. The
 // handle is explicit rather than thread-local state so the two phases cannot be
 // mismatched (a stale stash, a UTI that disagrees with the one probed) and the
-// retain has exactly one owner. `*out_data` is null ⇔ `*out_len` is 0.
+// retain has exactly one owner. `*out_data` is null ⇔ the representation is
+// absent; a present 0-byte NSData is a non-null handle with `*out_len` of 0.
 // The pasteboard server promotes legacy flavours and converts images to
 // `public.png` on demand, so one `dataForType:` per UTI suffices.
 int32_t bun_coregraphics_clipboard_read_type(const char* uti, void** out_data, size_t* out_len)

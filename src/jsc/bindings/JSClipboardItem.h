@@ -60,8 +60,9 @@ private:
 };
 
 // Normalizes one settled ClipboardItemData to a Blob carrying `type`: a Blob already
-// declaring that type passes through, a string becomes `new Blob([value], { type })`, and
-// anything else throws. Synchronous — the caller has already awaited what needed awaiting.
+// declaring that type passes through; any other value is ToString-coerced (WebIDL
+// `(DOMString or Blob)`) into `new Blob([value], { type })`. Synchronous — the caller has
+// already awaited what needed awaiting.
 JSC::JSValue clipboardDataToBlob(JSC::JSGlobalObject*, JSC::JSValue data, const WTF::String& type);
 
 // `getType()`'s reaction: normalizes the settled value. Its context cell at argument(1) is

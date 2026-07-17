@@ -116,7 +116,7 @@ Absorbs 21 crates into one ~86k LOC foundation. The two former `link_interface!`
 
 `bun_analytics` is absorbed; its declared-but-dead `bun_sys` Cargo dependency is deleted first (0 code references; see `src/analytics/Cargo.toml:23`).
 
-`__bun_crash_handler_out_of_memory` / `__bun_crash_handler_dump_stack_trace`: replaced by `pub static PANIC_HOOK: AtomicPtr<fn()->!> = …` and `pub static STACK_TRACE_HOOK: AtomicPtr<fn(usize, StackLimits)>`. `bun_core` ships a minimal default (print + `libc::abort`); `bun_sys::crash_handler` upgrades them at init. Std idiom (this is how `std::alloc::set_alloc_error_hook` works).
+`__bun_crash_handler_out_of_memory` / `__bun_crash_handler_dump_stack_trace`: replaced by `pub static PANIC_HOOK: AtomicUsize` and `pub static STACK_TRACE_HOOK: AtomicUsize` holding the fn-pointer cast to `usize` (not `AtomicPtr<()>`, which would assume fn-ptr and data-ptr share representation). `bun_core` ships a minimal default (print + `libc::abort`); `bun_sys::crash_handler` upgrades them at init. Std idiom (this is how `std::alloc::set_alloc_error_hook` works).
 
 ### 2.3 `bun_sys` — OS layer
 
@@ -192,8 +192,8 @@ Every `extern "Rust"` symbol, `link_interface!`, and manual hook vtable, with it
 
 | Symbol(s)                                                                                                                                            | Declarer → Definer (today)          | Disposition                                                                        |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------- |
-| `__bun_crash_handler_out_of_memory`                                                                                                                  | `bun_alloc` → `crash_handler`       | `bun_core::PANIC_HOOK: AtomicPtr<fn()->!>`, upgraded by `bun_sys`                  |
-| `__bun_crash_handler_dump_stack_trace`                                                                                                               | `bun_core` → `crash_handler`        | `bun_core::STACK_TRACE_HOOK: AtomicPtr<fn(…)>`                                     |
+| `__bun_crash_handler_out_of_memory`                                                                                                                  | `bun_alloc` → `crash_handler`       | `bun_core::PANIC_HOOK: AtomicUsize`, upgraded by `bun_sys`                         |
+| `__bun_crash_handler_dump_stack_trace`                                                                                                               | `bun_core` → `crash_handler`        | `bun_core::STACK_TRACE_HOOK: AtomicUsize`                                          |
 | `__bun_regex_{compile,matches,drop}`                                                                                                                 | `install_types` → `bun_jsc`         | `bun_ast::REGEX_ENGINE: OnceLock<RegexEngineVTable>`, set by `bun_jsc` init        |
 | `__bun_resolver_init_package_manager`                                                                                                                | `resolver` → `install`              | Deleted; `install` constructs PM and passes `&dyn AutoInstaller` to resolver       |
 | `__bun_dns_prefetch`                                                                                                                                 | `dns` → `runtime`                   | `bun_sys::dns::PREFETCH_HOOK: OnceLock<fn(&[u8],u16)>`                             |
@@ -208,7 +208,7 @@ Every `extern "Rust"` symbol, `link_interface!`, and manual hook vtable, with it
 | `__bun_blob_from_build_artifact`                                                                                                                     | `bun_jsc` (group B) → `runtime`     | Same-crate after split: direct call                                                |
 | `__BUN_SQL_RUNTIME_HOOKS`                                                                                                                            | `sql_jsc` → `runtime`               | Same-crate after split: direct field access                                        |
 
-**Result:** zero `extern "Rust"` blocks remain. They are replaced by: 11 direct calls (same-crate after merge/split), 7 `OnceLock<struct of fn>` single-registration tables, 2 `AtomicPtr<fn>` hooks, 2 `dyn Trait` trait objects.
+**Result:** zero `extern "Rust"` blocks remain. They are replaced by: 11 direct calls (same-crate after merge/split), 7 `OnceLock<struct of fn>` single-registration tables, 2 `AtomicUsize` fn-pointer hooks, 2 `dyn Trait` trait objects.
 
 ### 3.2 `link_interface!` (10 sites) → 2
 
@@ -406,17 +406,17 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 ### Step 2: Create `bun_macros`
 
-1. New `src/macros/{Cargo.toml,lib.rs}` with `proc-macro = true`. `lib.rs` `#[path]`-mounts `../bun_core_macros/lib.rs`, `../clap_macros/lib.rs`, `../jsc_macros/lib.rs`, `../css_derive/lib.rs`, `../dispatch/lib.rs` as modules; re-exports every `#[proc_macro*]` fn at crate root.
+1. New `src/macros/{Cargo.toml,lib.rs}` with `proc-macro = true`. `lib.rs` `#[path]`-mounts `../bun_core_macros/lib.rs`, `../clap_macros/lib.rs`, `../jsc_macros/lib.rs`, `../css_derive/lib.rs`, `../dispatch/lib.rs` as `mod core_macros_impl;` etc. **`#[proc_macro*]` items must live at the crate root** (re-exports do not satisfy rustc), so in each mounted file rename `#[proc_macro…] pub fn foo` → `pub fn foo_impl` (plain fn), and in `src/macros/lib.rs` add one-line wrappers at the root: `#[proc_macro] pub fn foo(t: TokenStream) -> TokenStream { core_macros_impl::foo_impl(t) }`. Same for `#[proc_macro_derive]`/`#[proc_macro_attribute]` (~18 wrappers total).
 2. Rewrite `dispatch/lib.rs` codegen: replace the `unsafe extern "Rust" { … }` emission with `static __VTABLE_<Iface>_<Variant>: <Iface>MethodTable = …;` + `static __VTABLES_<Iface>: [&<Iface>MethodTable; N] = [&__VTABLE_…, …];`. `link_impl_*!` fills the static. No `extern "Rust"` in output.
 3. Update `bun_core_macros` derive emissions: `::bun_ptr::` → `::bun_core::ptr::` (deferred: add `pub use crate as bun_ptr;` alias in `bun_core/lib.rs` so this step is optional).
 4. Every `Cargo.toml` that depends on one of the 5 absorbed proc-macro crates: replace with `bun_macros.workspace = true`. Add `bun_macros` to `[workspace.dependencies]`.
 
 ### Step 3: Merge `bun_core`
 
-1. `src/bun_core/lib.rs`: `#[path]`-mount `../bun_alloc/lib.rs` as `pub mod alloc_impl;`, and likewise for `mimalloc_sys`, `simdutf_sys`, `wyhash`, `highway`, `hash`, `ptr`, `safety`, `collections`, `base64`, `errno`, `paths`, `libuv_sys` (cfg(windows)), `url`, `semver`, `http_types`, `analytics`, `picohttp`, `valkey`. Add flat re-exports at crate root matching the old crates' public surface: `pub use alloc_impl::*; pub use ptr::*; …`.
+1. `src/bun_core/lib.rs`: `#[path]`-mount `../bun_alloc/lib.rs` as `pub mod alloc_impl;`, and likewise for `mimalloc_sys`, `simdutf_sys`, `wyhash`, `highway`, `hash`, `ptr`, `safety`, `collections`, `base64`, `errno`, `paths`, `libuv_sys` (cfg(windows)), `url`, `semver`, `http_types`, `analytics`, `picohttp`, `valkey`. Add flat re-exports at crate root matching the old crates' public surface: `pub use alloc_impl::*; pub use ptr::*; …`. **`crate::` paths inside mounted files** now resolve to `bun_core`, not the original crate root: the flat root re-exports cover every `crate::PublicItem`, but intra-crate submodule paths (`crate::posix`, `crate::hash_map`, `crate::path_buffer_pool`, `crate::zig_base64`) must be rewritten to `super::…` or the mount-point path. Grep each absorbed crate for `\bcrate::` and fix before the Cargo.toml switch; `cargo check -p bun_core` catches any miss.
 2. Delete `link_interface! ErrnoNames` (`lib.rs:610`); callers use `crate::errno::SystemErrno::name()`.
 3. Replace `link_interface! OutputSink` (`lib.rs:584`) with `pub struct OutputSinkVTable { pub stderr: fn()->output::File, … 11 slots … } pub static OUTPUT_SINK: OnceLock<OutputSinkVTable> = OnceLock::new();`. `src/sys/lib.rs:9680` `link_impl_OutputSink!` becomes `const SINK: OutputSinkVTable = …; pub fn register_output_sink() { bun_core::OUTPUT_SINK.set(SINK).ok(); }` called from `bun_sys::init()`.
-4. Replace `extern "Rust" __bun_crash_handler_*` with `pub static PANIC_HOOK: AtomicPtr<()> = …` / `STACK_TRACE_HOOK` (erased to `*const ()`, cast at call site); `bun_core` ships default bodies (print + abort).
+4. Replace `extern "Rust" __bun_crash_handler_*` with `pub static PANIC_HOOK: AtomicUsize = …` / `STACK_TRACE_HOOK: AtomicUsize` (fn-pointer stored via `as usize`; `AtomicPtr<()>` would assume fn-pointer and data-pointer share representation, which Rust does not guarantee). Add `const _: () = assert!(size_of::<fn()->!>() == size_of::<usize>());` next to the statics. `bun_core` ships default bodies (print + abort).
 5. `[features] debug_logs = []`.
 6. Tree-wide `sed` (all `src/**/*.rs` + `src/**/Cargo.toml`): `bun_{alloc,mimalloc_sys,simdutf_sys,wyhash,highway,hash,ptr,safety,output,collections,base64,errno,paths,libuv_sys,url,semver,http_types,analytics,picohttp,valkey}::` → `bun_core::`. Same for `use bun_X` → `use bun_core`.
 7. `scripts/rust-miri.ts:34-47`: `MIRI_CRATES` → `["bun_core", "bun_macros", "bun_ast"]`.
@@ -516,7 +516,7 @@ Each step leaves `cargo check --workspace` passing. Source files stay at their c
 
 - **Debug cold-build prefix serialization.** `bun_core` (86k) + `bun_sys` (46k) compile serially before any fan-out, vs today's ~33k + parallel siblings. Estimated ~1.5–2× wall-clock on that prefix. `-Zthreads=8` (`scripts/build/rust.ts:423-438`) partially mitigates. Release unaffected (`lto = "fat"` + `codegen-units = 1` already serialize, per `Cargo.toml:114-131`).
 - **`bun_runtime` at ~392k LOC** (from 331k). Longer incremental rebuild when touching any runtime/VM/console/SQL-driver/WebSocket code. Buys: elimination of all hook tables and `*mut c_void` VM fields.
-- **`OnceLock<fn-struct>` vs link-time.** 7 `OnceLock` tables + 2 `AtomicPtr` hooks replace 20 `extern "Rust"` blocks. Each call is now `static.get().unwrap().slot(…)` vs a direct symbol. On the hot paths (`TIMER_DISPATCH`, `POLL_DISPATCH`, `TASK_DISPATCH`) this is one predictable branch + one load; under `lto = "fat"` the `OnceLock::get` inlines to a relaxed load. `JS_LOOP_VTABLE` calls are on the event-loop tick path but behind a branch that already exists (`Js` vs `Mini`).
+- **`OnceLock<fn-struct>` vs link-time.** 7 `OnceLock` tables + 2 `AtomicUsize` hooks replace 20 `extern "Rust"` blocks. Each call is now `static.get().unwrap().slot(…)` vs a direct symbol. On the hot paths (`TIMER_DISPATCH`, `POLL_DISPATCH`, `TASK_DISPATCH`) this is one predictable branch + one load; under `lto = "fat"` the `OnceLock::get` inlines to a relaxed load. `JS_LOOP_VTABLE` calls are on the event-loop tick path but behind a branch that already exists (`Js` vs `Mini`).
 
 ## 8.3 Out of scope
 

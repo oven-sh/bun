@@ -139,10 +139,20 @@ test.skipIf(!isASAN)(
         let done = 0;
         for (let i = 0; i < 4; i++) {
           const w = new Worker(
+            // Hermetic: point the global resolver's c-ares channel at a local
+            // UDP socket that never replies, so both queries are guaranteed
+            // in-flight (socket registered, no completion) when terminate()
+            // lands. In bun, dns.lookup() uses the c-ares backend on Linux
+            // and so also respects setServers().
+            'const dgram = require("dgram");' +
             'const dns = require("dns");' +
-            'dns.lookup("nonexistent.org", () => {});' +
-            'dns.resolve4("nonexistent.org", () => {});' +
-            'require("worker_threads").parentPort.postMessage(0);',
+            'const s = dgram.createSocket("udp4");' +
+            's.bind(0, "127.0.0.1", () => {' +
+            '  dns.setServers(["127.0.0.1:" + s.address().port]);' +
+            '  dns.lookup("example.org", () => {});' +
+            '  dns.resolve4("example.org", () => {});' +
+            '  require("worker_threads").parentPort.postMessage(0);' +
+            '});',
             { eval: true },
           );
           w.on("message", () => w.terminate().then(() => {

@@ -3291,8 +3291,6 @@ pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Optio
     if sym.is_null() { None } else { Some(sym) }
 }
 
-pub use bun_windows_sys::externs::LoadLibraryA;
-
 unsafe extern "system" {
     #[link_name = "CreateHardLinkW"]
     fn CreateHardLinkW_raw(

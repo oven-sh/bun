@@ -1993,8 +1993,9 @@ prefetch_build_deps() {
 		BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts && \
 		cd test && \
 		BUN_INSTALL_CACHE_DIR="$install_cache_dir" "$bun_path" install --ignore-scripts ); then
-		execute_sudo chown -R buildkite-agent "$install_cache_dir" 2>/dev/null || \
-			execute_sudo chmod -R a+rwX "$install_cache_dir"
+		# Re-chown after populating: the install ran as the bootstrap user, and
+		# buildkite-agent needs to write new entries alongside the baked ones.
+		grant_to_user "$install_cache_dir"
 		append_file /etc/environment "BUN_INSTALL_CACHE_DIR=$install_cache_dir"
 		append_to_profile "export BUN_INSTALL_CACHE_DIR=\"$install_cache_dir\""
 	else

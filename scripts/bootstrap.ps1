@@ -835,8 +835,7 @@ function Prefetch-Build-Deps {
   try {
     foreach ($dir in @($cloneDir, (Join-Path $cloneDir "test"))) {
       Push-Location $dir
-      & bun install --ignore-scripts
-      Pop-Location
+      try { & bun install --ignore-scripts } finally { Pop-Location }
       if ($LASTEXITCODE -ne 0) { throw "bun install in $dir failed" }
     }
     Set-Env "BUN_INSTALL_CACHE_DIR" $installCacheDir
@@ -847,7 +846,12 @@ function Prefetch-Build-Deps {
     Remove-Item Env:\BUN_INSTALL_CACHE_DIR -ErrorAction SilentlyContinue
   }
 
-  Remove-Item -Recurse -Force $cloneDir
+  # The installs leave ~2 GB of node_modules in the clone (test/ uses the
+  # isolated linker); cmd's rmdir handles the junctions/deep paths that
+  # Remove-Item -Recurse trips over. The clone lives under $env:TEMP so a
+  # leftover is wiped at sysprep anyway.
+  & cmd /c rmdir /s /q $cloneDir 2>$null
+  Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $cloneDir
 }
 
 if ($CI) {
